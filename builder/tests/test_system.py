@@ -154,15 +154,42 @@ def live_emerge_config():
     return load_emerge_config()
 
 
+@pytest.fixture(scope="module")
+def live_depclean(live_emerge_config):
+    from depclean import depclean
+
+    config = live_emerge_config
+    return {
+        with_bdeps: depclean(config.trees, config.target_config.root, with_bdeps)
+        for with_bdeps in (True, False)
+    }
+
+
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+def test_orphans_with_dynamic_deps(live_store, live_emerge_config):
+    """emerge's default re-reads dependencies from the repository, which egraph does not; on a
+    system whose ebuilds have not dropped a dependency since merge, the answers still agree.
+    """
+    from depclean import depclean
+
+    config = live_emerge_config
+    expected = depclean(config.trees, config.target_config.root, dynamic_deps=True)
+    result = subprocess.run(
+        [os.environ["EGRAPH"], "--store", str(live_store), "--no-refresh", "orphans"],
+        capture_output=True,
+        text=True,
+    )
+    assert tuple(result.stdout.splitlines()) == expected.orphans
+
+
 @pytest.mark.skipif(
     not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
 )
 @pytest.mark.parametrize("with_bdeps", [True, False], ids=["bdeps", "no-bdeps"])
-def test_orphans_are_what_depclean_removes(live_store, live_emerge_config, with_bdeps):
-    from depclean import depclean
-
-    config = live_emerge_config
-    expected = depclean(config.trees, config.target_config.root, with_bdeps)
+def test_orphans_are_what_depclean_removes(live_store, live_depclean, with_bdeps):
+    expected = live_depclean[with_bdeps]
     result = subprocess.run(
         [
             os.environ["EGRAPH"],
@@ -178,3 +205,16 @@ def test_orphans_are_what_depclean_removes(live_store, live_emerge_config, with_
     )
     assert (result.returncode != 0) == (expected.returncode != 0), result.stderr
     assert tuple(result.stdout.splitlines()) == expected.orphans
+
+
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+def test_why_explains_every_kept_package(live_vardb, live_store, live_depclean):
+    from test_why import assert_explains, why
+
+    expected = live_depclean[True]
+    for cpv in sorted(expected.kept):
+        result = why(live_store, cpv)
+        assert result.returncode == 0, result.stderr
+        assert_explains(result.stdout, cpv, expected, live_vardb)

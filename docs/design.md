@@ -87,6 +87,11 @@ greps, diffs and compares against the oracle line for line:
   depclean would refuse (runtime dependencies nothing installed satisfies), the orphans are still
   listed, the unresolved dependencies go to stderr as `cpv kind atom`, and the exit status is 1.
   An empty @world is refused outright, as depclean does.
+- `why ATOM [--with-bdeps y|n]`: for each installed package the atom matches, a shortest chain
+  of what depclean follows from a root: `@set atom cpv`, then one `deps`-style line per
+  dependency, chains separated by a blank line. Ties prefer the earlier root, then runtime
+  dependencies over build-time ones. A package depclean would remove gets a message on stderr and
+  exit status 1.
 
 ## Orphans: emulating depclean
 
@@ -106,6 +111,18 @@ reachability, because depclean is choosier than reachability in ways users rely 
   is.
 - Unresolved runtime dependencies (RDEPEND, PDEPEND, IDEPEND) make depclean refuse; unresolved
   build-time ones do not.
+
+`why` walks the same traversal. It answers with the dependency that keeps a package, not with
+every root atom that happens to match it: an unslotted world atom matching two slots keeps only
+the higher one, and the other is explained by whatever depends on it.
+
+Dependencies are the ones the vdb recorded at merge time, as `emerge --dynamic-deps=n` reads
+them. emerge's default re-reads an installed package's dependencies from its ebuild when the same
+version is still in the repository; after an ebuild drops a dependency without a revision bump,
+depclean can remove what egraph keeps. On the dev box the two agree, although the vdb carries
+about 1,400 `>=sys-libs/glibc-*` runtime dependencies no ebuild states (only @system glibc is
+affected, so no answer changes). Offering dynamic dependencies needs the repository's metadata:
+the evaluated layer.
 
 In removal mode `dep_zapdeps` asks which packages are *available* (visible: unmasked, or with a
 visible equivalent ebuild). egraph has no masking information until the evaluated layer, so it

@@ -79,3 +79,20 @@ def test_roots_scenario_by_hand(playgrounds, tmp_path):
         # The unslotted world atom keeps the highest slot only.
         "sys-kernel/sources-1",
     ]
+
+
+def test_dependencies_are_the_ones_recorded_at_merge(playgrounds, tmp_path):
+    """The one known divergence: depclean's default --dynamic-deps=y reads dependencies from an
+    installed package's ebuild when it still exists; egraph reads the vdb (docs/design.md).
+    """
+    system = playgrounds("dynamic-deps")
+    path = tmp_path / "installed.egraph"
+    store.write(
+        path,
+        store.encode(installed.build(system.vardb), store.Meta("0", "0", "/", 0)),
+    )
+    assert orphans(path).stdout == ""
+    assert depclean(system.trees, system.eroot, dynamic_deps=False).orphans == ()
+    assert depclean(system.trees, system.eroot, dynamic_deps=True).orphans == (
+        "dev-libs/dep-1",
+    )

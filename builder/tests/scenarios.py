@@ -206,6 +206,16 @@ SCENARIOS = {
             "dev-libs/cycle-b-1": {"EAPI": "8", "RDEPEND": "dev-libs/cycle-a"},
         },
     },
+    # An installed package whose ebuild has since dropped a dependency. depclean re-reads it from
+    # the ebuild (--dynamic-deps, on by default); egraph keeps what the vdb recorded.
+    "dynamic-deps": {
+        "world": ["app-misc/dyn"],
+        "ebuilds": {"app-misc/dyn-1": {"EAPI": "8", "KEYWORDS": "x86"}},
+        "installed": {
+            "app-misc/dyn-1": {"EAPI": "8", "RDEPEND": "dev-libs/dep"},
+            "dev-libs/dep-1": {"EAPI": "8"},
+        },
+    },
     # Sonames across multilib categories.
     "sonames": {
         "world": ["app-misc/tool", "app-misc/nocategory"],

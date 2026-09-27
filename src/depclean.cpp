@@ -1,6 +1,7 @@
 #include "depclean.hpp"
 
 #include "atom.hpp"
+#include "query.hpp"
 #include "version.hpp"
 
 #include <algorithm>
@@ -9,7 +10,9 @@
 #include <functional>
 #include <numeric>
 #include <optional>
+#include <ostream>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 
 namespace egraph {
@@ -362,6 +365,67 @@ std::vector<std::uint32_t> orphans(const Kept& kept) {
         }
     }
     return ids;
+}
+
+std::optional<Path> why(const Kept& kept, std::uint32_t package) {
+    // Runtime reasons before build-time ones when both keep a package.
+    const auto rank = [](std::uint32_t kind) {
+        return static_cast<std::size_t>(std::ranges::find(kind_order, kind) - kind_order.begin());
+    };
+    std::vector<Edge> pulls = kept.pulls;
+    std::ranges::sort(pulls, [&](const Edge& a, const Edge& b) {
+        return std::tuple{a.parent, rank(a.kind), a.child, a.atom, a.choice} <
+               std::tuple{b.parent, rank(b.kind), b.child, b.atom, b.choice};
+    });
+    const auto [first, last] = std::ranges::unique(pulls);
+    pulls.erase(first, last);
+
+    // Breadth first from the roots; each package remembers how it was first reached.
+    const auto count = kept.packages.size();
+    std::vector<bool> seen(count, false);
+    std::vector<std::optional<std::size_t>> by_root(count);
+    std::vector<std::optional<std::size_t>> by_pull(count);
+    std::vector<std::uint32_t> queue;
+    for (std::size_t i = 0; i < kept.roots.size(); ++i) {
+        const auto child = kept.roots.at(i).child;
+        if (!seen.at(child)) {
+            seen.at(child) = true;
+            by_root.at(child) = i;
+            queue.push_back(child);
+        }
+    }
+    for (std::size_t head = 0; head < queue.size() && !seen.at(package); ++head) {
+        const auto parent = queue.at(head);
+        const auto from = std::ranges::lower_bound(pulls, parent, {}, &Edge::parent);
+        for (auto pull = from; pull != pulls.end() && pull->parent == parent; ++pull) {
+            if (!seen.at(pull->child)) {
+                seen.at(pull->child) = true;
+                by_pull.at(pull->child) = static_cast<std::size_t>(pull - pulls.begin());
+                queue.push_back(pull->child);
+            }
+        }
+    }
+    if (!seen.at(package)) {
+        return std::nullopt;
+    }
+    Path path;
+    auto at = package;
+    while (const auto pull = by_pull.at(at)) {
+        path.edges.push_back(pulls.at(*pull));
+        at = pulls.at(*pull).parent;
+    }
+    std::ranges::reverse(path.edges);
+    path.root = kept.roots.at(by_root.at(at).value());
+    return path;
+}
+
+void write_path(std::ostream& out, const Store& store, const Path& path) {
+    const auto& root = store.roots.at(path.root.root);
+    out << '@' << store.string(root.set) << '\t' << store.string(root.atom) << '\t'
+        << store.string(store.packages.at(path.root.child).cpv) << '\n';
+    for (const auto& edge : path.edges) {
+        out << edge_line(store, edge) << '\n';
+    }
 }
 
 std::vector<std::string> unresolved_lines(const Store& store, const Kept& kept) {

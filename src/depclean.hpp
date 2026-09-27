@@ -4,6 +4,8 @@
 #include "store.hpp"
 
 #include <cstdint>
+#include <iosfwd>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -49,6 +51,19 @@ struct Kept {
 
 // Installed packages depclean would remove, as ids in cpv order.
 [[nodiscard]] std::vector<std::uint32_t> orphans(const Kept& kept);
+
+// Why depclean keeps a package: the root that starts the chain, then each dependency in it.
+struct Path {
+    RootPull root;
+    std::vector<Edge> edges;
+};
+
+// A shortest chain of kept dependencies from a root to package; nullopt when depclean would
+// remove it. Ties go to the earlier root, then to runtime dependencies over build-time ones.
+[[nodiscard]] std::optional<Path> why(const Kept& kept, std::uint32_t package);
+
+// "@set<TAB>atom<TAB>cpv" for the root, then an edge_line per dependency.
+void write_path(std::ostream& out, const Store& store, const Path& path);
 
 // "parent<TAB>kind<TAB>dependency" for each unresolved dependency, sorted.
 [[nodiscard]] std::vector<std::string> unresolved_lines(const Store& store, const Kept& kept);

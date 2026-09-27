@@ -39,6 +39,8 @@ struct Rdeps {
 struct Why {
     static constexpr std::string_view name = "why";
     std::string package;
+    // emerge --with-bdeps: whether build-time dependencies keep packages.
+    bool build_deps = true;
 };
 
 struct Match {

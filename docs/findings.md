@@ -249,3 +249,8 @@ process including load and the freshness check of 2,575 inputs.
   playgrounds without KEYWORDS every installed package counts as masked and unavailable, so the
   first installed alternative always wins, even over one already kept. The scenarios therefore
   give installed packages an accepted keyword, the state of a live system.
+- Against `--dynamic-deps=n`, which is what egraph implements, `why` gives a shortest chain of
+  depclean's own parent links for every one of the 2,324 kept packages (1,968 without build-time
+  dependencies). Against emerge's default dynamic deps, 1,393 packages' `>=sys-libs/glibc-*`
+  runtime dependencies, present in the vdb but in no ebuild, are invisible to depclean; that
+  changes paths to glibc and nothing else. `why` costs 88M instructions and 34M cycles.

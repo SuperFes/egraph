@@ -3,6 +3,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <sstream>
+
 #include <string>
 #include <vector>
 
@@ -49,4 +51,18 @@ TEST_CASE("a runtime dependency nothing satisfies is unresolved") {
     CHECK(egraph::unresolved_lines(store, kept) ==
           std::vector<std::string>{"app-misc/a-1\tRDEPEND\tdev-libs/b",
                                    "app-misc/a-1\tRDEPEND\tdev-libs/missing"});
+}
+
+TEST_CASE("why follows kept dependencies back to a root") {
+    const auto store = decoded(egraph::test::fresh_sample());
+    const auto kept = egraph::keep(store, {});
+    const auto path = egraph::why(kept, 1);
+    REQUIRE(path.has_value());
+    std::ostringstream out;
+    egraph::write_path(out, store, path.value_or(egraph::Path{}));
+    CHECK(out.str() == "@selected\tapp-misc/a\tapp-misc/a-1\n"
+                       "app-misc/a-1\tRDEPEND\tdev-libs/b\tdev-libs/b-1\tany-of\n");
+
+    const auto rootless = decoded(egraph::test::with_section(5, Bytes{}.varint(0)));
+    CHECK_FALSE(egraph::why(egraph::keep(rootless, {}), 1).has_value());
 }

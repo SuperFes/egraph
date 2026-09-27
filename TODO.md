@@ -10,7 +10,6 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 - [ ] `broken`: needs `||` satisfaction. Check whether `portage.dep.dep_check` with the vardb can
       answer it directly before composing it from `matches`.
 - [ ] `blockers`: per parent, strength and the installed packages each blocker matches.
-- [ ] `why` (step 7): shortest path from a root; define tie-breaking so answers are comparable.
 - [ ] Oracle `rdeps` costs about 2.3 s per package on the live vdb (2,324 packages), which is why
       the system comparison samples. If that hurts, evaluate every package's edges once per vardb.
 
@@ -71,6 +70,10 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       use.force on unmet USE dependencies, package.provided, and new-style virtual expansion
       (depclean decides a virtual's `||` in its parent's context; egraph when the virtual is read).
 - [ ] `orphans --ignore-soname-deps=n` (keep soname providers), as emerge offers.
+- [ ] Dynamic dependencies (`--dynamic-deps=y`, emerge's default) for `orphans` and `why`: read
+      an installed package's dependencies from its ebuild when the same version is still in the
+      repository. Needs the evaluated layer's metadata.
+- [ ] `why --all`: every chain, or every root, rather than one shortest chain.
 
 ## Output and UX
 

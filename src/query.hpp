@@ -12,8 +12,11 @@
 
 namespace egraph {
 
-// deps and rdeps: one line per edge, "parent<TAB>kind<TAB>atom<TAB>child", with "<TAB>any-of"
-// appended for an alternative inside a || group. Sorted, without duplicates.
+// "parent<TAB>kind<TAB>atom<TAB>child", with "<TAB>any-of" appended for an alternative inside a
+// || group.
+[[nodiscard]] std::string edge_line(const Store& store, const Edge& edge);
+
+// deps and rdeps: one edge_line per edge, sorted, without duplicates.
 void write_edges(std::ostream& out, const Store& store, std::span<const Edge> edges);
 
 // Consumers (or providers) of a soname: one "cpv<TAB>multilib category" line each, sorted.

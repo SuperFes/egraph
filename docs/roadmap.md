@@ -12,7 +12,7 @@ Update the status column as steps land.
 | 4 | Freshness | done |
 | 5 | `rebuild` and `check` | done |
 | 6 | Queries | done |
-| 7 | Roots and orphans | in progress |
+| 7 | Roots and orphans | done |
 | 8 | Consumers | not started |
 | 9 | Evaluated and candidate layers | not planned yet |
 
@@ -78,7 +78,8 @@ Update the status column as steps land.
   configuration, with the world, world_sets and set configuration files as inputs.
 - 7b (done): `orphans` replays depclean's graph completion; it agrees with depclean on every
   scenario and on the live system, with and without `--with-bdeps`.
-- 7c: `why` (shortest path from a root through what depclean keeps).
+- 7c (done): `why`, a shortest chain from a root through what depclean follows, checked link by
+  link against depclean's recorded parents and their shortest distance.
 
 ## 8. Consumers
 

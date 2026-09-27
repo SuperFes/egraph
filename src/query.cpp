@@ -35,14 +35,18 @@ std::string dot_id(std::string_view value) {
 
 } // namespace
 
+std::string edge_line(const Store& store, const Edge& edge) {
+    return std::format("{}\t{}\t{}\t{}{}", store.string(store.packages.at(edge.parent).cpv),
+                       dep_kinds.at(edge.kind), store.string(edge.atom),
+                       store.string(store.packages.at(edge.child).cpv),
+                       edge.choice ? "\tany-of" : "");
+}
+
 void write_edges(std::ostream& out, const Store& store, std::span<const Edge> edges) {
     std::vector<std::string> lines;
     lines.reserve(edges.size());
     for (const auto& edge : edges) {
-        lines.push_back(std::format(
-            "{}\t{}\t{}\t{}{}", store.string(store.packages.at(edge.parent).cpv),
-            dep_kinds.at(edge.kind), store.string(edge.atom),
-            store.string(store.packages.at(edge.child).cpv), edge.choice ? "\tany-of" : ""));
+        lines.push_back(edge_line(store, edge));
     }
     sorted_unique(lines);
     for (const auto& line : lines) {

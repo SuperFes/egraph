@@ -23,7 +23,9 @@ class Depclean(NamedTuple):
     parents: dict
 
 
-def depclean(trees, eroot, with_bdeps=True):
+def depclean(trees, eroot, with_bdeps=True, dynamic_deps=False):
+    """depclean's answer. egraph reads dependencies as the vdb recorded them, so the default is
+    --dynamic-deps=n, not emerge's own default of re-reading them from the ebuild."""
     import _emerge.emergelog
     from _emerge.actions import _calc_depclean
     from _emerge.Package import Package
@@ -34,6 +36,8 @@ def depclean(trees, eroot, with_bdeps=True):
     options = {"--pretend": True}
     if not with_bdeps:
         options["--with-bdeps"] = "n"
+    if not dynamic_deps:
+        options["--dynamic-deps"] = "n"
     settings = trees[eroot]["root_config"].settings
     noiselimit = portage.util.noiselimit
     disabled = _emerge.emergelog._disable

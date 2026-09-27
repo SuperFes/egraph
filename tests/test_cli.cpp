@@ -6,7 +6,6 @@
 
 #include <sstream>
 #include <string>
-#include <tuple>
 
 namespace {
 
@@ -93,6 +92,13 @@ TEST_CASE("orphans takes emerge's --with-bdeps") {
     CHECK_THROWS_AS(parse("orphans --with-bdeps maybe"), CLI::ValidationError);
 }
 
+TEST_CASE("why takes one atom and emerge's --with-bdeps") {
+    const auto why = std::get<egraph::Why>(parse("why --with-bdeps n dev-libs/a").command);
+    CHECK(why.package == "dev-libs/a");
+    CHECK_FALSE(why.build_deps);
+    CHECK_THROWS_AS(parse("why"), CLI::RequiredError);
+}
+
 TEST_CASE("malformed command lines are rejected") {
     CHECK_THROWS_AS(parse(""), CLI::RequiredError);
     CHECK_THROWS_AS(parse("rdeps"), CLI::RequiredError);
@@ -104,17 +110,4 @@ TEST_CASE("running without a command is a usage error") {
     std::ostringstream out;
     std::ostringstream err;
     CHECK(egraph::run(egraph::Invocation{}, out, err) == egraph::Exit::usage);
-}
-
-// Shrinks as commands are implemented.
-using Stubs = std::tuple<egraph::Why>;
-
-TEMPLATE_LIST_TEST_CASE("unimplemented commands say so", "", Stubs) {
-    egraph::Invocation invocation;
-    invocation.command = TestType{};
-    std::ostringstream out;
-    std::ostringstream err;
-    CHECK(egraph::run(invocation, out, err) == egraph::Exit::not_implemented);
-    CHECK(out.str().empty());
-    CHECK(err.str() == "egraph: " + std::string{TestType::name} + ": not implemented\n");
 }

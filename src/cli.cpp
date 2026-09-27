@@ -83,11 +83,6 @@ Exit execute(const std::monostate&, const Invocation&, std::ostream&, std::ostre
     return Exit::usage;
 }
 
-template <class C> Exit execute(const C&, const Invocation&, std::ostream&, std::ostream& err) {
-    err << "egraph: " << C::name << ": not implemented\n";
-    return Exit::not_implemented;
-}
-
 Exit execute(const Rebuild&, const Invocation& invocation, std::ostream&, std::ostream& err) {
     if (const auto error = run_builder(invocation, "--full", store_path(invocation))) {
         err << "egraph: " << *error << '\n';
@@ -262,6 +257,35 @@ Exit execute(const Orphans& command, const Invocation& invocation, std::ostream&
     return Exit::failure;
 }
 
+Exit execute(const Why& command, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    const auto store = open_store(invocation, err);
+    if (!store) {
+        err << "egraph: " << store.error() << '\n';
+        return Exit::failure;
+    }
+    const auto ids = resolve_all(*store, {command.package}, err);
+    if (!ids) {
+        return Exit::failure;
+    }
+    const auto kept = keep(*store, {.build_deps = command.build_deps});
+    auto exit = Exit::ok;
+    bool first = true;
+    for (const auto id : *ids) {
+        const auto path = why(kept, id);
+        if (!path) {
+            err << "egraph: why: " << store->string(store->packages.at(id).cpv)
+                << ": nothing keeps it; depclean would remove it\n";
+            exit = Exit::failure;
+            continue;
+        }
+        out << (first ? "" : "\n");
+        first = false;
+        write_path(out, *store, *path);
+    }
+    return exit;
+}
+
 Exit execute(const Stats&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
     const auto store = open_store(invocation, err);
     if (!store) {
@@ -332,9 +356,15 @@ void configure(CLI::App& app, Invocation& invocation) {
     add_field(add_command<Rdeps>(app, invocation, "What depends on installed packages"), invocation,
               "packages", &Rdeps::packages, "Installed cpvs, or cps for every installed version")
         ->required();
-    add_field(add_command<Why>(app, invocation, "Path from @world or @system to a package"),
-              invocation, "package", &Why::package, "Package atom")
+    const std::map<std::string, bool> yes_no{{"y", true}, {"n", false}};
+    CLI::App* why_cmd = add_command<Why>(
+        app, invocation, "Shortest chain of dependencies from a root set that keeps a package");
+    add_field(why_cmd, invocation, "package", &Why::package,
+              "Portage atom; every installed package it matches is explained")
         ->required();
+    add_field(why_cmd, invocation, "--with-bdeps", &Why::build_deps,
+              "Whether build-time dependencies keep packages, as emerge's option (default y)")
+        ->transform(CLI::CheckedTransformer(yes_no).description("{y,n}"));
     add_field(add_command<Match>(app, invocation, "Installed packages each atom matches"),
               invocation, "atoms", &Match::atoms, "Portage atoms, such as '>=dev-libs/openssl-3:0'")
         ->required();
@@ -347,7 +377,6 @@ void configure(CLI::App& app, Invocation& invocation) {
     add_command<Broken>(app, invocation, "Installed dependencies nothing installed satisfies");
     CLI::App* orphans_cmd =
         add_command<Orphans>(app, invocation, "Installed packages emerge --depclean would remove");
-    const std::map<std::string, bool> yes_no{{"y", true}, {"n", false}};
     add_field(orphans_cmd, invocation, "--with-bdeps", &Orphans::build_deps,
               "Whether build-time dependencies keep packages, as emerge's option (default y)")
         ->transform(CLI::CheckedTransformer(yes_no).description("{y,n}"));
