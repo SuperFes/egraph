@@ -93,6 +93,17 @@ SCENARIOS = {
                 "BDEPEND": "|| ( dev-libs/nothing-a dev-libs/nothing-b )",
                 "PDEPEND": "dev-libs/absent !!dev-libs/c",
             },
+            # A || group emptied by USE: never satisfied from EAPI 7, dropped before.
+            "app-misc/y-1": {
+                "EAPI": "8",
+                "IUSE": "u",
+                "DEPEND": "|| ( u? ( dev-libs/a ) )",
+            },
+            "app-misc/z-1": {
+                "EAPI": "6",
+                "IUSE": "u",
+                "DEPEND": "|| ( u? ( dev-libs/a ) )",
+            },
         },
     },
     # Sonames across multilib categories.
@@ -111,6 +122,7 @@ SCENARIOS = {
                 "EAPI": "8",
                 "REQUIRES": "x86_32: libz.so.1 x86_64: libssl.so.3 libgone.so.1",
             },
+            "app-misc/nocategory-1": {"EAPI": "8", "REQUIRES": "libz.so.1"},
         },
     },
 }

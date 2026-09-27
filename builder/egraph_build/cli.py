@@ -43,8 +43,26 @@ def parser():
         default=os.environ.get("EGRAPH_STORE"),
         help="store file to write",
     )
+    p.add_argument(
+        "--root",
+        default=os.environ.get("ROOT", "/"),
+        help="root whose installed packages to evaluate",
+    )
+    p.add_argument(
+        "--config-root",
+        default=os.environ.get("PORTAGE_CONFIGROOT", "/"),
+        help="root of the portage configuration to evaluate them with",
+    )
     p.set_defaults(mode="full")
     return p
+
+
+def open_vardb(config_root, root):
+    import portage
+    from portage.dbapi.vartree import vartree
+
+    settings = portage.config(config_root=config_root, target_root=root)
+    return vartree(settings=settings).dbapi
 
 
 def main(argv=None):
@@ -52,5 +70,11 @@ def main(argv=None):
         args = parser().parse_args(argv)
     except SystemExit as e:
         return EXIT_OK if e.code == 0 else EXIT_USAGE
+    if args.mode == "json":
+        from egraph_build import installed
+
+        layer = installed.build(open_vardb(args.config_root, args.root))
+        sys.stdout.write(installed.to_json(layer))
+        return EXIT_OK
     print(f"egraph-build: {args.mode}: not implemented", file=sys.stderr)
     return EXIT_NOT_IMPLEMENTED

@@ -1,14 +1,12 @@
 """egraph against portage on this machine's own /var/db/pkg, read-only."""
 
+import json
 import os
 
 import pytest
 
-import portage
-from portage.dbapi.vartree import vartree
-
 from compare import QUERIES, assert_agrees
-from egraph_build import installed, oracle
+from egraph_build import cli, installed, oracle
 
 pytestmark = [
     pytest.mark.system,
@@ -24,8 +22,12 @@ SAMPLE = int(os.environ.get("EGRAPH_SYSTEM_SAMPLE", "20"))
 
 @pytest.fixture(scope="module")
 def live_vardb():
-    settings = portage.config(config_root="/", target_root="/")
-    return vartree(settings=settings).dbapi
+    return cli.open_vardb("/", "/")
+
+
+@pytest.fixture(scope="module")
+def live_layer(live_vardb):
+    return installed.build(live_vardb)
 
 
 def test_oracle_reads_the_live_vdb(live_vardb):
@@ -35,8 +37,13 @@ def test_oracle_reads_the_live_vdb(live_vardb):
         assert oracle.matches(live_vardb, f"={cpv}") == (cpv,)
 
 
-@pytest.mark.xfail(raises=NotImplementedError, strict=True, reason="roadmap step 2")
 @pytest.mark.parametrize("query", QUERIES)
-def test_installed_layer_agrees_with_portage(live_vardb, query):
-    layer = installed.build(live_vardb)
-    assert_agrees(live_vardb, layer, query, sample=SAMPLE)
+def test_installed_layer_agrees_with_portage(live_vardb, live_layer, query):
+    assert_agrees(live_vardb, live_layer, query, sample=SAMPLE)
+
+
+def test_json_covers_every_package(live_vardb, live_layer):
+    document = json.loads(installed.to_json(live_layer))
+    assert [pkg["cpv"] for pkg in document["packages"]] == list(
+        oracle.installed(live_vardb)
+    )

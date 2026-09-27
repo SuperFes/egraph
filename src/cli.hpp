@@ -74,6 +74,10 @@ using Command = std::variant<std::monostate, Deps, Rdeps, Why, Soname, Broken, O
                              Stats, Rebuild, Check>;
 
 struct Invocation {
+    // Both are handed to egraph-build, which evaluates packages under root with the portage
+    // configuration under config_root.
+    std::filesystem::path root = "/";
+    std::filesystem::path config_root = "/";
     std::optional<std::filesystem::path> store;
     bool no_refresh = false;
     Command command;

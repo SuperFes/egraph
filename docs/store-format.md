@@ -15,7 +15,8 @@ settled; the record layouts are the step 1 prototype and are finalized in roadma
 
 ## Logical content
 
-1. **Header.** Magic, format version, producer versions (egraph, portage), EROOT, build time.
+1. **Header.** Magic, format version, producer versions (egraph, portage), EROOT, build time,
+   and the profile's implicit IUSE settings that USE-dep matching needs (`design.md`).
 2. **Inputs.** `(path, kind, mtime_ns, size)` for every file and directory the builder read.
    Freshness is exactly "every input still stats the same".
 3. **Strings.** An interned table; package data refers to strings by index.

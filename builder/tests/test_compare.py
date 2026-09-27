@@ -43,7 +43,6 @@ def test_harness_reports_disagreement(playgrounds):
         assert_agrees(vardb, _OracleLayer(vardb, wrong="rdeps"), "rdeps")
 
 
-@pytest.mark.xfail(raises=NotImplementedError, strict=True, reason="roadmap step 2")
 @pytest.mark.parametrize("query", QUERIES)
 def test_installed_layer_agrees_with_portage(scenario, query):
     layer = installed.build(scenario.vardb)

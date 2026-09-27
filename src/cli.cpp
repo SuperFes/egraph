@@ -46,6 +46,13 @@ void configure(CLI::App& app, Invocation& invocation) {
     app.set_version_flag("--version", std::string{version});
     app.require_subcommand(1);
 
+    app.add_option("--root", invocation.root, "Root whose installed packages to query")
+        ->envname("ROOT")
+        ->capture_default_str();
+    app.add_option("--config-root", invocation.config_root,
+                   "Root of the portage configuration to evaluate them with")
+        ->envname("PORTAGE_CONFIGROOT")
+        ->capture_default_str();
     app.add_option("--store", invocation.store, "Store file to read")->envname("EGRAPH_STORE");
     app.add_flag("--no-refresh", invocation.no_refresh,
                  "Answer from a stale store instead of rebuilding it");

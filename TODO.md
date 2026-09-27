@@ -26,8 +26,9 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       USE deps on flags outside the ebuild's IUSE depend on IUSE_EFFECTIVE, not IUSE.
 - [ ] `virtual/*` packages and new-style virtuals depending on each other.
 - [ ] Several slots of one cp, and several versions a single atom matches.
-- [ ] Weak and strong blockers that match installed packages, including self-blocks.
-- [ ] Malformed PROVIDES/REQUIRES (the oracle currently drops the whole field).
+- [ ] Weak and strong blockers that match installed packages, including self-blocks. The layer
+      records every package a blocker's atom matches, the parent included; what counts as a
+      conflict is for the blockers query to decide.
 - [ ] Dependency cycles within one kind and across kinds.
 
 ## Freshness and incremental refresh
@@ -42,17 +43,26 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       fixed-width u32 columns: Python can view them with `memoryview.cast` instead of decoding
       varints one by one. The step 1 Python numbers only tokenized, so they are lower bounds.
 
-## Open questions
+- [ ] The canonical JSON carries strings as portage returns them; a non-UTF-8 byte in a path or
+      atom arrives as a lone surrogate. Decide how the store and the C++ JSON export spell it
+      before the step 3 golden test.
 
-- [ ] Do `egraph` queries take full atoms (`>=dev-libs/openssl-3:0=`) or only cp/cpv? Full atoms
-      mean the C++ side matches atoms itself, which puts portage semantics on the query path.
-- [ ] `egraph-build --root`: the builder needs a config root and target root to leave `/`.
-- [ ] Exit codes are duplicated in `src/cli.hpp` and `builder/egraph_build/cli.py`; the step 3
-      golden tests should pin them to each other.
+- [ ] Record the profile's implicit IUSE settings in the store for the C++ atom matcher, and the
+      profile files they come from as inputs. Check how `settings._iuse_effective_match` builds
+      its pattern before choosing a representation.
+- [ ] Prefix installs: the default store path is `${EROOT}/var/cache/egraph/`, but only the
+      builder knows EPREFIX. `egraph` could take it from the store it finds, or from `--eprefix`.
+
+## Ideas
+
+- [ ] An in-process bash-compatible interpreter, instead of spawning bash. Nothing on egraph's
+      path runs bash today: the installed layer reads vdb metadata and repos ship md5-cache. It
+      would matter only if the evaluated layer generated metadata itself (overlays without a
+      cache), which portage does now. Gentoo's libbash tried this and was abandoned.
 
 ## Tooling
 
-- [ ] pytest is only installed for python3.13 here, not 3.14: install `dev-python/pytest` for
+- [x] pytest is only installed for python3.13 here, not 3.14: install `dev-python/pytest` for
       3.14, or make meson pick an interpreter that has it.
 - [ ] Install `egraph-build` through meson so `egraph` can find it without PYTHONPATH.
 - [ ] CLI11's CheckedTransformer error for a bad `--format` prints the enum map

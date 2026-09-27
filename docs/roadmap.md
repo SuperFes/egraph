@@ -7,7 +7,7 @@ Update the status column as steps land.
 |---|---|---|
 | 0 | Scaffold | done |
 | 1 | Measure and choose the store encoding | done |
-| 2 | Installed layer in the builder | not started |
+| 2 | Installed layer in the builder | done |
 | 3 | Store writer and reader | not started |
 | 4 | Freshness | not started |
 | 5 | `rebuild` and `check` | not started |
@@ -65,6 +65,8 @@ Update the status column as steps land.
 
 - `deps`, `rdeps`, `why` (BFS from roots over the reverse graph), `soname`, `broken`, `export`
   (dot, json) and `stats`.
+- Query arguments are full portage atoms: a C++ atom parser and matcher, run in shadow against
+  `vardb.match` until they agree (`design.md`).
 - Each query is tested against the builder's Python answer on the same playground.
 
 ## 7. Roots and orphans

@@ -47,8 +47,8 @@ PYTHONPATH=/Development/Gentoo/portage/lib pytest builder/tests   # builder agai
 EGRAPH_SYSTEM_TESTS=1 PYTHONPATH=... pytest builder/tests         # also compare on the live vdb
 ```
 
-pytest is only installed for python3.13 here. `meson test` puts the `portage_lib` option (default:
-the fork) on PYTHONPATH; the playground tests need a portage checkout for its test GPG keys.
+`meson test` puts the `portage_lib` option (default: the fork) on PYTHONPATH; the playground
+tests need a portage checkout for its test GPG keys.
 
 Toolchain on this machine: clang 23, gcc 16, meson 1.12, Catch2 3.15, CLI11 2.7, Python 3.14.
 

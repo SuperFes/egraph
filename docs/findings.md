@@ -127,3 +127,20 @@ in one `std::string`, lists in shared index vectors.
 - A's section table lets the freshness check decode the header and inputs only.
 
 Decision: A. See `store-format.md`.
+
+## Installed layer (2026-09-27, roadmap step 2)
+
+- `egraph-build --json` on the live vdb: 9.31G instructions (median of 7 interleaved runs),
+  against 8.15G for the step 1 phases up to matching. Building the trees and the reverse index
+  and writing 5.7 MB of JSON cost about 1.1G. Cycles were not comparable: the load average sat
+  above 20 during the runs.
+- Agreement with portage on the live vdb, every subject, no sampling: `installed`, `errors`,
+  `matches` (5,679 distinct atoms), `deps` (2,324 packages), `rdeps` (34,432 edges),
+  `soname_providers` and `soname_consumers` (1,001 sonames, 15,177 uses). Zero differences.
+- The unsampled oracle is too slow to run routinely: `rdeps` and the soname queries rescan every
+  package per subject, and the unsampled pytest run passed 10 minutes before reaching
+  `soname_consumers`. The full check above inverted the oracle's per-package answers once
+  instead, which is equivalent for these queries.
+- use_reduce shapes the trees in ways worth knowing: a `||` left with one alternative becomes a
+  plain atom, nested `||` groups are flattened, and in EAPI 7+ a `||` emptied by USE becomes the
+  never-matching atom `__const__/empty-any-of` (older EAPIs drop it).

@@ -27,6 +27,14 @@ TEST_CASE("a package argument lands in its command") {
     CHECK(rdeps->package == "dev-libs/openssl");
     CHECK_FALSE(invocation.store.has_value());
     CHECK_FALSE(invocation.no_refresh);
+    CHECK(invocation.root == std::filesystem::path{"/"});
+    CHECK(invocation.config_root == std::filesystem::path{"/"});
+}
+
+TEST_CASE("roots are passed through") {
+    const auto invocation = parse("--root /mnt/target --config-root /mnt/config broken");
+    CHECK(invocation.root == std::filesystem::path{"/mnt/target"});
+    CHECK(invocation.config_root == std::filesystem::path{"/mnt/config"});
 }
 
 TEST_CASE("global options precede the command") {

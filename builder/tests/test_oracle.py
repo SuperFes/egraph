@@ -13,6 +13,8 @@ def test_installed(playgrounds):
     vardb = playgrounds("any-of").vardb
     assert oracle.installed(vardb) == (
         "app-misc/x-1",
+        "app-misc/y-1",
+        "app-misc/z-1",
         "dev-libs/a-1",
         "dev-libs/b-1",
         "dev-libs/c-1",
@@ -106,6 +108,23 @@ def test_unparseable_deps_are_errors_not_edges(playgrounds):
     vardb = playgrounds("reference").vardb
     assert oracle.errors(vardb) == {("app-misc/bad-1", "RDEPEND")}
     assert oracle.deps(vardb, "app-misc/bad-1") == frozenset()
+
+
+def test_malformed_sonames_are_errors(playgrounds):
+    vardb = playgrounds("sonames").vardb
+    assert oracle.errors(vardb) == {("app-misc/nocategory-1", "REQUIRES")}
+    assert oracle.soname_consumers(vardb, "libz.so.1") == {
+        SonameUse("dev-libs/openssl-3", "x86_64"),
+        SonameUse("app-misc/tool-1", "x86_32"),
+    }
+
+
+def test_emptied_any_of_depends_on_eapi(playgrounds):
+    vardb = playgrounds("any-of").vardb
+    assert oracle.dep_atoms(vardb, "app-misc/y-1", "DEPEND") == [
+        ("__const__/empty-any-of", False)
+    ]
+    assert oracle.dep_atoms(vardb, "app-misc/z-1", "DEPEND") == []
 
 
 def test_sonames_keep_multilib_categories(playgrounds):

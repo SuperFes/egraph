@@ -15,12 +15,12 @@ from egraph_build.model import DEP_KINDS, Edge, SonameUse
 
 
 def installed(vardb):
-    return tuple(sorted(vardb.cpv_all()))
+    return tuple(sorted(str(cpv) for cpv in vardb.cpv_all()))
 
 
 def matches(vardb, atom):
     """Installed cpvs satisfying a dependency atom."""
-    return tuple(sorted(vardb.match(atom)))
+    return tuple(sorted(str(cpv) for cpv in vardb.match(atom)))
 
 
 def _flatten(tokens, choice, out):
@@ -53,7 +53,7 @@ def dep_atoms(vardb, cpv, kind):
 
 
 def errors(vardb):
-    """(cpv, kind) of every dependency string portage cannot parse."""
+    """(cpv, key) of every dependency or soname string portage cannot parse."""
     found = set()
     for cpv in installed(vardb):
         for kind in DEP_KINDS:
@@ -61,6 +61,12 @@ def errors(vardb):
                 dep_atoms(vardb, cpv, kind)
             except (InvalidAtom, InvalidDependString):
                 found.add((cpv, kind))
+        for key in ("PROVIDES", "REQUIRES"):
+            (value,) = vardb.aux_get(cpv, [key])
+            try:
+                tuple(parse_soname_deps(value))
+            except InvalidData:
+                found.add((cpv, key))
     return frozenset(found)
 
 

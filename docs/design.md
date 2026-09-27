@@ -52,6 +52,27 @@ answers rather than a superset:
 - **Roots.** The world file and `world_sets` are read directly. @system and @profile need profile
   stacking, so the builder evaluates them and records the profile files it consulted.
 
+## Queries take portage atoms
+
+Every query that names packages accepts a full portage atom (versions, slots and sub-slots, USE
+dependencies with defaults, repository) and means by it exactly what `vardb.match` means.
+
+- Atoms that already appear in the installed trees resolve from their stored matches.
+- Other atoms are matched in C++ against the stored package data. USE-dep defaults on installed
+  packages depend on the profile's implicit IUSE (`IUSE_IMPLICIT`, `USE_EXPAND_IMPLICIT`,
+  `USE_EXPAND_UNPREFIXED`, `USE_EXPAND_VALUES_*`), so the store carries those, and the profile
+  files are inputs.
+- The C++ matcher runs in shadow against `vardb.match`, over every atom in the store and a
+  generated corpus, before anything relies on it. Portage is right until a test says otherwise.
+
+## Roots and exit codes
+
+- Both tools take `--root` and `--config-root`, defaulting to `ROOT` and `PORTAGE_CONFIGROOT`,
+  and `egraph` passes them to `egraph-build`. The store records its EROOT and is stale for any
+  other.
+- Both tools share exit codes (0 ok, 1 failure, 2 usage, 3 not implemented); a test pins
+  `builder/egraph_build/cli.py` to the `Exit` enum in `src/cli.hpp`.
+
 ## Freshness: validate on read
 
 The store carries its own input list, like a make `.d` file: every file and directory the builder
