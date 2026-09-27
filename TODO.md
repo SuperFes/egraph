@@ -47,9 +47,9 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       the entry point takes a pointer and a size, so it needs a reviewed exception to
       `-Wunsafe-buffer-usage` in that one file.
 
-- [ ] Record the profile's implicit IUSE settings in the store for the C++ atom matcher, and the
-      profile files they come from as inputs. Check how `settings._iuse_effective_match` builds
-      its pattern before choosing a representation.
+- [ ] Implicit IUSE patterns for pre-EAPI-5 packages are stored as literals and `x_.*` prefixes.
+      Portage compiles them into one regex unescaped, so a flag containing a regex character
+      (`+` is legal in flag names) would match differently. None exist on the dev box.
 
 ## Queries
 
@@ -60,6 +60,19 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       (without expanding them). Add them with the `blockers` query.
 - [ ] Queries rebuild the edge index on every run (about 20M instructions on the live store). If
       that ever dominates, the store could carry it.
+
+## Output and UX
+
+Direction from the user (2026-09-27): output does not have to look like portage's; make it clean
+and organised, and a TUI (ncurses, or Notcurses) is welcome.
+
+- [ ] A human default: grouped and indented (by kind, by package), coloured on a tty, with the
+      current tab-separated lines kept behind a flag for scripts and the oracle tests.
+- [ ] Dependencies behind disabled USE flags, opt in and marked with the flag that would pull
+      them in (`rdeps --possible`). The vdb only keeps reduced strings, so this needs the
+      unreduced ones from the repository's metadata cache: the evaluated layer (step 9).
+- [ ] A TUI: browse the dependency tree, `broken` and `check` results, with dialogs for errors;
+      later, possibly the build itself.
 
 ## Ideas
 

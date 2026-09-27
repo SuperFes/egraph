@@ -37,14 +37,15 @@ endif
 cli11 = dependency('CLI11', version: '>=2.4')
 catch2 = dependency('catch2-with-main', version: '>=3.4')
 
-version_hpp = configure_file(
-  input: 'src/version.hpp.in',
-  output: 'version.hpp',
+build_info_hpp = configure_file(
+  input: 'src/build_info.hpp.in',
+  output: 'build_info.hpp',
   configuration: {'VERSION': meson.project_version()},
 )
 
 egraph_lib = static_library(
   'egraph',
+  'src/atom.cpp',
   'src/check.cpp',
   'src/cli.cpp',
   'src/freshness.cpp',
@@ -53,7 +54,8 @@ egraph_lib = static_library(
   'src/os.cpp',
   'src/query.cpp',
   'src/store.cpp',
-  version_hpp,
+  'src/version.cpp',
+  build_info_hpp,
   dependencies: cli11,
 )
 egraph_dep = declare_dependency(
@@ -66,6 +68,7 @@ egraph_exe = executable('egraph', 'src/main.cpp', dependencies: egraph_dep, inst
 
 unit_tests = executable(
   'unit-tests',
+  'tests/test_atom.cpp',
   'tests/test_check.cpp',
   'tests/test_cli.cpp',
   'tests/test_freshness.cpp',

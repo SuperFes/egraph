@@ -72,9 +72,12 @@ def test_incremental_agrees_with_full(live_vardb, tmp_path, monkeypatch):
 
 
 @pytest.fixture(scope="module")
-def live_store(live_layer, tmp_path_factory):
+def live_store(live_vardb, live_layer, tmp_path_factory):
+    from egraph_build.profile import implicit_iuse
+
     path = tmp_path_factory.mktemp("live") / "installed.egraph"
-    store.write(path, store.encode(live_layer, store.Meta("0", "0", "/", 0)))
+    meta = store.Meta("0", "0", "/", 0, implicit_iuse(live_vardb.settings))
+    store.write(path, store.encode(live_layer, meta))
     return path
 
 
@@ -118,3 +121,27 @@ def subjects_sample(vardb, query):
 
     chosen = subjects(vardb, query)
     return sorted(random.Random(query).sample(chosen, min(SAMPLE, len(chosen))))
+
+
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+def test_cpp_matcher_agrees_on_every_live_atom(live_layer, live_store):
+    """Every atom in the live trees, against the matches portage resolved into the store."""
+    from test_match import egraph_matches
+
+    expected = {}
+    for pkg in live_layer:
+        for nodes in pkg.deps:
+            for node in nodes:
+                if node.atom:
+                    expected[node.atom.lstrip("!")] = set(node.matches)
+    found = egraph_matches(live_store, sorted(expected))
+    wrong = [
+        f"{atom}: portage {sorted(expected[atom])}, egraph {sorted(found[atom])}"
+        for atom in sorted(expected)
+        if found[atom] != expected[atom]
+    ]
+    assert not wrong, f"{len(wrong)} of {len(expected)} atoms differ:\n" + "\n".join(
+        wrong[:20]
+    )

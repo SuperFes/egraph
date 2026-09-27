@@ -1,0 +1,157 @@
+"""egraph's atom matching in shadow against portage's vardb.match."""
+
+import os
+import subprocess
+
+import pytest
+from portage.dep import Atom
+from portage.exception import InvalidAtom
+
+from egraph_build import installed, oracle, store
+from egraph_build.profile import implicit_iuse
+from scenarios import ATOM_VERSIONS
+
+EGRAPH = os.environ.get("EGRAPH")
+
+pytestmark = pytest.mark.skipif(
+    not EGRAPH, reason="set EGRAPH to the egraph binary (meson test does)"
+)
+
+EXTRA_VERSIONS = ("1.0.1", "0", "01", "1.0-r0", "1.0-r5", "3", "1.0_p", "1.0_p1-r1")
+FLAGS = (
+    "a",
+    "b",
+    "c",
+    "prefix",
+    "x86",
+    "amd64",
+    "elibc_glibc",
+    "elibc_musl",
+    "kernel_linux",
+    "stray",
+)
+
+
+def corpus():
+    atoms = ["dev-libs/v", "dev-libs/nothing"]
+    for version in ATOM_VERSIONS + EXTRA_VERSIONS:
+        for op in ("<", "<=", "=", "~", ">=", ">"):
+            atoms.append(f"{op}dev-libs/v-{version}")
+        atoms.append(f"=dev-libs/v-{version}*")
+    atoms += [
+        "=dev-libs/v-1.0.0*",
+        "=dev-libs/v-2*",
+        "=dev-libs/v-20*",
+        "=dev-libs/v-1.0_p1-r1*",
+        "dev-libs/v:3",
+        "dev-libs/v:3/3",
+        "dev-libs/v:3/4",
+        "app-misc/s:1",
+        "app-misc/s:1/1.5",
+        "app-misc/s:1/1.4",
+        "app-misc/s:2=",
+        "app-misc/s:2/2.0=",
+        "app-misc/s:*",
+        "app-misc/s:=",
+        "app-misc/s::test_repo",
+        "app-misc/s::other",
+        ">=app-misc/s-2:2::test_repo",
+    ]
+    for pkg in ("app-misc/u4", "app-misc/u8"):
+        for flag in FLAGS:
+            for spelling in ("{}", "-{}", "{}(+)", "{}(-)", "-{}(+)", "-{}(-)"):
+                atoms.append(f"{pkg}[{spelling.format(flag)}]")
+        atoms += [f"{pkg}[a,-c(-)]", f"{pkg}[a,c(+),-b]"]
+    # Rejected by portage as well.
+    atoms += [
+        "dev-libs/v-1.0",
+        "dev-libs/v-1",
+        ">=dev-libs/v",
+        "=dev-libs/v-1*-r1",
+        "dev-libs/v[]",
+        "dev-libs/v:",
+        "dev-libs/v-1a",
+    ]
+    return atoms
+
+
+def valid(text):
+    try:
+        Atom(text, allow_repo=True)
+    except InvalidAtom:
+        return False
+    return True
+
+
+def egraph_matches(path, atoms):
+    result = subprocess.run(
+        [EGRAPH, "--store", str(path), "--no-refresh", "match", *atoms],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    found = {atom: set() for atom in atoms}
+    for line in result.stdout.splitlines():
+        atom, cpv = line.split("\t")
+        found[atom].add(cpv)
+    return found
+
+
+def write_store(vardb, path):
+    meta = store.Meta("0", "0", "/", 0, implicit_iuse(vardb.settings))
+    store.write(path, store.encode(installed.build(vardb), meta))
+
+
+def test_corpus_matches_as_portage_does(playgrounds, tmp_path):
+    vardb = playgrounds("atoms").vardb
+    path = tmp_path / "installed.egraph"
+    write_store(vardb, path)
+    atoms = [atom for atom in corpus() if valid(atom)]
+    assert len(atoms) > 300
+    found = egraph_matches(path, atoms)
+    wrong = [
+        f"{atom}: portage {sorted(oracle.matches(vardb, atom))}, egraph {sorted(found[atom])}"
+        for atom in atoms
+        if found[atom] != set(oracle.matches(vardb, atom))
+    ]
+    assert not wrong, "\n".join(wrong)
+
+
+def test_invalid_atoms_are_rejected(playgrounds, tmp_path):
+    path = tmp_path / "installed.egraph"
+    write_store(playgrounds("atoms").vardb, path)
+    rejected = [atom for atom in corpus() if not valid(atom)]
+    assert rejected
+    for atom in rejected:
+        result = subprocess.run(
+            [EGRAPH, "--store", str(path), "--no-refresh", "match", atom],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 1, atom
+        assert result.stderr.startswith(f"egraph: {atom}: invalid atom: "), atom
+
+
+def tree_atoms(layer):
+    """Every atom in the dependency trees, blockers as the atom they block."""
+    return sorted(
+        {
+            node.atom.lstrip("!")
+            for pkg in layer
+            for nodes in pkg.deps
+            for node in nodes
+            if node.atom
+        }
+    )
+
+
+def test_every_tree_atom_matches_as_portage_does(scenario, tmp_path):
+    vardb = scenario.vardb
+    path = tmp_path / "installed.egraph"
+    write_store(vardb, path)
+    atoms = tree_atoms(installed.build(vardb))
+    if not atoms:
+        pytest.skip("no dependency atoms in this scenario")
+    found = egraph_matches(path, atoms)
+    for atom in atoms:
+        assert found[atom] == set(oracle.matches(vardb, atom)), atom

@@ -41,6 +41,11 @@ struct Why {
     std::string package;
 };
 
+struct Match {
+    static constexpr std::string_view name = "match";
+    std::vector<std::string> atoms;
+};
+
 struct Soname {
     static constexpr std::string_view name = "soname";
     std::string soname;
@@ -77,8 +82,8 @@ struct Check {
     static constexpr std::string_view name = "check";
 };
 
-using Command = std::variant<std::monostate, Deps, Rdeps, Why, Soname, Broken, Orphans, Export,
-                             Stats, Rebuild, Check>;
+using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Orphans,
+                             Export, Stats, Rebuild, Check>;
 
 struct Invocation {
     // Handed to egraph-build, which evaluates the packages under root with the portage

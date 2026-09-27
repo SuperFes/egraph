@@ -217,3 +217,15 @@ process including load and the freshness check of 2,575 inputs.
   reduced by the USE they were built with. portage's `vardb.match` agrees with egraph.
 - Every `deps`/`rdeps` answer through the binary matches the oracle on every scenario and on a
   sample of 20 live packages; `broken` matches the oracle on the whole live system.
+
+## Atom matching (2026-09-27, roadmap step 6b)
+
+- The C++ matcher agrees with `vardb.match` on all 5,667 distinct atoms in the live dependency
+  trees (1,814 with USE dependencies), on a generated corpus of 339 atoms covering every
+  operator, glob, slot, sub-slot, repository and USE-default form against 20 versions, and on
+  every atom of every scenario. It also rejects the 7 corpus atoms portage's `Atom()` rejects.
+- Portage's `vercmp` is what the port follows, not PMS text; the differences that matter are a
+  missing numeric component sorting below 0 (1.0 < 1.0.0) and `1.010 == 1.01` from its
+  zero-padding of fractional components.
+- Matching every live atom against all 2,326 packages in one `egraph match` run costs under 1G
+  instructions; a query argument is one atom and costs nothing measurable next to the load.

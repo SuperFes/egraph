@@ -4,6 +4,30 @@ Every comparative test runs against every scenario, so a case added here is
 checked against portage by every query at once.
 """
 
+# Installed versions of dev-libs/v in the atoms scenario.
+ATOM_VERSIONS = (
+    "0.9",
+    "1",
+    "1.0",
+    "1.0-r1",
+    "1.0.0",
+    "1.00",
+    "1.01",
+    "1.02",
+    "1.1",
+    "1.10",
+    "1.0a",
+    "1.0_alpha",
+    "1.0_beta2",
+    "1.0_pre",
+    "1.0_rc1",
+    "1.0_p1",
+    "1.0_p1_alpha",
+    "2.0-r2",
+    "10",
+    "20260101",
+)
+
 SCENARIOS = {
     # The fork's _InstalledGraph test system.
     "reference": {
@@ -103,6 +127,35 @@ SCENARIOS = {
                 "EAPI": "6",
                 "IUSE": "u",
                 "DEPEND": "|| ( u? ( dev-libs/a ) )",
+            },
+        },
+    },
+    # Atom matching: every version shape portage orders, sub-slots, and USE dependencies with
+    # defaults against both kinds of implicit IUSE (EAPI 4 patterns, EAPI 8 IUSE_EFFECTIVE).
+    "atoms": {
+        "user_config": {
+            "make.conf": [
+                'IUSE_IMPLICIT="prefix"',
+                'USE_EXPAND="ELIBC KERNEL"',
+                'USE_EXPAND_HIDDEN="ELIBC KERNEL"',
+                'USE_EXPAND_IMPLICIT="ARCH ELIBC"',
+                'USE_EXPAND_UNPREFIXED="ARCH"',
+                'USE_EXPAND_VALUES_ARCH="x86 amd64"',
+                'USE_EXPAND_VALUES_ELIBC="glibc musl"',
+            ],
+        },
+        "installed": {
+            **{
+                f"dev-libs/v-{version}": {"EAPI": "8", "SLOT": str(slot)}
+                for slot, version in enumerate(ATOM_VERSIONS)
+            },
+            "app-misc/s-1": {"EAPI": "8", "SLOT": "1/1.5"},
+            "app-misc/s-2": {"EAPI": "8", "SLOT": "2/2.0"},
+            "app-misc/u4-1": {"EAPI": "4", "IUSE": "a +b", "USE": "a elibc_glibc x86"},
+            "app-misc/u8-1": {
+                "EAPI": "8",
+                "IUSE": "a +b",
+                "USE": "a elibc_glibc x86 amd64 stray",
             },
         },
     },

@@ -1,12 +1,13 @@
 #include "cli.hpp"
 
+#include "atom.hpp"
+#include "build_info.hpp"
 #include "check.hpp"
 #include "freshness.hpp"
 #include "graph.hpp"
 #include "json.hpp"
 #include "os.hpp"
 #include "store.hpp"
-#include "version.hpp"
 
 #include <CLI/CLI.hpp>
 
@@ -134,12 +135,19 @@ resolve_all(const Store& store, const std::vector<std::string>& arguments, std::
     std::vector<std::uint32_t> ids;
     for (const auto& argument : arguments) {
         const auto found = resolve(store, argument);
-        if (found.empty()) {
+        if (!found) {
+            err << "egraph: " << found.error() << '\n';
+            return std::nullopt;
+        }
+        if (found->empty()) {
             err << "egraph: " << argument << ": no installed package matches\n";
             return std::nullopt;
         }
-        ids.insert(ids.end(), found.begin(), found.end());
+        ids.insert(ids.end(), found->begin(), found->end());
     }
+    std::ranges::sort(ids);
+    const auto duplicates = std::ranges::unique(ids);
+    ids.erase(duplicates.begin(), duplicates.end());
     return ids;
 }
 
@@ -172,6 +180,32 @@ Exit execute(const Deps& command, const Invocation& invocation, std::ostream& ou
 Exit execute(const Rdeps& command, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
     return edges(command.packages, true, invocation, out, err);
+}
+
+Exit execute(const Match& command, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    const auto store = open_store(invocation, err);
+    if (!store) {
+        err << "egraph: " << store.error() << '\n';
+        return Exit::failure;
+    }
+    std::vector<Atom> atoms;
+    for (const auto& text : command.atoms) {
+        auto atom = parse_atom(text);
+        if (!atom) {
+            err << "egraph: " << atom.error() << '\n';
+            return Exit::failure;
+        }
+        atoms.push_back(std::move(*atom));
+    }
+    for (std::size_t i = 0; i < atoms.size(); ++i) {
+        for (const auto& pkg : store->packages) {
+            if (matches(*store, pkg, atoms.at(i))) {
+                out << command.atoms.at(i) << '\t' << store->string(pkg.cpv) << '\n';
+            }
+        }
+    }
+    return Exit::ok;
 }
 
 Exit execute(const Soname& command, const Invocation& invocation, std::ostream& out,
@@ -271,6 +305,9 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->required();
     add_field(add_command<Why>(app, invocation, "Path from @world or @system to a package"),
               invocation, "package", &Why::package, "Package atom")
+        ->required();
+    add_field(add_command<Match>(app, invocation, "Installed packages each atom matches"),
+              invocation, "atoms", &Match::atoms, "Portage atoms, such as '>=dev-libs/openssl-3:0'")
         ->required();
     CLI::App* soname = add_command<Soname>(app, invocation, "Installed consumers of a soname");
     add_field(soname, invocation, "soname", &Soname::soname, "Soname, such as libssl.so.3")

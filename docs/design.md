@@ -57,13 +57,18 @@ answers rather than a superset:
 Every query that names packages accepts a full portage atom (versions, slots and sub-slots, USE
 dependencies with defaults, repository) and means by it exactly what `vardb.match` means.
 
-- Atoms that already appear in the installed trees resolve from their stored matches.
-- Other atoms are matched in C++ against the stored package data. USE-dep defaults on installed
-  packages depend on the profile's implicit IUSE (`IUSE_IMPLICIT`, `USE_EXPAND_IMPLICIT`,
-  `USE_EXPAND_UNPREFIXED`, `USE_EXPAND_VALUES_*`), so the store carries those, and the profile
-  files are inputs.
-- The C++ matcher runs in shadow against `vardb.match`, over every atom in the store and a
-  generated corpus, before anything relies on it. Portage is right until a test says otherwise.
+- Atoms are matched in C++ (`src/atom.cpp`, `src/version.cpp`) against the stored package data,
+  porting `match_from_list` and vardb's USE-dependency check rather than PMS prose: portage's
+  `vercmp` (a missing component sorts below 0, so 1.0.0 > 1.0), `=...*` globs on version-part
+  boundaries, `~` comparing version text without the revision.
+- USE-dep defaults on installed packages depend on the profile's implicit IUSE, so the store
+  carries it (`IUSE_EFFECTIVE` for EAPI 5+, whose built packages also count every flag in their
+  USE; literal flags and `x_.*` prefixes for older EAPIs), and the profile files are inputs.
+- Query arguments cannot be blockers or conditional USE dependencies (`[x?]`, `[x=]`): both
+  only mean something next to a parent package. An exact cpv is also accepted as a convenience.
+- The matcher runs in shadow against `vardb.match` over a generated corpus of 339 atoms, every
+  atom in every scenario, and all 5,667 distinct atoms on the dev box, with no differences.
+  Portage is right until a test says otherwise.
 
 ## Query output
 

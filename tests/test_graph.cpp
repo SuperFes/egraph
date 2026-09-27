@@ -77,12 +77,13 @@ TEST_CASE("edges run both ways") {
     CHECK(out.str() == "app-misc/a-1\tRDEPEND\tdev-libs/b\tdev-libs/b-1\tany-of\n");
 }
 
-TEST_CASE("arguments name a cpv or every version of a cp") {
+TEST_CASE("arguments name a cpv or what an atom matches") {
     const auto store = sample();
     CHECK(egraph::resolve(store, "app-misc/a-1") == std::vector<std::uint32_t>{0});
     CHECK(egraph::resolve(store, "dev-libs/b") == std::vector<std::uint32_t>{1});
-    CHECK(egraph::resolve(store, "dev-libs/b-2").empty());
-    CHECK(egraph::resolve(store, ">=dev-libs/b-1").empty());
+    CHECK(egraph::resolve(store, ">=dev-libs/b-1") == std::vector<std::uint32_t>{1});
+    CHECK(egraph::resolve(store, "=dev-libs/b-2")->empty());
+    CHECK_FALSE(egraph::resolve(store, "dev-libs/b-2").has_value());
 }
 
 TEST_CASE("sonames list consumers or providers") {

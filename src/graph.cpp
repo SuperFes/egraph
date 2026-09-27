@@ -1,5 +1,7 @@
 #include "graph.hpp"
 
+#include "atom.hpp"
+
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
@@ -131,15 +133,20 @@ Graph build_graph(const Store& store) {
     return graph;
 }
 
-std::vector<std::uint32_t> resolve(const Store& store, std::string_view argument) {
-    std::vector<std::uint32_t> found;
+std::expected<std::vector<std::uint32_t>, std::string> resolve(const Store& store,
+                                                               std::string_view argument) {
     for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
         if (store.string(store.packages.at(id).cpv) == argument) {
-            return {id};
+            return std::vector<std::uint32_t>{id};
         }
     }
+    const auto atom = parse_atom(argument);
+    if (!atom) {
+        return std::unexpected(atom.error());
+    }
+    std::vector<std::uint32_t> found;
     for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
-        if (store.string(store.packages.at(id).cp) == argument) {
+        if (matches(store, store.packages.at(id), *atom)) {
             found.push_back(id);
         }
     }

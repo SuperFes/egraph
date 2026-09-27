@@ -4,7 +4,9 @@
 
 #include <compare>
 #include <cstdint>
+#include <expected>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -44,7 +46,9 @@ struct Graph {
 // they are constraints, not dependencies.
 [[nodiscard]] std::vector<bool> satisfied(std::span<const Node> nodes);
 
-// Package ids an argument names: the exact cpv, or every installed version of a cp.
-[[nodiscard]] std::vector<std::uint32_t> resolve(const Store& store, std::string_view argument);
+// Package ids an argument names: an exact cpv, or the installed packages a portage atom
+// matches (a bare cp is one). An error for an argument that is neither.
+[[nodiscard]] std::expected<std::vector<std::uint32_t>, std::string>
+resolve(const Store& store, std::string_view argument);
 
 } // namespace egraph

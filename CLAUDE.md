@@ -61,6 +61,11 @@ and through egraph and diffs them over every package, atom and soname in a scena
 them. `test_oracle.py` pins the oracle to hand-worked expectations. Unimplemented egraph queries
 are strict xfails that must flip when the implementation lands.
 
+`test_match.py` shadows the C++ atom matcher against `vardb.match`: a generated corpus on the
+`atoms` scenario (whose make.conf sets up both kinds of implicit IUSE), and every atom in every
+scenario. Any change to `src/atom.cpp` or `src/version.cpp` must keep it and the live-system run
+at zero differences.
+
 `test_golden.py` and `test_refresh.py` drive the real `egraph` binary (`EGRAPH`, set by `meson
 test`) against stores the builder wrote, with `EGRAPH_STRICT=1` so every incremental refresh is
 also checked against a full build. Tests that change a system use `mutable_playground` and

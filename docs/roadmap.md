@@ -11,7 +11,7 @@ Update the status column as steps land.
 | 3 | Store writer and reader | done |
 | 4 | Freshness | done |
 | 5 | `rebuild` and `check` | done |
-| 6 | Queries | 6a done, 6b not started |
+| 6 | Queries | done |
 | 7 | Roots and orphans | not started |
 | 8 | Consumers | not started |
 | 9 | Evaluated and candidate layers | not planned yet |
@@ -69,7 +69,7 @@ Update the status column as steps land.
   scenario, and sampled on the live vdb.
 - 6b: query arguments are full portage atoms: a C++ atom parser and matcher, run in shadow
   against `vardb.match` until they agree (`design.md`). Needs the profile's implicit IUSE in the
-  store.
+  store. `egraph match` lists what each atom matches.
 - `why` needs roots and lands with step 7.
 
 ## 7. Roots and orphans
