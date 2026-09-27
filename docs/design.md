@@ -96,8 +96,6 @@ Each consumer runs in shadow mode against the tool it replaces before anyone rel
 
 ## Open questions
 
-- **Store format:** binary sectioned or line-oriented text. Decided by the roadmap step 1 numbers;
-  see `store-format.md`.
 - **Unprivileged refresh:** proposed fallback is a store in `$XDG_CACHE_HOME/egraph/` when the
   system store is stale and unwritable, so non-root queries are never wrong.
 - **Store for the portage fork:** a Python reader in `egraph_build`, or the fork calls `egraph

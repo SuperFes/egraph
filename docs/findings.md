@@ -75,3 +75,55 @@ This shapes the later layers.
 - Gate a change on identical output before scoring it as a speedup.
 - For builder timings, make sure the intended portage is loaded: print
   `os.path.dirname(portage.__file__)`.
+
+## Store encoding (2026-09-27, roadmap step 1)
+
+Measured on the live vdb (2,324 packages) with `perf stat -x, -e instructions:u,cycles:u`, as the
+median of interleaved runs (7 for the builder, 21 for C++ loads, 9 for Python loads), warm page
+cache, unprivileged user. Prototypes were throwaway scripts; the method is below so it can be
+repeated.
+
+### Builder cost split
+
+One script run to a cutoff, so each row adds one phase to the one above.
+
+| Phase | Δ instructions | Δ cycles |
+|---|---|---|
+| Import portage, load config | 0.80G | 0.49G |
+| `aux_get` of 12 keys for every package | 1.93G | 0.71G |
+| `use_reduce` into Atoms, parse sonames | 1.46G | 0.64G |
+| `vardb.match` for every non-blocker atom (USE deps honored) | 3.96G | 1.57G |
+| Total | 8.14G | 3.41G |
+
+- 36,043 atoms after USE reduction, but only 5,679 distinct: interning atom strings pays, and
+  vardb's per-atom match cache is why matching is not worse.
+- Matching is half the build. An atom's matches can only change when a package of its cp is
+  added, removed or changed, so incremental refresh should re-match only those atoms.
+
+### Logical content at real size
+
+22,891 strings, 2,431 inputs (category and package directories plus the world file), 2,324
+packages, 36,975 dependency tree nodes (atoms, blockers, any-of and all-of groups), 34,647
+resolved matches, 209 world atoms.
+
+### Encodings
+
+Both prototypes hold the same content and their C++ loaders decode to the same model (checked
+by checksum). The loaders follow the project rules: bounds-checked reads over
+`std::span<const std::byte>` or `std::string_view`, a file read into one buffer, strings pooled
+in one `std::string`, lists in shared index vectors.
+
+| | A: binary sections, LEB128 | B: tab-separated lines |
+|---|---|---|
+| Size | 1.17 MB | 1.96 MB |
+| Size, zstd -19 | 307 KB | 293 KB |
+| C++ decode, net of process and file read | 30M ins, 8.5M cycles | 50M ins, 13.5M cycles |
+| Pure-Python decode, net of interpreter start | 750M ins, 157M cycles | 714M ins, 179M cycles |
+
+- Both parse in a few milliseconds from C++; A is 1.6x cheaper and 40% smaller.
+- In Python both take about 40 ms, versus 0.37 s for the fork's index build, so the encoding
+  does not decide the Python reader question. The Python numbers are lower bounds: they
+  tokenize the whole file but do not rebuild the records.
+- A's section table lets the freshness check decode the header and inputs only.
+
+Decision: A. See `store-format.md`.

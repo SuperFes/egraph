@@ -6,7 +6,7 @@ Update the status column as steps land.
 | # | Step | Status |
 |---|---|---|
 | 0 | Scaffold | done |
-| 1 | Measure and choose the store encoding | not started |
+| 1 | Measure and choose the store encoding | done |
 | 2 | Installed layer in the builder | not started |
 | 3 | Store writer and reader | not started |
 | 4 | Freshness | not started |

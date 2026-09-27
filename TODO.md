@@ -30,6 +30,18 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 - [ ] Malformed PROVIDES/REQUIRES (the oracle currently drops the whole field).
 - [ ] Dependency cycles within one kind and across kinds.
 
+## Freshness and incremental refresh
+
+- [ ] Matching is half the build (`findings.md`). Incremental refresh should re-match only atoms
+      whose cp had a package added, removed or changed, not every atom of every package.
+- [ ] Measure the stat-on-load cost in C++ for the 2,431 live inputs (design assumes a few ms).
+
+## Store
+
+- [ ] If the Python reader (portage fork consumer) proves slow, store the large lists as
+      fixed-width u32 columns: Python can view them with `memoryview.cast` instead of decoding
+      varints one by one. The step 1 Python numbers only tokenized, so they are lower bounds.
+
 ## Open questions
 
 - [ ] Do `egraph` queries take full atoms (`>=dev-libs/openssl-3:0=`) or only cp/cpv? Full atoms

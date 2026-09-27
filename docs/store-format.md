@@ -1,6 +1,7 @@
 # Store format
 
-Status: draft. The logical content is settled; the encoding waits on roadmap step 1.
+Status: encoding chosen (A, binary sections; measurements in `findings.md`). The framing below is
+settled; the record layouts are the step 1 prototype and are finalized in roadmap step 3.
 
 ## Requirements
 
@@ -17,7 +18,7 @@ Status: draft. The logical content is settled; the encoding waits on roadmap ste
 1. **Header.** Magic, format version, producer versions (egraph, portage), EROOT, build time.
 2. **Inputs.** `(path, kind, mtime_ns, size)` for every file and directory the builder read.
    Freshness is exactly "every input still stats the same".
-3. **Strings.** An interned table; everything else refers to strings by index.
+3. **Strings.** An interned table; package data refers to strings by index.
 4. **Packages.** cpv, cp, slot, sub-slot, repo, USE, IUSE, EAPI, parse errors.
 5. **Dependency trees.** Per package and per kind, a flat node list with parent indices. Node types
    are atom, any-of (`||`), all-of (a group inside `||`), and blocker (weak or strong).
@@ -27,12 +28,57 @@ Status: draft. The logical content is settled; the encoding waits on roadmap ste
    requires-to-provider edges.
 8. **Roots.** World atoms, world sets, @system and @profile atoms, each with the packages they match.
 
-## Candidate encodings
+## Encoding
 
-- **A. Binary sections:** a header, a section table of `(id, offset, length)`, then the sections
-  above, using varint lengths and indices. Smallest and fastest to load; needs `egraph export
-  --json` for debugging.
-- **B. Line-oriented text:** one record per line, tab-separated fields, string table first.
-  Greppable and diffable, but larger and slower to parse.
+Binary sections. Chosen over line-oriented text for a 1.6x cheaper C++ decode, a 40% smaller
+file, and a section table that lets the freshness check skip everything but the inputs.
+Debugging goes through `egraph export --json` and `egraph-build --json`.
 
-Step 1 prototypes both at real size and measures load time. Leaning A.
+### Framing
+
+- Fixed-width integers are little-endian. Offsets are from the start of the file.
+- Header, 16 bytes: magic `EGRAPH\0\0`, `u32` format version, `u32` section count.
+- Section table, 20 bytes per entry: `u32` id, `u64` offset, `u64` length. Each id appears at
+  most once and every section lies inside the file. An unknown id is a format mismatch: layout
+  changes bump the version rather than add optional sections.
+- Everything inside a section is a varint: unsigned LEB128, at most 10 bytes. A value read into
+  a 32-bit field must fit.
+- Every list is a varint count followed by its elements. Each element takes at least one byte, so
+  a reader rejects any count larger than the bytes left in the section before allocating.
+- String, package and node references are indices, checked against their table.
+- A section must be consumed exactly; trailing bytes are an error.
+- Any violation rejects the whole store, which is then treated as stale.
+
+### Sections
+
+| Id | Section | Contents |
+|---|---|---|
+| 1 | Meta | producer versions, EROOT, build time, as length-prefixed strings |
+| 2 | Inputs | `(path, kind, mtime_ns, size)`, path inline as length-prefixed bytes |
+| 3 | Strings | count, then length-prefixed bytes; string 0 is empty |
+| 4 | Packages | records below |
+| 5 | Roots | world atoms with their matches; sets and @system/@profile land in step 7 |
+
+Meta and inputs carry their strings inline, so freshness reads sections 1 and 2 and nothing else.
+Input paths are unique, so interning them would save nothing.
+
+Strings are bytes as portage returned them (UTF-8 in practice, not validated).
+
+### Package record (prototype)
+
+In package order, which is sorted by cpv:
+
+1. String ids: cpv, cp, slot, sub-slot, repo, EAPI.
+2. USE and IUSE: lists of string ids.
+3. Errors: list of `(kind, message)` string ids, for dependency strings portage could not parse.
+4. For each kind in the order BDEPEND, DEPEND, IDEPEND, PDEPEND, RDEPEND, a node list. A node is
+   `type, parent, atom, matches`:
+   - type: 0 atom, 1 any-of (`||`), 2 all-of (a group inside `||`), 3 weak blocker, 4 strong
+     blocker.
+   - parent: 0 for a top-level node, otherwise 1 + the parent's index in this list, which must
+     be an earlier any-of or all-of node.
+   - atom: string id of the atom as portage prints it after USE reduction; 0 for groups.
+   - matches: package ids the atom matches with USE deps honored (for a blocker, what it blocks).
+     Empty for groups: satisfaction of `||` follows from the children.
+5. Provides: list of `(multilib category, soname)` string ids.
+6. Requires: list of `(multilib category, soname, providers)`, providers a list of package ids.
