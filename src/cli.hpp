@@ -58,6 +58,8 @@ struct Broken {
 
 struct Orphans {
     static constexpr std::string_view name = "orphans";
+    // emerge --with-bdeps: whether build-time dependencies keep packages.
+    bool build_deps = true;
 };
 
 enum class ExportFormat : std::uint8_t { dot, json };

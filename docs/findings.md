@@ -240,3 +240,12 @@ process including load and the freshness check of 2,575 inputs.
   cp was not touched.
 - A live `emerge --depclean --pretend` takes 9 s wall and would remove 2 packages: the older
   gentoo-sources slots, which the unslotted world atom does not keep.
+- `egraph orphans` agrees exactly with `emerge --depclean` on the live system: 2 packages with
+  build-time dependencies kept (the default) and 358 without, against 5.6 s and 2.6 s for
+  depclean's resolution alone. egraph takes 80M instructions and 27M cycles (9 ms), about what
+  `stats` costs.
+- Depclean's `||` choices depend on visibility, not just on what is installed: in removal mode
+  `dep_zapdeps` asks the repository-backed composite db which alternatives are available. On
+  playgrounds without KEYWORDS every installed package counts as masked and unavailable, so the
+  first installed alternative always wins, even over one already kept. The scenarios therefore
+  give installed packages an accepted keyword, the state of a live system.

@@ -76,7 +76,8 @@ Update the status column as steps land.
 
 - 7a (done): the builder records @selected, @system and @profile through portage's set
   configuration, with the world, world_sets and set configuration files as inputs.
-- 7b: `orphans` runs in shadow against depclean; differences get tests before anyone trusts them.
+- 7b (done): `orphans` replays depclean's graph completion; it agrees with depclean on every
+  scenario and on the live system, with and without `--with-bdeps`.
 - 7c: `why` (shortest path from a root through what depclean keeps).
 
 ## 8. Consumers

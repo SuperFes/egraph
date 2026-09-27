@@ -20,7 +20,7 @@ def test_roots_scenario_sets(playgrounds):
 
 def test_roots_are_emerges_sets(scenario):
     """The sets depclean starts from, read through emerge's own root_config."""
-    setconfig = scenario.trees["root_config"].setconfig
+    setconfig = scenario.trees[scenario.eroot]["root_config"].setconfig
     expected = [
         (name, str(atom), tuple(sorted(scenario.vardb.match(atom))))
         for name in roots.ROOT_SETS

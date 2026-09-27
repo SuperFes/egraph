@@ -58,6 +58,7 @@ SCENARIOS = {
     },
     # USE dependencies, including (+)/(-) defaults for flags missing from IUSE.
     "use-deps": {
+        "world": ["app-misc/a"],
         "installed": {
             "dev-libs/lib-1": {"EAPI": "8", "IUSE": "ssl +gtk", "USE": "ssl"},
             "app-misc/a-1": {
@@ -84,6 +85,7 @@ SCENARIOS = {
     },
     # Slots, sub-slots and the slot operators as the vdb records them after a merge.
     "slots": {
+        "world": ["app-misc/a"],
         "installed": {
             "dev-libs/lib-1.2": {"EAPI": "8", "SLOT": "1/1.2"},
             "dev-libs/lib-2.0": {"EAPI": "8", "SLOT": "2/2.0"},
@@ -106,6 +108,7 @@ SCENARIOS = {
     },
     # || groups: nested, with all-of alternatives, and with nothing satisfied.
     "any-of": {
+        "world": ["app-misc/x", "app-misc/y", "app-misc/z"],
         "installed": {
             "dev-libs/a-1": {"EAPI": "8"},
             "dev-libs/b-1": {"EAPI": "8"},
@@ -132,6 +135,7 @@ SCENARIOS = {
     },
     # Atom matching: every version shape portage orders, sub-slots, and USE dependencies with
     # defaults against both kinds of implicit IUSE (EAPI 4 patterns, EAPI 8 IUSE_EFFECTIVE).
+    # No world file, which depclean refuses to work without.
     "atoms": {
         "user_config": {
             "make.conf": [
@@ -204,6 +208,7 @@ SCENARIOS = {
     },
     # Sonames across multilib categories.
     "sonames": {
+        "world": ["app-misc/tool", "app-misc/nocategory"],
         "installed": {
             "sys-libs/zlib-1": {
                 "EAPI": "8",

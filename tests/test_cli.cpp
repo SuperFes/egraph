@@ -86,6 +86,13 @@ TEST_CASE("export takes a format and any number of packages") {
     CHECK(exported->packages == std::vector<std::string>{"app-misc/a", "app-misc/b"});
 }
 
+TEST_CASE("orphans takes emerge's --with-bdeps") {
+    CHECK(std::get<egraph::Orphans>(parse("orphans").command).build_deps);
+    CHECK_FALSE(std::get<egraph::Orphans>(parse("orphans --with-bdeps n").command).build_deps);
+    CHECK(std::get<egraph::Orphans>(parse("orphans --with-bdeps y").command).build_deps);
+    CHECK_THROWS_AS(parse("orphans --with-bdeps maybe"), CLI::ValidationError);
+}
+
 TEST_CASE("malformed command lines are rejected") {
     CHECK_THROWS_AS(parse(""), CLI::RequiredError);
     CHECK_THROWS_AS(parse("rdeps"), CLI::RequiredError);
@@ -100,7 +107,7 @@ TEST_CASE("running without a command is a usage error") {
 }
 
 // Shrinks as commands are implemented.
-using Stubs = std::tuple<egraph::Why, egraph::Orphans>;
+using Stubs = std::tuple<egraph::Why>;
 
 TEMPLATE_LIST_TEST_CASE("unimplemented commands say so", "", Stubs) {
     egraph::Invocation invocation;

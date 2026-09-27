@@ -1,0 +1,381 @@
+#include "depclean.hpp"
+
+#include "atom.hpp"
+#include "version.hpp"
+
+#include <algorithm>
+#include <array>
+#include <format>
+#include <functional>
+#include <numeric>
+#include <optional>
+#include <string_view>
+#include <unordered_map>
+
+namespace egraph {
+
+namespace {
+
+// Indexes into dep_kinds in the order depclean reads them: RDEPEND, IDEPEND, PDEPEND, DEPEND,
+// BDEPEND.
+constexpr std::array<std::uint32_t, 5> kind_order{4, 2, 3, 1, 0};
+
+bool is_build_kind(std::uint32_t kind) {
+    return dep_kinds.at(kind) == "DEPEND" || dep_kinds.at(kind) == "BDEPEND";
+}
+
+template <class T> const T& element(std::span<const T> items, std::size_t index) {
+    return items.subspan(index).front();
+}
+
+// What depclean's choice logic asks of one atom.
+struct AtomFacts {
+    bool is_virtual = false;
+    // Some installed package matches it when its USE dependencies are ignored.
+    bool available = false;
+    // Some installed package has its cp.
+    bool cp_installed = false;
+};
+
+// One alternative of a || group, as dep_zapdeps classifies it.
+struct Choice {
+    // Atom node indexes, nested || groups already resolved.
+    std::vector<std::uint32_t> atoms;
+    bool available = true;
+    bool use_satisfied = true;
+    bool in_graph = true;
+    bool some_installed = false;
+    bool cp_installed = false;
+    // (cp string id, package): the highest installed package the choice selects in each cp.
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> selects;
+};
+
+class Depclean {
+  public:
+    Depclean(const Store& store, const KeepOptions& options)
+        : store_ref_(store), options_(options) {
+        kept_.packages.assign(store.packages.size(), false);
+        versions_.reserve(store.packages.size());
+        for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
+            const auto& pkg = store.packages.at(id);
+            by_cp_[store.string(pkg.cp)].push_back(id);
+            const auto cpv = store.string(pkg.cpv);
+            const auto cp = store.string(pkg.cp);
+            versions_.push_back(
+                parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1))).value_or(Version{}));
+        }
+    }
+
+    Kept run() {
+        for (std::uint32_t root = 0; root < store().roots.size(); ++root) {
+            if (const auto child = highest(store().ids_in(store().roots.at(root).matches))) {
+                kept_.roots.push_back({.root = root, .child = *child});
+                add(*child);
+            }
+        }
+        // Like emerge: a queued package is read before any queued || group is resolved, so
+        // choices see everything the plain dependencies keep.
+        while (!stack_.empty() || !disjunctions_.empty()) {
+            while (!stack_.empty()) {
+                const auto pkg = stack_.back();
+                stack_.pop_back();
+                read(pkg);
+            }
+            if (!disjunctions_.empty()) {
+                const auto disjunction = std::move(disjunctions_.back());
+                disjunctions_.pop_back();
+                resolve(disjunction);
+            }
+        }
+        return std::move(kept_);
+    }
+
+  private:
+    const Store& store() const { return store_ref_.get(); }
+
+    // The || groups and virtual atoms of one dependency list, deferred together.
+    struct Disjunction {
+        std::uint32_t parent = 0;
+        std::uint32_t kind = 0;
+        std::vector<std::uint32_t> nodes;
+    };
+
+    std::span<const Node> nodes_of(std::uint32_t pkg, std::uint32_t kind) const {
+        return store().nodes_in(store().packages.at(pkg).deps.at(kind));
+    }
+
+    int compare(std::uint32_t a, std::uint32_t b) const {
+        return vercmp(versions_.at(a), versions_.at(b));
+    }
+
+    std::optional<std::uint32_t> highest(std::span<const std::uint32_t> ids) const {
+        std::optional<std::uint32_t> best;
+        for (const auto id : ids) {
+            if (!best || compare(id, *best) > 0) {
+                best = id;
+            }
+        }
+        return best;
+    }
+
+    AtomFacts facts(std::uint32_t atom_string) {
+        if (const auto found = facts_.find(atom_string); found != facts_.end()) {
+            return found->second;
+        }
+        AtomFacts facts;
+        auto text = store().string(atom_string);
+        // The installed packages it would match without its USE dependencies.
+        if (text.ends_with(']')) {
+            text = text.substr(0, text.rfind('['));
+        }
+        if (auto atom = parse_atom(text)) {
+            facts.is_virtual = atom->cp.starts_with("virtual/");
+            const auto installed = by_cp_.find(atom->cp);
+            if (installed != by_cp_.end()) {
+                facts.cp_installed = true;
+                facts.available = std::ranges::any_of(installed->second, [&](std::uint32_t id) {
+                    return matches(store(), store().packages.at(id), *atom);
+                });
+            }
+        }
+        facts_.emplace(atom_string, facts);
+        return facts;
+    }
+
+    void add(std::uint32_t pkg) {
+        if (!kept_.packages.at(pkg)) {
+            kept_.packages.at(pkg) = true;
+            stack_.push_back(pkg);
+        }
+    }
+
+    // Keeps the highest installed package the atom matches, or records it as unresolved.
+    void pull(std::uint32_t parent, std::uint32_t kind, std::uint32_t index, bool choice) {
+        const auto& node = element(nodes_of(parent, kind), index);
+        if (const auto child = highest(store().ids_in(node.matches))) {
+            kept_.pulls.push_back({.parent = parent,
+                                   .child = *child,
+                                   .kind = kind,
+                                   .atom = node.atom,
+                                   .choice = choice});
+            add(*child);
+        } else if (!is_build_kind(kind)) {
+            kept_.unresolved.push_back({.parent = parent, .kind = kind, .node = index});
+        }
+    }
+
+    void read(std::uint32_t pkg) {
+        for (const auto kind : kind_order) {
+            if (is_build_kind(kind) && !options_.build_deps) {
+                continue;
+            }
+            const auto nodes = nodes_of(pkg, kind);
+            const auto inside = choices(nodes);
+            Disjunction deferred{.parent = pkg, .kind = kind, .nodes = {}};
+            for (std::uint32_t i = 0; i < nodes.size(); ++i) {
+                const auto& node = element(nodes, i);
+                if (inside.at(i)) {
+                    continue;
+                }
+                if (node.type == NodeType::any_of ||
+                    (node.type == NodeType::atom && facts(node.atom).is_virtual)) {
+                    deferred.nodes.push_back(i);
+                } else if (node.type == NodeType::atom) {
+                    pull(pkg, kind, i, false);
+                }
+            }
+            if (!deferred.nodes.empty()) {
+                disjunctions_.push_back(std::move(deferred));
+            }
+        }
+    }
+
+    void resolve(const Disjunction& disjunction) {
+        const auto nodes = nodes_of(disjunction.parent, disjunction.kind);
+        std::vector<std::pair<std::uint32_t, bool>> selected;
+        for (const auto index : disjunction.nodes) {
+            if (element(nodes, index).type == NodeType::any_of) {
+                std::vector<std::uint32_t> atoms;
+                choose(nodes, index, atoms);
+                for (const auto atom : atoms) {
+                    selected.emplace_back(atom, true);
+                }
+            } else {
+                selected.emplace_back(index, false);
+            }
+        }
+        // Every group of the list is decided before any of the choices is kept.
+        for (const auto& [index, choice] : selected) {
+            pull(disjunction.parent, disjunction.kind, index, choice);
+        }
+    }
+
+    // The atoms of the group or atom at index, nested || groups resolved.
+    void flatten(std::span<const Node> nodes, std::uint32_t index,
+                 std::vector<std::uint32_t>& atoms) {
+        const auto& node = element(nodes, index);
+        switch (node.type) {
+        case NodeType::atom:
+            atoms.push_back(index);
+            break;
+        case NodeType::any_of:
+            choose(nodes, index, atoms);
+            break;
+        case NodeType::all_of:
+            for (std::uint32_t i = index + 1; i < nodes.size(); ++i) {
+                if (element(nodes, i).parent == index) {
+                    flatten(nodes, i, atoms);
+                }
+            }
+            break;
+        case NodeType::weak_blocker:
+        case NodeType::strong_blocker:
+            break;
+        }
+    }
+
+    Choice classify(std::span<const Node> nodes, std::uint32_t index) {
+        Choice choice;
+        flatten(nodes, index, choice.atoms);
+        for (const auto atom : choice.atoms) {
+            const auto& node = element(nodes, atom);
+            const auto atom_facts = facts(node.atom);
+            const auto ids = store().ids_in(node.matches);
+            choice.available = choice.available && atom_facts.available;
+            choice.use_satisfied = choice.use_satisfied && !ids.empty();
+            choice.some_installed = choice.some_installed || !ids.empty();
+            choice.cp_installed = choice.cp_installed || atom_facts.cp_installed;
+            if (!atom_facts.is_virtual && std::ranges::none_of(ids, [&](std::uint32_t id) {
+                    return kept_.packages.at(id);
+                })) {
+                choice.in_graph = false;
+            }
+            if (const auto best = highest(ids)) {
+                const auto cp = store().packages.at(*best).cp;
+                const auto known = std::ranges::find(
+                    choice.selects, cp, &std::pair<std::uint32_t, std::uint32_t>::first);
+                if (known == choice.selects.end()) {
+                    choice.selects.emplace_back(cp, *best);
+                } else if (compare(*best, known->second) > 0) {
+                    known->second = *best;
+                }
+            }
+        }
+        return choice;
+    }
+
+    // dep_zapdeps's promotion within a bin: an alternative moves ahead of the first earlier one
+    // it would upgrade, or that is not already kept when it is.
+    void promote(std::vector<Choice>& bin) {
+        if (bin.size() < 2) {
+            return;
+        }
+        std::vector<std::size_t> order(bin.size());
+        std::ranges::iota(order, 0U);
+        for (std::size_t later = 1; later < bin.size(); ++later) {
+            const auto& first = bin.at(later);
+            for (std::size_t position = 0; order.at(position) != later; ++position) {
+                const auto& second = bin.at(order.at(position));
+                bool upgrade = false;
+                bool downgrade = false;
+                for (const auto& [cp, pkg] : first.selects) {
+                    const auto other = std::ranges::find(
+                        second.selects, cp, &std::pair<std::uint32_t, std::uint32_t>::first);
+                    if (other == second.selects.end()) {
+                        continue;
+                    }
+                    const auto order_of = compare(pkg, other->second);
+                    upgrade = upgrade || order_of > 0;
+                    downgrade = downgrade || order_of < 0;
+                }
+                if ((upgrade && !downgrade) ||
+                    (first.in_graph && !second.in_graph && !(downgrade && !upgrade))) {
+                    const auto from = std::ranges::find(order, later);
+                    order.erase(from);
+                    order.insert(order.begin() + static_cast<std::ptrdiff_t>(position), later);
+                    break;
+                }
+            }
+        }
+        std::vector<Choice> sorted;
+        sorted.reserve(bin.size());
+        for (const auto index : order) {
+            sorted.push_back(std::move(bin.at(index)));
+        }
+        bin = std::move(sorted);
+    }
+
+    // dep_zapdeps for one || group, every installed package taken as visible: an alternative
+    // whose atoms are all installed wins, with USE dependencies met before without, and failing
+    // that one with some of them installed. Appends the chosen alternative's atoms.
+    void choose(std::span<const Node> nodes, std::uint32_t group,
+                std::vector<std::uint32_t>& atoms) {
+        // Bins in the order dep_zapdeps tries them.
+        std::array<std::vector<Choice>, 5> bins;
+        for (std::uint32_t i = group + 1; i < nodes.size(); ++i) {
+            if (element(nodes, i).parent != group) {
+                continue;
+            }
+            auto choice = classify(nodes, i);
+            std::size_t bin = 4;
+            if (choice.available) {
+                bin = choice.use_satisfied ? 0 : 1;
+            } else if (choice.some_installed) {
+                bin = 2;
+            } else if (choice.cp_installed) {
+                bin = 3;
+            }
+            bins.at(bin).push_back(std::move(choice));
+        }
+        for (auto& bin : bins) {
+            promote(bin);
+        }
+        for (const auto& bin : bins) {
+            if (!bin.empty()) {
+                atoms.insert(atoms.end(), bin.front().atoms.begin(), bin.front().atoms.end());
+                return;
+            }
+        }
+    }
+
+    std::reference_wrapper<const Store> store_ref_;
+    KeepOptions options_;
+    Kept kept_;
+    std::vector<std::uint32_t> stack_;
+    std::vector<Disjunction> disjunctions_;
+    std::vector<Version> versions_;
+    std::unordered_map<std::string_view, std::vector<std::uint32_t>> by_cp_;
+    std::unordered_map<std::uint32_t, AtomFacts> facts_;
+};
+
+} // namespace
+
+Kept keep(const Store& store, const KeepOptions& options) {
+    return Depclean(store, options).run();
+}
+
+std::vector<std::uint32_t> orphans(const Kept& kept) {
+    std::vector<std::uint32_t> ids;
+    for (std::uint32_t id = 0; id < kept.packages.size(); ++id) {
+        if (!kept.packages.at(id)) {
+            ids.push_back(id);
+        }
+    }
+    return ids;
+}
+
+std::vector<std::string> unresolved_lines(const Store& store, const Kept& kept) {
+    std::vector<std::string> lines;
+    for (const auto& item : kept.unresolved) {
+        const auto& pkg = store.packages.at(item.parent);
+        const auto nodes = store.nodes_in(pkg.deps.at(item.kind));
+        lines.push_back(std::format("{}\t{}\t{}", store.string(pkg.cpv), dep_kinds.at(item.kind),
+                                    store.string(element(nodes, item.node).atom)));
+    }
+    std::ranges::sort(lines);
+    const auto [first, last] = std::ranges::unique(lines);
+    lines.erase(first, last);
+    return lines;
+}
+
+} // namespace egraph

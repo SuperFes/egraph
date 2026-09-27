@@ -17,10 +17,25 @@ from portage.util._eventloop.global_event_loop import global_event_loop
 from scenarios import SCENARIOS
 
 
+def playground_arguments(name):
+    """A scenario's ResolverPlayground arguments.
+
+    Installed packages get the playground's accepted keyword unless they set their own, so they
+    are visible: depclean prefers visible packages, and egraph assumes every installed package
+    is (it has no masking information yet).
+    """
+    arguments = dict(SCENARIOS[name])
+    arguments["installed"] = {
+        cpv: {"KEYWORDS": "x86", **metadata}
+        for cpv, metadata in arguments.get("installed", {}).items()
+    }
+    return arguments
+
+
 class System(NamedTuple):
     eroot: str
     vardb: object
-    # The playground's own trees, which carry the root_config emerge would use.
+    # The playground's trees by EROOT, with the root_config emerge would use.
     trees: object
 
 
@@ -80,11 +95,11 @@ def playgrounds(gnupg_home):
 
     def get(name):
         if name not in built:
-            playground = ResolverPlayground(**SCENARIOS[name])
+            playground = ResolverPlayground(**playground_arguments(name))
             built[name] = playground
         playground = built[name]
-        trees = playground.trees[playground.eroot]
-        return System(playground.eroot, trees["vartree"].dbapi, trees)
+        trees = playground.trees
+        return System(playground.eroot, trees[playground.eroot]["vartree"].dbapi, trees)
 
     yield get
     for playground in built.values():
@@ -99,7 +114,7 @@ def mutable_playground(gnupg_home):
     made = []
 
     def make(name):
-        playground = ResolverPlayground(**SCENARIOS[name])
+        playground = ResolverPlayground(**playground_arguments(name))
         made.append(playground)
         return playground
 

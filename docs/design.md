@@ -83,6 +83,35 @@ greps, diffs and compares against the oracle line for line:
 - `export [PKG...] [--depth N] [--direction reverse|forward|both]`: the packages within N
   dependency edges of PKG (all packages when none are given), as the canonical JSON or as DOT
   with every edge between them. Blockers are not followed.
+- `orphans [--with-bdeps y|n]`: one cpv per line, what `emerge --depclean` would remove. When
+  depclean would refuse (runtime dependencies nothing installed satisfies), the orphans are still
+  listed, the unresolved dependencies go to stderr as `cpv kind atom`, and the exit status is 1.
+  An empty @world is refused outright, as depclean does.
+
+## Orphans: emulating depclean
+
+`orphans` is depclean's graph completion replayed over the store (`src/depclean.cpp`), not plain
+reachability, because depclean is choosier than reachability in ways users rely on:
+
+- Roots are @selected, @system and @profile. Every atom, whether a root or a dependency, keeps
+  only the highest installed package it matches: an unslotted world atom does not keep old
+  kernel slots.
+- All five dependency kinds are followed (`--with-bdeps=n` drops DEPEND and BDEPEND); sonames
+  and blockers are not, as with depclean's default `--ignore-soname-deps=y`.
+- `||` groups and `virtual/*` atoms are resolved after the plain dependencies of every queued
+  package, in emerge's stack order, with `dep_zapdeps`'s preferences: an alternative whose atoms
+  are all installed, promoted ahead of earlier ones when it is already kept or selects a higher
+  version of the same cp; then one with unmet USE dependencies; then one with some atoms
+  installed. So `|| ( a b )` keeps `a` when neither is kept yet, and only `b` when `b` already
+  is.
+- Unresolved runtime dependencies (RDEPEND, PDEPEND, IDEPEND) make depclean refuse; unresolved
+  build-time ones do not.
+
+In removal mode `dep_zapdeps` asks which packages are *available* (visible: unmasked, or with a
+visible equivalent ebuild). egraph has no masking information until the evaluated layer, so it
+takes every installed package as visible, which is the usual state of a live system. An
+installed package that is masked and gone from the repository can make depclean choose
+differently among `||` alternatives. On the dev box both modes agree exactly with depclean.
 
 ## Roots and exit codes
 

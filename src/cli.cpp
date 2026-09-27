@@ -3,6 +3,7 @@
 #include "atom.hpp"
 #include "build_info.hpp"
 #include "check.hpp"
+#include "depclean.hpp"
 #include "freshness.hpp"
 #include "graph.hpp"
 #include "json.hpp"
@@ -233,6 +234,34 @@ Exit execute(const Broken&, const Invocation& invocation, std::ostream& out, std
     return Exit::ok;
 }
 
+Exit execute(const Orphans& command, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    const auto store = open_store(invocation, err);
+    if (!store) {
+        err << "egraph: " << store.error() << '\n';
+        return Exit::failure;
+    }
+    // Everything would be an orphan; depclean refuses, and so do we.
+    if (store->roots.empty()) {
+        err << "egraph: orphans: the @world set is empty\n";
+        return Exit::failure;
+    }
+    const auto kept = keep(*store, {.build_deps = command.build_deps});
+    for (const auto id : orphans(kept)) {
+        out << store->string(store->packages.at(id).cpv) << '\n';
+    }
+    const auto unresolved = unresolved_lines(*store, kept);
+    if (unresolved.empty()) {
+        return Exit::ok;
+    }
+    err << "egraph: orphans: depclean would refuse to run; nothing installed satisfies these "
+           "runtime dependencies:\n";
+    for (const auto& line : unresolved) {
+        err << "  " << line << '\n';
+    }
+    return Exit::failure;
+}
+
 Exit execute(const Stats&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
     const auto store = open_store(invocation, err);
     if (!store) {
@@ -316,7 +345,12 @@ void configure(CLI::App& app, Invocation& invocation) {
         "--providers", [&invocation] { std::get<Soname>(invocation.command).providers = true; },
         "List the packages providing it instead");
     add_command<Broken>(app, invocation, "Installed dependencies nothing installed satisfies");
-    add_command<Orphans>(app, invocation, "Installed packages no root reaches");
+    CLI::App* orphans_cmd =
+        add_command<Orphans>(app, invocation, "Installed packages emerge --depclean would remove");
+    const std::map<std::string, bool> yes_no{{"y", true}, {"n", false}};
+    add_field(orphans_cmd, invocation, "--with-bdeps", &Orphans::build_deps,
+              "Whether build-time dependencies keep packages, as emerge's option (default y)")
+        ->transform(CLI::CheckedTransformer(yes_no).description("{y,n}"));
 
     CLI::App* export_cmd = add_command<Export>(app, invocation, "Export part of the graph");
     const std::map<std::string, ExportFormat> formats{{"dot", ExportFormat::dot},

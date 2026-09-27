@@ -145,3 +145,36 @@ def test_cpp_matcher_agrees_on_every_live_atom(live_layer, live_store):
     assert not wrong, f"{len(wrong)} of {len(expected)} atoms differ:\n" + "\n".join(
         wrong[:20]
     )
+
+
+@pytest.fixture(scope="module")
+def live_emerge_config():
+    from _emerge.actions import load_emerge_config
+
+    return load_emerge_config()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+@pytest.mark.parametrize("with_bdeps", [True, False], ids=["bdeps", "no-bdeps"])
+def test_orphans_are_what_depclean_removes(live_store, live_emerge_config, with_bdeps):
+    from depclean import depclean
+
+    config = live_emerge_config
+    expected = depclean(config.trees, config.target_config.root, with_bdeps)
+    result = subprocess.run(
+        [
+            os.environ["EGRAPH"],
+            "--store",
+            str(live_store),
+            "--no-refresh",
+            "orphans",
+            "--with-bdeps",
+            "y" if with_bdeps else "n",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert (result.returncode != 0) == (expected.returncode != 0), result.stderr
+    assert tuple(result.stdout.splitlines()) == expected.orphans

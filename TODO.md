@@ -10,8 +10,6 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 - [ ] `broken`: needs `||` satisfaction. Check whether `portage.dep.dep_check` with the vardb can
       answer it directly before composing it from `matches`.
 - [ ] `blockers`: per parent, strength and the installed packages each blocker matches.
-- [ ] `orphans`: compare against depclean. `ResolverPlayground.run(..., {"--depclean": True})`
-      gives a cleanlist on playgrounds; on the live system, `emerge --depclean --pretend`.
 - [ ] `why` (step 7): shortest path from a root; define tie-breaking so answers are comparable.
 - [ ] Oracle `rdeps` costs about 2.3 s per package on the live vdb (2,324 packages), which is why
       the system comparison samples. If that hurts, evaluate every package's edges once per vardb.
@@ -65,6 +63,14 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       (without expanding them). Add them with the `blockers` query.
 - [ ] Queries rebuild the edge index on every run (about 20M instructions on the live store). If
       that ever dominates, the store could carry it.
+
+- [ ] `orphans` takes every installed package as visible. A masked installed package without a
+      visible ebuild is unavailable to depclean's `||` choice and its multi-slot preference; the
+      evaluated layer (step 9) can store a visibility bit. Add a scenario with such a package then.
+- [ ] `orphans` ignores the rest of `dep_zapdeps` that needs more than the vdb: use.mask and
+      use.force on unmet USE dependencies, package.provided, and new-style virtual expansion
+      (depclean decides a virtual's `||` in its parent's context; egraph when the virtual is read).
+- [ ] `orphans --ignore-soname-deps=n` (keep soname providers), as emerge offers.
 
 ## Output and UX
 

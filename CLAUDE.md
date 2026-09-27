@@ -66,6 +66,13 @@ are strict xfails that must flip when the implementation lands.
 scenario. Any change to `src/atom.cpp` or `src/version.cpp` must keep it and the live-system run
 at zero differences.
 
+`builder/tests/depclean.py` runs portage's own depclean (`_calc_depclean`, test code only) and
+`test_orphans.py` holds `egraph orphans` to it on every scenario, with and without build-time
+deps; `test_system.py` does the same on the live system. Scenario packages get an accepted
+KEYWORDS in `conftest.py`, because depclean's `||` choices depend on visibility and egraph assumes
+every installed package is visible. Changes to `src/depclean.cpp` must keep both at zero
+differences.
+
 `test_golden.py` and `test_refresh.py` drive the real `egraph` binary (`EGRAPH`, set by `meson
 test`) against stores the builder wrote, with `EGRAPH_STRICT=1` so every incremental refresh is
 also checked against a full build. Tests that change a system use `mutable_playground` and
