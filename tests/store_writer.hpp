@@ -110,8 +110,8 @@ inline std::vector<Section> sample_sections() {
 
     Bytes packages;
     packages.varint(2);
-    // a-1: cpv, cp, slot, sub-slot, repo, EAPI, USE, IUSE, errors.
-    packages.varints({1, 2, 3, 3, 4, 5});
+    // a-1: cpv, cp, slot, sub-slot, repo, EAPI, IUSE_EFFECTIVE, USE, IUSE, errors.
+    packages.varints({1, 2, 3, 3, 4, 5, 1});
     packages.list({6}).list({6}).varint(1).varint(9).varint(10);
     // BDEPEND, DEPEND, IDEPEND, PDEPEND are empty; RDEPEND has four nodes.
     packages.varint(0).varint(0).varint(0).varint(0).varint(4);
@@ -122,18 +122,21 @@ inline std::vector<Section> sample_sections() {
     // Provides nothing; requires x86_64 libb.so.1, provided by package 1.
     packages.varint(0).varint(1).varint(11).varint(12).list({1});
     // b-1.
-    packages.varints({8, 7, 3, 3, 4, 5}).list({}).list({}).varint(0);
+    packages.varints({8, 7, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
     packages.varint(0).varint(0).varint(0).varint(0).varint(0);
     packages.varint(1).varint(11).varint(12).varint(0);
 
     Bytes roots;
     roots.varint(0);
 
-    return {{.id = 1, .bytes = meta.bytes()},
-            {.id = 2, .bytes = inputs.bytes()},
-            {.id = 3, .bytes = strings.bytes()},
-            {.id = 4, .bytes = packages.bytes()},
-            {.id = 5, .bytes = roots.bytes()}};
+    Bytes profile;
+    profile.varint(2).text("amd64").text("elibc_glibc");
+    profile.varint(1).text("build");
+    profile.varint(1).text("elibc_");
+
+    return {{.id = 1, .bytes = meta.bytes()},    {.id = 2, .bytes = inputs.bytes()},
+            {.id = 3, .bytes = strings.bytes()}, {.id = 4, .bytes = packages.bytes()},
+            {.id = 5, .bytes = roots.bytes()},   {.id = 6, .bytes = profile.bytes()}};
 }
 
 // The sample with one section replaced.
@@ -152,7 +155,7 @@ inline std::vector<std::byte> with_section(std::uint64_t id, const Bytes& bytes)
 inline std::vector<std::byte> with_rdepend(std::uint64_t count,
                                            const std::function<void(Bytes&)>& nodes) {
     Bytes packages;
-    packages.varint(1).varints({1, 2, 3, 3, 4, 5}).list({}).list({}).varint(0);
+    packages.varint(1).varints({1, 2, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
     packages.varint(0).varint(0).varint(0).varint(0).varint(count);
     nodes(packages);
     packages.varint(0).varint(0);

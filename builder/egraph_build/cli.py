@@ -88,7 +88,7 @@ def _previous(path):
 def write_store(args, incremental):
     import portage
 
-    from egraph_build import __version__, build, installed, store
+    from egraph_build import __version__, build, installed, profile, store
 
     vardb = open_vardb(args.config_root, args.root, args.eprefix)
     path = args.store or store.default_path(vardb.settings["EROOT"])
@@ -107,6 +107,7 @@ def write_store(args, incremental):
         portage_version=portage.VERSION,
         eroot=vardb.settings["EROOT"],
         build_time_ns=result.started_ns,
+        implicit=profile.implicit_iuse(vardb.settings),
     )
     store.write(path, store.encode(result.layer, meta, result.inputs))
     return EXIT_OK

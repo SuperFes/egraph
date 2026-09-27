@@ -18,7 +18,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t store_format_version = 2;
+inline constexpr std::uint32_t store_format_version = 3;
 inline constexpr std::array<std::string_view, 5> dep_kinds{"BDEPEND", "DEPEND", "IDEPEND",
                                                            "PDEPEND", "RDEPEND"};
 
@@ -62,6 +62,8 @@ struct Package {
     std::uint32_t sub_slot = 0;
     std::uint32_t repo = 0;
     std::uint32_t eapi = 0;
+    // The EAPI has IUSE_EFFECTIVE (5 and later), which decides how implicit IUSE applies.
+    bool iuse_effective = false;
     // String ids in Store::ids.
     Range use;
     Range iuse;
@@ -87,6 +89,15 @@ struct Meta {
     std::uint64_t build_time_ns = 0;
 };
 
+// The profile's implicit IUSE: flags that count as in IUSE without the ebuild listing them.
+struct ImplicitIuse {
+    // IUSE_EFFECTIVE, for packages whose EAPI has it.
+    std::vector<std::string> effective;
+    // Earlier EAPIs: flags implied exactly, and prefixes implying every flag that starts with them.
+    std::vector<std::string> literals;
+    std::vector<std::string> prefixes;
+};
+
 enum class InputKind : std::uint8_t { file, directory, symlink, missing };
 
 struct Input {
@@ -99,6 +110,7 @@ struct Input {
 // A decoded store. Every id and Range in it was checked against its table by decode().
 struct Store {
     Meta meta;
+    ImplicitIuse implicit;
     std::vector<Input> inputs;
     // Every string back to back; strings[id] slices it.
     std::string pool;

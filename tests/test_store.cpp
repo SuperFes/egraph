@@ -69,8 +69,13 @@ TEST_CASE("the sample store decodes") {
     CHECK(store->inputs.front().kind == egraph::InputKind::directory);
     CHECK(store->inputs.front().mtime_ns == 5);
 
+    CHECK(store->implicit.effective == std::vector<std::string>{"amd64", "elibc_glibc"});
+    CHECK(store->implicit.literals == std::vector<std::string>{"build"});
+    CHECK(store->implicit.prefixes == std::vector<std::string>{"elibc_"});
+
     REQUIRE(store->packages.size() == 2);
     const auto& a = store->packages.front();
+    CHECK(a.iuse_effective);
     CHECK(store->string(a.cpv) == "app-misc/a-1");
     CHECK(store->string(a.cp) == "app-misc/a");
     CHECK(store->ids_in(a.use).size() == 1);
@@ -128,8 +133,8 @@ TEST_CASE("the header is checked") {
     bytes.at(0) = std::byte{'X'};
     CHECK(rejection(bytes) == "not an egraph store");
 
-    CHECK(rejection(egraph::test::assemble(egraph::test::sample_sections(), 3)) ==
-          "format version 3, expected 2");
+    CHECK(rejection(egraph::test::assemble(egraph::test::sample_sections(), 4)) ==
+          "format version 4, expected 3");
 
     auto sections = egraph::test::sample_sections();
     sections.pop_back();
@@ -140,16 +145,16 @@ TEST_CASE("the header is checked") {
     CHECK(rejection(egraph::test::assemble(sections)) == "unexpected section 1");
 
     sections = egraph::test::sample_sections();
-    sections.back().id = 6;
-    CHECK(rejection(egraph::test::assemble(sections)) == "unexpected section 6");
+    sections.back().id = 7;
+    CHECK(rejection(egraph::test::assemble(sections)) == "unexpected section 7");
 }
 
 TEST_CASE("a section must lie inside the file") {
     auto bytes = sample();
-    // The last entry's length, one byte past the end.
-    const std::size_t length_at = 16 + (20 * 4) + 12;
-    bytes.at(length_at) = std::byte{2};
-    CHECK(rejection(bytes) == "section 5 outside the file");
+    // The last entry's length, past the end.
+    const std::size_t length_at = 16 + (20 * 5) + 12;
+    bytes.at(length_at) = std::byte{0x7F};
+    CHECK(rejection(bytes) == "section 6 outside the file");
 }
 
 TEST_CASE("sections are checked") {

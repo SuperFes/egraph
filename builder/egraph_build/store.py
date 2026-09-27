@@ -7,18 +7,25 @@ from typing import NamedTuple
 
 from egraph_build.installed import InstalledLayer, Node, Package
 from egraph_build.model import DEP_KINDS
+from egraph_build.profile import ImplicitIuse, has_iuse_effective
 
 MAGIC = b"EGRAPH\0\0"
-FORMAT_VERSION = 2
-SECTION_META, SECTION_INPUTS, SECTION_STRINGS, SECTION_PACKAGES, SECTION_ROOTS = range(
-    1, 6
-)
+FORMAT_VERSION = 3
+(
+    SECTION_META,
+    SECTION_INPUTS,
+    SECTION_STRINGS,
+    SECTION_PACKAGES,
+    SECTION_ROOTS,
+    SECTION_PROFILE,
+) = range(1, 7)
 SECTIONS = (
     SECTION_META,
     SECTION_INPUTS,
     SECTION_STRINGS,
     SECTION_PACKAGES,
     SECTION_ROOTS,
+    SECTION_PROFILE,
 )
 INPUT_FILE, INPUT_DIRECTORY, INPUT_SYMLINK, INPUT_MISSING = range(4)
 DEFAULT_PATH = "var/cache/egraph/installed.egraph"
@@ -36,6 +43,7 @@ class Meta(NamedTuple):
     portage_version: str
     eroot: str
     build_time_ns: int
+    implicit: ImplicitIuse = ImplicitIuse()
 
 
 class Input(NamedTuple):
@@ -124,6 +132,7 @@ def encode(layer, meta, inputs=()):
     for pkg in packages:
         for value in (pkg.cpv, pkg.cp, pkg.slot, pkg.sub_slot, pkg.repo, pkg.eapi):
             w.varint(strings(value))
+        w.varint(1 if has_iuse_effective(pkg.eapi) else 0)
         w.ids([strings(flag) for flag in pkg.use])
         w.ids([strings(flag) for flag in pkg.iuse])
         w.varint(len(pkg.errors))
@@ -153,6 +162,13 @@ def encode(layer, meta, inputs=()):
     for value in strings.table:
         w.text(value)
     sections[SECTION_STRINGS] = w.out
+
+    w = _Writer()
+    for flags in meta.implicit:
+        w.varint(len(flags))
+        for flag in flags:
+            w.text(flag)
+    sections[SECTION_PROFILE] = w.out
 
     # Roots arrive with roadmap step 7.
     w = _Writer()
@@ -249,8 +265,14 @@ def decode(data):
     """(Meta, Inputs, InstalledLayer) from store bytes; raises StoreError."""
     sections = _sections(data)
 
+    r = _Reader(sections[SECTION_PROFILE], "profile")
+    implicit = ImplicitIuse(
+        *(tuple(r.text() for _ in range(r.count())) for _ in ImplicitIuse._fields)
+    )
+    r.done()
+
     r = _Reader(sections[SECTION_META], "meta")
-    meta = Meta(r.text(), r.text(), r.text(), r.varint())
+    meta = Meta(r.text(), r.text(), r.text(), r.varint(), implicit)
     r.done()
 
     r = _Reader(sections[SECTION_INPUTS], "inputs")
@@ -273,6 +295,8 @@ def decode(data):
     raw = []
     for _ in range(count):
         fields = [s() for _ in range(6)]
+        # Derived from the EAPI; only the C++ matcher needs it spelled out.
+        r.varint(2)
         use = tuple(strings[i] for i in r.ids(nstrings))
         iuse = tuple(strings[i] for i in r.ids(nstrings))
         errors = tuple((s(), s()) for _ in range(r.count()))

@@ -25,7 +25,8 @@ constexpr std::uint32_t section_inputs = 2;
 constexpr std::uint32_t section_strings = 3;
 constexpr std::uint32_t section_packages = 4;
 constexpr std::uint32_t section_roots = 5;
-constexpr std::size_t section_count = 5;
+constexpr std::uint32_t section_profile = 6;
+constexpr std::size_t section_count = 6;
 constexpr std::uint32_t node_type_count = 5;
 constexpr std::uint32_t input_kind_count = 4;
 
@@ -257,6 +258,7 @@ std::optional<StoreError> read_packages(std::span<const std::byte> section, Stor
         for (auto* field : {&pkg.cpv, &pkg.cp, &pkg.slot, &pkg.sub_slot, &pkg.repo, &pkg.eapi}) {
             *field = r.index(strings, "string");
         }
+        pkg.iuse_effective = r.index(2, "IUSE_EFFECTIVE flag") == 1;
         pkg.use = read_ids(r, store.ids, strings, "string");
         pkg.iuse = read_ids(r, store.ids, strings, "string");
         pkg.errors = read_pairs(r, store.pairs, strings);
@@ -273,6 +275,19 @@ std::optional<StoreError> read_packages(std::span<const std::byte> section, Stor
             store.required.push_back(require);
         }
         store.packages.push_back(pkg);
+    }
+    r.finish();
+    return r.error();
+}
+
+std::optional<StoreError> read_profile(std::span<const std::byte> section, Store& store) {
+    Reader r(section, "profile");
+    for (auto* flags :
+         {&store.implicit.effective, &store.implicit.literals, &store.implicit.prefixes}) {
+        const auto count = r.count();
+        for (std::uint32_t i = 0; i < count && r.ok(); ++i) {
+            flags->push_back(r.text());
+        }
     }
     r.finish();
     return r.error();
@@ -372,6 +387,9 @@ std::expected<Store, StoreError> decode(std::span<const std::byte> data) {
         return std::unexpected(*error);
     }
     if (auto error = read_roots(section(section_roots), store)) {
+        return std::unexpected(*error);
+    }
+    if (auto error = read_profile(section(section_profile), store)) {
         return std::unexpected(*error);
     }
     return store;

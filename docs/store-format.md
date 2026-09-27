@@ -1,6 +1,6 @@
 # Store format
 
-Status: format version 2, implemented by `builder/egraph_build/store.py` (writer and a Python
+Status: format version 3, implemented by `builder/egraph_build/store.py` (writer and a Python
 reader) and `src/store.cpp` (C++ reader). Any layout change bumps the version.
 
 ## Requirements
@@ -59,8 +59,14 @@ Debugging goes through `egraph export --json` and `egraph-build --json`.
 | 3 | Strings | count, then length-prefixed bytes; string 0 is empty |
 | 4 | Packages | count, then the records below |
 | 5 | Roots | count, then `(atom, matches)`; written empty until roadmap step 7 |
+| 6 | Profile | implicit IUSE: `IUSE_EFFECTIVE`, then implicit literal flags, then implicit prefixes, each a count and length-prefixed strings |
 
-All five sections are required.
+All six sections are required.
+
+The profile section is what USE-dependency defaults need to match installed packages outside
+portage: a flag counts as in IUSE when the package lists it, or, for an EAPI with
+`IUSE_EFFECTIVE`, when it is in that set or in the package's USE, or, for older EAPIs, when it
+is one of the literals or starts with one of the prefixes (portage's `x_.*` patterns).
 
 Inputs come from `lstat`. Kind is 0 file, 1 directory, 2 symlink, 3 missing (mtime and size 0).
 An mtime before 1970 is clamped to 0 on both sides. The build start is taken before any input is
@@ -77,7 +83,8 @@ both sides spell an undecodable byte as Python does (`\udcXX`).
 
 In package order, which is sorted by cpv:
 
-1. String ids: cpv, cp, slot, sub-slot, repo, EAPI.
+1. String ids: cpv, cp, slot, sub-slot, repo, EAPI; then 1 if the EAPI has `IUSE_EFFECTIVE`,
+   else 0.
 2. USE and IUSE: lists of string ids.
 3. Errors: list of `(kind, message)` string ids, for dependency strings portage could not parse.
 4. For each kind in the order BDEPEND, DEPEND, IDEPEND, PDEPEND, RDEPEND, a node list. A node is

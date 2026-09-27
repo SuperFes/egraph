@@ -23,7 +23,7 @@ namespace {
 // A store holding only dev-libs/b-1, with its slot given as a sample string id.
 std::vector<std::byte> only_b(std::uint64_t slot) {
     Bytes packages;
-    packages.varint(1).varints({8, 7, slot, slot, 4, 5}).list({}).list({}).varint(0);
+    packages.varint(1).varints({8, 7, slot, slot, 4, 5, 1}).list({}).list({}).varint(0);
     packages.varints({0, 0, 0, 0, 0}).varint(1).varints({11, 12}).varint(0);
     auto sections = egraph::test::sample_sections();
     sections.at(1).bytes = Bytes{}.varint(0).bytes();
