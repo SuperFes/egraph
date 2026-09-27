@@ -42,7 +42,7 @@ TEST_CASE("the sample store exports as the builder would") {
     std::ostringstream out;
     egraph::write_json(out, *store);
     CHECK(out.str() ==
-          R"({"format":1,"packages":[)"
+          R"({"format":2,"packages":[)"
           R"({"cp":"app-misc/a","cpv":"app-misc/a-1","deps":{"BDEPEND":[],"DEPEND":[],)"
           R"("IDEPEND":[],"PDEPEND":[],"RDEPEND":[)"
           R"({"atom":"","matches":[],"parent":-1,"type":"any-of"},)"
@@ -55,6 +55,8 @@ TEST_CASE("the sample store exports as the builder would") {
           R"({"cp":"dev-libs/b","cpv":"dev-libs/b-1","deps":{"BDEPEND":[],"DEPEND":[],)"
           R"("IDEPEND":[],"PDEPEND":[],"RDEPEND":[]},"eapi":"8","errors":[],"iuse":[],)"
           R"("provides":[["x86_64","libb.so.1"]],"repo":"test_repo","requires":[],"slot":"0",)"
-          R"("sub_slot":"0","use":[]}]})"
+          R"("sub_slot":"0","use":[]}],"roots":[)"
+          R"({"atom":"app-misc/a","matches":["app-misc/a-1"],"set":"selected"},)"
+          R"({"atom":"dev-libs/missing","matches":[],"set":"system"}]})"
           "\n");
 }

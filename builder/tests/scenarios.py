@@ -159,6 +159,49 @@ SCENARIOS = {
             },
         },
     },
+    # Root sets and what depclean keeps: world with a nested user set, @system and @profile
+    # from the profile, several slots under one atom, || choices, and a cycle nothing needs.
+    "roots": {
+        "repo_configs": {
+            "test_repo": {"layout.conf": ["profile-formats = profile-set"]}
+        },
+        "profile": {"packages": ["*sys-apps/base", "app-misc/prof"]},
+        "sets": {"myset": ["app-misc/set-member"]},
+        "world": ["app-misc/world", "sys-kernel/sources"],
+        "world_sets": ["@myset"],
+        "installed": {
+            "app-misc/world-1": {
+                "EAPI": "8",
+                "RDEPEND": "dev-libs/a virtual/v dev-libs/impl-b",
+                "DEPEND": "dev-libs/build-only",
+                "BDEPEND": "dev-util/tool",
+            },
+            "dev-libs/a-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-libs/alt-x dev-libs/alt-y )",
+            },
+            "dev-libs/alt-x-1": {"EAPI": "8"},
+            "dev-libs/alt-y-1": {"EAPI": "8"},
+            "virtual/v-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-libs/impl-a dev-libs/impl-b )",
+            },
+            "dev-libs/impl-a-1": {"EAPI": "8"},
+            "dev-libs/impl-b-1": {"EAPI": "8"},
+            "dev-libs/build-only-1": {"EAPI": "8"},
+            "dev-util/tool-1": {"EAPI": "8"},
+            "sys-apps/base-1": {"EAPI": "8", "RDEPEND": "sys-libs/core"},
+            "sys-libs/core-1": {"EAPI": "8"},
+            "app-misc/prof-1": {"EAPI": "8"},
+            "app-misc/set-member-1": {"EAPI": "8"},
+            "sys-kernel/sources-1": {"EAPI": "8", "SLOT": "1"},
+            "sys-kernel/sources-2": {"EAPI": "8", "SLOT": "2"},
+            "app-misc/orphan-1": {"EAPI": "8", "RDEPEND": "dev-libs/orphan-dep"},
+            "dev-libs/orphan-dep-1": {"EAPI": "8"},
+            "dev-libs/cycle-a-1": {"EAPI": "8", "RDEPEND": "dev-libs/cycle-b"},
+            "dev-libs/cycle-b-1": {"EAPI": "8", "RDEPEND": "dev-libs/cycle-a"},
+        },
+    },
     # Sonames across multilib categories.
     "sonames": {
         "installed": {

@@ -100,8 +100,9 @@ its kind (file, directory, symlink, or missing), `st_mtime_ns` and size from `ls
 the vdb directory (categories added or removed), each category directory (packages added or
 removed), each package directory (in-place changes, which portage writes by rename), and the
 configuration that decides how USE dependencies match: `make.globals`, `make.conf`, the
-`make.profile` link and every profile directory with its entries. A path recorded as missing is
-stale once it exists. The world file joins the inputs with roots (roadmap step 7).
+`make.profile` link and every profile directory with its entries, and what the root sets are read
+from: the world and world_sets files and portage's set configuration (`sets.conf` files and the
+user sets directory). A path recorded as missing is stale once it exists.
 
 Timestamps are coarse, so an input modified within 1 s before the build started is never trusted
 as unchanged (the racy-git rule); a store built right after a merge refreshes once more and then
@@ -116,8 +117,9 @@ On load `egraph` stats every input (2,575 `lstat` calls on the dev box, about 2.
 - The store cannot be written (unprivileged user): see open questions.
 
 `--incremental` re-reads only the packages that were added or whose directory changed, and in
-the others re-matches only the atoms naming a cp that gained, lost or changed a package. A
-changed configuration input or another EROOT means a full build. `EGRAPH_STRICT=1` compares
+the others re-matches only the atoms naming a cp that gained, lost or changed a package. Root sets
+are read again on every build, so a world or set file edit costs no more than that. A changed
+configuration input or another EROOT means a full build. `EGRAPH_STRICT=1` compares
 every incremental build against a full one and fails, leaving the old store, on any difference.
 
 No merge-time hook is needed, and edits to the vdb made outside portage are caught too.

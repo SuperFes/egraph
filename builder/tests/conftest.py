@@ -20,6 +20,8 @@ from scenarios import SCENARIOS
 class System(NamedTuple):
     eroot: str
     vardb: object
+    # The playground's own trees, which carry the root_config emerge would use.
+    trees: object
 
 
 def pytest_report_header(config):
@@ -81,9 +83,8 @@ def playgrounds(gnupg_home):
             playground = ResolverPlayground(**SCENARIOS[name])
             built[name] = playground
         playground = built[name]
-        return System(
-            playground.eroot, playground.trees[playground.eroot]["vartree"].dbapi
-        )
+        trees = playground.trees[playground.eroot]
+        return System(playground.eroot, trees["vartree"].dbapi, trees)
 
     yield get
     for playground in built.values():

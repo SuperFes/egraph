@@ -301,6 +301,7 @@ std::optional<StoreError> read_roots(std::span<const std::byte> section, Store& 
     store.roots.reserve(count);
     for (std::uint32_t i = 0; i < count && r.ok(); ++i) {
         Root root;
+        root.set = r.index(strings, "string");
         root.atom = r.index(strings, "string");
         root.matches = read_ids(r, store.ids, packages, "package");
         store.roots.push_back(root);

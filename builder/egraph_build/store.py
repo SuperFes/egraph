@@ -8,9 +8,10 @@ from typing import NamedTuple
 from egraph_build.installed import InstalledLayer, Node, Package
 from egraph_build.model import DEP_KINDS
 from egraph_build.profile import ImplicitIuse, has_iuse_effective
+from egraph_build.roots import Root
 
 MAGIC = b"EGRAPH\0\0"
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 (
     SECTION_META,
     SECTION_INPUTS,
@@ -157,6 +158,15 @@ def encode(layer, meta, inputs=()):
             w.ids(providers.get((category, soname), ()))
     sections[SECTION_PACKAGES] = w.out
 
+    roots = layer.roots()
+    w = _Writer()
+    w.varint(len(roots))
+    for root in roots:
+        w.varint(strings(root.set))
+        w.varint(strings(root.atom))
+        w.ids([index[cpv] for cpv in root.matches])
+    sections[SECTION_ROOTS] = w.out
+
     w = _Writer()
     w.varint(len(strings.table))
     for value in strings.table:
@@ -169,11 +179,6 @@ def encode(layer, meta, inputs=()):
         for flag in flags:
             w.text(flag)
     sections[SECTION_PROFILE] = w.out
-
-    # Roots arrive with roadmap step 7.
-    w = _Writer()
-    w.varint(0)
-    sections[SECTION_ROOTS] = w.out
 
     offset = _HEADER.size + _ENTRY.size * len(sections)
     table = bytearray()
@@ -319,9 +324,9 @@ def decode(data):
     r.done()
 
     r = _Reader(sections[SECTION_ROOTS], "roots")
+    raw_roots = []
     for _ in range(r.count()):
-        r.varint(nstrings)
-        r.ids(count)
+        raw_roots.append((s(), s(), r.ids(count)))
     r.done()
 
     cpvs = [fields[0] for fields, *_ in raw]
@@ -344,7 +349,11 @@ def decode(data):
                 requires=requires,
             )
         )
-    return meta, inputs, InstalledLayer(packages)
+    roots = tuple(
+        Root(name, atom, tuple(cpvs[i] for i in matches))
+        for name, atom, matches in raw_roots
+    )
+    return meta, inputs, InstalledLayer(packages, roots)
 
 
 def write(path, data):

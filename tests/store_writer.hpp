@@ -90,10 +90,11 @@ inline std::vector<std::byte> assemble(const std::vector<Section>& sections,
 //   a-1 RDEPEND: || ( dev-libs/b dev-libs/missing ) !app-misc/old, with an RDEPEND error,
 //       USE and IUSE "flag", requiring x86_64 libb.so.1 from b-1.
 //   b-1 provides x86_64 libb.so.1.
+// Roots: app-misc/a in @selected, and dev-libs/missing, matching nothing, in @system.
 inline constexpr std::initializer_list<std::string_view> sample_strings{
-    "",          "app-misc/a-1",  "app-misc/a",      "0",       "test_repo", "8",
-    "flag",      "dev-libs/b",    "dev-libs/b-1",    "RDEPEND", "bad dep",   "x86_64",
-    "libb.so.1", "!app-misc/old", "dev-libs/missing"};
+    "",          "app-misc/a-1",  "app-misc/a",       "0",        "test_repo", "8",
+    "flag",      "dev-libs/b",    "dev-libs/b-1",     "RDEPEND",  "bad dep",   "x86_64",
+    "libb.so.1", "!app-misc/old", "dev-libs/missing", "selected", "system"};
 
 inline std::vector<Section> sample_sections() {
     Bytes meta;
@@ -127,7 +128,8 @@ inline std::vector<Section> sample_sections() {
     packages.varint(1).varint(11).varint(12).varint(0);
 
     Bytes roots;
-    roots.varint(0);
+    roots.varint(2).varint(15).varint(2).list({0});
+    roots.varint(16).varint(14).list({});
 
     Bytes profile;
     profile.varint(2).text("amd64").text("elibc_glibc");

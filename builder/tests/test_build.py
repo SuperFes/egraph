@@ -38,6 +38,11 @@ def write_atomically(path, text):
     os.replace(temp, path)
 
 
+def add_to_world(playground, atom):
+    with open(os.path.join(playground.eroot, "var/lib/portage/world"), "a") as f:
+        f.write(atom + "\n")
+
+
 def vdb(playground, *parts):
     return os.path.join(playground.eroot, "var/db/pkg", *parts)
 
@@ -85,6 +90,10 @@ def test_inputs_cover_the_vdb_and_the_profile(system):
     assert kinds[os.path.join(user, "profile")] == store.INPUT_MISSING
     for profile in fresh_vardb(playground).settings.profiles:
         assert kinds[profile] == store.INPUT_DIRECTORY
+    world = os.path.join(playground.eroot, "var/lib/portage")
+    assert kinds[os.path.join(world, "world")] == store.INPUT_FILE
+    assert kinds[os.path.join(world, "world_sets")] == store.INPUT_FILE
+    assert kinds[os.path.join(user, "sets")] == store.INPUT_DIRECTORY
 
 
 def test_nothing_changed(system):
@@ -134,6 +143,38 @@ def test_new_category(system):
     result = rebuild(playground, meta, first)
     assert not result.full
     assert result.evaluated == {"sys-apps/new-1"}
+
+
+def test_world_edit_only_reads_roots_again(system):
+    playground, meta, first = system
+    add_to_world(playground, "app-misc/old")
+    result = rebuild(playground, meta, first)
+    assert not result.full
+    assert result.evaluated == frozenset()
+    assert ("selected", "app-misc/old", ("app-misc/old-1",)) in result.layer.roots()
+
+
+def test_package_added_rematches_roots(system):
+    playground, meta, first = system
+    add_package(playground, "app-misc/user-2")
+    result = rebuild(playground, meta, first)
+    assert not result.full
+    assert (
+        "selected",
+        "app-misc/user",
+        ("app-misc/user-1", "app-misc/user-2"),
+    ) in result.layer.roots()
+
+
+def test_new_user_set_only_reads_roots_again(system):
+    playground, meta, first = system
+    with open(os.path.join(playground.eroot, "etc/portage/sets/extra"), "w") as f:
+        f.write("dev-libs/cond\n")
+    with open(os.path.join(playground.eroot, "var/lib/portage/world_sets"), "a") as f:
+        f.write("@extra\n")
+    result = rebuild(playground, meta, first)
+    assert not result.full
+    assert ("selected", "dev-libs/cond", ("dev-libs/cond-1",)) in result.layer.roots()
 
 
 def test_profile_edit_forces_a_full_build(system):

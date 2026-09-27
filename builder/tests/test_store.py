@@ -50,7 +50,7 @@ def test_every_truncation_is_rejected(reference_store):
     "offset, value, message",
     [
         (0, ord("X"), "not an egraph store"),
-        (8, 4, "format version 4"),
+        (8, 99, "format version 99"),
         (12, 4, "bad section table"),
     ],
 )

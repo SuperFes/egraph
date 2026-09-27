@@ -19,6 +19,7 @@ from portage.exception import InvalidAtom, InvalidData, InvalidDependString
 from portage.versions import cpv_getkey
 
 from egraph_build.model import DEP_KINDS, Edge, SonameUse
+from egraph_build.roots import read_roots
 
 ATOM, ANY_OF, ALL_OF, WEAK_BLOCKER, STRONG_BLOCKER = range(5)
 NODE_TYPES = ("atom", "any-of", "all-of", "weak-blocker", "strong-blocker")
@@ -180,8 +181,9 @@ class _Index(NamedTuple):
 
 
 class InstalledLayer:
-    def __init__(self, packages):
+    def __init__(self, packages, roots=()):
         self._packages = {pkg.cpv: pkg for pkg in sorted(packages, key=_cpv)}
+        self._roots = tuple(roots)
 
     # Built on first query: building and encoding a layer never need it.
     @functools.cached_property
@@ -218,6 +220,10 @@ class InstalledLayer:
     def installed(self):
         return tuple(self._packages)
 
+    def roots(self):
+        """egraph_build.roots.Root records, sets in ROOT_SETS order and atoms sorted."""
+        return self._roots
+
     def matches(self, atom):
         """Installed cpvs an atom from any installed dependency tree resolves to."""
         return self._index.matches[atom]
@@ -249,7 +255,10 @@ def _cpv(pkg):
 def build(vardb):
     """Evaluate every installed package in vardb into an InstalledLayer."""
     match = Matcher(vardb)
-    return InstalledLayer(read_package(vardb, cpv, match) for cpv in vardb.cpv_all())
+    return InstalledLayer(
+        (read_package(vardb, cpv, match) for cpv in vardb.cpv_all()),
+        read_roots(vardb, match),
+    )
 
 
 def to_json(layer):
@@ -283,5 +292,9 @@ def to_json(layer):
                 "requires": [list(soname) for soname in pkg.requires],
             }
         )
-    document = {"format": 1, "packages": packages}
+    roots = [
+        {"set": root.set, "atom": root.atom, "matches": list(root.matches)}
+        for root in layer.roots()
+    ]
+    document = {"format": 2, "packages": packages, "roots": roots}
     return json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"

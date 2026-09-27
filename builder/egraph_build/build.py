@@ -9,7 +9,7 @@ import portage
 from portage.dep import Atom
 from portage.versions import cpv_getkey
 
-from egraph_build import installed
+from egraph_build import installed, roots
 from egraph_build.installed import ATOM, STRONG_BLOCKER, WEAK_BLOCKER, InstalledLayer
 from egraph_build.store import (
     INPUT_DIRECTORY,
@@ -92,6 +92,7 @@ def collect_inputs(settings, cpvs):
     paths.extend(os.path.join(vdb, category) for category in categories)
     paths.extend(os.path.join(vdb, cpv) for cpv in cpvs)
     paths.extend(config_paths(settings))
+    paths.extend(roots.input_paths(settings))
     return tuple(sorted({stat_input(path) for path in paths}))
 
 
@@ -104,7 +105,10 @@ def full(vardb):
     cpvs = _cpvs(vardb)
     inputs = collect_inputs(vardb.settings, cpvs)
     match = installed.Matcher(vardb)
-    layer = InstalledLayer(installed.read_package(vardb, cpv, match) for cpv in cpvs)
+    layer = InstalledLayer(
+        (installed.read_package(vardb, cpv, match) for cpv in cpvs),
+        roots.read_roots(vardb, match),
+    )
     return Build(layer, inputs, started, frozenset(cpvs), True)
 
 
@@ -142,7 +146,8 @@ def incremental(vardb, meta, inputs, layer):
     """Rebuild from a previous store, reading only what changed since it was built.
 
     A changed config input, or a store built for another EROOT, means a full build: the
-    profile decides how every USE dependency matches.
+    profile decides how every USE dependency matches. Roots are cheap and always read again,
+    so a world or set file edit is not a config change.
     """
     settings = vardb.settings
     if meta.eroot != settings["EROOT"]:
@@ -158,9 +163,11 @@ def incremental(vardb, meta, inputs, layer):
         return old is None or old != item or old.mtime_ns >= racy_after
 
     vdb = vdb_path(settings)
+    root_inputs = set(roots.input_paths(settings))
 
     def is_config(path):
-        return path != vdb and not path.startswith(vdb + os.sep)
+        in_vdb = path == vdb or path.startswith(vdb + os.sep)
+        return not in_vdb and path not in root_inputs
 
     current_paths = {item.path for item in current}
     if any(changed(item) for item in current if is_config(item.path)) or any(
@@ -186,4 +193,11 @@ def incremental(vardb, meta, inputs, layer):
         )
         for cpv in cpvs
     ]
-    return Build(InstalledLayer(packages), current, started, frozenset(reread), False)
+    known = {root.atom: root.matches for root in layer.roots()}
+
+    def match_root(atom):
+        found = known.get(str(atom))
+        return match(atom) if found is None or atom.cp in touched else found
+
+    layer = InstalledLayer(packages, roots.read_roots(vardb, match_root))
+    return Build(layer, current, started, frozenset(reread), False)

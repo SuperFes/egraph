@@ -10,8 +10,6 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 - [ ] `broken`: needs `||` satisfaction. Check whether `portage.dep.dep_check` with the vardb can
       answer it directly before composing it from `matches`.
 - [ ] `blockers`: per parent, strength and the installed packages each blocker matches.
-- [ ] Roots: world and `world_sets` from `portage._sets`, @system and @profile through the profile.
-      Check whether the sets API counts as public enough or needs wrapping in one place.
 - [ ] `orphans`: compare against depclean. `ResolverPlayground.run(..., {"--depclean": True})`
       gives a cleanlist on playgrounds; on the live system, `emerge --depclean --pretend`.
 - [ ] `why` (step 7): shortest path from a root; define tie-breaking so answers are comparable.
@@ -42,6 +40,13 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       incremental builds.
 
 ## Store
+
+- [ ] Root sets that portage cannot load (a world_sets entry naming a missing set) fall back to
+      the set's own atoms, as depclean does, but depclean then refuses to run. The store does not
+      record that the sets were broken, so `orphans` cannot refuse too.
+- [ ] Sets whose atoms come from the vdb or the repository (`@installed`, `@live-rebuild`, ...)
+      named in world_sets are read again on every build, but a repository change alone does not
+      trigger one.
 
 - [ ] A libFuzzer target for `decode()`. The unit tests mutate every byte of a small store, but
       the entry point takes a pointer and a size, so it needs a reviewed exception to

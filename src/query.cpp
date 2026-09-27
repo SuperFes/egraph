@@ -193,7 +193,8 @@ void write_stats(std::ostream& out, const Store& store, const Graph& graph,
         << std::format("packages: {}\ndependency nodes: {}\nedges: {}\nunsatisfied: {}\n",
                        store.packages.size(), store.nodes.size(), graph.forward.size(),
                        broken(store).size())
-        << std::format("sonames: {}\ninputs: {}\n", sonames.size(), store.inputs.size());
+        << std::format("sonames: {}\nroot atoms: {}\ninputs: {}\n", sonames.size(),
+                       store.roots.size(), store.inputs.size());
 }
 
 } // namespace egraph

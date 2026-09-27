@@ -155,5 +155,6 @@ TEST_CASE("stats") {
                        "edges: 1\n"
                        "unsatisfied: 0\n"
                        "sonames: 1\n"
+                       "root atoms: 2\n"
                        "inputs: 0\n");
 }

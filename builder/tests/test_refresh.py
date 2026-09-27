@@ -9,7 +9,7 @@ import portage
 import pytest
 
 from egraph_build import build, installed
-from test_build import add_package, age, fresh_vardb, vdb
+from test_build import add_package, add_to_world, age, fresh_vardb, vdb
 
 EGRAPH = os.environ.get("EGRAPH")
 
@@ -91,8 +91,9 @@ def test_fresh_store_is_not_rebuilt(system):
         lambda p: add_package(p, "dev-libs/alt-b-1"),
         lambda p: shutil.rmtree(vdb(p, "dev-libs/cond-1")),
         lambda p: add_package(p, "sys-apps/new-1", RDEPEND="dev-libs/lib:2"),
+        lambda p: add_to_world(p, "app-misc/old"),
     ],
-    ids=["added", "removed", "new-category"],
+    ids=["added", "removed", "new-category", "world"],
 )
 def test_changes_are_picked_up(system, change):
     playground = system[0]

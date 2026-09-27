@@ -229,3 +229,14 @@ process including load and the freshness check of 2,575 inputs.
   zero-padding of fractional components.
 - Matching every live atom against all 2,326 packages in one `egraph match` run costs under 1G
   instructions; a query argument is one atom and costs nothing measurable next to the load.
+
+## Roots (2026-09-27, roadmap step 7)
+
+- The live system has 260 root atoms: 210 in @selected, 50 in @system, none in @profile. Three
+  world atoms match more than one installed slot (ruby, lld, gentoo-sources).
+- Reading the root sets costs about 130 ms warm: half is `vardb.match` on the root atoms, 30 ms
+  constructing the portdbapi that portage's set configuration insists on, and the rest parsing
+  it. Every build reads them, so incremental builds reuse the previous matches of root atoms whose
+  cp was not touched.
+- A live `emerge --depclean --pretend` takes 9 s wall and would remove 2 packages: the older
+  gentoo-sources slots, which the unslotted world atom does not keep.

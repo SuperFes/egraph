@@ -1,5 +1,6 @@
 #include "json.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <format>
@@ -223,21 +224,60 @@ std::string package_json(const Store& store, const Package& pkg) {
     return std::move(out).str();
 }
 
-void write_json(std::ostream& out, const Store& store, std::span<const std::uint32_t> packages) {
-    out << R"({"format":1,"packages":[)";
+namespace {
+
+void write_root(std::ostream& out, const Store& store, const Root& root) {
+    out << "{\"atom\":";
+    write_string(out, store, root.atom);
+    out << ",\"matches\":[";
+    bool first = true;
+    for (const auto id : store.ids_in(root.matches)) {
+        out << (first ? "" : ",");
+        first = false;
+        write_string(out, store, store.packages.at(id).cpv);
+    }
+    out << "],\"set\":";
+    write_string(out, store, root.set);
+    out << '}';
+}
+
+// Roots go out whole, and with only_matching, only those matching one of the packages.
+void write_document(std::ostream& out, const Store& store, std::span<const std::uint32_t> packages,
+                    bool only_matching) {
+    out << R"({"format":2,"packages":[)";
+    std::vector<bool> chosen(store.packages.size(), false);
     bool first = true;
     for (const auto id : packages) {
         out << (first ? "" : ",");
         first = false;
         write_package(out, store, store.packages.at(id));
+        chosen.at(id) = true;
+    }
+    out << R"(],"roots":[)";
+    first = true;
+    for (const auto& root : store.roots) {
+        const auto ids = store.ids_in(root.matches);
+        if (only_matching &&
+            std::ranges::none_of(ids, [&](std::uint32_t id) { return chosen.at(id); })) {
+            continue;
+        }
+        out << (first ? "" : ",");
+        first = false;
+        write_root(out, store, root);
     }
     out << "]}\n";
+}
+
+} // namespace
+
+void write_json(std::ostream& out, const Store& store, std::span<const std::uint32_t> packages) {
+    write_document(out, store, packages, true);
 }
 
 void write_json(std::ostream& out, const Store& store) {
     std::vector<std::uint32_t> all(store.packages.size());
     std::ranges::iota(all, 0U);
-    write_json(out, store, all);
+    write_document(out, store, all, false);
 }
 
 } // namespace egraph

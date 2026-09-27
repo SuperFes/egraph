@@ -7,7 +7,7 @@ import subprocess
 import pytest
 
 from compare import _sonames
-from egraph_build import installed, oracle, store
+from egraph_build import installed, oracle, roots, store
 from egraph_build.model import Edge
 
 EGRAPH = os.environ.get("EGRAPH")
@@ -110,6 +110,8 @@ def test_stats(system):
         frozenset().union(*(oracle.deps(vardb, c) for c in cpvs))
     )
     assert int(lines["unsatisfied"]) == len(oracle.broken(vardb))
+    atoms = roots.root_atoms(vardb)
+    assert int(lines["root atoms"]) == sum(len(atoms[name]) for name in roots.ROOT_SETS)
 
 
 def _neighborhood(vardb, roots, depth, forward, reverse):

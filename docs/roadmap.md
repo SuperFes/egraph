@@ -12,7 +12,7 @@ Update the status column as steps land.
 | 4 | Freshness | done |
 | 5 | `rebuild` and `check` | done |
 | 6 | Queries | done |
-| 7 | Roots and orphans | not started |
+| 7 | Roots and orphans | in progress |
 | 8 | Consumers | not started |
 | 9 | Evaluated and candidate layers | not planned yet |
 
@@ -74,11 +74,10 @@ Update the status column as steps land.
 
 ## 7. Roots and orphans
 
-- `why` (shortest path from a root over the reverse graph).
-
-- The builder evaluates @system and @profile and records the profile files as inputs.
-- `orphans` runs in shadow against `emerge --depclean --pretend`; differences get tests before
-  anyone trusts them.
+- 7a (done): the builder records @selected, @system and @profile through portage's set
+  configuration, with the world, world_sets and set configuration files as inputs.
+- 7b: `orphans` runs in shadow against depclean; differences get tests before anyone trusts them.
+- 7c: `why` (shortest path from a root through what depclean keeps).
 
 ## 8. Consumers
 

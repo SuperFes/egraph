@@ -1,6 +1,6 @@
 # Store format
 
-Status: format version 3, implemented by `builder/egraph_build/store.py` (writer and a Python
+Status: format version 4, implemented by `builder/egraph_build/store.py` (writer and a Python
 reader) and `src/store.cpp` (C++ reader). Any layout change bumps the version.
 
 ## Requirements
@@ -27,7 +27,8 @@ reader) and `src/store.cpp` (C++ reader). Any layout change bumps the version.
    Empty means unsatisfied. Per any-of node, which alternatives are satisfied.
 7. **Sonames.** Per package, provides and requires with multilib category, plus the resolved
    requires-to-provider edges.
-8. **Roots.** World atoms, world sets, @system and @profile atoms, each with the packages they match.
+8. **Roots.** The atoms of @selected (world and world_sets), @system and @profile, nested sets
+   expanded, each with the installed packages it matches.
 
 ## Encoding
 
@@ -58,7 +59,7 @@ Debugging goes through `egraph export --json` and `egraph-build --json`.
 | 2 | Inputs | count, then `(path, kind, mtime_ns, size)`; path length-prefixed |
 | 3 | Strings | count, then length-prefixed bytes; string 0 is empty |
 | 4 | Packages | count, then the records below |
-| 5 | Roots | count, then `(atom, matches)`; written empty until roadmap step 7 |
+| 5 | Roots | count, then `(set, atom, matches)`: set and atom string ids, sets in the order selected, system, profile and atoms sorted within each |
 | 6 | Profile | implicit IUSE: `IUSE_EFFECTIVE`, then implicit literal flags, then implicit prefixes, each a count and length-prefixed strings |
 
 All six sections are required.

@@ -133,8 +133,8 @@ TEST_CASE("the header is checked") {
     bytes.at(0) = std::byte{'X'};
     CHECK(rejection(bytes) == "not an egraph store");
 
-    CHECK(rejection(egraph::test::assemble(egraph::test::sample_sections(), 4)) ==
-          "format version 4, expected 3");
+    CHECK(rejection(egraph::test::assemble(egraph::test::sample_sections(), 3)) ==
+          "format version 3, expected 4");
 
     auto sections = egraph::test::sample_sections();
     sections.pop_back();
@@ -162,6 +162,10 @@ TEST_CASE("sections are checked") {
                Catch::Matchers::StartsWith("roots: trailing bytes"));
     CHECK_THAT(rejection(with_section(5, Bytes{}.varint(9))),
                Catch::Matchers::StartsWith("roots: count 9 exceeds the bytes left"));
+    CHECK_THAT(rejection(with_section(5, Bytes{}.varint(1).varint(99).varint(2).varint(0))),
+               Catch::Matchers::StartsWith("roots: string 99 out of range"));
+    CHECK_THAT(rejection(with_section(5, Bytes{}.varint(1).varint(15).varint(2).list({2}))),
+               Catch::Matchers::StartsWith("roots: package 2 out of range"));
     CHECK_THAT(rejection(with_section(3, Bytes{}.varint(1).text("x"))),
                Catch::Matchers::StartsWith("strings: string 0 must be empty"));
     CHECK_THAT(
@@ -198,7 +202,7 @@ TEST_CASE("dependency trees are checked") {
     CHECK_THAT(rejection(with_rdepend(1, [](Bytes& b) { b.varints({2, 0, 0}).list({0}); })),
                Catch::Matchers::StartsWith("packages: a group has matches"));
     CHECK_THAT(rejection(with_rdepend(1, [](Bytes& b) { b.varints({0, 0, 99}).list({}); })),
-               Catch::Matchers::StartsWith("packages: string 99 out of range 15"));
+               Catch::Matchers::StartsWith("packages: string 99 out of range 17"));
 }
 
 TEST_CASE("load names the file in its errors") {
@@ -230,7 +234,7 @@ TEST_CASE("export --format json reads the store") {
     std::ostringstream err;
     REQUIRE(egraph::run(invocation, out, err) == egraph::Exit::ok);
     CHECK(err.str().empty());
-    CHECK_THAT(out.str(), Catch::Matchers::StartsWith(R"({"format":1,"packages":[{"cp":)"));
+    CHECK_THAT(out.str(), Catch::Matchers::StartsWith(R"({"format":2,"packages":[{"cp":)"));
 
     invocation.store = "/nonexistent/egraph.store";
     invocation.no_refresh = true;
