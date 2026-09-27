@@ -10,7 +10,7 @@ Update the status column as steps land.
 | 2 | Installed layer in the builder | done |
 | 3 | Store writer and reader | done |
 | 4 | Freshness | done |
-| 5 | `rebuild` and `check` | not started |
+| 5 | `rebuild` and `check` | done |
 | 6 | Queries | not started |
 | 7 | Roots and orphans | not started |
 | 8 | Consumers | not started |

@@ -135,4 +135,20 @@ inline std::vector<Section> sample_sections() {
             {.id = 5, .bytes = roots.bytes()}};
 }
 
+// The sample with one section replaced.
+inline std::vector<std::byte> with_section(std::uint64_t id, const Bytes& bytes) {
+    auto sections = sample_sections();
+    for (auto& section : sections) {
+        if (section.id == id) {
+            section.bytes = bytes.bytes();
+        }
+    }
+    return assemble(sections);
+}
+
+// The sample without inputs, which is therefore always fresh.
+inline std::vector<std::byte> fresh_sample() {
+    return with_section(2, Bytes{}.varint(0));
+}
+
 } // namespace egraph::test

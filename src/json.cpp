@@ -5,6 +5,8 @@
 #include <format>
 #include <optional>
 #include <ostream>
+#include <sstream>
+#include <utility>
 
 namespace egraph {
 
@@ -211,6 +213,12 @@ void write_json_string(std::ostream& out, std::string_view bytes) {
         }
     }
     out << '"';
+}
+
+std::string package_json(const Store& store, const Package& pkg) {
+    std::ostringstream out;
+    write_package(out, store, pkg);
+    return std::move(out).str();
 }
 
 void write_json(std::ostream& out, const Store& store) {

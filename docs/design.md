@@ -71,7 +71,7 @@ dependencies with defaults, repository) and means by it exactly what `vardb.matc
   `PORTAGE_CONFIGROOT` and `PORTAGE_OVERRIDE_EPREFIX`, and `egraph` passes the ones given to
   `egraph-build`. The default store is `${ROOT}${EPREFIX}/var/cache/egraph/installed.egraph`.
   The store records its EROOT, and an incremental build for another EROOT is a full one.
-- Both tools share exit codes (0 ok, 1 failure, 2 usage, 3 not implemented); a test pins
+- Both tools share exit codes (0 ok, 1 failure, 2 usage, 3 not implemented, 4 drift); a test pins
   `builder/egraph_build/cli.py` to the `Exit` enum in `src/cli.hpp`.
 
 ## Freshness: validate on read
@@ -107,8 +107,10 @@ No merge-time hook is needed, and edits to the vdb made outside portage are caug
 ## Rebuild and check
 
 - `egraph rebuild`: full rebuild via `egraph-build --full`.
-- `egraph check`: build a fresh store in memory and diff it against the stored one; nonzero exit on
-  drift. This is the recovery tool and the standing proof that incremental refresh is exact.
+- `egraph check`: build a fresh store into a scratch file and diff its packages against the
+  stored ones, without refreshing the store first. Prints `+cpv` (missing from the store),
+  `-cpv` (no longer installed) or `~cpv` (different) per package and exits 4 on drift. This is
+  the recovery tool and the standing proof that incremental refresh is exact.
 - `EGRAPH_STRICT=1`: every incremental refresh also runs a full build and fails on any
   difference. Used by tests and while shaking out new layers.
 

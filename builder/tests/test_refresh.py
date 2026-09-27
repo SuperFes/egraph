@@ -36,9 +36,8 @@ def system(mutable_playground, tmp_path):
     return playground, tmp_path / "installed.egraph", builder, log
 
 
-def query(system, *extra, strict=True):
+def egraph(system, *args):
     playground, store, builder, _ = system
-    env = dict(os.environ, EGRAPH_STRICT="1" if strict else "0")
     return subprocess.run(
         [
             EGRAPH,
@@ -50,15 +49,16 @@ def query(system, *extra, strict=True):
             playground.eprefix,
             "--builder",
             str(builder),
-            *extra,
-            "export",
-            "--format",
-            "json",
+            *args,
         ],
         capture_output=True,
         text=True,
-        env=env,
+        env=dict(os.environ, EGRAPH_STRICT="1"),
     )
+
+
+def query(system, *extra):
+    return egraph(system, *extra, "export", "--format", "json")
 
 
 def expected(playground):
@@ -114,3 +114,31 @@ def test_no_refresh_answers_from_the_stale_store(system):
     assert result.stdout == before
     assert "warning: answering from a stale store" in result.stderr
     assert len(builds(system)) == 1
+
+
+def test_rebuild_writes_a_full_store(system):
+    result = egraph(system, "rebuild")
+    assert result.returncode == 0, result.stderr
+    assert builds(system)[-1].startswith("--full --store ")
+    assert query(system).stdout == expected(system[0])
+
+
+def test_check_finds_no_drift_in_a_current_store(system):
+    query(system)
+    result = egraph(system, "check")
+    assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
+
+
+def test_check_reports_what_the_store_missed(system):
+    playground = system[0]
+    query(system)
+    add_package(playground, "dev-libs/alt-b-1")
+    shutil.rmtree(vdb(playground, "dev-libs/nocond-1"))
+    result = egraph(system, "check")
+    assert result.returncode == 4
+    # alt-b-1 is new, nocond-1 is gone, and root-1's || now matches alt-b-1.
+    assert result.stdout.splitlines() == [
+        "~app-misc/root-1",
+        "+dev-libs/alt-b-1",
+        "-dev-libs/nocond-1",
+    ]

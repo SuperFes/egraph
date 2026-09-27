@@ -20,6 +20,8 @@ enum class Exit : std::uint8_t {
     failure = 1,
     usage = 2,
     not_implemented = 3,
+    // egraph check: the store differs from a fresh build.
+    drift = 4,
 };
 
 struct Deps {
@@ -88,8 +90,10 @@ struct Invocation {
 
 [[nodiscard]] std::filesystem::path store_path(const Invocation& invocation);
 
-// The egraph-build command line that refreshes the store at path.
-[[nodiscard]] std::vector<std::string> refresh_command(const Invocation& invocation,
+// The egraph-build command line that writes the store at path; mode is --full or
+// --incremental.
+[[nodiscard]] std::vector<std::string> builder_command(const Invocation& invocation,
+                                                       std::string_view mode,
                                                        const std::filesystem::path& path);
 
 // Declares every option and subcommand on app; app.parse() then fills invocation, which must

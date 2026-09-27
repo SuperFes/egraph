@@ -15,6 +15,7 @@
 using egraph::NodeType;
 using egraph::test::Bytes;
 using egraph::test::Section;
+using egraph::test::with_section;
 
 namespace {
 
@@ -26,17 +27,6 @@ std::string rejection(const std::vector<std::byte>& bytes) {
     const auto store = egraph::decode(bytes);
     REQUIRE_FALSE(store.has_value());
     return store.error().message;
-}
-
-// The sample with one section replaced.
-std::vector<std::byte> with_section(std::uint64_t id, const Bytes& bytes) {
-    auto sections = egraph::test::sample_sections();
-    for (auto& section : sections) {
-        if (section.id == id) {
-            section.bytes = bytes.bytes();
-        }
-    }
-    return egraph::test::assemble(sections);
 }
 
 // A packages section holding one package whose RDEPEND is written by nodes.

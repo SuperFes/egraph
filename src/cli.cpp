@@ -1,5 +1,6 @@
 #include "cli.hpp"
 
+#include "check.hpp"
 #include "freshness.hpp"
 #include "json.hpp"
 #include "os.hpp"
@@ -11,7 +12,10 @@
 #include <expected>
 #include <format>
 #include <map>
+#include <optional>
 #include <ostream>
+#include <random>
+#include <string_view>
 #include <utility>
 
 namespace egraph {
@@ -35,6 +39,19 @@ CLI::Option* add_field(CLI::App* sub, Invocation& invocation, std::string option
         std::move(description));
 }
 
+// Runs egraph-build; the error when it could not run or did not succeed.
+std::optional<std::string> run_builder(const Invocation& invocation, std::string_view mode,
+                                       const std::filesystem::path& path) {
+    const auto status = os::run(builder_command(invocation, mode, path));
+    if (!status) {
+        return status.error().message;
+    }
+    if (*status != 0) {
+        return std::format("{} exited with status {}", invocation.builder, *status);
+    }
+    return std::nullopt;
+}
+
 // The store, refreshed through egraph-build first if its inputs changed.
 std::expected<Store, std::string> open_store(const Invocation& invocation, std::ostream& err) {
     const auto path = store_path(invocation);
@@ -51,13 +68,8 @@ std::expected<Store, std::string> open_store(const Invocation& invocation, std::
     } else if (invocation.no_refresh) {
         return std::unexpected(store.error().message);
     }
-    const auto status = os::run(refresh_command(invocation, path));
-    if (!status) {
-        return std::unexpected(status.error().message);
-    }
-    if (*status != 0) {
-        return std::unexpected(
-            std::format("{} exited with status {}", invocation.builder, *status));
+    if (auto error = run_builder(invocation, "--incremental", path)) {
+        return std::unexpected(std::move(*error));
     }
     return load(path).transform_error([](const StoreError& error) { return error.message; });
 }
@@ -70,6 +82,48 @@ Exit execute(const std::monostate&, const Invocation&, std::ostream&, std::ostre
 template <class C> Exit execute(const C&, const Invocation&, std::ostream&, std::ostream& err) {
     err << "egraph: " << C::name << ": not implemented\n";
     return Exit::not_implemented;
+}
+
+Exit execute(const Rebuild&, const Invocation& invocation, std::ostream&, std::ostream& err) {
+    if (const auto error = run_builder(invocation, "--full", store_path(invocation))) {
+        err << "egraph: " << *error << '\n';
+        return Exit::failure;
+    }
+    return Exit::ok;
+}
+
+// A path no other egraph check is using.
+std::filesystem::path scratch_store() {
+    std::random_device random;
+    const auto name = std::format("egraph-check-{:08x}{:08x}.egraph", random(), random());
+    return std::filesystem::temp_directory_path() / name;
+}
+
+Exit execute(const Check&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
+    // Deliberately not refreshed: the point is to compare what is stored.
+    const auto stored = load(store_path(invocation));
+    if (!stored) {
+        err << "egraph: " << stored.error().message << '\n';
+        return Exit::failure;
+    }
+    const auto path = scratch_store();
+    const auto error = run_builder(invocation, "--full", path);
+    const auto fresh = error ? std::expected<Store, StoreError>{} : load(path);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    if (error) {
+        err << "egraph: " << *error << '\n';
+        return Exit::failure;
+    }
+    if (!fresh) {
+        err << "egraph: " << fresh.error().message << '\n';
+        return Exit::failure;
+    }
+    const auto lines = drift(*stored, *fresh);
+    for (const auto& line : lines) {
+        out << line << '\n';
+    }
+    return lines.empty() ? Exit::ok : Exit::drift;
 }
 
 Exit execute(const Export& command, const Invocation& invocation, std::ostream& out,
@@ -145,10 +199,10 @@ std::filesystem::path store_path(const Invocation& invocation) {
         default_store_path(invocation.root, invocation.eprefix.value_or("")));
 }
 
-std::vector<std::string> refresh_command(const Invocation& invocation,
+std::vector<std::string> builder_command(const Invocation& invocation, std::string_view mode,
                                          const std::filesystem::path& path) {
-    std::vector<std::string> argv{invocation.builder, "--incremental", "--store",
-                                  path.string(),      "--root",        invocation.root.string()};
+    std::vector<std::string> argv{invocation.builder, std::string{mode}, "--store",
+                                  path.string(),      "--root",          invocation.root.string()};
     if (invocation.config_root) {
         argv.insert(argv.end(), {"--config-root", invocation.config_root->string()});
     }

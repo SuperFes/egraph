@@ -1,5 +1,6 @@
 #include "cli.hpp"
 #include "freshness.hpp"
+#include "helpers.hpp"
 #include "os.hpp"
 #include "store_writer.hpp"
 
@@ -14,36 +15,16 @@
 namespace fs = std::filesystem;
 using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::EndsWith;
+using egraph::test::fake_builder;
+using egraph::test::fresh_sample;
+using egraph::test::read_text;
+using egraph::test::TempDir;
+using egraph::test::write_bytes;
+using egraph::test::write_text;
 
 namespace {
 
 constexpr std::uint64_t second_ns = 1'000'000'000;
-
-class TempDir {
-  public:
-    TempDir() : path_(fs::temp_directory_path() / ("egraph-fresh-" + std::to_string(counter++))) {
-        fs::remove_all(path_);
-        fs::create_directories(path_);
-    }
-    TempDir(const TempDir&) = delete;
-    TempDir& operator=(const TempDir&) = delete;
-    TempDir(TempDir&&) = delete;
-    TempDir& operator=(TempDir&&) = delete;
-    ~TempDir() {
-        std::error_code ignored;
-        fs::remove_all(path_, ignored);
-    }
-    [[nodiscard]] const fs::path& path() const { return path_; }
-
-  private:
-    static inline int counter = 0;
-    fs::path path_;
-};
-
-void write(const fs::path& path, std::string_view text) {
-    std::ofstream out(path, std::ios::binary);
-    out << text;
-}
 
 egraph::Input recorded(const fs::path& path, egraph::InputKind kind) {
     const auto status = egraph::os::lstat(path);
@@ -68,7 +49,7 @@ egraph::Store store_of(std::vector<egraph::Input> inputs) {
 
 TEST_CASE("unchanged inputs are fresh") {
     const TempDir dir;
-    write(dir.path() / "file", "abc");
+    write_text(dir.path() / "file", "abc");
     fs::create_symlink("file", dir.path() / "link");
     const auto store =
         store_of({recorded(dir.path(), egraph::InputKind::directory),
@@ -81,11 +62,11 @@ TEST_CASE("unchanged inputs are fresh") {
 TEST_CASE("changed inputs are stale") {
     const TempDir dir;
     const auto file = dir.path() / "file";
-    write(file, "abc");
+    write_text(file, "abc");
     const auto store = store_of({recorded(file, egraph::InputKind::file)});
 
     SECTION("size") {
-        write(file, "abcd");
+        write_text(file, "abcd");
         CHECK(egraph::staleness(store) == file.string() + ": changed");
     }
     SECTION("mtime") {
@@ -107,13 +88,13 @@ TEST_CASE("a recorded absence is stale once the path exists") {
     const TempDir dir;
     const auto path = dir.path() / "later";
     const auto store = store_of({{.path = path.string(), .kind = egraph::InputKind::missing}});
-    write(path, "");
+    write_text(path, "");
     CHECK(egraph::staleness(store) == path.string() + ": created");
 }
 
 TEST_CASE("inputs modified close to the build are not trusted") {
     const TempDir dir;
-    write(dir.path() / "file", "abc");
+    write_text(dir.path() / "file", "abc");
     auto store = store_of({recorded(dir.path() / "file", egraph::InputKind::file)});
     store.meta.build_time_ns = store.inputs.front().mtime_ns + (second_ns / 2);
     CHECK_THAT(egraph::staleness(store).value_or(""),
@@ -135,13 +116,13 @@ TEST_CASE("processes run and report how they ended") {
 TEST_CASE("the refresh command passes the roots through") {
     egraph::Invocation invocation;
     invocation.builder = "/usr/bin/egraph-build";
-    CHECK(egraph::refresh_command(invocation, "/s") ==
+    CHECK(egraph::builder_command(invocation, "--incremental", "/s") ==
           std::vector<std::string>{"/usr/bin/egraph-build", "--incremental", "--store", "/s",
                                    "--root", "/"});
     invocation.root = "/mnt";
     invocation.config_root = "/cfg";
     invocation.eprefix = "/prefix";
-    CHECK(egraph::refresh_command(invocation, "/s") ==
+    CHECK(egraph::builder_command(invocation, "--incremental", "/s") ==
           std::vector<std::string>{"/usr/bin/egraph-build", "--incremental", "--store", "/s",
                                    "--root", "/mnt", "--config-root", "/cfg", "--eprefix",
                                    "/prefix"});
@@ -150,37 +131,6 @@ TEST_CASE("the refresh command passes the roots through") {
 }
 
 namespace {
-
-// A store with no inputs, which is therefore always fresh.
-std::vector<std::byte> fresh_store() {
-    auto sections = egraph::test::sample_sections();
-    sections.at(1).bytes = egraph::test::Bytes{}.varint(0).bytes();
-    return egraph::test::assemble(sections);
-}
-
-void write_bytes(const fs::path& path, const std::vector<std::byte>& bytes) {
-    std::ofstream out(path, std::ios::binary);
-    for (const auto byte : bytes) {
-        out.put(static_cast<char>(byte));
-    }
-}
-
-// A stand-in for egraph-build: records its arguments, then installs a prepared store.
-fs::path fake_builder(const fs::path& dir, int status) {
-    const auto script = dir / "egraph-build";
-    write(script, std::format("#!/bin/sh\necho \"$@\" > '{}'\ncp '{}' \"$3\"\nexit {}\n",
-                              (dir / "args").string(), (dir / "prepared").string(), status));
-    fs::permissions(script, fs::perms::owner_all);
-    write_bytes(dir / "prepared", fresh_store());
-    return script;
-}
-
-std::string read(const fs::path& path) {
-    std::ifstream in(path);
-    std::ostringstream text;
-    text << in.rdbuf();
-    return text.str();
-}
 
 egraph::Invocation export_json(const fs::path& store, const fs::path& builder) {
     egraph::Invocation invocation;
@@ -195,14 +145,14 @@ egraph::Invocation export_json(const fs::path& store, const fs::path& builder) {
 TEST_CASE("a missing store is built before answering") {
     const TempDir dir;
     const auto store = dir.path() / "installed.egraph";
-    auto invocation = export_json(store, fake_builder(dir.path(), 0));
+    auto invocation = export_json(store, fake_builder(dir.path(), fresh_sample(), 0));
     invocation.eprefix = "/prefix";
     std::ostringstream out;
     std::ostringstream err;
     REQUIRE(egraph::run(invocation, out, err) == egraph::Exit::ok);
     CHECK(err.str().empty());
     CHECK_THAT(out.str(), ContainsSubstring("app-misc/a-1"));
-    CHECK(read(dir.path() / "args") ==
+    CHECK(read_text(dir.path() / "args") ==
           std::format("--incremental --store {} --root / --eprefix /prefix\n", store.string()));
 }
 
@@ -211,7 +161,7 @@ TEST_CASE("a stale store is refreshed before answering") {
     const auto store = dir.path() / "installed.egraph";
     // The sample records /var/db/pkg/app-misc with an mtime of 5 ns, which is never current.
     write_bytes(store, egraph::test::assemble(egraph::test::sample_sections()));
-    const auto invocation = export_json(store, fake_builder(dir.path(), 0));
+    const auto invocation = export_json(store, fake_builder(dir.path(), fresh_sample(), 0));
     std::ostringstream out;
     std::ostringstream err;
     REQUIRE(egraph::run(invocation, out, err) == egraph::Exit::ok);
@@ -223,7 +173,7 @@ TEST_CASE("--no-refresh answers from a stale store with a warning") {
     const TempDir dir;
     const auto store = dir.path() / "installed.egraph";
     write_bytes(store, egraph::test::assemble(egraph::test::sample_sections()));
-    auto invocation = export_json(store, fake_builder(dir.path(), 0));
+    auto invocation = export_json(store, fake_builder(dir.path(), fresh_sample(), 0));
     invocation.no_refresh = true;
     std::ostringstream out;
     std::ostringstream err;
@@ -235,7 +185,8 @@ TEST_CASE("--no-refresh answers from a stale store with a warning") {
 
 TEST_CASE("--no-refresh without a store fails") {
     const TempDir dir;
-    auto invocation = export_json(dir.path() / "none.egraph", fake_builder(dir.path(), 0));
+    auto invocation =
+        export_json(dir.path() / "none.egraph", fake_builder(dir.path(), fresh_sample(), 0));
     invocation.no_refresh = true;
     std::ostringstream out;
     std::ostringstream err;
@@ -245,7 +196,7 @@ TEST_CASE("--no-refresh without a store fails") {
 
 TEST_CASE("a failing builder fails the query") {
     const TempDir dir;
-    const auto builder = fake_builder(dir.path(), 7);
+    const auto builder = fake_builder(dir.path(), fresh_sample(), 7);
     const auto invocation = export_json(dir.path() / "installed.egraph", builder);
     std::ostringstream out;
     std::ostringstream err;

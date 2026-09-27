@@ -8,6 +8,8 @@ EXIT_OK = 0
 EXIT_FAILURE = 1
 EXIT_USAGE = 2
 EXIT_NOT_IMPLEMENTED = 3
+# egraph check: the store differs from a fresh build.
+EXIT_DRIFT = 4
 
 
 def parser():
