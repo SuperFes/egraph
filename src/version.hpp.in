@@ -1,0 +1,9 @@
+#pragma once
+
+#include <string_view>
+
+namespace egraph {
+
+inline constexpr std::string_view version = "@VERSION@";
+
+} // namespace egraph

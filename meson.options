@@ -1,0 +1,6 @@
+option(
+  'portage_lib',
+  type: 'string',
+  value: '/Development/Gentoo/portage/lib',
+  description: 'portage lib/ directory the builder tests import; empty uses the installed portage',
+)

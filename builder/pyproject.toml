@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "egraph-build"
+version = "0.0.0"
+description = "Builds the egraph store from the installed packages, through portage"
+requires-python = ">=3.9"
+license = { text = "GPL-2.0-only" }
+
+[project.scripts]
+egraph-build = "egraph_build.cli:main"
+
+[tool.black]
+target-version = ["py39"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "system: reads the live /var/db/pkg; opt in with EGRAPH_SYSTEM_TESTS=1",
+]
