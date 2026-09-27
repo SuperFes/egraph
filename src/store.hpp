@@ -18,7 +18,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t store_format_version = 1;
+inline constexpr std::uint32_t store_format_version = 2;
 inline constexpr std::array<std::string_view, 5> dep_kinds{"BDEPEND", "DEPEND", "IDEPEND",
                                                            "PDEPEND", "RDEPEND"};
 
@@ -87,7 +87,7 @@ struct Meta {
     std::uint64_t build_time_ns = 0;
 };
 
-enum class InputKind : std::uint8_t { file, directory };
+enum class InputKind : std::uint8_t { file, directory, symlink, missing };
 
 struct Input {
     std::string path;
@@ -129,6 +129,8 @@ read_file(const std::filesystem::path& path);
 
 [[nodiscard]] std::expected<Store, StoreError> load(const std::filesystem::path& path);
 
-[[nodiscard]] std::filesystem::path default_store_path(const std::filesystem::path& root);
+// ${ROOT}${EPREFIX}/var/cache/egraph/installed.egraph
+[[nodiscard]] std::filesystem::path default_store_path(const std::filesystem::path& root,
+                                                       const std::filesystem::path& eprefix);
 
 } // namespace egraph

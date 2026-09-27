@@ -61,6 +61,11 @@ and through egraph and diffs them over every package, atom and soname in a scena
 them. `test_oracle.py` pins the oracle to hand-worked expectations. Unimplemented egraph queries
 are strict xfails that must flip when the implementation lands.
 
+`test_golden.py` and `test_refresh.py` drive the real `egraph` binary (`EGRAPH`, set by `meson
+test`) against stores the builder wrote, with `EGRAPH_STRICT=1` so every incremental refresh is
+also checked against a full build. Tests that change a system use `mutable_playground` and
+backdate its files, since inputs modified within 1 s of a build are never trusted.
+
 ## C++ rules: memory safety is not negotiable
 
 No memory-unsafe code. Templates and values first, smart pointers only when ownership genuinely

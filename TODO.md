@@ -33,28 +33,23 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 
 ## Freshness and incremental refresh
 
-- [ ] Matching is half the build (`findings.md`). Incremental refresh should re-match only atoms
-      whose cp had a package added, removed or changed, not every atom of every package.
-- [ ] Measure the stat-on-load cost in C++ for the 2,431 live inputs (design assumes a few ms).
+- [ ] An incremental refresh after a one-package upgrade costs 5.0G instructions against 8.3G for
+      a full build, and nearly all of it is decoding and re-encoding the store in Python
+      (`findings.md`). If refresh latency after a merge matters, that floor is the thing to cut.
+- [ ] Environment variables that change implicit IUSE (`USE_EXPAND` and friends set in the
+      environment rather than make.conf) are not inputs, so a change there goes unnoticed.
+- [ ] `egraph` does not check the store's EROOT against its own roots; only the builder does, on
+      incremental builds.
 
 ## Store
-
-- [ ] If the Python reader (portage fork consumer) proves slow, store the large lists as
-      fixed-width u32 columns: Python can view them with `memoryview.cast` instead of decoding
-      varints one by one. The step 1 Python numbers only tokenized, so they are lower bounds.
 
 - [ ] A libFuzzer target for `decode()`. The unit tests mutate every byte of a small store, but
       the entry point takes a pointer and a size, so it needs a reviewed exception to
       `-Wunsafe-buffer-usage` in that one file.
-- [ ] The Python reader takes about 0.3 s on the live store (`findings.md`), close to the 0.37 s
-      index build the portage fork would replace. Decide at step 8 between the fork querying
-      `egraph` and the columnar u32 layout above.
 
 - [ ] Record the profile's implicit IUSE settings in the store for the C++ atom matcher, and the
       profile files they come from as inputs. Check how `settings._iuse_effective_match` builds
       its pattern before choosing a representation.
-- [ ] Prefix installs: the default store path is `${EROOT}/var/cache/egraph/`, but only the
-      builder knows EPREFIX. `egraph` could take it from the store it finds, or from `--eprefix`.
 
 ## Ideas
 

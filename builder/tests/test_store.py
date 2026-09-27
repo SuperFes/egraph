@@ -43,7 +43,7 @@ def test_every_truncation_is_rejected(reference_store):
     "offset, value, message",
     [
         (0, ord("X"), "not an egraph store"),
-        (8, 2, "format version 2"),
+        (8, 3, "format version 3"),
         (12, 4, "bad section table"),
     ],
 )
@@ -76,7 +76,7 @@ def test_write_replaces_atomically(tmp_path):
 
 def test_full_writes_the_store(monkeypatch, tmp_path, playgrounds):
     vardb = playgrounds("reference").vardb
-    monkeypatch.setattr(cli, "open_vardb", lambda config_root, root: vardb)
+    monkeypatch.setattr(cli, "open_vardb", lambda *args: vardb)
     path = tmp_path / "x.egraph"
     assert cli.main(["--full", "--store", str(path)]) == cli.EXIT_OK
     meta, inputs, layer = store.decode(path.read_bytes())
@@ -84,9 +84,11 @@ def test_full_writes_the_store(monkeypatch, tmp_path, playgrounds):
     assert installed.to_json(layer) == installed.to_json(installed.build(vardb))
 
 
-def test_full_defaults_to_the_roots_cache(monkeypatch, tmp_path, playgrounds):
+def test_full_defaults_to_the_eroots_cache(monkeypatch, playgrounds):
     vardb = playgrounds("reference").vardb
-    monkeypatch.setattr(cli, "open_vardb", lambda config_root, root: vardb)
+    monkeypatch.setattr(cli, "open_vardb", lambda *args: vardb)
     monkeypatch.delenv("EGRAPH_STORE", raising=False)
-    assert cli.main(["--full", "--root", str(tmp_path)]) == cli.EXIT_OK
-    assert (tmp_path / "var/cache/egraph/installed.egraph").is_file()
+    path = store.default_path(vardb.settings["EROOT"])
+    assert cli.main(["--full"]) == cli.EXIT_OK
+    assert os.path.isfile(path)
+    os.unlink(path)

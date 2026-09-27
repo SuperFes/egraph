@@ -57,10 +57,28 @@ def test_corrupt_store_fails_cleanly(scenario, tmp_path):
     path = tmp_path / "installed.egraph"
     path.write_bytes(data[: len(data) // 2])
     result = subprocess.run(
-        [EGRAPH, "--store", str(path), "export", "--format", "json"],
+        [EGRAPH, "--store", str(path), "--no-refresh", "export", "--format", "json"],
         capture_output=True,
         text=True,
     )
     assert result.returncode == 1
     assert result.stdout == ""
     assert result.stderr.startswith(f"egraph: {path}: ")
+
+
+def test_corrupt_store_is_rebuilt(tmp_path):
+    path = tmp_path / "installed.egraph"
+    path.write_bytes(b"EGRAPH\0\0garbage")
+    log = tmp_path / "args"
+    builder = tmp_path / "egraph-build"
+    builder.write_text(f'#!/bin/sh\necho "$@" > "{log}"\nexit 3\n')
+    builder.chmod(0o755)
+    result = subprocess.run(
+        [EGRAPH, "--store", str(path), "--builder", str(builder)]
+        + ["export", "--format", "json"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert log.read_text().startswith(f"--incremental --store {path} ")
+    assert result.stderr == f"egraph: {builder} exited with status 3\n"

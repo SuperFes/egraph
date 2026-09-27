@@ -1,6 +1,6 @@
 # Store format
 
-Status: format version 1, implemented by `builder/egraph_build/store.py` (writer and a Python
+Status: format version 2, implemented by `builder/egraph_build/store.py` (writer and a Python
 reader) and `src/store.cpp` (C++ reader). Any layout change bumps the version.
 
 ## Requirements
@@ -54,13 +54,17 @@ Debugging goes through `egraph export --json` and `egraph-build --json`.
 
 | Id | Section | Contents |
 |---|---|---|
-| 1 | Meta | egraph version, portage version, EROOT (length-prefixed), build time in ns |
-| 2 | Inputs | count, then `(path, kind, mtime_ns, size)`; path length-prefixed, kind 0 file, 1 directory |
+| 1 | Meta | egraph version, portage version, EROOT (length-prefixed), build start in ns |
+| 2 | Inputs | count, then `(path, kind, mtime_ns, size)`; path length-prefixed |
 | 3 | Strings | count, then length-prefixed bytes; string 0 is empty |
 | 4 | Packages | count, then the records below |
 | 5 | Roots | count, then `(atom, matches)`; written empty until roadmap step 7 |
 
-All five sections are required. Inputs are written empty until roadmap step 4.
+All five sections are required.
+
+Inputs come from `lstat`. Kind is 0 file, 1 directory, 2 symlink, 3 missing (mtime and size 0).
+An mtime before 1970 is clamped to 0 on both sides. The build start is taken before any input is
+stat'ed; an input whose mtime is within 1 s before it is racy and never trusted (`design.md`).
 
 Meta and inputs carry their strings inline, so freshness reads sections 1 and 2 and nothing else.
 Input paths are unique, so interning them would save nothing.

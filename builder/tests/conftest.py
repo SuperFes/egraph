@@ -90,6 +90,23 @@ def playgrounds(gnupg_home):
         playground.cleanup()
 
 
+@pytest.fixture
+def mutable_playground(gnupg_home):
+    """A throwaway system of its own, for tests that change it."""
+    from portage.tests.resolver.ResolverPlayground import ResolverPlayground
+
+    made = []
+
+    def make(name):
+        playground = ResolverPlayground(**SCENARIOS[name])
+        made.append(playground)
+        return playground
+
+    yield make
+    for playground in made:
+        playground.cleanup()
+
+
 @pytest.fixture(params=sorted(SCENARIOS))
 def scenario(request, playgrounds):
     return playgrounds(request.param)

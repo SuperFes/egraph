@@ -27,7 +27,7 @@ constexpr std::uint32_t section_packages = 4;
 constexpr std::uint32_t section_roots = 5;
 constexpr std::size_t section_count = 5;
 constexpr std::uint32_t node_type_count = 5;
-constexpr std::uint32_t input_kind_count = 2;
+constexpr std::uint32_t input_kind_count = 4;
 
 // decode() rejects files of 4 GiB and more, so every size derived from one fits.
 std::uint32_t size32(std::size_t size) {
@@ -406,8 +406,9 @@ std::expected<Store, StoreError> load(const std::filesystem::path& path) {
     });
 }
 
-std::filesystem::path default_store_path(const std::filesystem::path& root) {
-    return root / "var/cache/egraph/installed.egraph";
+std::filesystem::path default_store_path(const std::filesystem::path& root,
+                                         const std::filesystem::path& eprefix) {
+    return root / eprefix.relative_path() / "var/cache/egraph/installed.egraph";
 }
 
 } // namespace egraph

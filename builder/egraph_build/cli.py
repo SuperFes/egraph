@@ -41,47 +41,73 @@ def parser():
         "--store",
         type=Path,
         default=os.environ.get("EGRAPH_STORE"),
-        help="store file to write",
+        help="store file to write (default: ${EROOT}/var/cache/egraph/installed.egraph)",
     )
+    # Unset options fall through to portage's own defaults and environment.
     p.add_argument(
         "--root",
-        default=os.environ.get("ROOT", "/"),
+        default=os.environ.get("ROOT"),
         help="root whose installed packages to evaluate",
     )
     p.add_argument(
         "--config-root",
-        default=os.environ.get("PORTAGE_CONFIGROOT", "/"),
+        default=os.environ.get("PORTAGE_CONFIGROOT"),
         help="root of the portage configuration to evaluate them with",
+    )
+    p.add_argument(
+        "--eprefix",
+        default=os.environ.get("PORTAGE_OVERRIDE_EPREFIX"),
+        help="offset prefix of a prefix installation",
     )
     p.set_defaults(mode="full")
     return p
 
 
-def open_vardb(config_root, root):
+def open_vardb(config_root, root, eprefix=None):
     import portage
     from portage.dbapi.vartree import vartree
 
-    settings = portage.config(config_root=config_root, target_root=root)
+    settings = portage.config(
+        config_root=config_root, target_root=root, eprefix=eprefix
+    )
     return vartree(settings=settings).dbapi
 
 
-def write_store(args):
-    import time
+def _previous(path):
+    from egraph_build import store
 
+    try:
+        with open(path, "rb") as f:
+            return store.decode(f.read())
+    except (OSError, store.StoreError):
+        return None
+
+
+def write_store(args, incremental):
     import portage
 
-    from egraph_build import __version__, installed, store
+    from egraph_build import __version__, build, installed, store
 
-    vardb = open_vardb(args.config_root, args.root)
-    layer = installed.build(vardb)
+    vardb = open_vardb(args.config_root, args.root, args.eprefix)
+    path = args.store or store.default_path(vardb.settings["EROOT"])
+    previous = _previous(path) if incremental else None
+    result = build.incremental(vardb, *previous) if previous else build.full(vardb)
+    if not result.full and os.environ.get("EGRAPH_STRICT") == "1":
+        expected = installed.to_json(build.full(vardb).layer)
+        if installed.to_json(result.layer) != expected:
+            print(
+                "egraph-build: EGRAPH_STRICT: incremental build differs from a full build",
+                file=sys.stderr,
+            )
+            return EXIT_FAILURE
     meta = store.Meta(
         egraph_version=__version__,
         portage_version=portage.VERSION,
         eroot=vardb.settings["EROOT"],
-        build_time_ns=time.time_ns(),
+        build_time_ns=result.started_ns,
     )
-    path = args.store or store.default_path(args.root)
-    store.write(path, store.encode(layer, meta))
+    store.write(path, store.encode(result.layer, meta, result.inputs))
+    return EXIT_OK
 
 
 def main(argv=None):
@@ -90,13 +116,9 @@ def main(argv=None):
     except SystemExit as e:
         return EXIT_OK if e.code == 0 else EXIT_USAGE
     if args.mode == "json":
-        from egraph_build import installed
+        from egraph_build import build, installed
 
-        layer = installed.build(open_vardb(args.config_root, args.root))
-        sys.stdout.write(installed.to_json(layer))
+        vardb = open_vardb(args.config_root, args.root, args.eprefix)
+        sys.stdout.write(installed.to_json(build.full(vardb).layer))
         return EXIT_OK
-    if args.mode == "full":
-        write_store(args)
-        return EXIT_OK
-    print(f"egraph-build: {args.mode}: not implemented", file=sys.stderr)
-    return EXIT_NOT_IMPLEMENTED
+    return write_store(args, incremental=args.mode == "incremental")

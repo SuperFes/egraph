@@ -74,14 +74,23 @@ using Command = std::variant<std::monostate, Deps, Rdeps, Why, Soname, Broken, O
                              Stats, Rebuild, Check>;
 
 struct Invocation {
-    // Both are handed to egraph-build, which evaluates packages under root with the portage
-    // configuration under config_root.
+    // Handed to egraph-build, which evaluates the packages under root with the portage
+    // configuration under config_root. Unset ones are left to portage's defaults.
     std::filesystem::path root = "/";
-    std::filesystem::path config_root = "/";
+    std::optional<std::filesystem::path> config_root;
+    std::optional<std::filesystem::path> eprefix;
     std::optional<std::filesystem::path> store;
+    // Run to refresh a stale store.
+    std::string builder = "egraph-build";
     bool no_refresh = false;
     Command command;
 };
+
+[[nodiscard]] std::filesystem::path store_path(const Invocation& invocation);
+
+// The egraph-build command line that refreshes the store at path.
+[[nodiscard]] std::vector<std::string> refresh_command(const Invocation& invocation,
+                                                       const std::filesystem::path& path);
 
 // Declares every option and subcommand on app; app.parse() then fills invocation, which must
 // outlive the parse.

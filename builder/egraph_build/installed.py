@@ -9,6 +9,7 @@ to portage.
 """
 
 import collections
+import functools
 import json
 from typing import NamedTuple
 
@@ -53,7 +54,7 @@ class Package(NamedTuple):
     requires: tuple
 
 
-class _Matcher:
+class Matcher:
     """vardb.match per distinct atom string; 36k atoms on a real system are 5.7k distinct."""
 
     def __init__(self, vardb):
@@ -170,30 +171,43 @@ def satisfied(nodes):
     return tuple(result)
 
 
+class _Index(NamedTuple):
+    edges: dict
+    reverse: dict
+    matches: dict
+    providers: dict
+    consumers: dict
+
+
 class InstalledLayer:
     def __init__(self, packages):
-        self._packages = {pkg.cpv: pkg for pkg in sorted(packages)}
-        self._edges = {}
-        self._reverse = collections.defaultdict(set)
-        self._matches = {}
-        self._providers = collections.defaultdict(set)
-        self._consumers = collections.defaultdict(set)
+        self._packages = {pkg.cpv: pkg for pkg in sorted(packages, key=_cpv)}
+
+    # Built on first query: building and encoding a layer never need it.
+    @functools.cached_property
+    def _index(self):
+        index = _Index({}, collections.defaultdict(set), {}, {}, {})
+        providers = collections.defaultdict(set)
+        consumers = collections.defaultdict(set)
         for pkg in self._packages.values():
             edges = set()
             for kind, nodes in zip(DEP_KINDS, pkg.deps):
                 for node, choice in zip(nodes, choices(nodes)):
                     if node.type != ATOM:
                         continue
-                    self._matches[node.atom] = node.matches
+                    index.matches[node.atom] = node.matches
                     for child in node.matches:
                         edges.add(Edge(pkg.cpv, child, kind, node.atom, choice))
-            self._edges[pkg.cpv] = frozenset(edges)
+            index.edges[pkg.cpv] = frozenset(edges)
             for edge in edges:
-                self._reverse[edge.child].add(edge)
+                index.reverse[edge.child].add(edge)
             for category, soname in pkg.provides:
-                self._providers[soname].add(SonameUse(pkg.cpv, category))
+                providers[soname].add(SonameUse(pkg.cpv, category))
             for category, soname in pkg.requires:
-                self._consumers[soname].add(SonameUse(pkg.cpv, category))
+                consumers[soname].add(SonameUse(pkg.cpv, category))
+        index.providers.update(providers)
+        index.consumers.update(consumers)
+        return index
 
     def __iter__(self):
         return iter(self._packages.values())
@@ -206,7 +220,7 @@ class InstalledLayer:
 
     def matches(self, atom):
         """Installed cpvs an atom from any installed dependency tree resolves to."""
-        return self._matches[atom]
+        return self._index.matches[atom]
 
     def errors(self):
         return frozenset(
@@ -214,23 +228,27 @@ class InstalledLayer:
         )
 
     def deps(self, cpv, kinds=DEP_KINDS):
-        return frozenset(edge for edge in self._edges[cpv] if edge.kind in kinds)
+        return frozenset(edge for edge in self._index.edges[cpv] if edge.kind in kinds)
 
     def rdeps(self, cpv, kinds=DEP_KINDS):
         return frozenset(
-            edge for edge in self._reverse.get(cpv, ()) if edge.kind in kinds
+            edge for edge in self._index.reverse.get(cpv, ()) if edge.kind in kinds
         )
 
     def soname_providers(self, soname):
-        return frozenset(self._providers.get(soname, ()))
+        return frozenset(self._index.providers.get(soname, ()))
 
     def soname_consumers(self, soname):
-        return frozenset(self._consumers.get(soname, ()))
+        return frozenset(self._index.consumers.get(soname, ()))
+
+
+def _cpv(pkg):
+    return pkg.cpv
 
 
 def build(vardb):
     """Evaluate every installed package in vardb into an InstalledLayer."""
-    match = _Matcher(vardb)
+    match = Matcher(vardb)
     return InstalledLayer(read_package(vardb, cpv, match) for cpv in vardb.cpv_all())
 
 

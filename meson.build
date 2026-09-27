@@ -46,7 +46,9 @@ version_hpp = configure_file(
 egraph_lib = static_library(
   'egraph',
   'src/cli.cpp',
+  'src/freshness.cpp',
   'src/json.cpp',
+  'src/os.cpp',
   'src/store.cpp',
   version_hpp,
   dependencies: cli11,
@@ -62,6 +64,7 @@ egraph_exe = executable('egraph', 'src/main.cpp', dependencies: egraph_dep, inst
 unit_tests = executable(
   'unit-tests',
   'tests/test_cli.cpp',
+  'tests/test_freshness.cpp',
   'tests/test_json.cpp',
   'tests/test_store.cpp',
   dependencies: [egraph_dep, catch2],

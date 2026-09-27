@@ -9,7 +9,7 @@ from egraph_build.installed import InstalledLayer, Node, Package
 from egraph_build.model import DEP_KINDS
 
 MAGIC = b"EGRAPH\0\0"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 SECTION_META, SECTION_INPUTS, SECTION_STRINGS, SECTION_PACKAGES, SECTION_ROOTS = range(
     1, 6
 )
@@ -20,7 +20,7 @@ SECTIONS = (
     SECTION_PACKAGES,
     SECTION_ROOTS,
 )
-INPUT_FILE, INPUT_DIRECTORY = range(2)
+INPUT_FILE, INPUT_DIRECTORY, INPUT_SYMLINK, INPUT_MISSING = range(4)
 DEFAULT_PATH = "var/cache/egraph/installed.egraph"
 
 _HEADER = struct.Struct("<8sII")
@@ -45,8 +45,8 @@ class Input(NamedTuple):
     size: int
 
 
-def default_path(root):
-    return os.path.join(root, DEFAULT_PATH)
+def default_path(eroot):
+    return os.path.join(eroot, DEFAULT_PATH)
 
 
 def _bytes(text):
@@ -60,6 +60,9 @@ class _Writer:
 
     def varint(self, value):
         out = self.out
+        if value < 0x80:
+            out.append(value)
+            return
         while value > 0x7F:
             out.append((value & 0x7F) | 0x80)
             value >>= 7
@@ -176,6 +179,13 @@ class _Reader:
         raise StoreError(f"{self.name}: {what} at byte {self.pos}")
 
     def varint(self, limit=None):
+        pos = self.pos
+        if pos < len(self.data) and self.data[pos] < 0x80:
+            value = self.data[pos]
+            self.pos = pos + 1
+            if limit is not None and value >= limit:
+                self.fail(f"index {value} out of range {limit}")
+            return value
         value = 0
         for shift in range(0, 70, 7):
             if self.pos >= len(self.data):

@@ -62,3 +62,10 @@ def test_cpp_reads_the_live_store(live_layer, tmp_path):
         check=True,
     ).stdout
     assert exported == installed.to_json(live_layer).encode()
+
+
+def test_incremental_agrees_with_full(live_vardb, tmp_path, monkeypatch):
+    monkeypatch.setenv("EGRAPH_STRICT", "1")
+    path = tmp_path / "installed.egraph"
+    assert cli.main(["--full", "--store", str(path)]) == cli.EXIT_OK
+    assert cli.main(["--incremental", "--store", str(path)]) == cli.EXIT_OK

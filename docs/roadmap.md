@@ -9,7 +9,7 @@ Update the status column as steps land.
 | 1 | Measure and choose the store encoding | done |
 | 2 | Installed layer in the builder | done |
 | 3 | Store writer and reader | done |
-| 4 | Freshness | not started |
+| 4 | Freshness | done |
 | 5 | `rebuild` and `check` | not started |
 | 6 | Queries | not started |
 | 7 | Roots and orphans | not started |
@@ -53,8 +53,9 @@ Update the status column as steps land.
 
 - An input list in the store, and stat-on-load in C++.
 - `egraph-build --incremental`, spawned from `src/os.cpp`, and `--no-refresh`.
-- Tests: in-place vdb change, package added, package removed, world edit, profile edit.
-  `EGRAPH_STRICT` checks every refresh against a full build.
+- Tests: in-place vdb change, package added, package removed, profile edit. `EGRAPH_STRICT`
+  checks every refresh against a full build. World edits are tested with roots in step 7, when
+  the world file becomes an input.
 
 ## 5. `rebuild` and `check`
 

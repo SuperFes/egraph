@@ -169,3 +169,29 @@ packages, 1.01 MB with inputs still empty. Load average was about 20, so cycles 
   0.37 s index build by much; see `TODO.md`.
 - The live store round-trips: `egraph export --format json` of the builder's store is
   byte-identical to `egraph-build --json` (5.7 MB).
+
+## Freshness and incremental refresh (2026-09-27, roadmap step 4)
+
+Live system, 2,324 packages. Instruction and cycle counts are medians of interleaved
+`perf stat` runs (15 for C++, 5 for the builder); task-clock includes the kernel.
+
+- The store records 2,575 inputs: 2,482 directories (vdb, categories, packages, profile
+  directories), 92 files and 1 absent path. It grew from 1.01 MB to 1.15 MB.
+- C++ load plus freshness check: 42.1M instructions and 11.6M cycles in user space, against
+  38.1M and 10.4M for the load alone. Counting the kernel, the 2,575 `lstat` calls add about
+  2.6 ms (task-clock 5.5 ms to 8.1 ms for the whole process).
+- Builder, on a copy of the live vdb without CONTENTS and environment files:
+
+  | Build | Instructions | Cycles |
+  |---|---|---|
+  | Full | 8.27G | 4.41G |
+  | Incremental, nothing changed | 5.00G | 1.83G |
+  | Incremental after upgrading dev-libs/openssl (199 reverse deps re-matched) | 5.05G | 2.05G |
+
+  The openssl case re-read one package and matched a full build exactly (`EGRAPH_STRICT=1`).
+- Most of the incremental floor is the Python store decode and encode. Two changes cut it before
+  the numbers above: building the query index lazily (the builder never queries) and a
+  single-byte fast path for varints. No-change incremental went from 6.06G to 5.00G
+  instructions and 2.40G to 1.83G cycles; full builds from 8.81G to 8.27G.
+- A bug the tests caught on the way: the vdb directory itself was classified as configuration,
+  so a new category forced a full build.

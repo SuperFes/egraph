@@ -1,11 +1,15 @@
 #include "cli.hpp"
 
+#include "freshness.hpp"
 #include "json.hpp"
+#include "os.hpp"
 #include "store.hpp"
 #include "version.hpp"
 
 #include <CLI/CLI.hpp>
 
+#include <expected>
+#include <format>
 #include <map>
 #include <ostream>
 #include <utility>
@@ -31,6 +35,33 @@ CLI::Option* add_field(CLI::App* sub, Invocation& invocation, std::string option
         std::move(description));
 }
 
+// The store, refreshed through egraph-build first if its inputs changed.
+std::expected<Store, std::string> open_store(const Invocation& invocation, std::ostream& err) {
+    const auto path = store_path(invocation);
+    auto store = load(path);
+    if (store) {
+        const auto reason = staleness(*store);
+        if (!reason) {
+            return std::move(*store);
+        }
+        if (invocation.no_refresh) {
+            err << "egraph: warning: answering from a stale store (" << *reason << ")\n";
+            return std::move(*store);
+        }
+    } else if (invocation.no_refresh) {
+        return std::unexpected(store.error().message);
+    }
+    const auto status = os::run(refresh_command(invocation, path));
+    if (!status) {
+        return std::unexpected(status.error().message);
+    }
+    if (*status != 0) {
+        return std::unexpected(
+            std::format("{} exited with status {}", invocation.builder, *status));
+    }
+    return load(path).transform_error([](const StoreError& error) { return error.message; });
+}
+
 Exit execute(const std::monostate&, const Invocation&, std::ostream&, std::ostream& err) {
     err << "egraph: no command given\n";
     return Exit::usage;
@@ -47,9 +78,9 @@ Exit execute(const Export& command, const Invocation& invocation, std::ostream& 
         err << "egraph: export: only --format json of the whole graph is implemented\n";
         return Exit::not_implemented;
     }
-    const auto store = load(invocation.store.value_or(default_store_path(invocation.root)));
+    const auto store = open_store(invocation, err);
     if (!store) {
-        err << "egraph: " << store.error().message << '\n';
+        err << "egraph: " << store.error() << '\n';
         return Exit::failure;
     }
     write_json(out, *store);
@@ -68,9 +99,16 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->capture_default_str();
     app.add_option("--config-root", invocation.config_root,
                    "Root of the portage configuration to evaluate them with")
-        ->envname("PORTAGE_CONFIGROOT")
+        ->envname("PORTAGE_CONFIGROOT");
+    app.add_option("--eprefix", invocation.eprefix, "Offset prefix of a prefix installation")
+        ->envname("PORTAGE_OVERRIDE_EPREFIX");
+    app.add_option("--store", invocation.store,
+                   "Store file to read (default: ${ROOT}${EPREFIX}/var/cache/egraph/"
+                   "installed.egraph)")
+        ->envname("EGRAPH_STORE");
+    app.add_option("--builder", invocation.builder, "egraph-build command that refreshes the store")
+        ->envname("EGRAPH_BUILD")
         ->capture_default_str();
-    app.add_option("--store", invocation.store, "Store file to read")->envname("EGRAPH_STORE");
     app.add_flag("--no-refresh", invocation.no_refresh,
                  "Answer from a stale store instead of rebuilding it");
 
@@ -100,6 +138,24 @@ void configure(CLI::App& app, Invocation& invocation) {
     add_command<Stats>(app, invocation, "Store and graph statistics");
     add_command<Rebuild>(app, invocation, "Rebuild the store from scratch");
     add_command<Check>(app, invocation, "Diff the store against a fresh build");
+}
+
+std::filesystem::path store_path(const Invocation& invocation) {
+    return invocation.store.value_or(
+        default_store_path(invocation.root, invocation.eprefix.value_or("")));
+}
+
+std::vector<std::string> refresh_command(const Invocation& invocation,
+                                         const std::filesystem::path& path) {
+    std::vector<std::string> argv{invocation.builder, "--incremental", "--store",
+                                  path.string(),      "--root",        invocation.root.string()};
+    if (invocation.config_root) {
+        argv.insert(argv.end(), {"--config-root", invocation.config_root->string()});
+    }
+    if (invocation.eprefix) {
+        argv.insert(argv.end(), {"--eprefix", invocation.eprefix->string()});
+    }
+    return argv;
 }
 
 Exit run(const Invocation& invocation, std::ostream& out, std::ostream& err) {

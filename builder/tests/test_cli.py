@@ -33,30 +33,37 @@ def test_help_exits_cleanly(capsys):
     assert cli.main(["--help"]) == cli.EXIT_OK
 
 
-@pytest.mark.parametrize("mode", ["incremental"])
-def test_unimplemented_modes_say_so(mode, capsys):
-    assert cli.main([f"--{mode}"]) == cli.EXIT_NOT_IMPLEMENTED
-    assert capsys.readouterr().err == f"egraph-build: {mode}: not implemented\n"
-
-
-def test_roots_default_to_environment(monkeypatch):
+def test_roots_default_to_portages_environment(monkeypatch):
     monkeypatch.setenv("ROOT", "/mnt/target")
     monkeypatch.setenv("PORTAGE_CONFIGROOT", "/mnt/config")
+    monkeypatch.setenv("PORTAGE_OVERRIDE_EPREFIX", "/prefix")
     args = cli.parser().parse_args([])
-    assert (args.root, args.config_root) == ("/mnt/target", "/mnt/config")
+    assert (args.root, args.config_root, args.eprefix) == (
+        "/mnt/target",
+        "/mnt/config",
+        "/prefix",
+    )
+
+
+def test_unset_roots_are_left_to_portage(monkeypatch):
+    for name in ("ROOT", "PORTAGE_CONFIGROOT", "PORTAGE_OVERRIDE_EPREFIX"):
+        monkeypatch.delenv(name, raising=False)
+    args = cli.parser().parse_args([])
+    assert (args.root, args.config_root, args.eprefix) == (None, None, None)
 
 
 def test_json_prints_the_installed_layer(monkeypatch, capsys, playgrounds):
     vardb = playgrounds("reference").vardb
     opened = []
 
-    def open_vardb(config_root, root):
-        opened.append((config_root, root))
+    def open_vardb(config_root, root, eprefix):
+        opened.append((config_root, root, eprefix))
         return vardb
 
     monkeypatch.setattr(cli, "open_vardb", open_vardb)
-    assert cli.main(["--json", "--root", "/r", "--config-root", "/c"]) == cli.EXIT_OK
-    assert opened == [("/c", "/r")]
+    argv = ["--json", "--root", "/r", "--config-root", "/c", "--eprefix", "/p"]
+    assert cli.main(argv) == cli.EXIT_OK
+    assert opened == [("/c", "/r", "/p")]
     assert capsys.readouterr().out == installed.to_json(installed.build(vardb))
 
 

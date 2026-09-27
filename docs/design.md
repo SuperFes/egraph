@@ -67,25 +67,39 @@ dependencies with defaults, repository) and means by it exactly what `vardb.matc
 
 ## Roots and exit codes
 
-- Both tools take `--root` and `--config-root`, defaulting to `ROOT` and `PORTAGE_CONFIGROOT`,
-  and `egraph` passes them to `egraph-build`. The store records its EROOT and is stale for any
-  other.
+- Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,
+  `PORTAGE_CONFIGROOT` and `PORTAGE_OVERRIDE_EPREFIX`, and `egraph` passes the ones given to
+  `egraph-build`. The default store is `${ROOT}${EPREFIX}/var/cache/egraph/installed.egraph`.
+  The store records its EROOT, and an incremental build for another EROOT is a full one.
 - Both tools share exit codes (0 ok, 1 failure, 2 usage, 3 not implemented); a test pins
   `builder/egraph_build/cli.py` to the `Exit` enum in `src/cli.hpp`.
 
 ## Freshness: validate on read
 
-The store carries its own input list, like a make `.d` file: every file and directory the builder
-read, with `st_mtime_ns` and size. That covers each `/var/db/pkg/<cat>/<pf>` directory (in-place
-changes), each category directory (packages added or removed), the world file, and the profile
-files.
+The store carries its own input list, like a make `.d` file: every path the builder read, with
+its kind (file, directory, symlink, or missing), `st_mtime_ns` and size from `lstat`. That covers
+the vdb directory (categories added or removed), each category directory (packages added or
+removed), each package directory (in-place changes, which portage writes by rename), and the
+configuration that decides how USE dependencies match: `make.globals`, `make.conf`, the
+`make.profile` link and every profile directory with its entries. A path recorded as missing is
+stale once it exists. The world file joins the inputs with roots (roadmap step 7).
 
-On load `egraph` stats every input (a few thousand `stat` calls, a few ms):
+Timestamps are coarse, so an input modified within 1 s before the build started is never trusted
+as unchanged (the racy-git rule); a store built right after a merge refreshes once more and then
+settles.
+
+On load `egraph` stats every input (2,575 `lstat` calls on the dev box, about 2.6 ms):
 
 - Nothing changed: answer from the store.
-- Something changed: run `egraph-build --incremental`, which re-evaluates only the changed
-  packages, then reload. `--no-refresh` answers from the stale store with a warning.
+- Something changed, or the store is missing or corrupt: run `egraph-build --incremental` (the
+  command is `--builder` or `EGRAPH_BUILD`), then reload. `--no-refresh` answers from a stale
+  store with a warning and fails without one.
 - The store cannot be written (unprivileged user): see open questions.
+
+`--incremental` re-reads only the packages that were added or whose directory changed, and in
+the others re-matches only the atoms naming a cp that gained, lost or changed a package. A
+changed configuration input or another EROOT means a full build. `EGRAPH_STRICT=1` compares
+every incremental build against a full one and fails, leaving the old store, on any difference.
 
 No merge-time hook is needed, and edits to the vdb made outside portage are caught too.
 `/etc/portage/postsync.d` can prebuild the later layers after a sync.
@@ -95,8 +109,8 @@ No merge-time hook is needed, and edits to the vdb made outside portage are caug
 - `egraph rebuild`: full rebuild via `egraph-build --full`.
 - `egraph check`: build a fresh store in memory and diff it against the stored one; nonzero exit on
   drift. This is the recovery tool and the standing proof that incremental refresh is exact.
-- `EGRAPH_STRICT=1`: every refresh also runs a full build and fails on any difference. Used by tests
-  and while shaking out new layers.
+- `EGRAPH_STRICT=1`: every incremental refresh also runs a full build and fails on any
+  difference. Used by tests and while shaking out new layers.
 
 ## Store location
 
@@ -109,8 +123,9 @@ partial store.
 Each consumer runs in shadow mode against the tool it replaces before anyone relies on it.
 
 - CLI queries: `deps`, `rdeps`, `why`, `soname`, `broken`, `orphans`, `export`, `stats`.
-- The portage fork's neighborhood completion (`depgraph._installed_graph()`), through a small Python
-  reader, which removes the 0.37 s index build from every emerge run.
+- The portage fork's neighborhood completion (`depgraph._installed_graph()`), by querying `egraph`,
+  which removes the 0.37 s index build from every emerge run. The Python store reader decodes the
+  live store in about 0.3 s and exists for tests only.
 - The graph viewer (`~/.local/bin/portage-graph-view`) reading the store instead of building its own.
 - The update fast path, once the candidate layer exists: `-uDN @world` becomes a set difference,
   and an empty difference means nothing to resolve.
@@ -119,5 +134,3 @@ Each consumer runs in shadow mode against the tool it replaces before anyone rel
 
 - **Unprivileged refresh:** proposed fallback is a store in `$XDG_CACHE_HOME/egraph/` when the
   system store is stale and unwritable, so non-root queries are never wrong.
-- **Store for the portage fork:** a Python reader in `egraph_build`, or the fork calls `egraph
-  export`. Decide when that consumer is next.

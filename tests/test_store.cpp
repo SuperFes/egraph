@@ -147,8 +147,8 @@ TEST_CASE("the header is checked") {
     bytes.at(0) = std::byte{'X'};
     CHECK(rejection(bytes) == "not an egraph store");
 
-    CHECK(rejection(egraph::test::assemble(egraph::test::sample_sections(), 2)) ==
-          "format version 2, expected 1");
+    CHECK(rejection(egraph::test::assemble(egraph::test::sample_sections(), 3)) ==
+          "format version 3, expected 2");
 
     auto sections = egraph::test::sample_sections();
     sections.pop_back();
@@ -179,8 +179,8 @@ TEST_CASE("sections are checked") {
     CHECK_THAT(rejection(with_section(3, Bytes{}.varint(1).text("x"))),
                Catch::Matchers::StartsWith("strings: string 0 must be empty"));
     CHECK_THAT(
-        rejection(with_section(2, Bytes{}.varint(1).text("/").varint(2).varint(0).varint(0))),
-        Catch::Matchers::StartsWith("inputs: input kind 2 out of range 2"));
+        rejection(with_section(2, Bytes{}.varint(1).text("/").varint(4).varint(0).varint(0))),
+        Catch::Matchers::StartsWith("inputs: input kind 4 out of range 4"));
     // Nine continuation bytes leave one bit for the tenth.
     Bytes overflow;
     for (int i = 0; i < 9; ++i) {
@@ -228,12 +228,15 @@ TEST_CASE("load names the file in its errors") {
 }
 
 TEST_CASE("the default store lives under the root") {
-    CHECK(egraph::default_store_path("/mnt/target") ==
+    CHECK(egraph::default_store_path("/mnt/target", "") ==
           std::filesystem::path{"/mnt/target/var/cache/egraph/installed.egraph"});
+    CHECK(egraph::default_store_path("/", "/prefix") ==
+          std::filesystem::path{"/prefix/var/cache/egraph/installed.egraph"});
 }
 
 TEST_CASE("export --format json reads the store") {
-    const TempFile file(sample());
+    // No inputs, so the store is fresh and nothing is spawned.
+    const TempFile file(with_section(2, Bytes{}.varint(0)));
     egraph::Invocation invocation;
     invocation.store = file.path();
     invocation.command = egraph::Export{.format = egraph::ExportFormat::json, .packages = {}};
@@ -244,6 +247,7 @@ TEST_CASE("export --format json reads the store") {
     CHECK_THAT(out.str(), Catch::Matchers::StartsWith(R"({"format":1,"packages":[{"cp":)"));
 
     invocation.store = "/nonexistent/egraph.store";
+    invocation.no_refresh = true;
     std::ostringstream missing;
     CHECK(egraph::run(invocation, out, missing) == egraph::Exit::failure);
     CHECK(missing.str() == "egraph: /nonexistent/egraph.store: No such file or directory\n");
