@@ -1,5 +1,7 @@
 #pragma once
 
+#include "query.hpp"
+
 #include <cstdint>
 #include <filesystem>
 #include <iosfwd>
@@ -26,12 +28,12 @@ enum class Exit : std::uint8_t {
 
 struct Deps {
     static constexpr std::string_view name = "deps";
-    std::string package;
+    std::vector<std::string> packages;
 };
 
 struct Rdeps {
     static constexpr std::string_view name = "rdeps";
-    std::string package;
+    std::vector<std::string> packages;
 };
 
 struct Why {
@@ -42,6 +44,7 @@ struct Why {
 struct Soname {
     static constexpr std::string_view name = "soname";
     std::string soname;
+    bool providers = false;
 };
 
 struct Broken {
@@ -58,6 +61,8 @@ struct Export {
     static constexpr std::string_view name = "export";
     ExportFormat format = ExportFormat::dot;
     std::vector<std::string> packages;
+    std::uint32_t depth = 1;
+    Direction direction = Direction::reverse;
 };
 
 struct Stats {

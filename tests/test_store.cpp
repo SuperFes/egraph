@@ -15,6 +15,7 @@
 using egraph::NodeType;
 using egraph::test::Bytes;
 using egraph::test::Section;
+using egraph::test::with_rdepend;
 using egraph::test::with_section;
 
 namespace {
@@ -27,16 +28,6 @@ std::string rejection(const std::vector<std::byte>& bytes) {
     const auto store = egraph::decode(bytes);
     REQUIRE_FALSE(store.has_value());
     return store.error().message;
-}
-
-// A packages section holding one package whose RDEPEND is written by nodes.
-std::vector<std::byte> with_rdepend(std::uint64_t count, const std::function<void(Bytes&)>& nodes) {
-    Bytes packages;
-    packages.varint(1).varints({1, 2, 3, 3, 4, 5}).list({}).list({}).varint(0);
-    packages.varint(0).varint(0).varint(0).varint(0).varint(count);
-    nodes(packages);
-    packages.varint(0).varint(0);
-    return with_section(4, packages);
 }
 
 class TempFile {
@@ -241,12 +232,4 @@ TEST_CASE("export --format json reads the store") {
     std::ostringstream missing;
     CHECK(egraph::run(invocation, out, missing) == egraph::Exit::failure);
     CHECK(missing.str() == "egraph: /nonexistent/egraph.store: No such file or directory\n");
-}
-
-TEST_CASE("export of dot or a neighborhood is not implemented yet") {
-    egraph::Invocation invocation;
-    invocation.command = egraph::Export{.format = egraph::ExportFormat::dot, .packages = {}};
-    std::ostringstream out;
-    std::ostringstream err;
-    CHECK(egraph::run(invocation, out, err) == egraph::Exit::not_implemented);
 }

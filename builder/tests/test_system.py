@@ -69,3 +69,52 @@ def test_incremental_agrees_with_full(live_vardb, tmp_path, monkeypatch):
     path = tmp_path / "installed.egraph"
     assert cli.main(["--full", "--store", str(path)]) == cli.EXIT_OK
     assert cli.main(["--incremental", "--store", str(path)]) == cli.EXIT_OK
+
+
+@pytest.fixture(scope="module")
+def live_store(live_layer, tmp_path_factory):
+    path = tmp_path_factory.mktemp("live") / "installed.egraph"
+    store.write(path, store.encode(live_layer, store.Meta("0", "0", "/", 0)))
+    return path
+
+
+def _egraph(path, *args):
+    result = subprocess.run(
+        [os.environ["EGRAPH"], "--store", str(path), "--no-refresh", *args],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+def test_cpp_queries_agree_with_portage(live_vardb, live_store):
+    from test_queries import parse_edges
+
+    for (cpv,) in subjects_sample(live_vardb, "deps"):
+        assert parse_edges(_egraph(live_store, "deps", cpv)) == oracle.deps(
+            live_vardb, cpv
+        )
+        assert parse_edges(_egraph(live_store, "rdeps", cpv)) == oracle.rdeps(
+            live_vardb, cpv
+        )
+
+
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+def test_cpp_broken_agrees_with_portage(live_vardb, live_store):
+    expected = sorted("\t".join(item) for item in oracle.broken(live_vardb))
+    assert _egraph(live_store, "broken").splitlines() == expected
+
+
+def subjects_sample(vardb, query):
+    import random
+
+    from compare import subjects
+
+    chosen = subjects(vardb, query)
+    return sorted(random.Random(query).sample(chosen, min(SAMPLE, len(chosen))))

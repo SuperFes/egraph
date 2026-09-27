@@ -11,7 +11,7 @@ Update the status column as steps land.
 | 3 | Store writer and reader | done |
 | 4 | Freshness | done |
 | 5 | `rebuild` and `check` | done |
-| 6 | Queries | not started |
+| 6 | Queries | 6a done, 6b not started |
 | 7 | Roots and orphans | not started |
 | 8 | Consumers | not started |
 | 9 | Evaluated and candidate layers | not planned yet |
@@ -64,13 +64,17 @@ Update the status column as steps land.
 
 ## 6. Queries
 
-- `deps`, `rdeps`, `why` (BFS from roots over the reverse graph), `soname`, `broken`, `export`
-  (dot, json) and `stats`.
-- Query arguments are full portage atoms: a C++ atom parser and matcher, run in shadow against
-  `vardb.match` until they agree (`design.md`).
-- Each query is tested against the builder's Python answer on the same playground.
+- 6a: `deps`, `rdeps`, `soname`, `broken`, `export` (dot, json, neighborhoods) and `stats`, taking
+  cpvs and cps. Each is tested through the binary against `egraph_build.oracle` on every
+  scenario, and sampled on the live vdb.
+- 6b: query arguments are full portage atoms: a C++ atom parser and matcher, run in shadow
+  against `vardb.match` until they agree (`design.md`). Needs the profile's implicit IUSE in the
+  store.
+- `why` needs roots and lands with step 7.
 
 ## 7. Roots and orphans
+
+- `why` (shortest path from a root over the reverse graph).
 
 - The builder evaluates @system and @profile and records the profile files as inputs.
 - `orphans` runs in shadow against `emerge --depclean --pretend`; differences get tests before

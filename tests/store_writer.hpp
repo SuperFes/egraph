@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <initializer_list>
 #include <string_view>
 #include <vector>
@@ -144,6 +145,18 @@ inline std::vector<std::byte> with_section(std::uint64_t id, const Bytes& bytes)
         }
     }
     return assemble(sections);
+}
+
+// The sample with its packages replaced by app-misc/a-1 alone, whose RDEPEND is count nodes
+// written by nodes as (type, parent, atom, matches).
+inline std::vector<std::byte> with_rdepend(std::uint64_t count,
+                                           const std::function<void(Bytes&)>& nodes) {
+    Bytes packages;
+    packages.varint(1).varints({1, 2, 3, 3, 4, 5}).list({}).list({}).varint(0);
+    packages.varint(0).varint(0).varint(0).varint(0).varint(count);
+    nodes(packages);
+    packages.varint(0).varint(0);
+    return with_section(4, packages);
 }
 
 // The sample without inputs, which is therefore always fresh.

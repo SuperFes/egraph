@@ -3,10 +3,12 @@
 #include <array>
 #include <cstdint>
 #include <format>
+#include <numeric>
 #include <optional>
 #include <ostream>
 #include <sstream>
 #include <utility>
+#include <vector>
 
 namespace egraph {
 
@@ -221,15 +223,21 @@ std::string package_json(const Store& store, const Package& pkg) {
     return std::move(out).str();
 }
 
-void write_json(std::ostream& out, const Store& store) {
+void write_json(std::ostream& out, const Store& store, std::span<const std::uint32_t> packages) {
     out << R"({"format":1,"packages":[)";
     bool first = true;
-    for (const auto& pkg : store.packages) {
+    for (const auto id : packages) {
         out << (first ? "" : ",");
         first = false;
-        write_package(out, store, pkg);
+        write_package(out, store, store.packages.at(id));
     }
     out << "]}\n";
+}
+
+void write_json(std::ostream& out, const Store& store) {
+    std::vector<std::uint32_t> all(store.packages.size());
+    std::ranges::iota(all, 0U);
+    write_json(out, store, all);
 }
 
 } // namespace egraph

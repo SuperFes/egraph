@@ -141,3 +141,19 @@ def test_sonames_keep_multilib_categories(playgrounds):
     assert oracle.soname_consumers(vardb, "libgone.so.1") == {
         SonameUse("app-misc/tool-1", "x86_64"),
     }
+
+
+def test_broken(playgrounds):
+    assert oracle.broken(playgrounds("any-of").vardb) == {
+        ("app-misc/x-1", "BDEPEND", "|| ( dev-libs/nothing-a dev-libs/nothing-b )"),
+        ("app-misc/x-1", "PDEPEND", "dev-libs/absent"),
+        ("app-misc/y-1", "DEPEND", "__const__/empty-any-of"),
+    }
+    assert oracle.broken(playgrounds("slots").vardb) == {
+        ("app-misc/a-1", "RDEPEND", "dev-libs/lib:1/1.1="),
+        ("app-misc/a-1", "RDEPEND", "dev-libs/lib:3"),
+    }
+    assert oracle.broken(playgrounds("use-deps").vardb) == {
+        ("app-misc/a-1", "RDEPEND", "dev-libs/lib[gtk]"),
+        ("app-misc/a-1", "RDEPEND", "dev-libs/lib[qt(-)]"),
+    }

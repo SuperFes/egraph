@@ -2,6 +2,7 @@
 
 #include "check.hpp"
 #include "freshness.hpp"
+#include "graph.hpp"
 #include "json.hpp"
 #include "os.hpp"
 #include "store.hpp"
@@ -12,6 +13,7 @@
 #include <expected>
 #include <format>
 #include <map>
+#include <numeric>
 #include <optional>
 #include <ostream>
 #include <random>
@@ -126,18 +128,113 @@ Exit execute(const Check&, const Invocation& invocation, std::ostream& out, std:
     return lines.empty() ? Exit::ok : Exit::drift;
 }
 
-Exit execute(const Export& command, const Invocation& invocation, std::ostream& out,
-             std::ostream& err) {
-    if (command.format != ExportFormat::json || !command.packages.empty()) {
-        err << "egraph: export: only --format json of the whole graph is implemented\n";
-        return Exit::not_implemented;
+// Package ids for every argument, or nothing after reporting the first that names none.
+std::optional<std::vector<std::uint32_t>>
+resolve_all(const Store& store, const std::vector<std::string>& arguments, std::ostream& err) {
+    std::vector<std::uint32_t> ids;
+    for (const auto& argument : arguments) {
+        const auto found = resolve(store, argument);
+        if (found.empty()) {
+            err << "egraph: " << argument << ": no installed package matches\n";
+            return std::nullopt;
+        }
+        ids.insert(ids.end(), found.begin(), found.end());
     }
+    return ids;
+}
+
+Exit edges(const std::vector<std::string>& packages, bool reverse, const Invocation& invocation,
+           std::ostream& out, std::ostream& err) {
     const auto store = open_store(invocation, err);
     if (!store) {
         err << "egraph: " << store.error() << '\n';
         return Exit::failure;
     }
-    write_json(out, *store);
+    const auto ids = resolve_all(*store, packages, err);
+    if (!ids) {
+        return Exit::failure;
+    }
+    const auto graph = build_graph(*store);
+    std::vector<Edge> found;
+    for (const auto id : *ids) {
+        const auto some = reverse ? graph.rdeps(id) : graph.deps(id);
+        found.insert(found.end(), some.begin(), some.end());
+    }
+    write_edges(out, *store, found);
+    return Exit::ok;
+}
+
+Exit execute(const Deps& command, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    return edges(command.packages, false, invocation, out, err);
+}
+
+Exit execute(const Rdeps& command, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    return edges(command.packages, true, invocation, out, err);
+}
+
+Exit execute(const Soname& command, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    const auto store = open_store(invocation, err);
+    if (!store) {
+        err << "egraph: " << store.error() << '\n';
+        return Exit::failure;
+    }
+    for (const auto& line : soname_users(*store, command.soname, command.providers)) {
+        out << line << '\n';
+    }
+    return Exit::ok;
+}
+
+Exit execute(const Broken&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
+    const auto store = open_store(invocation, err);
+    if (!store) {
+        err << "egraph: " << store.error() << '\n';
+        return Exit::failure;
+    }
+    for (const auto& line : broken(*store)) {
+        out << line << '\n';
+    }
+    return Exit::ok;
+}
+
+Exit execute(const Stats&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
+    const auto store = open_store(invocation, err);
+    if (!store) {
+        err << "egraph: " << store.error() << '\n';
+        return Exit::failure;
+    }
+    write_stats(out, *store, build_graph(*store), store_path(invocation));
+    return Exit::ok;
+}
+
+Exit execute(const Export& command, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    const auto store = open_store(invocation, err);
+    if (!store) {
+        err << "egraph: " << store.error() << '\n';
+        return Exit::failure;
+    }
+    const auto graph = build_graph(*store);
+    std::vector<std::uint32_t> roots;
+    std::vector<std::uint32_t> packages;
+    if (command.packages.empty()) {
+        packages.resize(store->packages.size());
+        std::ranges::iota(packages, 0U);
+    } else {
+        auto ids = resolve_all(*store, command.packages, err);
+        if (!ids) {
+            return Exit::failure;
+        }
+        roots = std::move(*ids);
+        packages = neighborhood(graph, roots, command.depth, command.direction);
+    }
+    if (command.format == ExportFormat::json) {
+        write_json(out, *store, packages);
+    } else {
+        write_dot(out, *store, graph, packages, roots);
+    }
     return Exit::ok;
 }
 
@@ -166,18 +263,21 @@ void configure(CLI::App& app, Invocation& invocation) {
     app.add_flag("--no-refresh", invocation.no_refresh,
                  "Answer from a stale store instead of rebuilding it");
 
-    add_field(add_command<Deps>(app, invocation, "What an installed package depends on"),
-              invocation, "package", &Deps::package, "Package atom")
+    add_field(add_command<Deps>(app, invocation, "What installed packages depend on"), invocation,
+              "packages", &Deps::packages, "Installed cpvs, or cps for every installed version")
         ->required();
-    add_field(add_command<Rdeps>(app, invocation, "What depends on an installed package"),
-              invocation, "package", &Rdeps::package, "Package atom")
+    add_field(add_command<Rdeps>(app, invocation, "What depends on installed packages"), invocation,
+              "packages", &Rdeps::packages, "Installed cpvs, or cps for every installed version")
         ->required();
     add_field(add_command<Why>(app, invocation, "Path from @world or @system to a package"),
               invocation, "package", &Why::package, "Package atom")
         ->required();
-    add_field(add_command<Soname>(app, invocation, "Installed consumers of a soname"), invocation,
-              "soname", &Soname::soname, "Soname, such as libssl.so.3")
+    CLI::App* soname = add_command<Soname>(app, invocation, "Installed consumers of a soname");
+    add_field(soname, invocation, "soname", &Soname::soname, "Soname, such as libssl.so.3")
         ->required();
+    soname->add_flag_callback(
+        "--providers", [&invocation] { std::get<Soname>(invocation.command).providers = true; },
+        "List the packages providing it instead");
     add_command<Broken>(app, invocation, "Installed dependencies nothing installed satisfies");
     add_command<Orphans>(app, invocation, "Installed packages no root reaches");
 
@@ -188,6 +288,14 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->transform(CLI::CheckedTransformer(formats, CLI::ignore_case).description("{dot,json}"));
     add_field(export_cmd, invocation, "packages", &Export::packages,
               "Packages whose neighborhood to export; all when omitted");
+    add_field(export_cmd, invocation, "--depth", &Export::depth,
+              "Dependency edges to follow out from the packages (default 1)");
+    const std::map<std::string, Direction> directions{{"reverse", Direction::reverse},
+                                                      {"forward", Direction::forward},
+                                                      {"both", Direction::both}};
+    add_field(export_cmd, invocation, "--direction", &Export::direction,
+              "Follow reverse dependencies, forward ones, or both (default reverse)")
+        ->transform(CLI::CheckedTransformer(directions).description("{reverse,forward,both}"));
 
     add_command<Stats>(app, invocation, "Store and graph statistics");
     add_command<Rebuild>(app, invocation, "Rebuild the store from scratch");

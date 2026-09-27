@@ -2,7 +2,9 @@
 
 #include "store.hpp"
 
+#include <cstdint>
 #include <iosfwd>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -17,5 +19,8 @@ void write_json_string(std::ostream& out, std::string_view bytes);
 
 // The store's packages as egraph_build.installed.to_json writes them.
 void write_json(std::ostream& out, const Store& store);
+
+// The same document holding only the given packages, in id order.
+void write_json(std::ostream& out, const Store& store, std::span<const std::uint32_t> packages);
 
 } // namespace egraph

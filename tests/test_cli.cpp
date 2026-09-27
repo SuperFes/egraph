@@ -24,7 +24,7 @@ TEST_CASE("a package argument lands in its command") {
     const auto invocation = parse("rdeps dev-libs/openssl");
     const auto* rdeps = std::get_if<egraph::Rdeps>(&invocation.command);
     REQUIRE(rdeps != nullptr);
-    CHECK(rdeps->package == "dev-libs/openssl");
+    CHECK(rdeps->packages == std::vector<std::string>{"dev-libs/openssl"});
     CHECK_FALSE(invocation.store.has_value());
     CHECK_FALSE(invocation.no_refresh);
     CHECK(invocation.root == std::filesystem::path{"/"});
@@ -46,6 +46,32 @@ TEST_CASE("global options precede the command") {
     CHECK(invocation.no_refresh);
 }
 
+TEST_CASE("deps and rdeps take several packages") {
+    const auto invocation = parse("deps app-misc/a dev-libs/b-1");
+    const auto* deps = std::get_if<egraph::Deps>(&invocation.command);
+    REQUIRE(deps != nullptr);
+    CHECK(deps->packages == std::vector<std::string>{"app-misc/a", "dev-libs/b-1"});
+}
+
+TEST_CASE("soname lists consumers unless asked for providers") {
+    const auto consumers = parse("soname libz.so.1");
+    CHECK_FALSE(std::get<egraph::Soname>(consumers.command).providers);
+    const auto providers = parse("soname --providers libz.so.1");
+    CHECK(std::get<egraph::Soname>(providers.command).providers);
+    CHECK(std::get<egraph::Soname>(providers.command).soname == "libz.so.1");
+}
+
+TEST_CASE("export neighborhoods take a depth and a direction") {
+    const auto plain = std::get<egraph::Export>(parse("export a/b").command);
+    CHECK(plain.depth == 1);
+    CHECK(plain.direction == egraph::Direction::reverse);
+    const auto both =
+        std::get<egraph::Export>(parse("export --depth 3 --direction both a/b").command);
+    CHECK(both.depth == 3);
+    CHECK(both.direction == egraph::Direction::both);
+    CHECK_THROWS_AS(parse("export --direction sideways a/b"), CLI::ValidationError);
+}
+
 TEST_CASE("export takes a format and any number of packages") {
     const auto plain = parse("export");
     const auto* defaults = std::get_if<egraph::Export>(&plain.command);
@@ -63,7 +89,6 @@ TEST_CASE("export takes a format and any number of packages") {
 TEST_CASE("malformed command lines are rejected") {
     CHECK_THROWS_AS(parse(""), CLI::RequiredError);
     CHECK_THROWS_AS(parse("rdeps"), CLI::RequiredError);
-    CHECK_THROWS_AS(parse("rdeps a b"), CLI::ExtrasError);
     CHECK_THROWS_AS(parse("export --format svg"), CLI::ValidationError);
     CHECK_THROWS_AS(parse("frobnicate"), CLI::ParseError);
 }
@@ -75,8 +100,7 @@ TEST_CASE("running without a command is a usage error") {
 }
 
 // Shrinks as commands are implemented.
-using Stubs = std::tuple<egraph::Deps, egraph::Rdeps, egraph::Why, egraph::Soname, egraph::Broken,
-                         egraph::Orphans, egraph::Stats>;
+using Stubs = std::tuple<egraph::Why, egraph::Orphans>;
 
 TEMPLATE_LIST_TEST_CASE("unimplemented commands say so", "", Stubs) {
     egraph::Invocation invocation;

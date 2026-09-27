@@ -65,6 +65,20 @@ dependencies with defaults, repository) and means by it exactly what `vardb.matc
 - The C++ matcher runs in shadow against `vardb.match`, over every atom in the store and a
   generated corpus, before anything relies on it. Portage is right until a test says otherwise.
 
+## Query output
+
+Plain text, one tab-separated record per line, sorted and without duplicates, so the output
+greps, diffs and compares against the oracle line for line:
+
+- `deps` / `rdeps PKG...`: `parent kind atom child`, plus `any-of` for an alternative inside a
+  `||` group. `PKG` is a cpv or a cp (every installed version) until atoms land (roadmap 6b).
+- `soname NAME [--providers]`: `cpv multilib-category`.
+- `broken`: `cpv kind dependency`, one per top-level dependency nothing installed satisfies, with
+  `||` groups rendered as portage's `paren_enclose` does.
+- `export [PKG...] [--depth N] [--direction reverse|forward|both]`: the packages within N
+  dependency edges of PKG (all packages when none are given), as the canonical JSON or as DOT
+  with every edge between them. Blockers are not followed.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

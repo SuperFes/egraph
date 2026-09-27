@@ -195,3 +195,25 @@ Live system, 2,324 packages. Instruction and cycle counts are medians of interle
   instructions and 2.40G to 1.83G cycles; full builds from 8.81G to 8.27G.
 - A bug the tests caught on the way: the vdb directory itself was classified as configuration,
   so a new category forced a full build.
+
+## Queries (2026-09-27, roadmap step 6a)
+
+Live store, 2,326 packages, 34,432 edges. `perf stat` medians of 15 interleaved runs, whole
+process including load and the freshness check of 2,575 inputs.
+
+| Command | Instructions | Cycles |
+|---|---|---|
+| `egraph --version` | 3.0M | 5.1M |
+| `egraph rdeps dev-libs/openssl` (199 edges) | 61.6M | 40.6M |
+| `egraph soname libssl.so.3` | 43.2M | 24.0M |
+| `egraph broken` (156 lines) | 48.1M | 26.9M |
+| `egraph export --depth 2 dev-libs/openssl` (dot) | 116.6M | 67.1M |
+
+- `rdeps dev-libs/openssl` takes 15.5 ms of task-clock. `equery depends dev-libs/openssl` takes
+  5.1 s wall.
+- equery lists 104 packages and egraph 97, all of them in equery's list. The other 7 have
+  openssl behind USE flags that are off in the installed build (`pkcs7?` on kmod, `utils?` on
+  nghttp2): equery reads the repository's unreduced metadata, while the vdb stores dependencies
+  reduced by the USE they were built with. portage's `vardb.match` agrees with egraph.
+- Every `deps`/`rdeps` answer through the binary matches the oracle on every scenario and on a
+  sample of 20 live packages; `broken` matches the oracle on the whole live system.

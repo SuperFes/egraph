@@ -14,7 +14,7 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       Check whether the sets API counts as public enough or needs wrapping in one place.
 - [ ] `orphans`: compare against depclean. `ResolverPlayground.run(..., {"--depclean": True})`
       gives a cleanlist on playgrounds; on the live system, `emerge --depclean --pretend`.
-- [ ] `why`: shortest path from a root; define tie-breaking so answers are comparable.
+- [ ] `why` (step 7): shortest path from a root; define tie-breaking so answers are comparable.
 - [ ] Oracle `rdeps` costs about 2.3 s per package on the live vdb (2,324 packages), which is why
       the system comparison samples. If that hurts, evaluate every package's edges once per vardb.
 
@@ -50,6 +50,16 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 - [ ] Record the profile's implicit IUSE settings in the store for the C++ atom matcher, and the
       profile files they come from as inputs. Check how `settings._iuse_effective_match` builds
       its pattern before choosing a representation.
+
+## Queries
+
+- [ ] `broken` lists every kind, and on the live system most of its 156 lines are BDEPEND on build
+      tools removed since (automake 1.18). Decide whether it defaults to runtime kinds
+      (RDEPEND, PDEPEND, IDEPEND) with a `--kind` filter, as `--with-bdeps` does for depclean.
+- [ ] `export` neighborhoods follow dependency edges only; the fork's included blocker edges
+      (without expanding them). Add them with the `blockers` query.
+- [ ] Queries rebuild the edge index on every run (about 20M instructions on the live store). If
+      that ever dominates, the store could carry it.
 
 ## Ideas
 

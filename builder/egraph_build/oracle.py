@@ -7,7 +7,7 @@ installed layer, and through it the store, is compared against, so it must
 stay a thin layer over portage rather than grow semantics of its own.
 """
 
-from portage.dep import Atom, use_reduce
+from portage.dep import Atom, paren_enclose, use_reduce
 from portage.dep.soname.parse import parse_soname_deps
 from portage.exception import InvalidAtom, InvalidData, InvalidDependString
 
@@ -123,3 +123,71 @@ def _soname_users(vardb, soname, key):
         for atom in sonames(vardb, cpv, key)
         if atom.soname == soname
     )
+
+
+def _all_of(vardb, tokens):
+    tokens = iter(tokens)
+    for token in tokens:
+        if token == "||":
+            if not _any_of(vardb, next(tokens)):
+                return False
+        elif isinstance(token, list):
+            if not _all_of(vardb, token):
+                return False
+        elif not token.blocker and not vardb.match(token):
+            return False
+    return True
+
+
+def _any_of(vardb, alternatives):
+    # An empty group only survives use_reduce in EAPIs where portage counts it as satisfied.
+    if not alternatives:
+        return True
+    tokens = iter(alternatives)
+    for token in tokens:
+        if token == "||":
+            if _any_of(vardb, next(tokens)):
+                return True
+        elif isinstance(token, list):
+            if _all_of(vardb, token):
+                return True
+        elif token.blocker or vardb.match(token):
+            return True
+    return False
+
+
+def _reduced(vardb, cpv, kind):
+    depstring, use, eapi = vardb.aux_get(cpv, [kind, "USE", "EAPI"])
+    return use_reduce(
+        depstring,
+        uselist=frozenset(use.split()),
+        eapi=eapi or None,
+        opconvert=False,
+        token_class=Atom,
+    )
+
+
+def broken(vardb):
+    """(cpv, kind, dependency) for each top-level dependency nothing installed satisfies.
+
+    Evaluated straight from portage's reduced dependency lists, with the dependency rendered
+    by paren_enclose. Blockers are constraints, not dependencies, and never count.
+    """
+    found = set()
+    for cpv in installed(vardb):
+        for kind in DEP_KINDS:
+            try:
+                tokens = iter(_reduced(vardb, cpv, kind))
+            except (InvalidAtom, InvalidDependString):
+                continue
+            for token in tokens:
+                if token == "||":
+                    group = next(tokens)
+                    if not _any_of(vardb, group):
+                        found.add((cpv, kind, paren_enclose(["||", group])))
+                elif isinstance(token, list):
+                    if not _all_of(vardb, token):
+                        found.add((cpv, kind, paren_enclose([token])))
+                elif not token.blocker and not vardb.match(token):
+                    found.add((cpv, kind, str(token)))
+    return frozenset(found)
