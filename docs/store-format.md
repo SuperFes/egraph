@@ -1,7 +1,7 @@
 # Store format
 
-Status: encoding chosen (A, binary sections; measurements in `findings.md`). The framing below is
-settled; the record layouts are the step 1 prototype and are finalized in roadmap step 3.
+Status: format version 1, implemented by `builder/egraph_build/store.py` (writer and a Python
+reader) and `src/store.cpp` (C++ reader). Any layout change bumps the version.
 
 ## Requirements
 
@@ -42,8 +42,8 @@ Debugging goes through `egraph export --json` and `egraph-build --json`.
 - Section table, 20 bytes per entry: `u32` id, `u64` offset, `u64` length. Each id appears at
   most once and every section lies inside the file. An unknown id is a format mismatch: layout
   changes bump the version rather than add optional sections.
-- Everything inside a section is a varint: unsigned LEB128, at most 10 bytes. A value read into
-  a 32-bit field must fit.
+- Everything inside a section is a varint: unsigned LEB128, at most 10 bytes, the tenth holding
+  at most one bit. A value read into a 32-bit field must fit.
 - Every list is a varint count followed by its elements. Each element takes at least one byte, so
   a reader rejects any count larger than the bytes left in the section before allocating.
 - String, package and node references are indices, checked against their table.
@@ -54,18 +54,22 @@ Debugging goes through `egraph export --json` and `egraph-build --json`.
 
 | Id | Section | Contents |
 |---|---|---|
-| 1 | Meta | producer versions, EROOT, build time, as length-prefixed strings |
-| 2 | Inputs | `(path, kind, mtime_ns, size)`, path inline as length-prefixed bytes |
+| 1 | Meta | egraph version, portage version, EROOT (length-prefixed), build time in ns |
+| 2 | Inputs | count, then `(path, kind, mtime_ns, size)`; path length-prefixed, kind 0 file, 1 directory |
 | 3 | Strings | count, then length-prefixed bytes; string 0 is empty |
-| 4 | Packages | records below |
-| 5 | Roots | world atoms with their matches; sets and @system/@profile land in step 7 |
+| 4 | Packages | count, then the records below |
+| 5 | Roots | count, then `(atom, matches)`; written empty until roadmap step 7 |
+
+All five sections are required. Inputs are written empty until roadmap step 4.
 
 Meta and inputs carry their strings inline, so freshness reads sections 1 and 2 and nothing else.
 Input paths are unique, so interning them would save nothing.
 
-Strings are bytes as portage returned them (UTF-8 in practice, not validated).
+Strings are bytes as portage returned them (UTF-8 in practice, not validated). The builder
+encodes with `surrogateescape`, so any str portage decoded round-trips, and the JSON exports on
+both sides spell an undecodable byte as Python does (`\udcXX`).
 
-### Package record (prototype)
+### Package record
 
 In package order, which is sorted by cpv:
 
@@ -78,7 +82,8 @@ In package order, which is sorted by cpv:
      blocker.
    - parent: 0 for a top-level node, otherwise 1 + the parent's index in this list, which must
      be an earlier any-of or all-of node.
-   - atom: string id of the atom as portage prints it after USE reduction; 0 for groups.
+   - atom: string id of the atom as portage prints it after USE reduction; 0 for groups and
+     only for groups.
    - matches: package ids the atom matches with USE deps honored (for a blocker, what it blocks).
      Empty for groups: satisfaction of `||` follows from the children.
 5. Provides: list of `(multilib category, soname)` string ids.

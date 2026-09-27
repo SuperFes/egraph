@@ -73,9 +73,8 @@ TEST_CASE("running without a command is a usage error") {
 }
 
 // Shrinks as commands are implemented.
-using Stubs =
-    std::tuple<egraph::Deps, egraph::Rdeps, egraph::Why, egraph::Soname, egraph::Broken,
-               egraph::Orphans, egraph::Export, egraph::Stats, egraph::Rebuild, egraph::Check>;
+using Stubs = std::tuple<egraph::Deps, egraph::Rdeps, egraph::Why, egraph::Soname, egraph::Broken,
+                         egraph::Orphans, egraph::Stats, egraph::Rebuild, egraph::Check>;
 
 TEMPLATE_LIST_TEST_CASE("unimplemented commands say so", "", Stubs) {
     egraph::Invocation invocation;

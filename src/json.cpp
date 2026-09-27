@@ -1,0 +1,227 @@
+#include "json.hpp"
+
+#include <array>
+#include <cstdint>
+#include <format>
+#include <optional>
+#include <ostream>
+
+namespace egraph {
+
+namespace {
+
+struct CodePoint {
+    char32_t value = 0;
+    std::size_t length = 0;
+};
+
+unsigned byte_at(std::string_view bytes, std::size_t index) {
+    return static_cast<unsigned char>(bytes.at(index));
+}
+
+// One well-formed UTF-8 sequence at the front of bytes, by the table Python's decoder uses
+// (Unicode 3-7): no overlongs, no surrogates, nothing past U+10FFFF.
+std::optional<CodePoint> decode_utf8(std::string_view bytes) {
+    const unsigned lead = byte_at(bytes, 0);
+    if (lead < 0x80U) {
+        return CodePoint{.value = lead, .length = 1};
+    }
+    std::size_t length = 0;
+    char32_t value = 0;
+    unsigned low = 0x80U;
+    unsigned high = 0xBFU;
+    if (lead >= 0xC2U && lead <= 0xDFU) {
+        length = 2;
+        value = lead & 0x1FU;
+    } else if (lead >= 0xE0U && lead <= 0xEFU) {
+        length = 3;
+        value = lead & 0x0FU;
+        low = lead == 0xE0U ? 0xA0U : low;
+        high = lead == 0xEDU ? 0x9FU : high;
+    } else if (lead >= 0xF0U && lead <= 0xF4U) {
+        length = 4;
+        value = lead & 0x07U;
+        low = lead == 0xF0U ? 0x90U : low;
+        high = lead == 0xF4U ? 0x8FU : high;
+    } else {
+        return std::nullopt;
+    }
+    if (bytes.size() < length) {
+        return std::nullopt;
+    }
+    for (std::size_t i = 1; i < length; ++i) {
+        const unsigned next = byte_at(bytes, i);
+        if (next < (i == 1 ? low : 0x80U) || next > (i == 1 ? high : 0xBFU)) {
+            return std::nullopt;
+        }
+        value = (value << 6U) | (next & 0x3FU);
+    }
+    return CodePoint{.value = value, .length = length};
+}
+
+void write_unit(std::ostream& out, char32_t unit) {
+    out << std::format("\\u{:04x}", static_cast<std::uint32_t>(unit));
+}
+
+void write_code_point(std::ostream& out, char32_t code) {
+    switch (code) {
+    case U'"':
+        out << "\\\"";
+        return;
+    case U'\\':
+        out << "\\\\";
+        return;
+    case U'\n':
+        out << "\\n";
+        return;
+    case U'\r':
+        out << "\\r";
+        return;
+    case U'\t':
+        out << "\\t";
+        return;
+    case U'\b':
+        out << "\\b";
+        return;
+    case U'\f':
+        out << "\\f";
+        return;
+    default:
+        break;
+    }
+    if (code >= 0x20U && code < 0x7FU) {
+        out << static_cast<char>(code);
+    } else if (code < 0x10000U) {
+        write_unit(out, code);
+    } else {
+        const char32_t offset = code - 0x10000U;
+        write_unit(out, 0xD800U + (offset >> 10U));
+        write_unit(out, 0xDC00U + (offset & 0x3FFU));
+    }
+}
+
+void write_string(std::ostream& out, const Store& store, std::uint32_t id) {
+    write_json_string(out, store.string(id));
+}
+
+void write_string_list(std::ostream& out, const Store& store, Range range) {
+    out << '[';
+    bool first = true;
+    for (const auto id : store.ids_in(range)) {
+        out << (first ? "" : ",");
+        first = false;
+        write_string(out, store, id);
+    }
+    out << ']';
+}
+
+void write_pairs(std::ostream& out, const Store& store, Range range) {
+    out << '[';
+    bool first = true;
+    for (const auto& pair : store.pairs_in(range)) {
+        out << (first ? "[" : ",[");
+        first = false;
+        write_string(out, store, pair.first);
+        out << ',';
+        write_string(out, store, pair.second);
+        out << ']';
+    }
+    out << ']';
+}
+
+constexpr std::array<std::string_view, 5> node_type_names{"atom", "any-of", "all-of",
+                                                          "weak-blocker", "strong-blocker"};
+
+void write_nodes(std::ostream& out, const Store& store, Range range) {
+    out << '[';
+    bool first = true;
+    for (const auto& node : store.nodes_in(range)) {
+        out << (first ? "{\"atom\":" : ",{\"atom\":");
+        first = false;
+        write_string(out, store, node.atom);
+        out << ",\"matches\":[";
+        bool first_match = true;
+        for (const auto id : store.ids_in(node.matches)) {
+            out << (first_match ? "" : ",");
+            first_match = false;
+            write_string(out, store, store.packages.at(id).cpv);
+        }
+        out << "],\"parent\":";
+        if (node.parent == no_parent) {
+            out << "-1";
+        } else {
+            out << node.parent;
+        }
+        out << R"(,"type":")" << node_type_names.at(static_cast<std::size_t>(node.type)) << R"("})";
+    }
+    out << ']';
+}
+
+void write_package(std::ostream& out, const Store& store, const Package& pkg) {
+    out << "{\"cp\":";
+    write_string(out, store, pkg.cp);
+    out << ",\"cpv\":";
+    write_string(out, store, pkg.cpv);
+    out << ",\"deps\":{";
+    for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+        out << (kind == 0 ? "\"" : ",\"") << dep_kinds.at(kind) << "\":";
+        write_nodes(out, store, pkg.deps.at(kind));
+    }
+    out << "},\"eapi\":";
+    write_string(out, store, pkg.eapi);
+    out << ",\"errors\":";
+    write_pairs(out, store, pkg.errors);
+    out << ",\"iuse\":";
+    write_string_list(out, store, pkg.iuse);
+    out << ",\"provides\":";
+    write_pairs(out, store, pkg.provided);
+    out << ",\"repo\":";
+    write_string(out, store, pkg.repo);
+    out << ",\"requires\":[";
+    bool first = true;
+    for (const auto& require : store.required_in(pkg.required)) {
+        out << (first ? "[" : ",[");
+        first = false;
+        write_string(out, store, require.category);
+        out << ',';
+        write_string(out, store, require.soname);
+        out << ']';
+    }
+    out << "],\"slot\":";
+    write_string(out, store, pkg.slot);
+    out << ",\"sub_slot\":";
+    write_string(out, store, pkg.sub_slot);
+    out << ",\"use\":";
+    write_string_list(out, store, pkg.use);
+    out << '}';
+}
+
+} // namespace
+
+void write_json_string(std::ostream& out, std::string_view bytes) {
+    out << '"';
+    while (!bytes.empty()) {
+        if (const auto code = decode_utf8(bytes)) {
+            write_code_point(out, code->value);
+            bytes.remove_prefix(code->length);
+        } else {
+            // Python's surrogateescape: each undecodable byte becomes U+DC80..U+DCFF.
+            write_unit(out, 0xDC00U + byte_at(bytes, 0));
+            bytes.remove_prefix(1);
+        }
+    }
+    out << '"';
+}
+
+void write_json(std::ostream& out, const Store& store) {
+    out << R"({"format":1,"packages":[)";
+    bool first = true;
+    for (const auto& pkg : store.packages) {
+        out << (first ? "" : ",");
+        first = false;
+        write_package(out, store, pkg);
+    }
+    out << "]}\n";
+}
+
+} // namespace egraph

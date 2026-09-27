@@ -41,7 +41,7 @@ meson setup build && meson compile -C build          # egraph binary
 meson test -C build --print-errorlogs                 # Catch2 + pytest
 meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false && meson test -C build-san
 clang-tidy -p build src/*.cpp                         # safety checks, config in .clang-tidy
-clang-format -i src/*.cpp src/*.hpp tests/*.cpp
+clang-format -i src/*.cpp src/*.hpp tests/*.cpp tests/*.hpp
 black builder
 PYTHONPATH=/Development/Gentoo/portage/lib pytest builder/tests   # builder against the fork
 EGRAPH_SYSTEM_TESTS=1 PYTHONPATH=... pytest builder/tests         # also compare on the live vdb

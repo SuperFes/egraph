@@ -8,7 +8,7 @@ Update the status column as steps land.
 | 0 | Scaffold | done |
 | 1 | Measure and choose the store encoding | done |
 | 2 | Installed layer in the builder | done |
-| 3 | Store writer and reader | not started |
+| 3 | Store writer and reader | done |
 | 4 | Freshness | not started |
 | 5 | `rebuild` and `check` | not started |
 | 6 | Queries | not started |

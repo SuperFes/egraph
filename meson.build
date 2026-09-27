@@ -46,6 +46,8 @@ version_hpp = configure_file(
 egraph_lib = static_library(
   'egraph',
   'src/cli.cpp',
+  'src/json.cpp',
+  'src/store.cpp',
   version_hpp,
   dependencies: cli11,
 )
@@ -55,9 +57,15 @@ egraph_dep = declare_dependency(
   dependencies: cli11,
 )
 
-executable('egraph', 'src/main.cpp', dependencies: egraph_dep, install: true)
+egraph_exe = executable('egraph', 'src/main.cpp', dependencies: egraph_dep, install: true)
 
-unit_tests = executable('unit-tests', 'tests/test_cli.cpp', dependencies: [egraph_dep, catch2])
+unit_tests = executable(
+  'unit-tests',
+  'tests/test_cli.cpp',
+  'tests/test_json.cpp',
+  'tests/test_store.cpp',
+  dependencies: [egraph_dep, catch2],
+)
 test('unit', unit_tests, protocol: 'exitcode')
 
 # The builder imports portage, so its tests run under whichever portage is on PYTHONPATH:
@@ -65,6 +73,8 @@ test('unit', unit_tests, protocol: 'exitcode')
 pytest = find_program('pytest', required: false)
 if pytest.found()
   builder_env = environment()
+  # The golden tests run the C++ reader on stores the Python writer produced.
+  builder_env.set('EGRAPH', egraph_exe.full_path())
   if get_option('portage_lib') != ''
     builder_env.set('PYTHONPATH', get_option('portage_lib'))
   endif
@@ -73,6 +83,7 @@ if pytest.found()
     pytest,
     args: ['-p', 'no:cacheprovider', '-q', meson.project_source_root() / 'builder' / 'tests'],
     env: builder_env,
+    depends: egraph_exe,
     timeout: 600,
   )
 else

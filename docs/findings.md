@@ -144,3 +144,28 @@ Decision: A. See `store-format.md`.
 - use_reduce shapes the trees in ways worth knowing: a `||` left with one alternative becomes a
   plain atom, nested `||` groups are flattened, and in EAPI 7+ a `||` emptied by USE becomes the
   never-matching atom `__const__/empty-any-of` (older EAPIs drop it).
+
+## Store reader and writer (2026-09-27, roadmap step 3)
+
+Median of interleaved `perf stat` runs (15 for C++, 7 for Python) on the live store: 2,324
+packages, 1.01 MB with inputs still empty. Load average was about 20, so cycles are noisy.
+
+| | Instructions | Cycles |
+|---|---|---|
+| C++ `read_file` (process and read) | 2.7M | 4.6M |
+| C++ `load`: read, decode, validate every id | 34.0M | 16.4M |
+| C++ `export --format json` (5.7 MB out) | 528M | 235M |
+| Python `store.decode` into an InstalledLayer, net of interpreter start | 3.1G | 1.09G |
+| Python `store.encode`, per call | 0.89G | 0.49G |
+
+- Validated decode costs 31M instructions net of the read, the same as the unvalidated step 1
+  prototype, once the failure paths were moved out of line (`[[gnu::cold]]`, no inlined
+  `std::format`): 45.9M to 31.3M instructions, 15.9M to 11.8M cycles.
+- The byte-mutation test found a decoder bug before it shipped: after the first failure, later
+  reads returned unchecked values. Hardened `.at()` turned it into an exception rather than
+  memory corruption; every read now returns zero once the reader has failed.
+- Python decode splits roughly into varint decoding (a third), building the index (a quarter)
+  and object construction. A Python reader that materializes the store will not beat the fork's
+  0.37 s index build by much; see `TODO.md`.
+- The live store round-trips: `egraph export --format json` of the builder's store is
+  byte-identical to `egraph-build --json` (5.7 MB).

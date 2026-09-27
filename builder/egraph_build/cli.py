@@ -65,6 +65,25 @@ def open_vardb(config_root, root):
     return vartree(settings=settings).dbapi
 
 
+def write_store(args):
+    import time
+
+    import portage
+
+    from egraph_build import __version__, installed, store
+
+    vardb = open_vardb(args.config_root, args.root)
+    layer = installed.build(vardb)
+    meta = store.Meta(
+        egraph_version=__version__,
+        portage_version=portage.VERSION,
+        eroot=vardb.settings["EROOT"],
+        build_time_ns=time.time_ns(),
+    )
+    path = args.store or store.default_path(args.root)
+    store.write(path, store.encode(layer, meta))
+
+
 def main(argv=None):
     try:
         args = parser().parse_args(argv)
@@ -75,6 +94,9 @@ def main(argv=None):
 
         layer = installed.build(open_vardb(args.config_root, args.root))
         sys.stdout.write(installed.to_json(layer))
+        return EXIT_OK
+    if args.mode == "full":
+        write_store(args)
         return EXIT_OK
     print(f"egraph-build: {args.mode}: not implemented", file=sys.stderr)
     return EXIT_NOT_IMPLEMENTED

@@ -1,5 +1,7 @@
 #include "cli.hpp"
 
+#include "json.hpp"
+#include "store.hpp"
 #include "version.hpp"
 
 #include <CLI/CLI.hpp>
@@ -37,6 +39,21 @@ Exit execute(const std::monostate&, const Invocation&, std::ostream&, std::ostre
 template <class C> Exit execute(const C&, const Invocation&, std::ostream&, std::ostream& err) {
     err << "egraph: " << C::name << ": not implemented\n";
     return Exit::not_implemented;
+}
+
+Exit execute(const Export& command, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    if (command.format != ExportFormat::json || !command.packages.empty()) {
+        err << "egraph: export: only --format json of the whole graph is implemented\n";
+        return Exit::not_implemented;
+    }
+    const auto store = load(invocation.store.value_or(default_store_path(invocation.root)));
+    if (!store) {
+        err << "egraph: " << store.error().message << '\n';
+        return Exit::failure;
+    }
+    write_json(out, *store);
+    return Exit::ok;
 }
 
 } // namespace

@@ -43,9 +43,12 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       fixed-width u32 columns: Python can view them with `memoryview.cast` instead of decoding
       varints one by one. The step 1 Python numbers only tokenized, so they are lower bounds.
 
-- [ ] The canonical JSON carries strings as portage returns them; a non-UTF-8 byte in a path or
-      atom arrives as a lone surrogate. Decide how the store and the C++ JSON export spell it
-      before the step 3 golden test.
+- [ ] A libFuzzer target for `decode()`. The unit tests mutate every byte of a small store, but
+      the entry point takes a pointer and a size, so it needs a reviewed exception to
+      `-Wunsafe-buffer-usage` in that one file.
+- [ ] The Python reader takes about 0.3 s on the live store (`findings.md`), close to the 0.37 s
+      index build the portage fork would replace. Decide at step 8 between the fork querying
+      `egraph` and the columnar u32 layout above.
 
 - [ ] Record the profile's implicit IUSE settings in the store for the C++ atom matcher, and the
       profile files they come from as inputs. Check how `settings._iuse_effective_match` builds

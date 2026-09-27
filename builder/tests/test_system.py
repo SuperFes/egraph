@@ -2,11 +2,12 @@
 
 import json
 import os
+import subprocess
 
 import pytest
 
 from compare import QUERIES, assert_agrees
-from egraph_build import cli, installed, oracle
+from egraph_build import cli, installed, oracle, store
 
 pytestmark = [
     pytest.mark.system,
@@ -47,3 +48,17 @@ def test_json_covers_every_package(live_vardb, live_layer):
     assert [pkg["cpv"] for pkg in document["packages"]] == list(
         oracle.installed(live_vardb)
     )
+
+
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+def test_cpp_reads_the_live_store(live_layer, tmp_path):
+    path = tmp_path / "installed.egraph"
+    store.write(path, store.encode(live_layer, store.Meta("0", "0", "/", 0)))
+    exported = subprocess.run(
+        [os.environ["EGRAPH"], "--store", str(path), "export", "--format", "json"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert exported == installed.to_json(live_layer).encode()

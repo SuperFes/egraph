@@ -33,7 +33,7 @@ def test_help_exits_cleanly(capsys):
     assert cli.main(["--help"]) == cli.EXIT_OK
 
 
-@pytest.mark.parametrize("mode", ["full", "incremental"])
+@pytest.mark.parametrize("mode", ["incremental"])
 def test_unimplemented_modes_say_so(mode, capsys):
     assert cli.main([f"--{mode}"]) == cli.EXIT_NOT_IMPLEMENTED
     assert capsys.readouterr().err == f"egraph-build: {mode}: not implemented\n"
