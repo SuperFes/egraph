@@ -40,6 +40,15 @@ inline constexpr std::array<Setting, 6> all_settings{
     Setting::jobs,       Setting::min_jobs,    Setting::load_average,
     Setting::min_memory, Setting::per_process, Setting::recheck_timeout};
 
+// What is known of the running steve.
+struct Status {
+    // Read through stevie, so current, and open to changes.
+    bool live = false;
+    Settings settings{};
+    // Why stevie could not read it, when it could not.
+    std::string problem{};
+};
+
 // stevie's arguments that print every setting, one per line, and reading them back.
 [[nodiscard]] std::vector<std::string> get_arguments();
 [[nodiscard]] std::expected<Settings, std::string> parse_get(std::string_view output);

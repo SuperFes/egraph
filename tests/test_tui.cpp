@@ -924,13 +924,163 @@ TEST_CASE("the emerge view shows the pressure panel where it fits") {
     app.finish_watch(running_emerges(), *history.latest());
     FakeScreen tall{16, 120, {}};
     egraph::tui::draw(tall, app, ascii);
-    CHECK(tall.line(9) == std::string(120, ' '));
-    CHECK(tall.line(10).starts_with(" System"));
-    CHECK(tall.line(12).starts_with(" Memory"));
-    CHECK(tall.line(14).starts_with(" Stalls"));
+    CHECK(tall.line(8) == std::string(120, ' '));
+    CHECK(tall.line(9).starts_with(" System"));
+    CHECK(tall.line(11).starts_with(" Memory"));
+    CHECK(tall.line(13).starts_with(" Stalls"));
+    CHECK(tall.line(14).starts_with(" Steve    not running"));
     // Room for the emerge and its three tasks above.
     CHECK(contains(tall.text(), "app-misc/baz-1"));
     FakeScreen short_screen{12, 120, {}};
     egraph::tui::draw(short_screen, app, ascii);
     CHECK_FALSE(contains(short_screen.text(), " System"));
+}
+
+namespace {
+
+// steve as the dev box runs it, 7 of its 12 jobs handed out.
+egraph::steve::Status live_steve() {
+    return {.live = true,
+            .settings = {.tokens = 5,
+                         .jobs = 12,
+                         .min_jobs = 1,
+                         .load_average = 12,
+                         .recheck_timeout = 0.5,
+                         .min_memory = 4096}};
+}
+
+} // namespace
+
+TEST_CASE("steve's limits mark the graphs") {
+    const auto limits = egraph::tui::limits_of(live_steve());
+    CHECK(limits.load == 12.0);
+    CHECK(limits.min_available == 4096ULL << 20U);
+    CHECK_FALSE(egraph::tui::limits_of(std::nullopt).load.has_value());
+    auto unlimited = live_steve();
+    unlimited.settings.load_average.reset();
+    unlimited.settings.min_memory.reset();
+    CHECK_FALSE(egraph::tui::limits_of(unlimited).min_available.has_value());
+}
+
+TEST_CASE("steve's line shows its jobs and settings, and which one is changing") {
+    CHECK(joined(egraph::tui::steve_line(std::nullopt, std::nullopt, ascii)) ==
+          " Steve    not running");
+    CHECK(joined(egraph::tui::steve_line(live_steve(), std::nullopt, ascii)) ==
+          " Steve    #######-----  7 of 12 jobs in use   jobs 12  min jobs 1  load 12  memory 4.0 "
+          "GiB  per process -  recheck 0.5s");
+
+    const auto editing = egraph::tui::steve_line(live_steve(), 2, ascii);
+    CHECK(contains(joined(editing), "load  12   memory"));
+    const auto load = std::ranges::find(editing, std::string{" 12 "}, &egraph::tui::Span::text);
+    REQUIRE(load != editing.end());
+    CHECK(load->pen.bg.has_value());
+
+    auto read_only = live_steve();
+    read_only.live = false;
+    read_only.settings.tokens.reset();
+    read_only.problem = "unable to open /dev/steve: Permission denied";
+    CHECK(joined(egraph::tui::steve_line(read_only, std::nullopt, ascii)) ==
+          " Steve    jobs 12  min jobs 1  load 12  memory 4.0 GiB  per process -  recheck 0.5s   "
+          "from its command line (unable to open /dev/steve: Permission denied)");
+}
+
+TEST_CASE("s changes steve's settings in place, each step at once") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    app.handle(character(U'e'));
+    app.finish_watch({}, {}, live_steve());
+    app.handle(character(U's'));
+    REQUIRE(app.watched()->editing == 0);
+    app.handle(key(KeyKind::left));
+    CHECK(app.watched()->editing == 0);
+    app.handle(key(KeyKind::right));
+    CHECK(app.watched()->editing == 1);
+    // min-jobs up by one, asked of run() and not yet made.
+    app.handle(character(U'+'));
+    auto change = app.steve_change_requested();
+    REQUIRE(change.has_value());
+    CHECK(change->setting == egraph::steve::Setting::min_jobs);
+    CHECK(change->value == 2.0);
+    app.finish_steve_change({});
+    CHECK_FALSE(app.steve_change_requested().has_value());
+    // Read again at once, to show what steve made of it.
+    CHECK(app.watch_requested());
+    app.finish_watch({}, {}, live_steve());
+
+    // Down arrows change the setting rather than move.
+    app.handle(key(KeyKind::right));
+    app.handle(key(KeyKind::down));
+    change = app.steve_change_requested();
+    REQUIRE(change.has_value());
+    CHECK(change->setting == egraph::steve::Setting::load_average);
+    CHECK(change->value == 11.0);
+    app.finish_steve_change(std::unexpected("ioctl failed: Invalid argument"));
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "stevie could not change it");
+    CHECK(app.dialog()->lines == std::vector<std::string>{"ioctl failed: Invalid argument"});
+    app.handle(key(KeyKind::escape));
+
+    // A setting at its floor does not move.
+    app.handle(key(KeyKind::right));
+    app.handle(key(KeyKind::right));
+    app.handle(key(KeyKind::left));
+    CHECK(app.watched()->editing == 3);
+    auto floor = live_steve();
+    floor.settings.min_memory.reset();
+    app.finish_watch({}, {}, floor);
+    app.handle(character(U'-'));
+    CHECK_FALSE(app.steve_change_requested().has_value());
+
+    // Esc and s leave the settings, not the view.
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.watched()->editing.has_value());
+    CHECK(app.watched().has_value());
+    app.handle(character(U's'));
+    app.handle(character(U's'));
+    CHECK_FALSE(app.watched()->editing.has_value());
+}
+
+TEST_CASE("steve read from its command line, or not running, cannot be changed") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    app.handle(character(U'e'));
+    auto read_only = live_steve();
+    read_only.live = false;
+    read_only.problem = "unable to open /dev/steve: Permission denied";
+    app.finish_watch({}, {}, read_only);
+    app.handle(character(U's'));
+    CHECK_FALSE(app.watched()->editing.has_value());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "steve's settings can only be read here");
+    CHECK(app.dialog()->lines.front() == read_only.problem);
+    app.handle(key(KeyKind::escape));
+
+    app.handle(key(KeyKind::tick));
+    app.finish_watch({}, {}, std::nullopt);
+    app.handle(character(U's'));
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "steve is not running");
+}
+
+TEST_CASE("run makes steve's changes through stevie and reads the result") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{20, 140, {character(U'e'), character(U's'), character(U'+')}};
+    auto steve = live_steve();
+    std::vector<std::pair<egraph::steve::Setting, double>> changes;
+    const egraph::tui::SteveReader read = [&] { return std::optional{steve}; };
+    const egraph::tui::SteveSetter set = [&](egraph::steve::Setting setting,
+                                             double value) -> std::expected<void, std::string> {
+        changes.emplace_back(setting, value);
+        steve.settings.jobs = static_cast<std::int64_t>(value);
+        return {};
+    };
+    egraph::tui::run(screen, app, ascii, {.steve = read, .set_steve = set});
+    REQUIRE(changes.size() == 1);
+    CHECK(changes.front() == std::pair{egraph::steve::Setting::jobs, 13.0});
+    CHECK(contains(screen.text(), " 13 "));
+    CHECK(contains(screen.line(19), "+/- change"));
 }

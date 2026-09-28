@@ -11,6 +11,7 @@
 #include "json.hpp"
 #include "os.hpp"
 #include "pressure.hpp"
+#include "steve.hpp"
 #include "store.hpp"
 #include "tui.hpp"
 
@@ -152,6 +153,51 @@ std::string last_lines(const std::filesystem::path& path, std::size_t count) {
         joined += (joined.empty() ? "" : "\n") + line;
     }
     return joined;
+}
+
+// What argv prints, stdout and stderr together, or why it failed: its output, or its status.
+std::expected<std::string, std::string> output_of(const std::vector<std::string>& argv) {
+    const auto log = std::filesystem::path{scratch_store()}.replace_extension(".out");
+    const auto status = os::run(argv, log);
+    std::ifstream in{log};
+    std::ostringstream text;
+    text << in.rdbuf();
+    in.close();
+    std::error_code ignored;
+    std::filesystem::remove(log, ignored);
+    auto output = text.str();
+    while (output.ends_with('\n')) {
+        output.pop_back();
+    }
+    if (!status) {
+        return std::unexpected(status.error().message);
+    }
+    if (*status != 0) {
+        return std::unexpected(output.empty()
+                                   ? std::format("{} exited with status {}", argv.front(), *status)
+                                   : output);
+    }
+    return output;
+}
+
+// The running steve as stevie reads it, or else as its command line started it.
+std::optional<steve::Status> read_steve() {
+    const auto command_line = steve::find_command_line();
+    if (!command_line) {
+        return std::nullopt;
+    }
+    std::string problem;
+    if (const auto output = output_of(steve::get_arguments())) {
+        if (auto settings = steve::parse_get(*output)) {
+            return steve::Status{.live = true, .settings = *settings, .problem = {}};
+        }
+        problem = "stevie printed something unexpected";
+    } else {
+        problem = output.error();
+    }
+    return steve::Status{.live = false,
+                         .settings = steve::parse_command_line(*command_line).value_or({}),
+                         .problem = problem};
 }
 
 // A full build into path whose output goes to a log rather than the terminal; an error ends with
@@ -464,8 +510,17 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
     const auto run_dir = emerge::status_dir(invocation.eprefix.value_or(""));
     const auto watch = [run_dir] { return emerge::read_snapshots(run_dir); };
     const auto sample = [] { return pressure::read_sample(); };
+    const auto set_steve = [](steve::Setting setting,
+                              double value) -> std::expected<void, std::string> {
+        return output_of(steve::set_arguments(setting, value)).transform([](const auto&) {});
+    };
     return tui::open_and_run(*store, invocation.glyphs,
-                             {.check = check, .rebuild = rebuild, .watch = watch, .sample = sample},
+                             {.check = check,
+                              .rebuild = rebuild,
+                              .watch = watch,
+                              .sample = sample,
+                              .steve = read_steve,
+                              .set_steve = set_steve},
                              warnings, err);
 }
 

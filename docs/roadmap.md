@@ -132,7 +132,7 @@ one. Not scheduled ahead of 8 and 9.
 - 11b (done): pressure. CPU, available memory and load from `/proc`, and PSI from `/proc/pressure`
   when the kernel has it on (`psi=1`; the dev box builds it disabled by default), as sparklines
   with steve's thresholds (load average, minimum available memory) marked.
-- 11c: steve. Tokens in use of the total and its settings, through `stevie`'s getters; changed
+- 11c (done): steve. Tokens in use of the total and its settings, through `stevie`'s getters; changed
   live through its setters when `/dev/steve` is writable (root, or the `jobserver` group), and
   read-only otherwise. Which process holds which tokens steve only prints to its log on
   SIGUSR1; showing that needs an interface upstream.

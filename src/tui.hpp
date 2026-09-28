@@ -12,6 +12,7 @@
 #include "pressure.hpp"
 #include "query.hpp"
 #include "screen.hpp"
+#include "steve.hpp"
 #include "store.hpp"
 
 #include <algorithm>
@@ -114,6 +115,11 @@ using Watcher = std::function<std::vector<emerge::Snapshot>()>;
 // Reads /proc for the pressure graphs.
 using Sampler = std::function<pressure::Sample()>;
 
+// The running steve, or nothing when none runs.
+using SteveReader = std::function<std::optional<steve::Status>()>;
+// Changes one of steve's settings.
+using SteveSetter = std::function<std::expected<void, std::string>(steve::Setting, double)>;
+
 // What the interface asks of the world outside it: run() calls these, the app never does.
 struct Services {
     Checker check{};
@@ -121,12 +127,22 @@ struct Services {
     Rebuilder rebuild{};
     Watcher watch{};
     Sampler sample{};
+    SteveReader steve{};
+    SteveSetter set_steve{};
 };
 
 // Where steve stops handing out jobs, marked on the pressure graphs when known.
 struct Limits {
     std::optional<double> load{};
     std::optional<std::uint64_t> min_available{};
+};
+
+[[nodiscard]] Limits limits_of(const std::optional<steve::Status>& steve);
+
+// A change to one of steve's settings, waiting for run() to make it.
+struct SteveChange {
+    steve::Setting setting = steve::Setting::jobs;
+    double value = 0;
 };
 
 // How often the emerge view reads the snapshots again.
@@ -139,7 +155,10 @@ struct Watched {
     // Reads so far, which turn the spinners.
     std::size_t frame = 0;
     pressure::History history;
-    Limits limits;
+    std::optional<steve::Status> steve;
+    // The setting being changed, as an index into steve::all_settings.
+    std::optional<std::size_t> editing;
+    std::optional<SteveChange> change;
     // Over the tasks of every emerge, in order.
     Cursor cursor;
 };
@@ -214,7 +233,11 @@ class App {
     [[nodiscard]] const std::optional<Watched>& watched() const { return watched_; }
     // Whether the emerge view is showing and due to read the snapshots, which run() then does.
     [[nodiscard]] bool watch_requested() const;
-    void finish_watch(std::vector<emerge::Snapshot> snapshots, const pressure::Sample& sample = {});
+    void finish_watch(std::vector<emerge::Snapshot> snapshots, const pressure::Sample& sample = {},
+                      std::optional<steve::Status> steve = std::nullopt);
+    // A change to steve waiting for run() to make it.
+    [[nodiscard]] std::optional<SteveChange> steve_change_requested() const;
+    void finish_steve_change(const std::expected<void, std::string>& result);
     // How long run() waits for a key before the view needs drawing again; unset waits for one.
     [[nodiscard]] std::optional<std::chrono::milliseconds> refresh() const;
     [[nodiscard]] const std::optional<Dialog>& dialog() const { return dialog_; }
@@ -265,6 +288,7 @@ class App {
     void handle_page(const Key& key);
     void handle_check(const Key& key);
     void handle_watch(const Key& key);
+    void handle_steve(const Key& key);
     // The package with this cpv, if the store has it.
     [[nodiscard]] std::optional<std::uint32_t> find(std::string_view cpv) const;
 
@@ -828,10 +852,31 @@ inline std::vector<Span> emerge_spans(const emerge::Snapshot& snapshot, const Gl
 // Rows the pressure panel takes: a heading and a graph each for CPU, memory, load and stalls.
 inline constexpr unsigned pressure_rows = 5;
 
+// steve's line under the graphs: how many of its jobs are handed out and its settings, the one
+// being changed highlighted; or that it does not run.
+[[nodiscard]] std::vector<Span> steve_line(const std::optional<steve::Status>& steve,
+                                           std::optional<std::size_t> editing, const Glyphs& glyph);
+
 // The pressure panel from row down: what the history holds, with steve's limits marked.
 [[nodiscard]] std::vector<std::vector<Span>> pressure_lines(const pressure::History& history,
                                                             const Limits& limits, std::size_t width,
                                                             const Glyphs& glyph);
+
+// Moving and opening where there are tasks, and while steve's settings are being changed, how.
+template <class S>
+void draw_watch_hints(S& screen, const Watched& watched, const Glyphs& glyph, Size size) {
+    using Hints = std::vector<std::pair<std::string_view, std::string_view>>;
+    if (watched.editing) {
+        draw_hints(screen, size.rows - 1, size.cols,
+                   {{"h/l", "setting"}, {"+/-", "change"}, {"s", "done"}, {"q", "quit"}});
+        return;
+    }
+    Hints hints{{"s", "steve"}, {"esc", "back"}, {"q", "quit"}};
+    if (!watched.snapshots.empty()) {
+        hints.insert(hints.begin(), {{glyph.move, "move"}, {glyph.enter, "open"}});
+    }
+    draw_hints(screen, size.rows - 1, size.cols, hints);
+}
 
 template <class S> void draw_watch(S& screen, App& app, const Glyphs& glyph, Size size) {
     const auto& open = app.watched();
@@ -846,15 +891,17 @@ template <class S> void draw_watch(S& screen, App& app, const Glyphs& glyph, Siz
                 {"emerge", tone_pen(Tone::name)}});
     const unsigned first = 2;
     // The pressure panel sits above the hints, a blank line above it, where there is room.
-    const bool panel = size.rows >= first + pressure_rows + 6;
-    const unsigned height = size.rows - first - 1 - (panel ? pressure_rows + 1 : 0);
+    const bool panel = size.rows >= first + pressure_rows + 7;
+    const unsigned height = size.rows - first - 1 - (panel ? pressure_rows + 2 : 0);
     app.set_height(height);
     if (panel) {
         const auto graph = std::clamp<std::size_t>(size.cols > 60 ? size.cols - 60 : 0, 8, 120);
-        unsigned row = size.rows - 1 - pressure_rows;
-        for (const auto& spans : pressure_lines(watched.history, watched.limits, graph, glyph)) {
+        unsigned row = size.rows - 2 - pressure_rows;
+        for (const auto& spans :
+             pressure_lines(watched.history, limits_of(watched.steve), graph, glyph)) {
             put_spans(screen, row++, 0, spans, size.cols);
         }
+        put_spans(screen, row, 0, steve_line(watched.steve, watched.editing, glyph), size.cols);
     }
     if (watched.snapshots.empty()) {
         put_spans(screen, 1, 1, {{"No emerge is publishing its progress", tone_pen(Tone::heading)}},
@@ -865,7 +912,7 @@ template <class S> void draw_watch(S& screen, App& app, const Glyphs& glyph, Siz
                   size.cols);
         put_spans(screen, 4, 3, {{"this view reads it again every second.", tone_pen(Tone::note)}},
                   size.cols);
-        draw_hints(screen, size.rows - 1, size.cols, {{"esc", "back"}, {"q", "quit"}});
+        draw_watch_hints(screen, watched, glyph, size);
         return;
     }
     // Every line, with the selected one's index, then a window that keeps it in view.
@@ -905,8 +952,7 @@ template <class S> void draw_watch(S& screen, App& app, const Glyphs& glyph, Siz
         }
         put_spans(screen, first + line, 0, shown.spans, size.cols, bg);
     }
-    draw_hints(screen, size.rows - 1, size.cols,
-               {{glyph.move, "move"}, {glyph.enter, "open"}, {"esc", "back"}, {"q", "quit"}});
+    draw_watch_hints(screen, watched, glyph, size);
 }
 
 template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
@@ -941,9 +987,14 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
             app.finish_rebuild(services.rebuild
                                    ? services.rebuild()
                                    : std::unexpected(std::string{"no way to rebuild"}));
+        } else if (const auto change = app.steve_change_requested()) {
+            app.finish_steve_change(services.set_steve
+                                        ? services.set_steve(change->setting, change->value)
+                                        : std::unexpected(std::string{"no way to change steve"}));
         } else if (app.watch_requested()) {
             app.finish_watch(services.watch ? services.watch() : std::vector<emerge::Snapshot>{},
-                             services.sample ? services.sample() : pressure::Sample{});
+                             services.sample ? services.sample() : pressure::Sample{},
+                             services.steve ? services.steve() : std::nullopt);
         } else {
             app.handle(screen.read(app.refresh()));
         }

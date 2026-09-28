@@ -142,6 +142,14 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   use against `MemAvailable`, the one-minute load, and PSI's stall percentages when the kernel
   keeps them. Readings past steve's limits (load average, minimum available memory) are drawn
   in the bad tone, since that is when steve holds jobs back.
+- steve's line under the graphs shows how many of its jobs are handed out and its settings,
+  read each second through `stevie`'s getters (`src/steve.hpp`). Where `/dev/steve` is not
+  open to the user (root, or the `jobserver` group), they come from steve's command line in
+  `/proc` instead, which is stale after any live change and says so. `s` steps through the
+  settings: left and right pick one, up and down (or `+` and `-`) change it by a step through
+  `stevie`'s setters, at once and without confirming, since steve forgets them when it
+  restarts. A step stays within what steve accepts (a load average of at least 1, min-jobs no
+  higher than jobs).
 - Errors and notices are dialogs over the view, which the next key closes without acting on it:
   a failed check or rebuild (the drift stays listed underneath, and `u` can try again), a
   package only the fresh build has, and warnings from opening the store (`--no-refresh` on a

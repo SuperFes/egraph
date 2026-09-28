@@ -502,12 +502,17 @@ bool App::watch_requested() const {
     return watched_ && watched_->due && pages_.empty();
 }
 
-void App::finish_watch(std::vector<emerge::Snapshot> snapshots, const pressure::Sample& sample) {
+void App::finish_watch(std::vector<emerge::Snapshot> snapshots, const pressure::Sample& sample,
+                       std::optional<steve::Status> steve) {
     if (!watched_) {
         return;
     }
     auto& watched = *watched_;
     watched.snapshots = std::move(snapshots);
+    watched.steve = std::move(steve);
+    if (!watched.steve || !watched.steve->live) {
+        watched.editing.reset();
+    }
     if (sample.cpu || sample.mem_available || sample.load) {
         watched.history.add(sample);
     }
@@ -515,6 +520,57 @@ void App::finish_watch(std::vector<emerge::Snapshot> snapshots, const pressure::
     ++watched.frame;
     const auto count = tasks(watched).size();
     watched.cursor.at = std::min(watched.cursor.at, count == 0 ? 0 : count - 1);
+}
+
+std::optional<SteveChange> App::steve_change_requested() const {
+    if (!watched_ || !pages_.empty()) {
+        return std::nullopt;
+    }
+    return watched_->change;
+}
+
+void App::finish_steve_change(const std::expected<void, std::string>& result) {
+    if (!watched_) {
+        return;
+    }
+    watched_->change.reset();
+    // Whatever steve made of it, show it.
+    watched_->due = true;
+    if (!result) {
+        show(
+            {.error = true, .title = "stevie could not change it", .lines = lines(result.error())});
+    }
+}
+
+void App::handle_steve(const Key& key) {
+    if (!watched_ || !watched_->editing) {
+        return;
+    }
+    auto& watched = *watched_;
+    auto& at = *watched.editing;
+    int direction = 0;
+    if (is(key, U'q') || is(key, U'Q')) {
+        done_ = true;
+    } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace || is(key, U's')) {
+        watched.editing.reset();
+    } else if (key.kind == KeyKind::left || is(key, U'h')) {
+        at = at > 0 ? at - 1 : at;
+    } else if (key.kind == KeyKind::right || is(key, U'l')) {
+        at = std::min(at + 1, steve::all_settings.size() - 1);
+    } else if (key.kind == KeyKind::up || is(key, U'k') || is(key, U'+') || is(key, U'=')) {
+        direction = 1;
+    } else if (key.kind == KeyKind::down || is(key, U'j') || is(key, U'-')) {
+        direction = -1;
+    }
+    if (direction == 0 || !watched.steve || !watched.steve->live) {
+        return;
+    }
+    const auto& latest = watched.history.latest();
+    const auto setting = steve::all_settings.at(at);
+    if (const auto value =
+            steve::step(setting, watched.steve->settings, direction, latest ? latest->cpus : 0)) {
+        watched.change = SteveChange{.setting = setting, .value = *value};
+    }
 }
 
 std::optional<std::chrono::milliseconds> App::refresh() const {
@@ -529,9 +585,26 @@ void App::handle_watch(const Key& key) {
         return;
     }
     auto& watched = *watched_;
+    if (watched.editing) {
+        handle_steve(key);
+        return;
+    }
     const auto all = tasks(watched);
     if (is(key, U'q') || is(key, U'Q')) {
         done_ = true;
+    } else if (is(key, U's')) {
+        if (!watched.steve) {
+            show({.error = false,
+                  .title = "steve is not running",
+                  .lines = {"It shares one pool of jobs between every build when it runs."}});
+        } else if (!watched.steve->live) {
+            show({.error = false,
+                  .title = "steve's settings can only be read here",
+                  .lines = {watched.steve->problem,
+                            "stevie needs /dev/steve: root, or the jobserver group."}});
+        } else {
+            watched.editing = 0;
+        }
     } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace ||
                key.kind == KeyKind::left || is(key, U'h')) {
         watched_.reset();
@@ -930,6 +1003,70 @@ std::vector<std::vector<Span>> pressure_lines(const pressure::History& history,
     }
     lines.push_back(std::move(line));
     return lines;
+}
+
+Limits limits_of(const std::optional<steve::Status>& steve) {
+    if (!steve) {
+        return {};
+    }
+    const auto& settings = steve->settings;
+    return {.load = settings.load_average,
+            .min_available =
+                settings.min_memory && *settings.min_memory > 0
+                    ? std::optional<std::uint64_t>{static_cast<std::uint64_t>(*settings.min_memory)
+                                                   << 20U}
+                    : std::nullopt};
+}
+
+std::vector<Span> steve_line(const std::optional<steve::Status>& steve,
+                             std::optional<std::size_t> editing, const Glyphs& glyph) {
+    std::vector<Span> spans{{std::format(" {:<9}", "Steve"), tone_pen(Tone::heading)}};
+    if (!steve) {
+        spans.push_back({"not running", tone_pen(Tone::note)});
+        return spans;
+    }
+    const auto& settings = steve->settings;
+    if (steve->live && settings.tokens && settings.jobs && *settings.jobs > 0) {
+        const auto jobs = static_cast<std::uint64_t>(*settings.jobs);
+        const auto used = static_cast<std::uint64_t>(
+            std::clamp<std::int64_t>(*settings.jobs - *settings.tokens, 0, *settings.jobs));
+        spans.push_back({progress_bar(used, jobs, 12, glyph), tone_pen(Tone::choice)});
+        spans.push_back(
+            {std::format("  {} of {} jobs in use   ", used, jobs), tone_pen(Tone::note)});
+    }
+    const auto whole = [](std::optional<std::int64_t> value) {
+        return value ? std::format("{}", *value) : std::string{"-"};
+    };
+    const std::array<std::pair<std::string_view, std::string>, steve::all_settings.size()> items{{
+        {"jobs", whole(settings.jobs)},
+        {"min jobs", whole(settings.min_jobs)},
+        {"load", settings.load_average ? std::format("{:g}", *settings.load_average) : "-"},
+        {"memory",
+         settings.min_memory
+             ? byte_size(static_cast<std::uint64_t>(std::max<std::int64_t>(*settings.min_memory, 0))
+                         << 20U)
+             : "-"},
+        {"per process", whole(settings.per_process)},
+        {"recheck",
+         settings.recheck_timeout ? std::format("{:g}s", *settings.recheck_timeout) : "-"},
+    }};
+    for (std::size_t at = 0; at < items.size(); ++at) {
+        const auto& [name, value] = items.at(at);
+        spans.push_back({std::format("{}{} ", at == 0 ? "" : "  ", name), tone_pen(Tone::note)});
+        if (editing == at) {
+            spans.push_back({std::format(" {} ", value),
+                             {.fg = palette::crust, .bg = palette::mauve, .bold = true}});
+        } else {
+            spans.push_back({value, tone_pen(Tone::version)});
+        }
+    }
+    if (!steve->live) {
+        spans.push_back({steve->problem.empty()
+                             ? std::string{"   from its command line"}
+                             : std::format("   from its command line ({})", steve->problem),
+                         tone_pen(Tone::note)});
+    }
+    return spans;
 }
 
 std::string task_state(const emerge::Task& task) {
