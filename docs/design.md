@@ -119,11 +119,12 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
 
 - The package list filters on every key after `/` (case-insensitive, anywhere in the cpv) and
   shows how many packages each depends on and is needed by. Each row is marked with the root set
-  that keeps it directly, or as an orphan; `o` shows only orphans, as `egraph orphans` does,
-  and `b` toggles build-time dependencies (`--with-bdeps`). depclean runs once at start and again
-  on `b`.
-- A package page starts with why it is kept: `why`'s chain from a root, or that depclean would
-  remove it.
+  that keeps it directly, or as an orphan, and whether it is broken. `o` shows only orphans, as
+  `egraph orphans` does, and `!` only broken packages, as `egraph broken` does. `b` leaves out
+  build-time dependencies (DEPEND, BDEPEND) for both, as `--with-bdeps n` does for orphans.
+  depclean runs once at start and again on `b`.
+- A package page starts with why it is kept (`why`'s chain from a root, or that depclean would
+  remove it), then any dependencies nothing installed satisfies.
 - A package page lists what it depends on, then what needs it, one row per package and atom
   with the kind matrix, as `deps` and `rdeps` do. Enter follows a row to that package's page, and
   the title bar keeps the trail; Esc or Backspace go back.

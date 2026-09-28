@@ -27,6 +27,20 @@ namespace egraph {
 [[nodiscard]] std::string render(const Store& store, std::span<const Node> nodes,
                                  std::size_t index);
 
+// A top-level dependency of a package that nothing installed satisfies.
+struct Unsatisfied {
+    std::uint32_t package = 0;
+    // Index into dep_kinds.
+    std::uint32_t kind = 0;
+    // Index of the atom or group node in the package's list of that kind.
+    std::uint32_t node = 0;
+};
+
+// A package's unsatisfied dependencies, in dep_kinds order, then node order.
+[[nodiscard]] std::vector<Unsatisfied> unsatisfied(const Store& store, std::uint32_t package);
+
+[[nodiscard]] std::string render(const Store& store, const Unsatisfied& dependency);
+
 // Each top-level dependency nothing installed satisfies: "cpv<TAB>kind<TAB>dependency", sorted.
 [[nodiscard]] std::vector<std::string> broken(const Store& store);
 

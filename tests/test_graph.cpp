@@ -110,6 +110,21 @@ TEST_CASE("broken renders each unsatisfied top-level dependency as portage does"
                                    "|| ( dev-libs/missing ( dev-libs/b dev-libs/missing ) )"});
 }
 
+TEST_CASE("unsatisfied names each broken dependency by kind and node") {
+    CHECK(egraph::unsatisfied(sample(), 0).empty());
+    // a-1 alone: neither dev-libs/b nor dev-libs/missing is installed; a blocker never counts.
+    const auto store = decoded(egraph::test::with_rdepend(3, [](Bytes& b) {
+        b.varints({0, 0, 7}).list({});
+        b.varints({0, 0, 14}).list({});
+        b.varints({3, 0, 13}).list({});
+    }));
+    const auto found = egraph::unsatisfied(store, 0);
+    REQUIRE(found.size() == 2);
+    CHECK(found.front().kind == 4);
+    CHECK(found.front().node == 0);
+    CHECK(egraph::render(store, found.back()) == "dev-libs/missing");
+}
+
 TEST_CASE("neighborhoods follow the chosen direction to the chosen depth") {
     const auto store = sample();
     const auto graph = egraph::build_graph(store);

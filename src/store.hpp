@@ -22,6 +22,11 @@ inline constexpr std::uint32_t store_format_version = 4;
 inline constexpr std::array<std::string_view, 5> dep_kinds{"BDEPEND", "DEPEND", "IDEPEND",
                                                            "PDEPEND", "RDEPEND"};
 
+// DEPEND and BDEPEND, which emerge --with-bdeps=n leaves out.
+[[nodiscard]] inline bool is_build_kind(std::uint32_t kind) {
+    return dep_kinds.at(kind) == "DEPEND" || dep_kinds.at(kind) == "BDEPEND";
+}
+
 // A slice of one of Store's shared vectors.
 struct Range {
     std::uint32_t first = 0;

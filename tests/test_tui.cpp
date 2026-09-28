@@ -152,10 +152,10 @@ TEST_CASE("the list shows every package and quits on q") {
     egraph::tui::run(screen, app, ascii);
     CHECK(contains(screen.line(0), "2 of 2 packages"));
     // a-1 is marked as kept by @selected.
-    CHECK(screen.line(3).starts_with("   @ app-misc/a-1"));
+    CHECK(screen.line(3).starts_with("   @  app-misc/a-1"));
     // The cursor moved down to b-1 before q.
     CHECK(app.list().cursor.at == 1);
-    CHECK(screen.line(4).starts_with(" >   dev-libs/b-1"));
+    CHECK(screen.line(4).starts_with(" >    dev-libs/b-1"));
     CHECK(contains(screen.line(9), "q quit"));
     CHECK(screen.keys_left());
 }
@@ -349,7 +349,7 @@ TEST_CASE("o shows only orphans, and b drops build-time dependencies") {
     egraph::tui::App app{store, graph};
     FakeScreen screen{12, 120, {}};
     app.handle(character(U'o'));
-    CHECK(app.list().orphans);
+    CHECK(app.list().only == egraph::tui::Only::orphans);
     CHECK(app.list().shown.empty());
     egraph::tui::draw(screen, app, ascii);
     CHECK(contains(screen.line(0), "0 orphans"));
@@ -361,7 +361,7 @@ TEST_CASE("o shows only orphans, and b drops build-time dependencies") {
     CHECK(app.list().shown == std::vector<std::uint32_t>{1});
     egraph::tui::draw(screen, app, ascii);
     CHECK(contains(screen.line(0), "1 orphans  run-time deps only"));
-    CHECK(screen.line(3).starts_with(" > - dev-libs/b-1"));
+    CHECK(screen.line(3).starts_with(" > -  dev-libs/b-1"));
     app.handle(key(KeyKind::enter));
     egraph::tui::draw(screen, app, ascii);
     CHECK(contains(screen.text(), "Kept by, at run time"));
@@ -384,4 +384,58 @@ TEST_CASE("without roots depclean refuses, and the orphans view says so") {
     app.handle(key(KeyKind::enter));
     egraph::tui::draw(screen, app, ascii);
     CHECK(contains(screen.text(), "nothing: @world is empty"));
+}
+
+TEST_CASE("! shows only broken packages, and a page lists what is not installed") {
+    // a-1 alone, RDEPEND: dev-libs/missing dev-libs/b, neither installed.
+    const auto store = [] {
+        auto decoded = egraph::decode(egraph::test::with_rdepend(2, [](egraph::test::Bytes& b) {
+            b.varints({0, 0, 14}).list({});
+            b.varints({0, 0, 7}).list({});
+        }));
+        REQUIRE(decoded.has_value());
+        return std::move(*decoded);
+    }();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    CHECK(app.broken(0) == 2);
+    FakeScreen screen{14, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(screen.line(3).starts_with(" > @! app-misc/a-1"));
+    CHECK(contains(screen.text(), "! broken"));
+
+    app.handle(character(U'!'));
+    CHECK(app.list().shown == std::vector<std::uint32_t>{0});
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(0), "1 broken"));
+    CHECK(contains(screen.text(), "! all"));
+
+    app.handle(key(KeyKind::enter));
+    egraph::tui::draw(screen, app, ascii);
+    const auto text = screen.text();
+    CHECK(contains(text, "Not installed  2"));
+    CHECK(contains(text, "R.... ! dev-libs/b"));
+    CHECK(contains(text, "R.... ! dev-libs/missing"));
+}
+
+TEST_CASE("without build-time dependencies, only run-time ones count as broken") {
+    // a-1 alone, DEPEND: dev-libs/missing.
+    egraph::test::Bytes packages;
+    packages.varint(1).varints({1, 2, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
+    packages.varint(0).varint(1).varints({0, 0, 14}).list({});
+    packages.varint(0).varint(0).varint(0).varint(0).varint(0);
+    auto decoded = egraph::decode(egraph::test::with_section(4, packages));
+    REQUIRE(decoded.has_value());
+    const auto& store = *decoded;
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    app.handle(character(U'!'));
+    CHECK(app.list().shown.size() == 1);
+    app.handle(character(U'b'));
+    CHECK(app.broken(0) == 0);
+    CHECK(app.list().shown.empty());
+    app.handle(character(U'!'));
+    app.handle(key(KeyKind::enter));
+    const auto& rows = app.pages().back().rows;
+    CHECK(std::ranges::none_of(rows, [](const auto& row) { return row.type == RowType::missing; }));
 }

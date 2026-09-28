@@ -105,5 +105,6 @@ Taken ahead of 8 and 9 at the user's direction: output need not look like portag
   a package depends on and what needs it, with the kind matrix; Enter follows a link, Esc goes
   back. Step 3 (done): both lists unfold in place as trees, stopping at cycles. Step 4 (done):
   pages open with `why`'s chain, and the list marks roots and orphans and can show only
-  orphans, with or without build-time deps. Next: `broken` and `check`.
+  orphans, with or without build-time deps. Step 5 (done): broken packages, marked and
+  filtered in the list, and their unsatisfied dependencies on their pages. Next: `check`.
 - `rdeps --possible` (dependencies behind disabled USE flags) waits for the evaluated layer.

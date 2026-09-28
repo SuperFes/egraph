@@ -90,18 +90,32 @@ std::string render(const Store& store, std::span<const Node> nodes, std::size_t 
     return out;
 }
 
+std::vector<Unsatisfied> unsatisfied(const Store& store, std::uint32_t package) {
+    std::vector<Unsatisfied> found;
+    const auto& pkg = store.packages.at(package);
+    for (std::uint32_t kind = 0; kind < dep_kinds.size(); ++kind) {
+        const auto nodes = store.nodes_in(pkg.deps.at(kind));
+        const auto ok = satisfied(nodes);
+        for (std::uint32_t i = 0; i < nodes.size(); ++i) {
+            if (element(nodes, i).parent == no_parent && !ok.at(i)) {
+                found.push_back({.package = package, .kind = kind, .node = i});
+            }
+        }
+    }
+    return found;
+}
+
+std::string render(const Store& store, const Unsatisfied& dependency) {
+    const auto& pkg = store.packages.at(dependency.package);
+    return render(store, store.nodes_in(pkg.deps.at(dependency.kind)), dependency.node);
+}
+
 std::vector<std::string> broken(const Store& store) {
     std::vector<std::string> lines;
-    for (const auto& pkg : store.packages) {
-        for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
-            const auto nodes = store.nodes_in(pkg.deps.at(kind));
-            const auto ok = satisfied(nodes);
-            for (std::size_t i = 0; i < nodes.size(); ++i) {
-                if (element(nodes, i).parent == no_parent && !ok.at(i)) {
-                    lines.push_back(std::format("{}\t{}\t{}", store.string(pkg.cpv),
-                                                dep_kinds.at(kind), render(store, nodes, i)));
-                }
-            }
+    for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
+        for (const auto& dependency : unsatisfied(store, id)) {
+            lines.push_back(std::format("{}\t{}\t{}", store.string(store.packages.at(id).cpv),
+                                        dep_kinds.at(dependency.kind), render(store, dependency)));
         }
     }
     sorted_unique(lines);

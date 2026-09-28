@@ -22,10 +22,6 @@ namespace {
 // BDEPEND.
 constexpr std::array<std::uint32_t, 5> kind_order{4, 2, 3, 1, 0};
 
-bool is_build_kind(std::uint32_t kind) {
-    return dep_kinds.at(kind) == "DEPEND" || dep_kinds.at(kind) == "BDEPEND";
-}
-
 template <class T> const T& element(std::span<const T> items, std::size_t index) {
     return items.subspan(index).front();
 }

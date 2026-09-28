@@ -188,6 +188,33 @@ std::vector<Row> kept_rows(const Store& store, const Kept& kept, std::uint32_t p
     return rows;
 }
 
+// What package needs that nothing installed satisfies, one row per dependency with its kinds.
+std::vector<Row> unsatisfied_rows(const Store& store, std::uint32_t package, bool build_deps) {
+    std::vector<Row> missing;
+    for (const auto& dependency : unsatisfied(store, package)) {
+        if (!build_deps && is_build_kind(dependency.kind)) {
+            continue;
+        }
+        auto text = render(store, dependency);
+        auto row = std::ranges::find(missing, text, &Row::text);
+        if (row == missing.end()) {
+            missing.push_back(text_row(RowType::missing, std::move(text)));
+            row = missing.end() - 1;
+        }
+        if (const auto index = shorthand_of(dependency.kind); index < kind_shorthands.size()) {
+            row->link.kinds.at(index) = true;
+        }
+    }
+    if (missing.empty()) {
+        return {};
+    }
+    std::vector<Row> rows{
+        text_row(RowType::heading, std::format("Not installed  {}", missing.size()))};
+    std::ranges::move(missing, std::back_inserter(rows));
+    rows.push_back(text_row(RowType::note, ""));
+    return rows;
+}
+
 std::vector<Row> page_rows(const Store& store, const Graph& graph, std::uint32_t package) {
     std::vector<Row> rows;
     for (const bool reverse : {false, true}) {
@@ -273,6 +300,8 @@ App::App(const Store& store, const Graph& graph) : store_(store), graph_(graph) 
     folded_.reserve(count);
     dependencies_.assign(count, 0);
     dependents_.assign(count, 0);
+    broken_.reserve(count);
+    broken_at_run_time_.reserve(count);
     for (std::uint32_t id = 0; id < count; ++id) {
         folded_.push_back(folded(store.string(store.packages.at(id).cpv)));
         std::vector<std::uint32_t> children;
@@ -283,6 +312,10 @@ App::App(const Store& store, const Graph& graph) : store_(store), graph_(graph) 
         const auto [first, last] = std::ranges::unique(children);
         children.erase(first, last);
         dependencies_.at(id) = children.size();
+        const auto missing = unsatisfied(store, id);
+        broken_.push_back(missing.size());
+        broken_at_run_time_.push_back(static_cast<std::size_t>(std::ranges::count_if(
+            missing, [](const Unsatisfied& found) { return !is_build_kind(found.kind); })));
         for (const auto child : children) {
             ++dependents_.at(child);
         }
@@ -306,7 +339,8 @@ void App::filter() {
     const auto query = folded(list_.query);
     list_.shown.clear();
     for (std::uint32_t id = 0; id < folded_.size(); ++id) {
-        if (list_.orphans && kept_.packages.at(id)) {
+        if ((list_.only == Only::orphans && kept_.packages.at(id)) ||
+            (list_.only == Only::broken && broken(id) == 0)) {
             continue;
         }
         if (folded_.at(id).find(query) != std::string::npos) {
@@ -319,6 +353,8 @@ void App::filter() {
 void App::open(std::uint32_t package) {
     Page page{
         .package = package, .rows = kept_rows(store(), kept_, package, build_deps_), .cursor = {}};
+    std::ranges::move(unsatisfied_rows(store(), package, build_deps_),
+                      std::back_inserter(page.rows));
     std::ranges::move(page_rows(store(), graph_.get(), package), std::back_inserter(page.rows));
     thread(page.rows);
     // On the first dependency, else on whatever can be selected.
@@ -369,7 +405,10 @@ void App::handle_list(const Key& key) {
     } else if (is(key, U'/')) {
         list_.searching = true;
     } else if (is(key, U'o')) {
-        list_.orphans = !list_.orphans;
+        list_.only = list_.only == Only::orphans ? Only::all : Only::orphans;
+        filter();
+    } else if (is(key, U'!')) {
+        list_.only = list_.only == Only::broken ? Only::all : Only::broken;
         filter();
     } else if (is(key, U'b')) {
         build_deps_ = !build_deps_;
