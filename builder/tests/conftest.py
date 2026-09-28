@@ -63,11 +63,18 @@ def portage_environment():
 
 @pytest.fixture(scope="session")
 def gnupg_home():
-    """ResolverPlayground signs binpkgs, so it needs the test keys from a portage checkout."""
-    keys = os.path.join(os.path.dirname(portage.tests.__file__), ".gnupg")
+    """ResolverPlayground signs binpkgs, so it needs the test keys from a portage checkout.
+
+    An installed portage has the playground but not the keys; EGRAPH_TEST_KEYS names a
+    checkout's, so that any portage can be tested.
+    """
+    keys = os.environ.get("EGRAPH_TEST_KEYS") or os.path.join(
+        os.path.dirname(portage.tests.__file__), ".gnupg"
+    )
     if not os.path.isdir(keys):
         pytest.skip(
-            f"no test GPG keys at {keys}: put a portage checkout's lib/ on PYTHONPATH"
+            f"no test GPG keys at {keys}: set EGRAPH_TEST_KEYS to a portage checkout's"
+            " lib/portage/tests/.gnupg"
         )
     home = tempfile.mkdtemp(prefix="egraph-gpg-")
     shutil.copytree(keys, home, dirs_exist_ok=True)

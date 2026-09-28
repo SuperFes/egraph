@@ -57,9 +57,6 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 
 ## Queries
 
-- [ ] `broken` lists every kind, and on the live system most of its 156 lines are BDEPEND on build
-      tools removed since (automake 1.18). Decide whether it defaults to runtime kinds
-      (RDEPEND, PDEPEND, IDEPEND) with a `--kind` filter, as `--with-bdeps` does for depclean.
 - [ ] `export` neighborhoods follow dependency edges only; the fork's included blocker edges
       (without expanding them). Add them with the `blockers` query.
 - [ ] Queries rebuild the edge index on every run (about 20M instructions on the live store). If
@@ -85,8 +82,6 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 Direction from the user (2026-09-27): output does not have to look like portage's; make it clean
 and organised, and a TUI (ncurses, or Notcurses) is welcome.
 
-- [ ] `broken` in the human layout is 156 entries on the dev box, nearly all BDEPEND on removed
-      build tools; a runtime-only default (see Queries) would make it readable.
 - [ ] `--glyphs` defaults to Nerd Font icons; detecting a UTF-8 locale (and defaulting to
       `ascii` without one) would suit terminals that cannot show them.
 - [ ] Dependencies behind disabled USE flags, opt in and marked with the flag that would pull
@@ -104,9 +99,5 @@ and organised, and a TUI (ncurses, or Notcurses) is welcome.
 
 ## Tooling
 
-- [x] pytest is only installed for python3.13 here, not 3.14: install `dev-python/pytest` for
-      3.14, or make meson pick an interpreter that has it.
-- [ ] The installed `egraph-build` imports the system portage (3.0.82 here); the tests run
-      against the fork. Run the suite with `-Dportage_lib=` too, or in CI.
 - [ ] CLI11's CheckedTransformer error for a bad `--format` prints the enum map
       (`{dot->0,json->1} OR {0,1}`).

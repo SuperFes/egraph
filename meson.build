@@ -192,6 +192,9 @@ if pytest.found()
   if get_option('portage_lib') != ''
     builder_env.set('PYTHONPATH', get_option('portage_lib'))
   endif
+  if get_option('portage_test_keys') != ''
+    builder_env.set('EGRAPH_TEST_KEYS', get_option('portage_test_keys'))
+  endif
   test(
     'builder',
     pytest,

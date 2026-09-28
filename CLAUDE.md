@@ -47,11 +47,14 @@ clang-tidy -p build src/*.cpp                         # safety checks, config in
 clang-format -i src/*.cpp src/*.hpp tests/*.cpp tests/*.hpp
 black builder
 PYTHONPATH=/Development/Gentoo/portage/lib pytest builder/tests   # builder against the fork
+meson setup build-sysportage -Dportage_lib= && meson test -C build-sysportage  # installed portage
 EGRAPH_SYSTEM_TESTS=1 PYTHONPATH=... pytest builder/tests         # also compare on the live vdb
 ```
 
-`meson test` puts the `portage_lib` option (default: the fork) on PYTHONPATH; the playground
-tests need a portage checkout for its test GPG keys.
+`meson test` puts the `portage_lib` option (default: the fork) on PYTHONPATH. The playground
+tests need test GPG keys, which only a checkout has; `portage_test_keys` (default: the fork's)
+lends them to an installed portage, so `-Dportage_lib=` runs the full suite against the system
+portage the installed builder imports.
 
 Toolchain on this machine: clang 23, gcc 16, meson 1.12, Catch2 3.15, CLI11 2.7, nlohmann_json
 3.12, Python 3.14, Notcurses 3.0.17 (the optional `tui` feature).

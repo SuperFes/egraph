@@ -5,6 +5,13 @@ option(
   description: 'portage lib/ directory the builder tests import; empty uses the installed portage',
 )
 option(
+  'portage_test_keys',
+  type: 'string',
+  value: '/Development/Gentoo/portage/lib/portage/tests/.gnupg',
+  description: 'A portage checkout\'s test GPG keys, which the playground tests need and an '
+  + 'installed portage lacks; empty uses those of the portage under test',
+)
+option(
   'portage_hooks',
   type: 'boolean',
   value: true,
