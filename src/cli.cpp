@@ -20,11 +20,13 @@
 
 #include <CLI/CLI.hpp>
 
+#include <algorithm>
 #include <deque>
 #include <expected>
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <numeric>
 #include <optional>
@@ -144,7 +146,7 @@ std::expected<Store, std::string> open_dependencies(const Invocation& invocation
         return open_store(invocation, err);
     }
     return open_stores(invocation, err).transform([](Stores stores) {
-        return with_dynamic_deps(std::move(stores));
+        return with_dynamic_deps(std::move(stores.installed), stores.evaluated);
     });
 }
 
@@ -386,9 +388,21 @@ resolve_all(const Store& store, const std::vector<std::string>& arguments, std::
     return ids;
 }
 
-Exit edges(const std::vector<std::string>& packages, bool reverse, const Invocation& invocation,
-           std::ostream& out, std::ostream& err) {
-    const auto store = open_dependencies(invocation, err);
+Exit edges(const std::vector<std::string>& packages, bool reverse, bool possible,
+           const Invocation& invocation, std::ostream& out, std::ostream& err) {
+    if (possible && !invocation.dynamic_deps) {
+        err << "egraph: --possible reads the ebuilds' dependencies, which --dynamic-deps n "
+               "leaves out\n";
+        return Exit::usage;
+    }
+    // Only --possible needs the evaluated store past the merge.
+    std::optional<Evaluated> evaluated;
+    const auto store = !possible
+                           ? open_dependencies(invocation, err)
+                           : open_stores(invocation, err).transform([&](Stores stores) {
+                                 evaluated = std::move(stores.evaluated);
+                                 return with_dynamic_deps(std::move(stores.installed), *evaluated);
+                             });
     if (!store) {
         err << "egraph: " << store.error() << '\n';
         return Exit::failure;
@@ -403,7 +417,11 @@ Exit edges(const std::vector<std::string>& packages, bool reverse, const Invocat
         const auto some = reverse ? graph.rdeps(id) : graph.deps(id);
         found.insert(found.end(), some.begin(), some.end());
     }
-    const auto lines = edge_lines(*store, found);
+    auto lines = edge_lines(*store, found);
+    if (evaluated) {
+        std::ranges::move(possible_lines(*evaluated, *ids, reverse), std::back_inserter(lines));
+        std::ranges::sort(lines);
+    }
     if (const auto style = output(invocation); style.human) {
         human_edges(out, lines, cpvs(*store, *ids), reverse, style.theme);
     } else {
@@ -414,12 +432,12 @@ Exit edges(const std::vector<std::string>& packages, bool reverse, const Invocat
 
 Exit execute(const Deps& command, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
-    return edges(command.packages, false, invocation, out, err);
+    return edges(command.packages, false, command.possible, invocation, out, err);
 }
 
 Exit execute(const Rdeps& command, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
-    return edges(command.packages, true, invocation, out, err);
+    return edges(command.packages, true, command.possible, invocation, out, err);
 }
 
 Exit execute(const Match& command, const Invocation& invocation, std::ostream& out,
@@ -752,16 +770,24 @@ void configure(CLI::App& app, Invocation& invocation) {
             ->transform(CLI::CheckedTransformer(yes_no).description("{y,n}"));
         return sub;
     };
+    constexpr auto possible_help = "Also what the ebuilds would add with USE flags toggled, with "
+                                   "the flags";
     CLI::App* deps_cmd =
         add_dynamic_deps(add_command<Deps>(app, invocation, "What installed packages depend on"));
     add_field(deps_cmd, invocation, "packages", &Deps::packages,
               "Installed cpvs, or cps for every installed version")
         ->required();
+    deps_cmd->add_flag_callback(
+        "--possible", [&invocation] { std::get<Deps>(invocation.command).possible = true; },
+        possible_help);
     CLI::App* rdeps_cmd =
         add_dynamic_deps(add_command<Rdeps>(app, invocation, "What depends on installed packages"));
     add_field(rdeps_cmd, invocation, "packages", &Rdeps::packages,
               "Installed cpvs, or cps for every installed version")
         ->required();
+    rdeps_cmd->add_flag_callback(
+        "--possible", [&invocation] { std::get<Rdeps>(invocation.command).possible = true; },
+        possible_help);
     CLI::App* why_cmd = add_dynamic_deps(add_command<Why>(
         app, invocation, "Shortest chain of dependencies from a root set that keeps a package"));
     add_field(why_cmd, invocation, "package", &Why::package,

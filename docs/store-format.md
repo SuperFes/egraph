@@ -109,7 +109,7 @@ The installed packages as emerge sees them against the repositories: their depen
 store it was built against, named after it (`installed.egraph` → `installed.evaluated.egraph`:
 the last extension replaced by `.evaluated.egraph`), and is written by the same builder run.
 
-It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 1.
+It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 2.
 Package ids are the installed store's, so an evaluated store is current only while the installed
 store beside it has the build start recorded in its meta, and its own inputs stat the same.
 
@@ -133,6 +133,21 @@ A dependency record is how emerge reads the package's dependencies by default:
 4. Errors: list of `(kind, message)` string ids, as in the package record.
 5. The five node lists, exactly as in the package record, reduced under the installed USE, with
    matches naming installed package ids.
+6. Possible: list of what the ebuild would add with flags toggled that the installed build left
+   as they are, sorted by kind, atom, choice and flags; empty unless the source is 0, since only
+   the ebuild's strings keep their conditionals. Each entry is:
+   - kind: index into the dependency kinds (BDEPEND, DEPEND, IDEPEND, PDEPEND, RDEPEND).
+   - atom: string id, as portage prints it after reduction under the toggled USE.
+   - choice: 1 when the atom is an alternative inside a `||` group, else 0.
+   - matches: installed package ids the atom matches.
+   - flags: list of string ids, the fewest toggles that add it: `flag` turns a flag on, `-flag`
+     turns one off. Only flags in the ebuild's IUSE count, less those the profile masks (to turn
+     on) or forces (to turn off).
+
+   Per chain of USE conditionals in a string, the entries are the atoms `use_reduce` selects as
+   conditional on the flags the chain needs toggled (its `subset`), under the installed USE with
+   them toggled, less the atoms the reduced list holds already. Blockers are left out. An atom
+   several chains add keeps each minimal set of flags.
 
 A candidate is one version of an installed cp in one repository: every visible one, and each
 masked one that is installed.

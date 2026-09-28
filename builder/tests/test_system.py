@@ -372,3 +372,33 @@ def test_cpp_reads_the_live_evaluated_store(live_layer, live_evaluated, tmp_path
         check=True,
     ).stdout
     assert exported == evaluated.to_json(live_evaluated).encode()
+
+
+def test_possible_dependencies_agree_with_the_oracle(live_databases, live_evaluated):
+    """Single toggles only for completeness: the live IUSE makes pairs too many."""
+    from compare import possible_mismatches
+    from test_evaluated import layer_possible
+
+    vardb, portdb = live_databases
+    cpvs = [pkg.cpv for pkg in live_evaluated if pkg.source == evaluated.EBUILD]
+    for cpv in random.Random(0).sample(cpvs, min(SAMPLE, len(cpvs))):
+        found = layer_possible(live_evaluated, cpv)
+        deps = oracle.dynamic_deps(vardb, portdb, cpv)
+        assert possible_mismatches(vardb, portdb, cpv, found, deps, size=1) == [], cpv
+
+
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+def test_cpp_possible_dependencies_are_the_evaluated_layers(live_evaluated, live_store):
+    from test_evaluated import layer_possible
+    from test_queries import parse_possible
+
+    every = set()
+    for cpv in live_evaluated.installed():
+        every |= layer_possible(live_evaluated, cpv)
+    for cpv in random.Random(1).sample(live_evaluated.installed(), SAMPLE):
+        _, possible = parse_possible(_egraph(live_store, "deps", "--possible", cpv))
+        assert possible == {(e, f) for e, f in every if e.parent == cpv}, cpv
+        _, possible = parse_possible(_egraph(live_store, "rdeps", "--possible", cpv))
+        assert possible == {(e, f) for e, f in every if e.child == cpv}, cpv

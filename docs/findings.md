@@ -314,6 +314,25 @@ process including load and the freshness check of 2,575 inputs.
   candidates and the best version per slot for every installed cp; `egraph export --evaluated`
   reproduces the builder's JSON byte for byte on the live system.
 
+## Possible dependencies (2026-09-28, roadmap step 9d)
+
+- Live system: 1,300 of the 2,326 installed packages have possible dependencies, 11,202 entries
+  in all (9,976 needing one toggle, 1,193 two, 33 three), of which 5,955 match an installed
+  package (5,974 edges). The evaluated store grows from 1.06 MB to 1.14 MB (1.28 MB with
+  inputs).
+- `egraph rdeps --possible dev-libs/openssl` names the same 104 packages `equery depends`
+  lists, which reads the repository's unreduced metadata. The 7 beyond plain `rdeps` include
+  kmod (`+pkcs7`) and nghttp2 (`+utils`) from the step 6a comparison.
+- The evaluated pass costs 64.2G instructions against 58.3G without possible dependencies
+  (+10%). A first version set a config to every installed ebuild for its use.mask and use.force
+  and cost 81.9G; the candidate pass already sets one to each installed version, so it records
+  them there.
+- `rdeps --possible dev-libs/openssl` costs 124.4M instructions against 121.2M for `rdeps`
+  (both with dynamic deps, which load both stores).
+- Every entry is held to the oracle: its toggles add it, no fewer of them do, and every edge the
+  oracle adds for up to one toggle (live sample of 400 packages) or any number (scenarios) is
+  listed. The binary's output equals the layer's on a live sample.
+
 ## Dynamic dependencies in queries (2026-09-28, roadmap step 9c)
 
 - depclean selects the atoms of one dependency list together (`_minimize_children`). With the

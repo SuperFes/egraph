@@ -157,7 +157,8 @@ struct Theme {
 };
 
 // deps (reverse false) or rdeps records, one block per subject cpv in the given order: a line
-// per dependency (or dependent) and atom, with the kinds it appears under as a letter matrix.
+// per dependency (or dependent) and atom, with the kinds it appears under as a letter matrix, and
+// the toggles that would add it for a possible one (--possible).
 void human_edges(std::ostream& out, std::span<const std::string> records,
                  std::span<const std::string> subjects, bool reverse, const Theme& theme);
 
@@ -178,8 +179,8 @@ void human_soname(std::ostream& out, std::span<const std::string> records, std::
 void human_match(std::ostream& out, std::span<const std::string> records,
                  std::span<const std::string> atoms, const Theme& theme);
 
-// The legend for the kind letters and the any-of marker.
-void human_legend(std::ostream& out, const Theme& theme);
+// The legend for the kind letters and the any-of marker, and with possible the toggles.
+void human_legend(std::ostream& out, const Theme& theme, bool possible = false);
 
 // A cpv, or a dependency (an atom, or a || group as portage renders it), coloured part by part.
 [[nodiscard]] std::string paint_cpv(std::string_view cpv, const Painter& paint);

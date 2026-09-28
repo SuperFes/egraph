@@ -84,6 +84,25 @@ TEST_CASE("rdeps group by the package depended on") {
                            legend);
 }
 
+TEST_CASE("possible dependencies show the USE that would add them") {
+    const std::vector<std::string> records{
+        "app-misc/a-1\tRDEPEND\tdev-libs/b\tdev-libs/b-1",
+        "app-misc/a-1\tRDEPEND\tdev-libs/b[doc]\tdev-libs/b-1\tuse=doc",
+        "app-misc/a-1\tRDEPEND\tdev-libs/c\tdev-libs/c-1\tany-of\tuse=a -minimal",
+        "app-misc/a-1\tDEPEND\tdev-libs/c\tdev-libs/c-1\tany-of\tuse=a -minimal",
+    };
+    const std::vector<std::string> subjects{"app-misc/a-1"};
+    std::ostringstream out;
+    egraph::human_edges(out, records, subjects, false, plain);
+    CHECK(out.str() == "* app-misc/a-1  3 dependencies\n"
+                       "  R....  dev-libs/b-1  dev-libs/b\n"
+                       "  R....  dev-libs/b-1  dev-libs/b[doc]  +doc\n"
+                       "  R..D.  dev-libs/c-1  dev-libs/c |  +a -minimal\n" +
+                           legend +
+                           "+flag -flag USE the ebuild would need to add a possible "
+                           "dependency\n");
+}
+
 TEST_CASE("why draws the chain from its root") {
     const std::vector<std::string> records{
         "@selected\tapp-misc/a\tapp-misc/a-1",

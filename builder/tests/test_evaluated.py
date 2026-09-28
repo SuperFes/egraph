@@ -1,4 +1,4 @@
-"""The evaluated layer against the oracle on every scenario, and by hand on the repository one."""
+"""The evaluated layer against the oracle on every scenario, and by hand on two of them."""
 
 import collections
 
@@ -7,8 +7,9 @@ from portage import best
 from portage.exception import InvalidAtom, InvalidDependString
 from portage.versions import cpv_getkey
 
+import compare
 from egraph_build import evaluated, oracle
-from egraph_build.model import DEP_KINDS
+from egraph_build.model import DEP_KINDS, Edge
 
 _built = {}
 
@@ -173,3 +174,51 @@ def test_every_repository_has_its_candidates(repository):
 def test_candidate_flags(repository):
     (flags,) = repository.candidates("app-misc/flags")
     assert (flags.use, flags.iuse) == (("new",), ("new", "old"))
+
+
+def layer_possible(layer, cpv):
+    return {
+        (Edge(cpv, child, p.kind, p.atom, p.choice), p.flags)
+        for p in layer.package(cpv).possible
+        for child in p.matches
+    }
+
+
+def test_possible_dependencies_follow_the_oracle(scenario):
+    layer = build(scenario)
+    for cpv in oracle.installed(scenario.vardb):
+        found = layer_possible(layer, cpv)
+        deps = oracle.dynamic_deps(scenario.vardb, portdb(scenario), cpv)
+        assert (
+            compare.possible_mismatches(
+                scenario.vardb, portdb(scenario), cpv, found, deps
+            )
+            == []
+        ), cpv
+
+
+def test_possible_dependencies_by_hand(playgrounds):
+    layer = build(playgrounds("possible"))
+    found = {
+        (p.kind, p.atom, p.choice, p.matches, p.flags)
+        for p in layer.package("app-misc/host-1").possible
+    }
+
+    def entry(atom, flags, choice=False, kind="RDEPEND", installed=True):
+        name = atom.split("[")[0]
+        return (kind, atom, choice, (f"{name}-1",) if installed else (), flags)
+
+    assert found == {
+        entry("dev-libs/x", ("a",)),
+        entry("dev-libs/y", ("a", "b")),
+        entry("dev-libs/deep", ("a", "b", "c")),
+        entry("dev-libs/z", ("-minimal",)),
+        entry("dev-libs/v", ("a",)),
+        entry("dev-libs/w2", ("a",), choice=True),
+        entry("dev-libs/v2", ("a",), choice=True),
+        entry("dev-libs/absent", ("b",), installed=False),
+        entry("dev-libs/lib[doc]", ("doc",)),
+        entry("dev-libs/x", ("doc",), kind="DEPEND"),
+    }
+    # The vdb's strings are reduced already.
+    assert all(not pkg.possible for pkg in layer if pkg.source != evaluated.EBUILD)

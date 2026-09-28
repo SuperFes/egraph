@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from compare import _sonames
+from compare import _sonames, possible_mismatches
 from conftest import dynamic_option, portdb, write_stores
 from egraph_build import oracle, roots
 from egraph_build.model import Edge
@@ -53,6 +53,60 @@ def test_deps_and_rdeps(scenario, system, dynamic_deps):
         assert found == oracle.deps(vardb, cpv, portdb=ebuilds), cpv
         found = parse_edges(egraph(path, "rdeps", *option, cpv).stdout)
         assert found == oracle.rdeps(vardb, cpv, portdb=ebuilds), cpv
+
+
+def parse_possible(text):
+    """(edges, possible): deps or rdeps --possible output split into the edges installed
+    packages have and the (Edge, flags) pairs toggled flags would add."""
+    edges, possible = set(), set()
+    for line in text.splitlines():
+        parent, kind, atom, child, *markers = line.split("\t")
+        edge = Edge(parent, child, kind, atom, "any-of" in markers)
+        toggles = [m[len("use=") :] for m in markers if m.startswith("use=")]
+        if toggles:
+            possible.add((edge, tuple(toggles[0].split())))
+        else:
+            edges.add(edge)
+    return frozenset(edges), frozenset(possible)
+
+
+def test_possible_deps_and_rdeps(scenario, system):
+    vardb, path = system
+    ebuilds = portdb(scenario)
+    every = set()
+    for cpv in oracle.installed(vardb):
+        edges, possible = parse_possible(egraph(path, "deps", "--possible", cpv).stdout)
+        deps = oracle.deps(vardb, cpv, portdb=ebuilds)
+        assert edges == deps, cpv
+        assert possible_mismatches(vardb, ebuilds, cpv, possible, deps) == [], cpv
+        every |= possible
+    for cpv in oracle.installed(vardb):
+        edges, possible = parse_possible(
+            egraph(path, "rdeps", "--possible", cpv).stdout
+        )
+        assert edges == oracle.rdeps(vardb, cpv, portdb=ebuilds), cpv
+        assert possible == {(edge, flags) for edge, flags in every if edge.child == cpv}
+
+
+def test_possible_dependencies_name_their_flags(playgrounds, tmp_path):
+    path = tmp_path / "installed.egraph"
+    write_stores(playgrounds("possible"), path)
+    assert egraph(path, "rdeps", "--possible", "dev-libs/deep").stdout == (
+        "app-misc/host-1\tRDEPEND\tdev-libs/deep\tdev-libs/deep-1\tuse=a b c\n"
+    )
+    assert egraph(path, "rdeps", "--possible", "dev-libs/w2").stdout == (
+        "app-misc/host-1\tRDEPEND\tdev-libs/w2\tdev-libs/w2-1\tany-of\tuse=a\n"
+    )
+    assert egraph(path, "rdeps", "--possible", "dev-libs/z").stdout == (
+        "app-misc/host-1\tRDEPEND\tdev-libs/z\tdev-libs/z-1\tuse=-minimal\n"
+    )
+    # Masked and forced flags stay as they are, and arch flags are the profile's.
+    for name in ("m", "f", "arch", "never"):
+        assert egraph(path, "rdeps", "--possible", f"dev-libs/{name}").stdout == ""
+    result = egraph(
+        path, "rdeps", "--possible", "--dynamic-deps", "n", "dev-libs/z", check=False
+    )
+    assert result.returncode == 2
 
 
 def test_a_cp_names_every_installed_version(playgrounds, tmp_path):

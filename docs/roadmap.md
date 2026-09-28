@@ -137,8 +137,11 @@ a merge refreshes only what it changed.
   so every query runs unchanged. depclean's `_minimize_children` is now emulated: the ebuild's
   `:=` atom beside the built one it appends selects the same package. The fork passes its own
   setting, so its `on` mode uses egraph under emerge's default too.
-- 9d: `rdeps --possible`: the ebuilds' unreduced dependency strings, so that a dependency behind
-  a disabled USE flag shows with the flag that would pull it in.
+- 9d (done): `deps`/`rdeps --possible`: what the ebuilds' dependencies would add with USE flags
+  toggled, each with the fewest toggles that add it (`use=a -minimal`), stored per installed
+  package in the evaluated store. Only flags in the ebuild's IUSE that the profile neither
+  masks (to turn on) nor forces (to turn off) count. Held to an oracle that tries every set of
+  toggles on the scenarios and every single toggle on a live sample.
 - 9e: candidates. `egraph updates`: installed packages with a newer visible version in their
   slot, and those whose effective USE no longer matches what they were built with (as
   `--newuse` and `--changed-use` see it), held to `emerge -pu`/`-puDN @world` on scenarios where
@@ -167,7 +170,7 @@ Taken ahead of 8 and 9 at the user's direction: output need not look like portag
   `check` from the list, the drift linked to package pages. Step 7 (done): `u` in the check
   view rebuilds the store as root, or previews the fresh build for anyone else. Step 8 (done):
   errors and notices in dialogs.
-- `rdeps --possible` (dependencies behind disabled USE flags) waits for the evaluated layer.
+- `rdeps --possible` (dependencies behind disabled USE flags): done in 9d.
 
 ## 11. Build monitor
 

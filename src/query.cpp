@@ -54,6 +54,42 @@ std::vector<std::string> edge_lines(const Store& store, std::span<const Edge> ed
     return lines;
 }
 
+std::vector<std::string> possible_lines(const Evaluated& evaluated,
+                                        std::span<const std::uint32_t> packages, bool reverse) {
+    const auto cpv = [&evaluated](std::uint32_t id) {
+        return evaluated.string(evaluated.packages.at(id).cpv);
+    };
+    std::vector<std::string> lines;
+    const auto add = [&](std::uint32_t parent) {
+        for (const auto& entry : evaluated.possible_in(evaluated.packages.at(parent).possible)) {
+            std::string flags;
+            for (const auto id : evaluated.ids_in(entry.flags)) {
+                flags += flags.empty() ? "" : " ";
+                flags += evaluated.string(id);
+            }
+            for (const auto child : evaluated.ids_in(entry.matches)) {
+                if (reverse && !std::ranges::binary_search(packages, child)) {
+                    continue;
+                }
+                lines.push_back(std::format("{}\t{}\t{}\t{}{}\tuse={}", cpv(parent),
+                                            dep_kinds.at(entry.kind), evaluated.string(entry.atom),
+                                            cpv(child), entry.choice ? "\tany-of" : "", flags));
+            }
+        }
+    };
+    if (reverse) {
+        for (std::uint32_t parent = 0; parent < evaluated.packages.size(); ++parent) {
+            add(parent);
+        }
+    } else {
+        for (const auto parent : packages) {
+            add(parent);
+        }
+    }
+    sorted_unique(lines);
+    return lines;
+}
+
 std::vector<std::string> soname_users(const Store& store, std::string_view soname, bool providers) {
     std::vector<std::string> lines;
     for (const auto& pkg : store.packages) {

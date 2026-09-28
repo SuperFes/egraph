@@ -223,7 +223,9 @@ inline std::vector<std::byte> fresh_sample() {
 }
 
 // The evaluated store beside the sample, built against it (installed build time 42):
-//   a-1 from its ebuild, EAPI 8, RDEPEND dev-libs/b:= matching b-1, with an RDEPEND error.
+//   a-1 from its ebuild, EAPI 8, RDEPEND dev-libs/b:= matching b-1, with an RDEPEND error;
+//   possibly RDEPEND dev-libs/b (matching b-1) with flag on, and BDEPEND dev-libs/gone, an
+//   alternative matching nothing, with flag on and minimal off.
 //   b-1 from the vdb, with no dependencies.
 // Candidates of app-misc/a: a-1, visible, USE and IUSE "flag"; a-2, masked by keyword.
 inline constexpr std::initializer_list<std::string_view> evaluated_strings{"",
@@ -238,7 +240,10 @@ inline constexpr std::initializer_list<std::string_view> evaluated_strings{"",
                                                                            "app-misc/a-2",
                                                                            "~amd64 keyword",
                                                                            "RDEPEND",
-                                                                           "bad dep"};
+                                                                           "bad dep",
+                                                                           "dev-libs/b",
+                                                                           "dev-libs/gone",
+                                                                           "-minimal"};
 
 inline std::vector<Section> evaluated_sections() {
     Bytes meta;
@@ -259,9 +264,13 @@ inline std::vector<Section> evaluated_sections() {
     dependencies.varints({1, 0, 3}).varint(1).varint(11).varint(12);
     dependencies.varint(0).varint(0).varint(0).varint(0).varint(1);
     dependencies.varints({0, 0, 4}).list({1});
+    // Possible: kind, atom, choice, matches, flags.
+    dependencies.varint(2);
+    dependencies.varints({4, 13, 0}).list({1}).list({8});
+    dependencies.varints({0, 14, 1}).list({}).list({8, 15});
     // b-1.
     dependencies.varints({2, 1, 3}).varint(0);
-    dependencies.varint(0).varint(0).varint(0).varint(0).varint(0);
+    dependencies.varint(0).varint(0).varint(0).varint(0).varint(0).varint(0);
 
     Bytes candidates;
     candidates.varint(2);

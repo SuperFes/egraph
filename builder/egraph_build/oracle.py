@@ -242,3 +242,81 @@ def best_visible(portdb, cp):
         (slot,) = portdb.aux_get(cpv, ["SLOT"])
         by_slot.setdefault(slot.partition("/")[0], []).append(cpv)
     return {slot: str(best(cpvs)) for slot, cpvs in sorted(by_slot.items())}
+
+
+# Possible dependencies: what an installed package's ebuild would add with flags toggled that its
+# installed build left as they are. "flag" turns a flag on, "-flag" turns it off.
+
+
+def use_toggles(vardb, portdb, cpv):
+    """The toggles the user could make on cpv's ebuild: its explicit IUSE, less what the profile
+    masks (for a flag that is off) or forces (for a flag that is on)."""
+    from portage.package.ebuild.config import config
+
+    use, repo = vardb.aux_get(cpv, ["USE", "repository"])
+    keys = ["EAPI", "IUSE", "KEYWORDS", "SLOT", "repository"]
+    metadata = dict(zip(keys, portdb.aux_get(cpv, keys, myrepo=repo or None)))
+    settings = config(clone=portdb.settings)
+    settings.setcpv(cpv, mydb=metadata)
+    enabled = frozenset(use.split())
+    toggles = []
+    for flag in sorted({flag.lstrip("+-") for flag in metadata["IUSE"].split()}):
+        if flag in enabled:
+            if flag not in settings.useforce:
+                toggles.append(f"-{flag}")
+        elif flag not in settings.usemask:
+            toggles.append(flag)
+    return tuple(toggles)
+
+
+def possible_atoms(vardb, portdb, cpv, kind, toggles):
+    """(Atom, choice) of one kind that toggles add: the atoms use_reduce selects as conditional
+    on the toggled flags (its subset), under the installed USE with toggles applied, less the
+    atoms the package already depends on. Blockers left out, and none at all unless emerge reads
+    the ebuild's dependencies (only those keep their conditionals).
+
+    Raises InvalidDependString or InvalidAtom when portage cannot parse the string.
+    """
+    source, strings, eapi = dynamic.dependency_strings(vardb, portdb, cpv)
+    if source != "ebuild" or not toggles:
+        return []
+    (use,) = vardb.aux_get(cpv, ["USE"])
+    use = set(use.split())
+    subset = set()
+    for toggle in toggles:
+        if toggle.startswith("-"):
+            use.discard(toggle[1:])
+            subset.add(f"!{toggle[1:]}")
+        else:
+            use.add(toggle)
+            subset.add(toggle)
+    tokens = use_reduce(
+        strings[kind],
+        uselist=frozenset(use),
+        eapi=eapi or None,
+        opconvert=False,
+        token_class=Atom,
+        subset=subset,
+    )
+    selected = []
+    _flatten(tokens, False, selected)
+    present = {str(atom) for atom, _ in dep_atoms(vardb, cpv, kind, portdb)}
+    return [
+        (atom, choice)
+        for atom, choice in selected
+        if not atom.blocker and str(atom) not in present
+    ]
+
+
+def possible(vardb, portdb, cpv, toggles, kinds=DEP_KINDS):
+    """Edges from cpv to the installed packages the atoms toggles add would match."""
+    edges = set()
+    for kind in kinds:
+        try:
+            atoms = possible_atoms(vardb, portdb, cpv, kind, toggles)
+        except (InvalidAtom, InvalidDependString):
+            continue
+        for atom, choice in atoms:
+            for child in matches(vardb, atom):
+                edges.add(Edge(cpv, child, kind, str(atom), choice))
+    return frozenset(edges)

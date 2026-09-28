@@ -105,6 +105,22 @@ TEST_CASE("dependency queries take emerge's --dynamic-deps, on by default") {
     CHECK_THROWS(parse("soname --dynamic-deps n libc.so.6"));
 }
 
+TEST_CASE("deps and rdeps can add what toggled flags would") {
+    CHECK_FALSE(std::get<egraph::Deps>(parse("deps a/b").command).possible);
+    CHECK(std::get<egraph::Deps>(parse("deps --possible a/b").command).possible);
+    CHECK(std::get<egraph::Rdeps>(parse("rdeps --possible a/b").command).possible);
+    CHECK_THROWS(parse("why --possible a/b"));
+
+    // Only the ebuilds' dependencies keep their conditionals.
+    std::ostringstream out;
+    std::ostringstream err;
+    CHECK(egraph::run(parse("rdeps --possible --dynamic-deps n a/b"), out, err) ==
+          egraph::Exit::usage);
+    CHECK(
+        err.str() ==
+        "egraph: --possible reads the ebuilds' dependencies, which --dynamic-deps n leaves out\n");
+}
+
 TEST_CASE("why takes one atom and emerge's --with-bdeps") {
     const auto why = std::get<egraph::Why>(parse("why --with-bdeps n dev-libs/a").command);
     CHECK(why.package == "dev-libs/a");

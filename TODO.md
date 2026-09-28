@@ -75,8 +75,8 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       (depclean decides a virtual's `||` in its parent's context; egraph when the virtual is read).
 - [ ] `orphans --ignore-soname-deps=n` (keep soname providers), as emerge offers.
 - [ ] `why --all`: every chain, or every root, rather than one shortest chain.
-- [ ] The TUI reads the vdb's dependencies (`--dynamic-deps=n`); step 9g switches it, with the
-      check view's drift still comparing installed stores.
+- [ ] The TUI reads the vdb's dependencies (`--dynamic-deps=n`) and shows no possible ones; step
+      9g switches it, with the check view's drift still comparing installed stores.
 
 ## Output and UX
 
@@ -85,9 +85,13 @@ and organised, and a TUI (ncurses, or Notcurses) is welcome.
 
 - [ ] `--glyphs` defaults to Nerd Font icons; detecting a UTF-8 locale (and defaulting to
       `ascii` without one) would suit terminals that cannot show them.
-- [ ] Dependencies behind disabled USE flags, opt in and marked with the flag that would pull
-      them in (`rdeps --possible`). The vdb only keeps reduced strings, so this needs the
-      unreduced ones from the repository's metadata cache: the evaluated layer (step 9).
+- [ ] `--possible` finds each chain of USE conditionals through portage's `paren_reduce`, which
+      is deprecated "without replacement". If it goes, the chains need another source; the
+      semantics stay `use_reduce(subset=)`'s.
+- [ ] Possible dependencies take a USE dependency's flag only where a conditional needs it:
+      `x[a?]` outside any `a?` block is never listed as `x[a]` with `+a`. Only the atom changes,
+      not what is depended on, except when the looser or stricter atom matches another installed
+      slot.
 - [ ] The TUI's rebuild runs a second full build after the check's; saving the check's own
       scratch store (copied beside the target, then renamed) would halve the wait.
 

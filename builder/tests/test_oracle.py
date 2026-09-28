@@ -236,3 +236,85 @@ def test_mask_reasons(playgrounds, cpv, reasons):
 def test_best_visible_per_slot(playgrounds, cp, best):
     _, portdb = repository(playgrounds)
     assert oracle.best_visible(portdb, cp) == best
+
+
+# Possible dependencies, on the possible scenario.
+
+HOST = "app-misc/host-1"
+
+
+def possible_system(playgrounds):
+    system = playgrounds("possible")
+    return system.vardb, system.trees[system.eroot]["porttree"].dbapi
+
+
+def test_use_toggles_leave_out_masked_forced_and_implicit_flags(playgrounds):
+    vardb, portdb = possible_system(playgrounds)
+    # masked is off and use-masked, forced on and use-forced; x86 is not in IUSE.
+    assert oracle.use_toggles(vardb, portdb, HOST) == ("a", "b", "c", "doc", "-minimal")
+
+
+@pytest.mark.parametrize(
+    "toggles, kind, expected",
+    [
+        # always is a dependency already; w2 and v2 stay alternatives. v was an alternative to
+        # w, but the subset portage selects for a keeps only what a conditions.
+        (
+            ("a",),
+            "RDEPEND",
+            {
+                ("dev-libs/x", False),
+                ("dev-libs/v", False),
+                ("dev-libs/w2", True),
+                ("dev-libs/v2", True),
+            },
+        ),
+        (
+            ("a", "b"),
+            "RDEPEND",
+            {
+                ("dev-libs/x", False),
+                ("dev-libs/y", False),
+                ("dev-libs/v", False),
+                ("dev-libs/w2", True),
+                ("dev-libs/v2", True),
+                ("dev-libs/absent", False),
+            },
+        ),
+        # c alone reaches nothing: deep also needs a and b.
+        (("c",), "RDEPEND", set()),
+        (("-minimal",), "RDEPEND", {("dev-libs/z", False)}),
+        # The USE dependency follows the toggled flag.
+        (("doc",), "RDEPEND", {("dev-libs/lib[doc]", False)}),
+        (("doc",), "DEPEND", {("dev-libs/x", False)}),
+        (("masked",), "RDEPEND", {("dev-libs/m", False)}),
+        ((), "RDEPEND", set()),
+    ],
+)
+def test_possible_atoms(playgrounds, toggles, kind, expected):
+    vardb, portdb = possible_system(playgrounds)
+    found = oracle.possible_atoms(vardb, portdb, HOST, kind, toggles)
+    assert {(str(atom), choice) for atom, choice in found} == expected
+
+
+def test_possible_atoms_need_the_ebuilds_strings(playgrounds):
+    vardb, portdb = repository(playgrounds)
+    # gone has no ebuild: the vdb's strings are reduced already.
+    assert (
+        oracle.possible_atoms(vardb, portdb, "app-misc/gone-1", "RDEPEND", ("a",)) == []
+    )
+
+
+def test_possible_edges_are_installed_matches(playgrounds):
+    vardb, portdb = possible_system(playgrounds)
+    assert oracle.possible(vardb, portdb, HOST, ("a", "b", "c")) == {
+        Edge(HOST, f"dev-libs/{name}-1", "RDEPEND", f"dev-libs/{name}", choice)
+        for name, choice in (
+            ("x", False),
+            ("y", False),
+            ("deep", False),
+            ("v", False),
+            ("w2", True),
+            ("v2", True),
+        )
+    }

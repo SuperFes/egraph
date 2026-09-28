@@ -5,7 +5,7 @@ import struct
 import tempfile
 from typing import NamedTuple
 
-from egraph_build.evaluated import Candidate, Dependencies, EvaluatedLayer
+from egraph_build.evaluated import Candidate, Dependencies, EvaluatedLayer, Possible
 from egraph_build.installed import InstalledLayer, Node, Package
 from egraph_build.model import DEP_KINDS
 from egraph_build.profile import ImplicitIuse, has_iuse_effective
@@ -33,7 +33,7 @@ INPUT_FILE, INPUT_DIRECTORY, INPUT_SYMLINK, INPUT_MISSING = range(4)
 DEFAULT_PATH = "var/cache/egraph/installed.egraph"
 
 EVALUATED_MAGIC = b"EGRAPHEV"
-EVALUATED_FORMAT_VERSION = 1
+EVALUATED_FORMAT_VERSION = 2
 SECTION_DEPENDENCIES, SECTION_CANDIDATES = range(4, 6)
 EVALUATED_SECTIONS = (
     SECTION_META,
@@ -259,6 +259,13 @@ def encode_evaluated(layer, meta, inputs=()):
             w.varint(strings(key))
             w.varint(strings(message))
         _write_trees(w, pkg.deps, strings, index)
+        w.varint(len(pkg.possible))
+        for p in pkg.possible:
+            w.varint(DEP_KINDS.index(p.kind))
+            w.varint(strings(p.atom))
+            w.varint(int(p.choice))
+            w.ids([index[cpv] for cpv in p.matches])
+            w.ids([strings(flag) for flag in p.flags])
     sections[SECTION_DEPENDENCIES] = w.out
 
     candidates = layer.candidates()
@@ -489,12 +496,31 @@ def decode_evaluated(data):
         source = r.varint(3)
         eapi = s()
         errors = tuple((s(), s()) for _ in range(r.count()))
-        raw.append((cpv, source, eapi, errors, _read_trees(r, s, count)))
+        deps = _read_trees(r, s, count)
+        possible = []
+        for _ in range(r.count()):
+            kind = DEP_KINDS[r.varint(len(DEP_KINDS))]
+            atom = s()
+            choice = bool(r.varint(2))
+            matches = r.ids(count)
+            flags = tuple(strings[i] for i in r.ids(nstrings))
+            possible.append((kind, atom, choice, matches, flags))
+        raw.append((cpv, source, eapi, errors, deps, possible))
     r.done()
     cpvs = [cpv for cpv, *_ in raw]
     packages = [
-        Dependencies(cpv, source, eapi, errors, _named(deps, cpvs))
-        for cpv, source, eapi, errors, deps in raw
+        Dependencies(
+            cpv,
+            source,
+            eapi,
+            errors,
+            _named(deps, cpvs),
+            tuple(
+                Possible(kind, atom, choice, tuple(cpvs[i] for i in matches), flags)
+                for kind, atom, choice, matches, flags in possible
+            ),
+        )
+        for cpv, source, eapi, errors, deps, possible in raw
     ]
 
     r = _Reader(sections[SECTION_CANDIDATES], "candidates")

@@ -1,6 +1,7 @@
 #include "evaluated.hpp"
 #include "freshness.hpp"
 #include "helpers.hpp"
+#include "query.hpp"
 #include "store.hpp"
 #include "store_writer.hpp"
 
@@ -8,6 +9,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -53,7 +55,17 @@ TEST_CASE("the sample evaluated store decodes") {
     REQUIRE(rdepend.size() == 1);
     CHECK(evaluated->string(rdepend.front().atom) == "dev-libs/b:=");
     CHECK(evaluated->ids_in(rdepend.front().matches).front() == 1);
+    const auto possible = evaluated->possible_in(a.possible);
+    REQUIRE(possible.size() == 2);
+    CHECK(egraph::dep_kinds.at(possible.front().kind) == "RDEPEND");
+    CHECK(evaluated->string(possible.front().atom) == "dev-libs/b");
+    CHECK_FALSE(possible.front().choice);
+    CHECK(evaluated->ids_in(possible.front().matches).front() == 1);
+    CHECK(possible.back().choice);
+    CHECK(evaluated->ids_in(possible.back().matches).empty());
+    CHECK(evaluated->string(evaluated->ids_in(possible.back().flags).back()) == "-minimal");
     CHECK(evaluated->packages.back().source == egraph::DepSource::vdb);
+    CHECK(evaluated->possible_in(evaluated->packages.back().possible).empty());
 
     REQUIRE(evaluated->candidates.size() == 2);
     const auto& visible = evaluated->candidates.front();
@@ -114,6 +126,18 @@ TEST_CASE("evaluated records are checked") {
     CHECK_THAT(rejection(evaluated_with_section(5, bad_reason)),
                Catch::Matchers::StartsWith("candidates: string 99 out of range"));
 
+    Bytes bad_kind;
+    bad_kind.varint(1).varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0});
+    bad_kind.varint(1).varints({5, 13, 0}).list({}).list({});
+    CHECK_THAT(rejection(evaluated_with_section(4, bad_kind)),
+               Catch::Matchers::StartsWith("dependencies: kind 5 out of range 5"));
+
+    Bytes bad_choice;
+    bad_choice.varint(1).varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0});
+    bad_choice.varint(1).varints({4, 13, 2}).list({}).list({});
+    CHECK_THAT(rejection(evaluated_with_section(4, bad_choice)),
+               Catch::Matchers::StartsWith("dependencies: choice 2 out of range 2"));
+
     Bytes trailing;
     trailing.varint(0).varint(0);
     CHECK_THAT(rejection(evaluated_with_section(5, trailing)),
@@ -133,8 +157,8 @@ TEST_CASE("an evaluated store loads only beside its installed store") {
     // b-1's record names another package.
     Bytes swapped;
     swapped.varint(2);
-    swapped.varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0});
-    swapped.varints({1, 1, 3}).varint(0).varints({0, 0, 0, 0, 0});
+    swapped.varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0, 0});
+    swapped.varints({1, 1, 3}).varint(0).varints({0, 0, 0, 0, 0, 0});
     egraph::test::write_bytes(path, evaluated_with_section(4, swapped));
     const auto mismatched = egraph::load_evaluated(path, store);
     REQUIRE_FALSE(mismatched.has_value());
@@ -142,7 +166,7 @@ TEST_CASE("an evaluated store loads only beside its installed store") {
           path.string() + ": package 1 is app-misc/a-1, not the installed store's dev-libs/b-1");
 
     Bytes one;
-    one.varint(1).varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0});
+    one.varint(1).varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0, 0});
     egraph::test::write_bytes(path, evaluated_with_section(4, one));
     const auto short_one = egraph::load_evaluated(path, store);
     REQUIRE_FALSE(short_one.has_value());
@@ -173,8 +197,7 @@ TEST_CASE("the evaluated store sits beside the installed one") {
 TEST_CASE("dynamic dependencies replace the installed trees") {
     auto evaluated = egraph::decode_evaluated(sample());
     REQUIRE(evaluated.has_value());
-    const auto store =
-        egraph::with_dynamic_deps({.installed = installed(), .evaluated = *evaluated});
+    const auto store = egraph::with_dynamic_deps(installed(), *evaluated);
 
     REQUIRE(store.packages.size() == 2);
     const auto& a = store.packages.front();
@@ -198,12 +221,11 @@ TEST_CASE("groups keep the empty atom through the merge") {
     dependencies.varint(2);
     dependencies.varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 2});
     dependencies.varints({1, 0, 0}).list({});
-    dependencies.varints({0, 1, 4}).list({1});
-    dependencies.varints({2, 1, 3}).varint(0).varints({0, 0, 0, 0, 0});
+    dependencies.varints({0, 1, 4}).list({1}).varint(0);
+    dependencies.varints({2, 1, 3}).varint(0).varints({0, 0, 0, 0, 0, 0});
     auto evaluated = egraph::decode_evaluated(evaluated_with_section(4, dependencies));
     REQUIRE(evaluated.has_value());
-    const auto store =
-        egraph::with_dynamic_deps({.installed = installed(), .evaluated = *evaluated});
+    const auto store = egraph::with_dynamic_deps(installed(), *evaluated);
     const auto rdepend = store.nodes_in(store.packages.front().deps.at(4));
     REQUIRE(rdepend.size() == 2);
     CHECK(rdepend.front().type == egraph::NodeType::any_of);
@@ -211,4 +233,15 @@ TEST_CASE("groups keep the empty atom through the merge") {
     CHECK(rdepend.back().parent == 0);
     CHECK(store.string(rdepend.back().atom) == "dev-libs/b:=");
     CHECK(store.pairs_in(store.packages.front().errors).empty());
+}
+
+TEST_CASE("possible dependencies are listed with their toggles") {
+    const auto evaluated = egraph::decode_evaluated(sample());
+    REQUIRE(evaluated.has_value());
+    // dev-libs/gone matches nothing installed, so it has no line.
+    const std::vector<std::string> a{"app-misc/a-1\tRDEPEND\tdev-libs/b\tdev-libs/b-1\tuse=flag"};
+    CHECK(egraph::possible_lines(*evaluated, std::vector<std::uint32_t>{0}, false) == a);
+    CHECK(egraph::possible_lines(*evaluated, std::vector<std::uint32_t>{1}, true) == a);
+    CHECK(egraph::possible_lines(*evaluated, std::vector<std::uint32_t>{0}, true).empty());
+    CHECK(egraph::possible_lines(*evaluated, std::vector<std::uint32_t>{1}, false).empty());
 }

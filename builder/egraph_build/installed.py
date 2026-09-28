@@ -91,12 +91,18 @@ def _tree(tokens, parent, nodes, match):
             nodes.append(Node(ATOM, parent, str(token), match(token)))
 
 
+def nodes(tokens, match):
+    """The node tuple for use_reduce's tokens, atoms resolved through match."""
+    found = []
+    _tree(tokens, -1, found, match)
+    return tuple(found)
+
+
 def dependency_trees(strings, use, eapi, match):
     """(node tuples per kind, errors) for {kind: dependency string} reduced under use."""
     errors = []
     deps = []
     for kind in DEP_KINDS:
-        nodes = []
         try:
             tokens = use_reduce(
                 strings[kind],
@@ -105,11 +111,10 @@ def dependency_trees(strings, use, eapi, match):
                 opconvert=False,
                 token_class=Atom,
             )
-            _tree(tokens, -1, nodes, match)
+            deps.append(nodes(tokens, match))
         except (InvalidAtom, InvalidDependString) as e:
             errors.append((kind, str(e)))
-            nodes = []
-        deps.append(tuple(nodes))
+            deps.append(())
     return tuple(deps), errors
 
 

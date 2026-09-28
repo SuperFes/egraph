@@ -30,11 +30,15 @@ enum class Exit : std::uint8_t {
 struct Deps {
     static constexpr std::string_view name = "deps";
     std::vector<std::string> packages;
+    // Also the dependencies the ebuilds would add with flags toggled.
+    bool possible = false;
 };
 
 struct Rdeps {
     static constexpr std::string_view name = "rdeps";
     std::vector<std::string> packages;
+    // Also the dependencies the ebuilds would add with flags toggled.
+    bool possible = false;
 };
 
 struct Why {

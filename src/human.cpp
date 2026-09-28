@@ -204,6 +204,26 @@ std::vector<Fields> split_all(std::span<const std::string> records) {
     return all;
 }
 
+// The field query.hpp's possible_lines append.
+constexpr std::string_view possible_prefix = "use=";
+
+// "a -minimal" as "+a -minimal": the USE flags to set for a possible dependency to appear.
+std::string human_toggles(std::string_view toggles) {
+    std::string out;
+    while (!toggles.empty()) {
+        const auto space = toggles.find(' ');
+        const auto flag = toggles.substr(0, space);
+        out += out.empty() ? "" : " ";
+        out += flag.starts_with('-') ? "" : "+";
+        out += flag;
+        if (space == std::string_view::npos) {
+            break;
+        }
+        toggles.remove_prefix(space + 1);
+    }
+    return out;
+}
+
 std::string spaces(std::size_t used, std::size_t width) {
     return std::string(width > used ? width - used : 0, ' ');
 }
@@ -369,7 +389,7 @@ std::string paint_dependency(std::string_view text, const Painter& paint) {
     return out;
 }
 
-void human_legend(std::ostream& out, const Theme& theme) {
+void human_legend(std::ostream& out, const Theme& theme, bool possible) {
     const auto& paint = theme.paint;
     out << '\n';
     for (const auto& kind : kinds) {
@@ -377,6 +397,10 @@ void human_legend(std::ostream& out, const Theme& theme) {
     }
     out << paint(theme.glyph().choice, Tone::choice) << ' '
         << paint("one alternative of a || group", Tone::note) << '\n';
+    if (possible) {
+        out << paint("+flag -flag", Tone::note) << ' '
+            << paint("USE the ebuild would need to add a possible dependency", Tone::note) << '\n';
+    }
 }
 
 void human_edges(std::ostream& out, std::span<const std::string> records,
@@ -387,12 +411,15 @@ void human_edges(std::ostream& out, std::span<const std::string> records,
     const std::size_t self = reverse ? 3 : 0;
     const std::size_t other = reverse ? 0 : 3;
     bool first = true;
+    bool possible = false;
     for (const auto& subject : subjects) {
-        // One line per package and atom, with every kind it appears under.
+        // One line per package, atom and toggles, with every kind it appears under.
         struct Line {
             std::string_view package;
             std::string_view atom;
             bool choice = false;
+            // Empty unless the dependency is possible.
+            std::string_view toggles;
             std::array<bool, kinds.size()> in{};
         };
         std::vector<Line> lines;
@@ -400,13 +427,25 @@ void human_edges(std::ostream& out, std::span<const std::string> records,
             if (row.at(self) != subject) {
                 continue;
             }
-            const bool choice = row.size() > 4;
+            bool choice = false;
+            std::string_view toggles;
+            for (const auto field : std::span{row}.subspan(4)) {
+                if (field == "any-of") {
+                    choice = true;
+                } else if (field.starts_with(possible_prefix)) {
+                    toggles = field.substr(possible_prefix.size());
+                    possible = true;
+                }
+            }
             auto found = std::ranges::find_if(lines, [&](const Line& line) {
                 return line.package == row.at(other) && line.atom == row.at(2) &&
-                       line.choice == choice;
+                       line.choice == choice && line.toggles == toggles;
             });
             if (found == lines.end()) {
-                lines.push_back({.package = row.at(other), .atom = row.at(2), .choice = choice});
+                lines.push_back({.package = row.at(other),
+                                 .atom = row.at(2),
+                                 .choice = choice,
+                                 .toggles = toggles});
                 found = lines.end() - 1;
             }
             if (const auto index = kind_index(row.at(1)); index < kinds.size()) {
@@ -437,11 +476,14 @@ void human_edges(std::ostream& out, std::span<const std::string> records,
             if (line.choice) {
                 out << ' ' << paint(glyph.choice, Tone::choice);
             }
+            if (!line.toggles.empty()) {
+                out << "  " << paint(human_toggles(line.toggles), Tone::note);
+            }
             out << '\n';
         }
     }
     if (!rows.empty()) {
-        human_legend(out, theme);
+        human_legend(out, theme, possible);
     }
 }
 

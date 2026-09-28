@@ -1,5 +1,6 @@
 #pragma once
 
+#include "evaluated.hpp"
 #include "graph.hpp"
 #include "store.hpp"
 
@@ -18,6 +19,13 @@ namespace egraph {
 
 // deps and rdeps: one edge_line per edge, sorted, without duplicates.
 [[nodiscard]] std::vector<std::string> edge_lines(const Store& store, std::span<const Edge> edges);
+
+// What the ebuilds would add with flags toggled: edge_lines of the installed packages the possible
+// dependencies of packages match (reverse: of every package, into packages, which is sorted), each
+// with
+// "<TAB>use=toggles" appended, the toggles space-separated. Sorted, without duplicates.
+[[nodiscard]] std::vector<std::string>
+possible_lines(const Evaluated& evaluated, std::span<const std::uint32_t> packages, bool reverse);
 
 // Consumers (or providers) of a soname: one "cpv<TAB>multilib category" line each, sorted.
 [[nodiscard]] std::vector<std::string> soname_users(const Store& store, std::string_view soname,

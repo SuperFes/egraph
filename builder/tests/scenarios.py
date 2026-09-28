@@ -296,4 +296,68 @@ SCENARIOS = {
         # Written to the repository's profiles/updates by the fixtures.
         "updates": {"1Q-2026": ("move app-misc/oldname app-misc/newname",)},
     },
+    # Dependencies behind flags the installed build left off: nested, negated, inside and around
+    # ||, on a use-masked and a use-forced flag, on an arch flag, behind a contradiction, already
+    # depended on, not installed, and one whose USE dependency follows the flag.
+    "possible": {
+        "world": ["app-misc/host"],
+        "ebuilds": {
+            "app-misc/host-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "IUSE": "a b c doc minimal masked forced",
+                "RDEPEND": " ".join(
+                    (
+                        "dev-libs/always",
+                        "a? ( dev-libs/x dev-libs/always )",
+                        "a? ( b? ( dev-libs/y ) )",
+                        "a? ( b? ( c? ( dev-libs/deep ) ) )",
+                        "!minimal? ( dev-libs/z )",
+                        "|| ( dev-libs/w a? ( dev-libs/v ) )",
+                        "a? ( || ( dev-libs/w2 dev-libs/v2 ) )",
+                        "masked? ( dev-libs/m )",
+                        "!forced? ( dev-libs/f )",
+                        "!x86? ( dev-libs/arch )",
+                        "a? ( !a? ( dev-libs/never ) )",
+                        "b? ( dev-libs/absent )",
+                        "doc? ( dev-libs/lib[doc?] )",
+                        "a? ( !dev-libs/blocked )",
+                    )
+                ),
+                "DEPEND": "doc? ( dev-libs/x )",
+            },
+        },
+        "installed": {
+            "app-misc/host-1": {
+                "EAPI": "8",
+                "IUSE": "a b c doc minimal masked forced",
+                "USE": "forced minimal x86",
+                "RDEPEND": "dev-libs/always dev-libs/w",
+            },
+            **{
+                f"dev-libs/{name}-1": {"EAPI": "8"}
+                for name in (
+                    "always",
+                    "x",
+                    "y",
+                    "deep",
+                    "z",
+                    "w",
+                    "v",
+                    "w2",
+                    "v2",
+                    "m",
+                    "f",
+                    "arch",
+                    "never",
+                    "blocked",
+                )
+            },
+            "dev-libs/lib-1": {"EAPI": "8", "IUSE": "doc", "USE": "doc"},
+        },
+        "profile": {
+            "package.use.mask": ("app-misc/host masked",),
+            "package.use.force": ("app-misc/host forced",),
+        },
+    },
 }

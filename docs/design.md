@@ -25,7 +25,7 @@ Each layer has its own inputs and invalidation, and is proven independently.
 | Layer | Contents | Depends on | Status |
 |---|---|---|---|
 | Installed | installed packages, exact dependency edges, sonames, blockers, roots | `/var/db/pkg`, world file, profile (for @system) | first |
-| Evaluated | installed packages' dependencies as emerge reads them by default; the visible versions of installed cps with effective USE, and why installed ones are masked | repo metadata, `/etc/portage`, profile, the installed store | stored (9b) |
+| Evaluated | installed packages' dependencies as emerge reads them by default, and what their ebuilds would add with flags toggled; the visible versions of installed cps with effective USE, and why installed ones are masked | repo metadata, `/etc/portage`, profile, the installed store | stored (9b-9d) |
 | Candidate | best visible version per cp, pending updates and rebuilds | both of the above | later |
 
 The evaluated layer is its own file beside the installed store (`installed.evaluated.egraph`),
@@ -220,6 +220,14 @@ from its ebuild when the same version is still in its repository, from the evalu
 follows dependencies (deps, rdeps, why, orphans, broken, affected) takes the option; the store
 is opened with the evaluated trees swapped in (`with_dynamic_deps`), so the queries themselves
 do not know which they read.
+
+`deps` and `rdeps --possible` also list what the ebuilds would add with USE flags toggled,
+marked with the toggles (`use=a -minimal`). The vdb keeps only reduced strings, so these come
+from the ebuild's, and need dynamic deps. The builder finds each chain of USE conditionals
+with portage's `paren_reduce` (deprecated, wrapped in one place) and lets `use_reduce(subset=)`,
+the call depgraph uses for test dependencies, decide what the chain selects. Only toggles a
+user can make count: flags in the ebuild's IUSE that the profile does not mask (to turn on) or
+force (to turn off); arch, elibc and other implicit flags never do.
 
 In removal mode `dep_zapdeps` asks which packages are *available* (visible: unmasked, or with a
 visible equivalent ebuild). egraph has no masking information until the evaluated layer, so it

@@ -243,7 +243,7 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string_list(out, evaluated, candidate.use);
         out << '}';
     }
-    out << R"(],"format":1,"packages":[)";
+    out << R"(],"format":2,"packages":[)";
     first = true;
     for (const auto& pkg : evaluated.packages) {
         out << (first ? "{\"cpv\":" : ",{\"cpv\":");
@@ -258,7 +258,24 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string(out, evaluated, pkg.eapi);
         out << ",\"errors\":";
         write_pairs(out, evaluated, pkg.errors);
-        out << R"(,"source":")" << sources.at(static_cast<std::size_t>(pkg.source)) << R"("})";
+        out << ",\"possible\":[";
+        bool first_possible = true;
+        for (const auto& entry : evaluated.possible_in(pkg.possible)) {
+            out << (first_possible ? "{\"atom\":" : ",{\"atom\":");
+            first_possible = false;
+            write_string(out, evaluated, entry.atom);
+            out << ",\"choice\":" << (entry.choice ? "true" : "false") << ",\"flags\":";
+            write_string_list(out, evaluated, entry.flags);
+            out << R"(,"kind":")" << dep_kinds.at(entry.kind) << R"(","matches":[)";
+            bool first_match = true;
+            for (const auto id : evaluated.ids_in(entry.matches)) {
+                out << (first_match ? "" : ",");
+                first_match = false;
+                write_string(out, evaluated, evaluated.packages.at(id).cpv);
+            }
+            out << "]}";
+        }
+        out << R"(],"source":")" << sources.at(static_cast<std::size_t>(pkg.source)) << R"("})";
     }
     out << "]}\n";
 }

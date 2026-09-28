@@ -1,5 +1,6 @@
 """Side-by-side runs of a query through portage (the oracle) and through egraph."""
 
+import itertools
 import random
 
 from portage.exception import InvalidAtom, InvalidDependString
@@ -72,3 +73,36 @@ def mismatches(vardb, layer, query, sample=None):
 def assert_agrees(vardb, layer, query, sample=None):
     lines = mismatches(vardb, layer, query, sample)
     assert not lines, "egraph disagrees with portage:\n" + "\n".join(lines)
+
+
+def possible_mismatches(vardb, portdb, cpv, found, deps, size=None):
+    """Where found, cpv's possible edges as (Edge, flags) pairs, disagrees with the oracle.
+
+    Each edge must be one its flags add (oracle.possible), and no fewer of them may add it.
+    Every edge the oracle adds for up to size toggles (any number when None) must be in found
+    with no more flags, or be one of deps, the edges cpv has already. That side compares
+    children only: toggles beyond the ones a conditional needs can change its atom's USE
+    dependencies, and so its string.
+    """
+    problems = []
+    for edge, flags in sorted(found):
+        if edge not in oracle.possible(vardb, portdb, cpv, flags):
+            problems.append(f"{edge} with {flags}: the flags do not add it")
+        for fewer in range(1, len(flags)):
+            for chosen in itertools.combinations(flags, fewer):
+                if edge in oracle.possible(vardb, portdb, cpv, chosen):
+                    problems.append(f"{edge} with {flags}: {chosen} add it already")
+    source, _, _ = oracle.dynamic_dep_strings(vardb, portdb, cpv)
+    toggles = oracle.use_toggles(vardb, portdb, cpv) if source == "ebuild" else ()
+    have = {(edge.kind, edge.child) for edge in deps}
+    for count in range(1, (size or len(toggles)) + 1):
+        for chosen in itertools.combinations(toggles, count):
+            for edge in oracle.possible(vardb, portdb, cpv, chosen):
+                covered = (edge.kind, edge.child) in have or any(
+                    (other.kind, other.child) == (edge.kind, edge.child)
+                    and set(flags) <= set(chosen)
+                    for other, flags in found
+                )
+                if not covered:
+                    problems.append(f"{edge} with {chosen}: missing")
+    return problems

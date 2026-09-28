@@ -33,6 +33,22 @@ std::optional<StoreError> read_meta(std::span<const std::byte> section, Evaluate
     return r.error();
 }
 
+Range read_possible(Reader& r, Evaluated& evaluated, std::uint32_t strings,
+                    std::uint32_t packages) {
+    const auto count = r.count();
+    const auto first = size32(evaluated.possible.size());
+    for (std::uint32_t i = 0; i < count && r.ok(); ++i) {
+        Possible entry;
+        entry.kind = r.index(size32(dep_kinds.size()), "kind");
+        entry.atom = r.index(strings, "string");
+        entry.choice = r.index(2, "choice") == 1;
+        entry.matches = read_ids(r, evaluated.ids, packages, "package");
+        entry.flags = read_ids(r, evaluated.ids, strings, "string");
+        evaluated.possible.push_back(entry);
+    }
+    return {.first = first, .count = size32(evaluated.possible.size()) - first};
+}
+
 std::optional<StoreError> read_dependencies(std::span<const std::byte> section,
                                             Evaluated& evaluated) {
     Reader r(section, "dependencies");
@@ -48,6 +64,7 @@ std::optional<StoreError> read_dependencies(std::span<const std::byte> section,
         for (auto& deps : pkg.deps) {
             deps = read_nodes(r, evaluated, strings, count);
         }
+        pkg.possible = read_possible(r, evaluated, strings, count);
         evaluated.packages.push_back(pkg);
     }
     r.finish();
@@ -144,9 +161,7 @@ std::expected<Stores, StoreError> load_stores(const std::filesystem::path& path)
     return Stores{.installed = std::move(*installed), .evaluated = std::move(*evaluated)};
 }
 
-Store with_dynamic_deps(Stores stores) {
-    auto& store = stores.installed;
-    const auto& evaluated = stores.evaluated;
+Store with_dynamic_deps(Store store, const Evaluated& evaluated) {
     // Evaluated strings follow the installed ones; 0 stays the empty string that groups use.
     const auto offset = size32(store.strings.size());
     const auto pool = size32(store.pool.size());
@@ -177,7 +192,8 @@ Store with_dynamic_deps(Stores stores) {
 
         for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
             const auto nodes = evaluated.nodes_in(dynamic.deps.at(kind));
-            pkg.deps.at(kind) = {.first = size32(store.nodes.size()), .count = size32(nodes.size())};
+            pkg.deps.at(kind) = {.first = size32(store.nodes.size()),
+                                 .count = size32(nodes.size())};
             for (auto node : nodes) {
                 const auto matches = evaluated.ids_in(node.matches);
                 node.atom = string_id(node.atom);
@@ -187,7 +203,7 @@ Store with_dynamic_deps(Stores stores) {
             }
         }
     }
-    return std::move(store);
+    return store;
 }
 
 std::filesystem::path evaluated_store_path(const std::filesystem::path& installed) {
