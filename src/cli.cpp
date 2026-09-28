@@ -134,6 +134,14 @@ Exit execute(const Rebuild&, const Invocation& invocation, std::ostream&, std::o
     return Exit::ok;
 }
 
+Exit execute(const Refresh&, const Invocation& invocation, std::ostream&, std::ostream& err) {
+    if (const auto store = open_store(invocation, err); !store) {
+        err << "egraph: " << store.error() << '\n';
+        return Exit::failure;
+    }
+    return Exit::ok;
+}
+
 // A path no other egraph check is using.
 std::filesystem::path scratch_store() {
     std::random_device random;
@@ -742,6 +750,8 @@ void configure(CLI::App& app, Invocation& invocation) {
     add_command<Stats>(app, invocation, "Store and graph statistics");
     add_command<Tui>(app, invocation, "Browse the graph in a terminal interface");
     add_command<Rebuild>(app, invocation, "Rebuild the store from scratch");
+    add_command<Refresh>(app, invocation,
+                         "Bring the store up to date if its inputs changed, printing nothing");
     add_command<Check>(app, invocation, "Diff the store against a fresh build");
     add_field(
         add_command<Affected>(

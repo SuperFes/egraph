@@ -260,6 +260,9 @@ No merge-time hook is needed, and edits to the vdb made outside portage are caug
 ## Rebuild and check
 
 - `egraph rebuild`: full rebuild via `egraph-build --full`.
+- `egraph refresh`: what every query does first, alone: an incremental build if an input changed,
+  and no output. The portage fork runs it at the end of an emerge that changed the vdb, so the
+  refresh is paid there rather than by the next query.
 - `egraph check`: build a fresh store into a scratch file and diff its packages against the
   stored ones, without refreshing the store first. Prints `+cpv` (missing from the store),
   `-cpv` (no longer installed) or `~cpv` (different) per package and exits 4 on drift. This is

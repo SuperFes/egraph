@@ -83,6 +83,11 @@ struct Rebuild {
     static constexpr std::string_view name = "rebuild";
 };
 
+// Brings the store up to date, as any query does first, and answers nothing.
+struct Refresh {
+    static constexpr std::string_view name = "refresh";
+};
+
 struct Check {
     static constexpr std::string_view name = "check";
 };
@@ -99,7 +104,7 @@ struct Affected {
 };
 
 using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Orphans,
-                             Export, Stats, Rebuild, Check, Tui, Affected>;
+                             Export, Stats, Rebuild, Refresh, Check, Tui, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

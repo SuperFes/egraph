@@ -143,3 +143,17 @@ def test_check_reports_what_the_store_missed(system):
         "+dev-libs/alt-b-1",
         "-dev-libs/nocond-1",
     ]
+
+
+def test_refresh_brings_the_store_up_to_date_and_prints_nothing(system):
+    playground = system[0]
+    result = egraph(system, "refresh")
+    assert (result.returncode, result.stdout) == (0, "")
+    assert len(builds(system)) == 1
+    # Current: nothing to do.
+    assert egraph(system, "refresh").returncode == 0
+    assert len(builds(system)) == 1
+    add_package(playground, "dev-libs/alt-b-1")
+    assert egraph(system, "refresh").returncode == 0
+    assert builds(system)[-1].startswith("--incremental --store ")
+    assert query(system, "--no-refresh").stdout == expected(playground)
