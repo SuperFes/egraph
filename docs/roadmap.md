@@ -101,4 +101,7 @@ Taken ahead of 8 and 9 at the user's direction: output need not look like portag
   colour, kind shorthand and Nerd Font glyphs.
 - 10b: a TUI to browse the dependency tree, `why`, `orphans`, `broken` and `check`. Step 1
   (done): `egraph tui` on Notcurses, an optional meson feature, showing the store and quitting.
+  Step 2 (done): the package list with incremental search (`/`), and package pages listing what
+  a package depends on and what needs it, with the kind matrix; Enter follows a link, Esc goes
+  back.
 - `rdeps --possible` (dependencies behind disabled USE flags) waits for the evaluated layer.

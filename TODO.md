@@ -87,9 +87,9 @@ and organised, and a TUI (ncurses, or Notcurses) is welcome.
 - [ ] Dependencies behind disabled USE flags, opt in and marked with the flag that would pull
       them in (`rdeps --possible`). The vdb only keeps reduced strings, so this needs the
       unreduced ones from the repository's metadata cache: the evaluated layer (step 9).
-- [ ] TUI, next steps: a package list with search; a dependency tree that expands and
-      collapses (deps and rdeps); `why` and `orphans` views; `broken` and `check` panels; dialogs
-      for errors; later, possibly the build itself.
+- [ ] TUI, next steps: a dependency tree that expands and collapses (deps and rdeps); `why`
+      and `orphans` views; `broken` and `check` panels; dialogs for errors; later, possibly the
+      build itself. Marks on list rows (root set, orphan, broken) would suit the list too.
 
 ## Ideas
 

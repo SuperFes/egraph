@@ -52,11 +52,19 @@ def test_tui_shows_the_store_and_quits(playgrounds, tmp_path):
 
     socket = f"egraph-test-{os.getpid()}"
     command = f"{EGRAPH} --store {path} --no-refresh tui; echo EXIT=$?; sleep 30"
-    tmux(socket, "new-session", "-d", "-s", "t", "-x", "60", "-y", "10", command)
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "90", "-y", "16", command)
     try:
-        screen = wait_for(socket, "quit")
         packages = len(installed.build(vardb).installed())
-        assert f"{packages}  packages" in screen
+        wait_for(socket, f"{packages} of {packages} packages")
+        # Search, keep the search, open the one match.
+        tmux(socket, "send-keys", "-t", "t", "/", "world", "Enter")
+        wait_for(socket, "1 of")
+        tmux(socket, "send-keys", "-t", "t", "Enter")
+        screen = wait_for(socket, "Depends on")
+        assert "dev-libs/a-1" in screen
+        assert "Needed by  0" in screen
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        wait_for(socket, "1 of")
         tmux(socket, "send-keys", "-t", "t", "q")
         wait_for(socket, "EXIT=0")
     finally:

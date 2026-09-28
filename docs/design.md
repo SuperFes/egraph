@@ -115,7 +115,13 @@ The records are:
 Notcurses C API is confined to `src/screen.cpp` behind the value-typed `Screen` (keys, pens,
 cells), as `src/os.cpp` confines the OS; the app in `src/tui.hpp` is a template over the screen,
 so it is tested with a fake one and needs no terminal. It shares the human layout's palette and
-glyphs (`--glyphs`).
+glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only reads it.
+
+- The package list filters on every key after `/` (case-insensitive, anywhere in the cpv) and
+  shows how many packages each depends on and is needed by.
+- A package page lists what it depends on, then what needs it, one row per package and atom
+  with the kind matrix, as `deps` and `rdeps` do. Enter follows a row to that package's page, and
+  the title bar keeps the trail; Esc, Backspace or Left go back.
 
 ## Orphans: emulating depclean
 

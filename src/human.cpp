@@ -13,16 +13,7 @@ namespace egraph {
 namespace {
 
 // Catppuccin Mocha, with the nearest xterm-256 colour for terminals without truecolor.
-struct Style {
-    bool bold = false;
-    bool italic = false;
-    std::uint8_t red = 0;
-    std::uint8_t green = 0;
-    std::uint8_t blue = 0;
-    std::uint8_t xterm = 0;
-};
-
-Style style_of(Tone tone) {
+ToneStyle mocha(Tone tone) {
     switch (tone) {
     case Tone::heading:
     case Tone::name:
@@ -77,6 +68,10 @@ constexpr Glyphs nerd_glyphs{
     .choice = "",
     .branch = "╰─",
     .absent = "·",
+    .move = "↑↓",
+    .enter = "⏎",
+    .trail = "\uE0B1",
+    .cursor = "▌",
 };
 
 constexpr Glyphs unicode_glyphs{
@@ -93,6 +88,10 @@ constexpr Glyphs unicode_glyphs{
     .choice = "∨",
     .branch = "╰─",
     .absent = "·",
+    .move = "↑↓",
+    .enter = "⏎",
+    .trail = "›",
+    .cursor = "▌",
 };
 
 constexpr Glyphs ascii_glyphs{
@@ -109,6 +108,10 @@ constexpr Glyphs ascii_glyphs{
     .choice = "|",
     .branch = "`-",
     .absent = ".",
+    .move = "j/k",
+    .enter = "enter",
+    .trail = ">",
+    .cursor = ">",
 };
 
 using Fields = std::vector<std::string_view>;
@@ -142,24 +145,10 @@ std::string count(std::size_t n, std::string_view one, std::string_view many) {
     return std::format("{} {}", n, n == 1 ? one : many);
 }
 
-// Dependency kinds in the order depclean reads them, with their shorthand.
-struct Kind {
-    std::string_view name;
-    std::string_view letter;
-    std::string_view meaning;
-    Tone tone;
-};
-
-constexpr std::array<Kind, 5> kinds{{
-    {.name = "RDEPEND", .letter = "R", .meaning = "runtime", .tone = Tone::runtime},
-    {.name = "IDEPEND", .letter = "I", .meaning = "install", .tone = Tone::install},
-    {.name = "PDEPEND", .letter = "P", .meaning = "post", .tone = Tone::post},
-    {.name = "DEPEND", .letter = "D", .meaning = "build", .tone = Tone::build},
-    {.name = "BDEPEND", .letter = "B", .meaning = "build host", .tone = Tone::host},
-}};
+constexpr const auto& kinds = kind_shorthands;
 
 std::size_t kind_index(std::string_view name) {
-    const auto found = std::ranges::find(kinds, name, &Kind::name);
+    const auto found = std::ranges::find(kinds, name, &KindShorthand::name);
     return static_cast<std::size_t>(found - kinds.begin());
 }
 
@@ -233,7 +222,7 @@ std::string Painter::operator()(std::string_view text, Tone tone) const {
     if (depth_ == ColorDepth::none || text.empty()) {
         return std::string{text};
     }
-    const auto style = style_of(tone);
+    const auto style = mocha(tone);
     std::string codes = style.bold ? "1;" : "";
     codes += style.italic ? "3;" : "";
     codes += depth_ == ColorDepth::truecolor
@@ -254,22 +243,41 @@ const Glyphs& glyphs(GlyphSet set) {
     return ascii_glyphs;
 }
 
-std::string paint_cpv(std::string_view cpv, const Painter& paint) {
+ToneStyle tone_style(Tone tone) {
+    return mocha(tone);
+}
+
+CpvParts split_cpv(std::string_view cpv) {
+    CpvParts parts;
     const auto slash = cpv.find('/');
-    if (slash == std::string_view::npos) {
-        return paint(cpv, Tone::name);
+    auto rest = cpv;
+    if (slash != std::string_view::npos) {
+        parts.category = cpv.substr(0, slash);
+        rest = cpv.substr(slash + 1);
     }
-    const auto category = cpv.substr(0, slash);
-    const auto rest = cpv.substr(slash + 1);
-    std::string out = paint(category, Tone::category) + paint("/", Tone::note);
     for (auto dash = rest.find('-'); dash != std::string_view::npos;
          dash = rest.find('-', dash + 1)) {
         if (parse_version(rest.substr(dash + 1))) {
-            return out + paint(rest.substr(0, dash), Tone::name) + paint("-", Tone::note) +
-                   paint(rest.substr(dash + 1), Tone::version);
+            parts.name = rest.substr(0, dash);
+            parts.version = rest.substr(dash + 1);
+            return parts;
         }
     }
-    return out + paint(rest, Tone::name);
+    parts.name = rest;
+    return parts;
+}
+
+std::string paint_cpv(std::string_view cpv, const Painter& paint) {
+    const auto parts = split_cpv(cpv);
+    std::string out;
+    if (!parts.category.empty()) {
+        out = paint(parts.category, Tone::category) + paint("/", Tone::note);
+    }
+    out += paint(parts.name, Tone::name);
+    if (!parts.version.empty()) {
+        out += paint("-", Tone::note) + paint(parts.version, Tone::version);
+    }
+    return out;
 }
 
 std::string paint_dependency(std::string_view text, const Painter& paint) {

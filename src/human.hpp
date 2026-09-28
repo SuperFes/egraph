@@ -4,6 +4,7 @@
 // for reading: grouped, aligned, coloured and decorated with glyphs. Both layouts carry the same
 // information, so tests of the records cover both.
 
+#include <array>
 #include <cstdint>
 #include <iosfwd>
 #include <span>
@@ -35,6 +36,43 @@ enum class Tone : std::uint8_t {
     count,
 };
 
+// A tone's colour: 24-bit, and the nearest xterm-256 entry.
+struct ToneStyle {
+    bool bold = false;
+    bool italic = false;
+    std::uint8_t red = 0;
+    std::uint8_t green = 0;
+    std::uint8_t blue = 0;
+    std::uint8_t xterm = 0;
+};
+
+[[nodiscard]] ToneStyle tone_style(Tone tone);
+
+// Dependency kinds in the order depclean reads them, with their shorthand letters.
+struct KindShorthand {
+    std::string_view name;
+    std::string_view letter;
+    std::string_view meaning;
+    Tone tone;
+};
+
+inline constexpr std::array<KindShorthand, 5> kind_shorthands{{
+    {.name = "RDEPEND", .letter = "R", .meaning = "runtime", .tone = Tone::runtime},
+    {.name = "IDEPEND", .letter = "I", .meaning = "install", .tone = Tone::install},
+    {.name = "PDEPEND", .letter = "P", .meaning = "post", .tone = Tone::post},
+    {.name = "DEPEND", .letter = "D", .meaning = "build", .tone = Tone::build},
+    {.name = "BDEPEND", .letter = "B", .meaning = "build host", .tone = Tone::host},
+}};
+
+// A cpv's parts; the version is empty for a bare cp, the category for a bare name.
+struct CpvParts {
+    std::string_view category;
+    std::string_view name;
+    std::string_view version;
+};
+
+[[nodiscard]] CpvParts split_cpv(std::string_view cpv);
+
 enum class ColorDepth : std::uint8_t { none, palette, truecolor };
 
 class Painter {
@@ -64,6 +102,12 @@ struct Glyphs {
     std::string_view choice;
     std::string_view branch;
     std::string_view absent;
+    // Key hints.
+    std::string_view move;
+    std::string_view enter;
+    // The terminal interface's trail separator and selection marker.
+    std::string_view trail;
+    std::string_view cursor;
 };
 
 [[nodiscard]] const Glyphs& glyphs(GlyphSet set);
