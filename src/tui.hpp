@@ -20,6 +20,7 @@
 #include <format>
 #include <functional>
 #include <iosfwd>
+#include <memory>
 #include <optional>
 #include <ranges>
 #include <string>
@@ -91,16 +92,32 @@ struct Cursor {
     std::size_t top = 0;
 };
 
-// What `egraph check` finds: drift lines ("+cpv", "-cpv", "~cpv"), or why it could not run.
-using CheckResult = std::expected<std::vector<std::string>, std::string>;
+// A fresh build, and how the store differs from it: drift lines ("+cpv", "-cpv", "~cpv").
+struct Fresh {
+    Store store;
+    std::vector<std::string> drift;
+};
+// What `egraph check` finds, or why it could not run.
+using CheckResult = std::expected<Fresh, std::string>;
 // Builds a fresh store and compares the given one with it.
 using Checker = std::function<CheckResult(const Store&)>;
+// Writes a fresh store over the one on disk and loads it, or says why it could not.
+using Rebuilder = std::function<std::expected<Store, std::string>()>;
 
-// The check view: waiting for a fresh build, or what it found.
+// What u does in the check view: rebuild the store on disk and show it, or only show the check's
+// fresh build, for users who cannot write the store.
+enum class Update : std::uint8_t { save, preview };
+// The store on screen: the one opened, one rebuilt since, or a fresh build that is not saved.
+enum class Source : std::uint8_t { opened, saved, preview };
+
+// The check view: waiting for a fresh build or a rebuild, or what either found.
 struct Checked {
-    bool running = true;
+    enum class Stage : std::uint8_t { checking, checked, rebuilding, rebuilt };
+    Stage stage = Stage::checking;
     std::string error;
     std::vector<std::string> drift;
+    // The check's build, kept for a preview.
+    std::optional<Store> fresh;
     Cursor cursor;
 };
 
@@ -109,7 +126,7 @@ enum class Only : std::uint8_t { all, orphans, broken };
 
 class App {
   public:
-    App(const Store& store, const Graph& graph);
+    App(const Store& store, const Graph& graph, Update update = Update::preview);
 
     void handle(const Key& key);
     [[nodiscard]] bool done() const { return done_; }
@@ -137,8 +154,17 @@ class App {
     // Open from the list, under any pages opened from it.
     [[nodiscard]] const std::optional<Checked>& checked() const { return checked_; }
     // Whether the check view waits for a fresh build, which run() then makes.
-    [[nodiscard]] bool check_requested() const { return checked_ && checked_->running; }
+    [[nodiscard]] bool check_requested() const {
+        return checked_ && checked_->stage == Checked::Stage::checking;
+    }
     void finish_check(CheckResult result);
+    // Whether the check view waits for a rebuild, which run() then makes.
+    [[nodiscard]] bool rebuild_requested() const {
+        return checked_ && checked_->stage == Checked::Stage::rebuilding;
+    }
+    void finish_rebuild(std::expected<Store, std::string> result);
+    [[nodiscard]] Update update() const { return update_; }
+    [[nodiscard]] Source source() const { return source_; }
     // Distinct packages each package depends on, and that depend on it.
     [[nodiscard]] std::size_t dependencies(std::uint32_t package) const {
         return dependencies_.at(package);
@@ -164,6 +190,16 @@ class App {
     void set_height(std::size_t rows) { height_ = std::max<std::size_t>(rows, 1); }
 
   private:
+    // A store the app replaced the opened one with, and its graph.
+    struct Loaded {
+        explicit Loaded(Store fresh) : store(std::move(fresh)), graph(build_graph(store)) {}
+        Store store;
+        Graph graph;
+    };
+
+    void index();
+    // Shows store in place of the current one, back at the list (or the check view).
+    void adopt(Store store, Source source);
     void filter();
     void recompute();
     void open(std::uint32_t package);
@@ -177,6 +213,10 @@ class App {
 
     std::reference_wrapper<const Store> store_;
     std::reference_wrapper<const Graph> graph_;
+    // Behind a pointer so store_ and graph_ stay valid when the app moves.
+    std::unique_ptr<const Loaded> owned_;
+    Update update_;
+    Source source_ = Source::opened;
     std::vector<std::string> folded_;
     std::vector<std::size_t> dependencies_;
     std::vector<std::size_t> dependents_;
@@ -240,9 +280,18 @@ void draw_hints(S& screen, unsigned row, unsigned width,
     put_spans(screen, row, 0, spans, width);
 }
 
-template <class S> void draw_title(S& screen, unsigned width, const std::vector<Span>& trail) {
+// The trail, and on the right a warning while a fresh build is shown without being saved.
+template <class S>
+void draw_title(S& screen, const App& app, unsigned width, const std::vector<Span>& trail) {
     screen.fill_row(0, {.fg = palette::text, .bg = palette::crust});
     put_spans(screen, 0, 0, trail, width, palette::crust);
+    if (app.source() == Source::preview) {
+        const std::string badge = " preview, not saved ";
+        if (const auto used = columns(badge); used < width) {
+            put_spans(screen, 0, width - static_cast<unsigned>(used),
+                      {{badge, {.fg = palette::crust, .bg = palette::mauve, .bold = true}}}, width);
+        }
+    }
 }
 
 // The marker in front of the selected row.
@@ -299,7 +348,7 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
         title.push_back(
             {std::format("  {} depclean would refuse to run", glyph.broken), tone_pen(Tone::bad)});
     }
-    draw_title(screen, size.cols, title);
+    draw_title(screen, app, size.cols, title);
 
     std::vector<Span> search{{std::format(" {} ", glyph.search), tone_pen(Tone::heading)}};
     if (list.searching || !list.query.empty()) {
@@ -388,7 +437,7 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
         trail.push_back({std::string{parts.name},
                          &opened == &page ? tone_pen(Tone::name) : tone_pen(Tone::category)});
     }
-    draw_title(screen, size.cols, trail);
+    draw_title(screen, app, size.cols, trail);
     auto heading = cpv_spans(store.string(store.packages.at(page.package).cpv));
     heading.insert(heading.begin(), {std::format(" {} ", glyph.package), tone_pen(Tone::heading)});
     put_spans(screen, 1, 0, heading, size.cols);
@@ -512,7 +561,7 @@ template <class S> void draw_check(S& screen, App& app, const Glyphs& glyph, Siz
         return;
     }
     const auto& checked = *open;
-    draw_title(screen, size.cols,
+    draw_title(screen, app, size.cols,
                {{std::format(" {} egraph ", glyph.package),
                  {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
                 {std::format(" {} ", glyph.trail), tone_pen(Tone::note)},
@@ -520,17 +569,24 @@ template <class S> void draw_check(S& screen, App& app, const Glyphs& glyph, Siz
     const unsigned first = 3;
     const unsigned height = size.rows - first - 1;
     app.set_height(height);
-    if (checked.running) {
+    using Stage = Checked::Stage;
+    if (checked.stage == Stage::checking || checked.stage == Stage::rebuilding) {
         put_spans(screen, 1, 1,
-                  {{"Building a fresh store to compare with; this takes a few seconds",
+                  {{checked.stage == Stage::checking
+                        ? "Building a fresh store to compare with; this takes a few seconds"
+                        : "Rebuilding the store; this takes a few seconds",
                     tone_pen(Tone::note)}},
                   size.cols);
         draw_hints(screen, size.rows - 1, size.cols, {});
         return;
     }
+    const bool rebuilt = checked.stage == Stage::rebuilt;
     if (!checked.error.empty()) {
         put_spans(screen, 1, 1,
-                  {{std::format("{} The check could not run", glyph.broken), tone_pen(Tone::bad)}},
+                  {{std::format("{} {}", glyph.broken,
+                                rebuilt ? "The rebuild failed; the store is as it was"
+                                        : "The check could not run"),
+                    tone_pen(Tone::bad)}},
                   size.cols);
         unsigned row = first;
         for (const auto line : std::views::split(checked.error, '\n')) {
@@ -540,6 +596,16 @@ template <class S> void draw_check(S& screen, App& app, const Glyphs& glyph, Siz
             put_spans(screen, row++, 3,
                       {{std::string{std::string_view{line}}, tone_pen(Tone::note)}}, size.cols);
         }
+    } else if (rebuilt && app.source() == Source::preview) {
+        put_spans(screen, 1, 1,
+                  {{std::format("{} Showing the fresh build", glyph.good), tone_pen(Tone::good)},
+                   {"   not saved: only root writes the store", tone_pen(Tone::note)}},
+                  size.cols);
+    } else if (rebuilt) {
+        put_spans(screen, 1, 1,
+                  {{std::format("{} Rebuilt the store", glyph.good), tone_pen(Tone::good)},
+                   {"   showing it now", tone_pen(Tone::note)}},
+                  size.cols);
     } else if (checked.drift.empty()) {
         put_spans(
             screen, 1, 1,
@@ -549,7 +615,9 @@ template <class S> void draw_check(S& screen, App& app, const Glyphs& glyph, Siz
         put_spans(screen, 1, 1,
                   {{std::format("The store differs from a fresh build  {}", checked.drift.size()),
                     tone_pen(Tone::heading)},
-                   {"   egraph rebuild brings it up to date", tone_pen(Tone::note)}},
+                   {app.update() == Update::save ? "   u rebuilds it"
+                                                 : "   u shows the fresh build, without saving it",
+                    tone_pen(Tone::note)}},
                   size.cols);
         for (unsigned line = 0; line < height; ++line) {
             const auto index = checked.cursor.top + line;
@@ -574,8 +642,10 @@ template <class S> void draw_check(S& screen, App& app, const Glyphs& glyph, Siz
     }
     std::vector<std::pair<std::string_view, std::string_view>> hints{
         {"r", "again"}, {"esc", "back"}, {"q", "quit"}};
-    if (!checked.drift.empty()) {
-        hints.insert(hints.begin(), {{glyph.move, "move"}, {glyph.enter, "open"}});
+    if (!rebuilt && checked.error.empty() && !checked.drift.empty()) {
+        hints.insert(hints.begin(), {{glyph.move, "move"},
+                                     {glyph.enter, "open"},
+                                     {"u", app.update() == Update::save ? "rebuild" : "preview"}});
     }
     draw_hints(screen, size.rows - 1, size.cols, hints);
 }
@@ -595,13 +665,18 @@ template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
     screen.render();
 }
 
-// Runs until the user quits or input ends, making the fresh build a check asks for once the
-// waiting view is on screen.
-template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Checker& check) {
+// Runs until the user quits or input ends, making the fresh build a check asks for, or the
+// rebuild, once the waiting view is on screen.
+template <class S>
+void run(S& screen, App& app, const Glyphs& glyph, const Checker& check,
+         const Rebuilder& rebuild = {}) {
     draw(screen, app, glyph);
     while (!app.done()) {
         if (app.check_requested()) {
             app.finish_check(check(app.store()));
+        } else if (app.rebuild_requested()) {
+            app.finish_rebuild(rebuild ? rebuild()
+                                       : std::unexpected(std::string{"no way to rebuild"}));
         } else {
             app.handle(screen.read());
         }
@@ -611,8 +686,9 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Chec
     }
 }
 
-// Opens the terminal and runs the interface over store; errors go to err.
+// Opens the terminal and runs the interface over store; errors go to err. Without a rebuilder, a
+// check's fresh build can only be previewed.
 [[nodiscard]] Exit open_and_run(const Store& store, GlyphSet glyphs, const Checker& check,
-                                std::ostream& err);
+                                const Rebuilder& rebuild, std::ostream& err);
 
 } // namespace egraph::tui

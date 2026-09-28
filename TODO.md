@@ -87,8 +87,9 @@ and organised, and a TUI (ncurses, or Notcurses) is welcome.
 - [ ] Dependencies behind disabled USE flags, opt in and marked with the flag that would pull
       them in (`rdeps --possible`). The vdb only keeps reduced strings, so this needs the
       unreduced ones from the repository's metadata cache: the evaluated layer (step 9).
-- [ ] TUI, next steps: dialogs for errors; `rebuild` from the check view; later, possibly
-      showing the build's progress.
+- [ ] TUI, next steps: dialogs for errors; later, possibly showing the build's progress.
+- [ ] The TUI's rebuild runs a second full build after the check's; saving the check's own
+      scratch store (copied beside the target, then renamed) would halve the wait.
 
 ## Ideas
 

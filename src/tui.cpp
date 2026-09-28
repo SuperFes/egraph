@@ -3,6 +3,7 @@
 #include "build_info.hpp"
 
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <ostream>
 #include <ranges>
@@ -309,12 +310,24 @@ std::vector<Link> links(const Store& store, const Graph& graph, std::uint32_t pa
     return found;
 }
 
-App::App(const Store& store, const Graph& graph) : store_(store), graph_(graph) {
+App::App(const Store& store, const Graph& graph, Update update)
+    : store_(store), graph_(graph), update_(update) {
+    index();
+    recompute();
+    filter();
+}
+
+void App::index() {
+    const auto& store = this->store();
+    const auto& graph = graph_.get();
     const auto count = store.packages.size();
+    folded_.clear();
     folded_.reserve(count);
     dependencies_.assign(count, 0);
     dependents_.assign(count, 0);
+    broken_.clear();
     broken_.reserve(count);
+    broken_at_run_time_.clear();
     broken_at_run_time_.reserve(count);
     for (std::uint32_t id = 0; id < count; ++id) {
         folded_.push_back(folded(store.string(store.packages.at(id).cpv)));
@@ -342,6 +355,16 @@ App::App(const Store& store, const Graph& graph) : store_(store), graph_(graph) 
             ++dependents_.at(child);
         }
     }
+}
+
+void App::adopt(Store store, Source source) {
+    auto loaded = std::make_unique<const Loaded>(std::move(store));
+    store_ = loaded->store;
+    graph_ = loaded->graph;
+    owned_ = std::move(loaded);
+    source_ = source;
+    pages_.clear();
+    index();
     recompute();
     filter();
 }
@@ -409,15 +432,32 @@ void App::finish_check(CheckResult result) {
     if (!checked_) {
         return;
     }
-    checked_->running = false;
+    checked_->stage = Checked::Stage::checked;
     checked_->cursor = {};
     if (result) {
         checked_->error.clear();
-        checked_->drift = std::move(*result);
+        checked_->drift = std::move(result->drift);
+        if (update_ == Update::preview && !checked_->drift.empty()) {
+            checked_->fresh = std::move(result->store);
+        }
     } else {
         checked_->error = std::move(result.error());
         checked_->drift.clear();
     }
+}
+
+void App::finish_rebuild(std::expected<Store, std::string> result) {
+    if (!checked_) {
+        return;
+    }
+    checked_->stage = Checked::Stage::rebuilt;
+    checked_->cursor = {};
+    if (!result) {
+        checked_->error = std::move(result.error());
+        return;
+    }
+    checked_->drift.clear();
+    adopt(std::move(*result), Source::saved);
 }
 
 std::optional<std::uint32_t> App::find(std::string_view cpv) const {
@@ -430,7 +470,8 @@ std::optional<std::uint32_t> App::find(std::string_view cpv) const {
 }
 
 void App::handle_check(const Key& key) {
-    if (!checked_ || checked_->running) {
+    if (!checked_ || checked_->stage == Checked::Stage::checking ||
+        checked_->stage == Checked::Stage::rebuilding) {
         return;
     }
     auto& checked = *checked_;
@@ -441,6 +482,21 @@ void App::handle_check(const Key& key) {
         checked_.reset();
     } else if (is(key, U'r')) {
         checked = {};
+    } else if (is(key, U'u')) {
+        if (checked.stage != Checked::Stage::checked || !checked.error.empty() ||
+            checked.drift.empty()) {
+            return;
+        }
+        if (update_ == Update::save) {
+            checked.stage = Checked::Stage::rebuilding;
+        } else if (checked.fresh) {
+            auto fresh = std::move(*checked.fresh);
+            checked.fresh.reset();
+            checked.drift.clear();
+            checked.stage = Checked::Stage::rebuilt;
+            checked.cursor = {};
+            adopt(std::move(fresh), Source::preview);
+        }
     } else if (key.kind == KeyKind::enter || key.kind == KeyKind::right || is(key, U'l')) {
         // Packages only a fresh build has are not in the store to open.
         if (checked.cursor.at < checked.drift.size()) {
@@ -648,7 +704,8 @@ DriftSign drift_sign(char sign) {
     }
 }
 
-Exit open_and_run(const Store& store, GlyphSet glyphs, const Checker& check, std::ostream& err) {
+Exit open_and_run(const Store& store, GlyphSet glyphs, const Checker& check,
+                  const Rebuilder& rebuild, std::ostream& err) {
 #if EGRAPH_HAVE_TUI
     auto screen = Screen::open();
     if (!screen) {
@@ -656,13 +713,14 @@ Exit open_and_run(const Store& store, GlyphSet glyphs, const Checker& check, std
         return Exit::failure;
     }
     const auto graph = build_graph(store);
-    App app{store, graph};
-    run(*screen, app, egraph::glyphs(glyphs), check);
+    App app{store, graph, rebuild ? Update::save : Update::preview};
+    run(*screen, app, egraph::glyphs(glyphs), check, rebuild);
     return Exit::ok;
 #else
     (void)store;
     (void)glyphs;
     (void)check;
+    (void)rebuild;
     err << "egraph: tui: this egraph was built without Notcurses (meson -Dtui=enabled)\n";
     return Exit::not_implemented;
 #endif

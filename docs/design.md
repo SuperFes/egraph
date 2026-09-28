@@ -127,6 +127,10 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   build (the app itself never spawns anything) and lists the drift, each package's page a key
   away. The builder's output goes to a log beside the scratch store rather than the terminal the
   interface owns; if the build fails, its last lines are shown.
+- `u` in the check view acts on drift. As root it runs `egraph rebuild` (a second full build,
+  written through the builder's atomic rename) and shows the result. Anyone else gets a preview:
+  the check's own fresh build replaces the store in memory only, and the title bar says it is not
+  saved. The user's cache store is left alone either way; it is refreshed on the next query.
 - A package page starts with why it is kept (`why`'s chain from a root, or that depclean would
   remove it), then any dependencies nothing installed satisfies, each with what is installed
   under its name instead. A build-time dependency (DEPEND, BDEPEND) whose package is installed

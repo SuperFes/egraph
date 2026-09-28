@@ -39,6 +39,9 @@ std::expected<int, SpawnError> run(const std::vector<std::string>& argv,
 // the nearest existing directory above it is writable.
 bool can_create(const std::filesystem::path& path);
 
+// Whether this process runs as root (effective user id 0).
+bool is_root();
+
 // The running executable, from /proc/self/exe; empty if that cannot be read.
 std::filesystem::path executable();
 

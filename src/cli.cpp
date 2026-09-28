@@ -134,20 +134,6 @@ std::filesystem::path scratch_store() {
     return std::filesystem::temp_directory_path() / name;
 }
 
-// A full build into a scratch file, loaded; with a log, the builder's output goes there.
-std::expected<Store, std::string> fresh_build(const Invocation& invocation,
-                                              const std::optional<std::filesystem::path>& log) {
-    const auto path = scratch_store();
-    const auto error = run_builder(invocation, "--full", path, log);
-    auto built = error ? std::expected<Store, StoreError>{} : load(path);
-    std::error_code ignored;
-    std::filesystem::remove(path, ignored);
-    if (error) {
-        return std::unexpected(*error);
-    }
-    return std::move(built).transform_error([](const StoreError& e) { return e.message; });
-}
-
 // The last count lines of a file, joined; empty when it cannot be read.
 std::string last_lines(const std::filesystem::path& path, std::size_t count) {
     std::ifstream in{path};
@@ -165,6 +151,35 @@ std::string last_lines(const std::filesystem::path& path, std::size_t count) {
     return joined;
 }
 
+// A full build into path whose output goes to a log rather than the terminal; an error ends with
+// the log's last lines.
+std::optional<std::string> quiet_build(const Invocation& invocation,
+                                       const std::filesystem::path& path) {
+    const auto log = std::filesystem::path{scratch_store()}.replace_extension(".log");
+    auto error = run_builder(invocation, "--full", path, log);
+    const auto output = last_lines(log, 8);
+    std::error_code ignored;
+    std::filesystem::remove(log, ignored);
+    if (error && !output.empty()) {
+        *error += ":\n" + output;
+    }
+    return error;
+}
+
+// A full build into a scratch file, loaded; quiet keeps the builder off the terminal.
+std::expected<Store, std::string> fresh_build(const Invocation& invocation, bool quiet) {
+    const auto path = scratch_store();
+    const auto error =
+        quiet ? quiet_build(invocation, path) : run_builder(invocation, "--full", path);
+    auto built = error ? std::expected<Store, StoreError>{} : load(path);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    if (error) {
+        return std::unexpected(*error);
+    }
+    return std::move(built).transform_error([](const StoreError& e) { return e.message; });
+}
+
 Exit execute(const Check&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
     // Deliberately not refreshed: the point is to compare what queries would read.
     const auto system = system_store_path(invocation);
@@ -173,7 +188,7 @@ Exit execute(const Check&, const Invocation& invocation, std::ostream& out, std:
         err << "egraph: " << stored.error().message << '\n';
         return Exit::failure;
     }
-    const auto built = fresh_build(invocation, std::nullopt);
+    const auto built = fresh_build(invocation, false);
     if (!built) {
         err << "egraph: " << built.error() << '\n';
         return Exit::failure;
@@ -417,17 +432,25 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
     }
     // The builder cannot share the terminal the interface owns; its output is kept for errors.
     const auto check = [&invocation](const Store& stored) -> tui::CheckResult {
-        const auto log = std::filesystem::path{scratch_store()}.replace_extension(".log");
-        const auto built = fresh_build(invocation, log);
-        const auto output = last_lines(log, 8);
-        std::error_code ignored;
-        std::filesystem::remove(log, ignored);
+        auto built = fresh_build(invocation, true);
         if (!built) {
-            return std::unexpected(output.empty() ? built.error() : built.error() + ":\n" + output);
+            return std::unexpected(std::move(built.error()));
         }
-        return drift(stored, *built);
+        auto lines = drift(stored, *built);
+        return tui::Fresh{.store = std::move(*built), .drift = std::move(lines)};
     };
-    return tui::open_and_run(*store, invocation.glyphs, check, err);
+    // Only root writes the store here; anyone else previews the check's build instead.
+    tui::Rebuilder rebuild;
+    if (os::is_root()) {
+        rebuild = [&invocation]() -> std::expected<Store, std::string> {
+            const auto path = store_path(invocation);
+            if (auto error = quiet_build(invocation, path)) {
+                return std::unexpected(std::move(*error));
+            }
+            return load(path).transform_error([](const StoreError& e) { return e.message; });
+        };
+    }
+    return tui::open_and_run(*store, invocation.glyphs, check, rebuild, err);
 }
 
 Exit execute(const Stats&, const Invocation& invocation, std::ostream& out, std::ostream& err) {

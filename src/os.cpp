@@ -142,6 +142,10 @@ bool can_create(const std::filesystem::path& path) {
     return !dir.empty() && access(dir.c_str(), W_OK) == 0;
 }
 
+bool is_root() {
+    return geteuid() == 0;
+}
+
 std::filesystem::path executable() {
     std::error_code error;
     auto path = std::filesystem::read_symlink("/proc/self/exe", error);

@@ -8,6 +8,8 @@ import time
 import pytest
 
 from egraph_build import installed, store
+from test_build import add_package, fresh_vardb
+from test_refresh import builds, query, system  # noqa: F401 (a fixture)
 
 EGRAPH = os.environ.get("EGRAPH")
 
@@ -36,19 +38,21 @@ def wait_for(socket, text, seconds=10):
     raise AssertionError(f"{text!r} never appeared:\n{screen}")
 
 
+def skip_without_tui():
+    result = subprocess.run(
+        [EGRAPH, "--store", "/nonexistent", "--no-refresh", "tui"], capture_output=True
+    )
+    if result.returncode == 3:
+        pytest.skip("egraph was built without the terminal interface")
+
+
 def test_tui_shows_the_store_and_quits(playgrounds, tmp_path):
     vardb = playgrounds("roots").vardb
     path = tmp_path / "installed.egraph"
     store.write(
         path, store.encode(installed.build(vardb), store.Meta("0", "0", "/", 0))
     )
-    built = subprocess.run(
-        [EGRAPH, "--store", str(path), "--no-refresh", "tui"],
-        capture_output=True,
-        text=True,
-    )
-    if built.returncode == 3:
-        pytest.skip("egraph was built without the terminal interface")
+    skip_without_tui()
 
     socket = f"egraph-test-{os.getpid()}"
     command = f"{EGRAPH} --store {path} --no-refresh tui; echo EXIT=$?; sleep 30"
@@ -81,3 +85,40 @@ def test_tui_shows_the_store_and_quits(playgrounds, tmp_path):
         wait_for(socket, "EXIT=0")
     finally:
         tmux(socket, "kill-server")
+
+
+def test_tui_previews_a_fresh_build_without_saving_it(system, tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("root rebuilds the store instead")
+    skip_without_tui()
+    playground, path, builder, _ = system
+    assert query(system).returncode == 0
+    before = path.read_bytes()
+    add_package(playground, "dev-libs/alt-b-1")
+    packages = len(installed.build(fresh_vardb(playground)).installed())
+
+    socket = f"egraph-test-{os.getpid()}"
+    command = (
+        f"{EGRAPH} --store {path} --config-root {playground.eroot}"
+        f" --eprefix {playground.eprefix} --builder {builder} --no-refresh tui;"
+        " echo EXIT=$?; sleep 30"
+    )
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "100", "-y", "16", command)
+    try:
+        wait_for(socket, f"{packages - 1} of {packages - 1} packages")
+        tmux(socket, "send-keys", "-t", "t", "c")
+        screen = wait_for(socket, "differs from a fresh build", seconds=60)
+        assert "dev-libs/alt-b-1" in screen
+        assert "u preview" in screen
+        tmux(socket, "send-keys", "-t", "t", "u")
+        screen = wait_for(socket, "Showing the fresh build")
+        assert "preview, not saved" in screen
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        wait_for(socket, f"{packages} of {packages} packages")
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")
+    assert path.read_bytes() == before
+    assert builds(system)[-1].startswith("--full --store ")
+    assert str(path) not in builds(system)[-1]
