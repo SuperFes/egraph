@@ -103,6 +103,11 @@ and 1,648 of the 2,326 have dependencies there that differ from their vdb's, mos
 Reading those ebuilds' metadata costs 2.2 s, the visible versions of all installed cps 1.9 s
 (4,881 cpvs; `bestmatch-visible` 1.1 s), and effective USE 0.5 ms per package.
 
+Decided with the user: options default to portage's own defaults unless there is a compelling
+reason (so `--dynamic-deps` defaults to y, as emerge's does); every repository in repos.conf is
+covered; `updates` starts with the installed packages, and the aim is for egraph to become a
+complete suite, resolution included, eventually.
+
 The builder evaluates everything through portage, as for the installed layer; C++ never
 reimplements visibility or USE. The layer is its own store file (`evaluated.egraph`, specified
 in `store-format.md`) with its own inputs, so that a sync does not touch the installed store and
