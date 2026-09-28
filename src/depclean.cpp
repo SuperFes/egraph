@@ -10,7 +10,6 @@
 #include <functional>
 #include <numeric>
 #include <optional>
-#include <ostream>
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
@@ -419,13 +418,15 @@ std::optional<Path> why(const Kept& kept, std::uint32_t package) {
     return path;
 }
 
-void write_path(std::ostream& out, const Store& store, const Path& path) {
+std::vector<std::string> path_lines(const Store& store, const Path& path) {
     const auto& root = store.roots.at(path.root.root);
-    out << '@' << store.string(root.set) << '\t' << store.string(root.atom) << '\t'
-        << store.string(store.packages.at(path.root.child).cpv) << '\n';
+    std::vector<std::string> lines{
+        std::format("@{}\t{}\t{}", store.string(root.set), store.string(root.atom),
+                    store.string(store.packages.at(path.root.child).cpv))};
     for (const auto& edge : path.edges) {
-        out << edge_line(store, edge) << '\n';
+        lines.push_back(edge_line(store, edge));
     }
+    return lines;
 }
 
 std::vector<std::string> unresolved_lines(const Store& store, const Kept& kept) {

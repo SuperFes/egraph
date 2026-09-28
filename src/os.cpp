@@ -1,6 +1,7 @@
 #include "os.hpp"
 
 #include <cerrno>
+#include <cstdlib>
 #include <format>
 #include <spawn.h>
 #include <sys/stat.h>
@@ -75,6 +76,21 @@ std::expected<int, SpawnError> run(const std::vector<std::string>& argv) {
             SpawnError{std::format("{}: killed by signal {}", args.front(), WTERMSIG(status))});
     }
     return std::unexpected(SpawnError{std::format("{}: stopped", args.front())});
+}
+
+bool stdout_is_terminal() {
+    return isatty(STDOUT_FILENO) == 1;
+}
+
+std::optional<std::string> environment(std::string_view name) {
+    // getenv needs a terminated string.
+    const std::string key{name};
+    const char* value =
+        std::getenv(key.c_str()); // NOLINT(concurrency-mt-unsafe): read once, single-threaded
+    if (value == nullptr) {
+        return std::nullopt;
+    }
+    return std::string{value};
 }
 
 } // namespace egraph::os

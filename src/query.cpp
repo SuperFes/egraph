@@ -42,16 +42,14 @@ std::string edge_line(const Store& store, const Edge& edge) {
                        edge.choice ? "\tany-of" : "");
 }
 
-void write_edges(std::ostream& out, const Store& store, std::span<const Edge> edges) {
+std::vector<std::string> edge_lines(const Store& store, std::span<const Edge> edges) {
     std::vector<std::string> lines;
     lines.reserve(edges.size());
     for (const auto& edge : edges) {
         lines.push_back(edge_line(store, edge));
     }
     sorted_unique(lines);
-    for (const auto& line : lines) {
-        out << line << '\n';
-    }
+    return lines;
 }
 
 std::vector<std::string> soname_users(const Store& store, std::string_view soname, bool providers) {

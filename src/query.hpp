@@ -17,7 +17,7 @@ namespace egraph {
 [[nodiscard]] std::string edge_line(const Store& store, const Edge& edge);
 
 // deps and rdeps: one edge_line per edge, sorted, without duplicates.
-void write_edges(std::ostream& out, const Store& store, std::span<const Edge> edges);
+[[nodiscard]] std::vector<std::string> edge_lines(const Store& store, std::span<const Edge> edges);
 
 // Consumers (or providers) of a soname: one "cpv<TAB>multilib category" line each, sorted.
 [[nodiscard]] std::vector<std::string> soname_users(const Store& store, std::string_view soname,

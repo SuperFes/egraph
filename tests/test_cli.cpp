@@ -99,6 +99,27 @@ TEST_CASE("why takes one atom and emerge's --with-bdeps") {
     CHECK_THROWS_AS(parse("why"), CLI::RequiredError);
 }
 
+TEST_CASE("the layout is for people on a terminal and lines otherwise") {
+    egraph::Invocation invocation;
+    CHECK_FALSE(egraph::style(invocation).human);
+    invocation.terminal = true;
+    CHECK(egraph::style(invocation).human);
+    CHECK(egraph::style(invocation).color);
+    invocation.no_color = true;
+    CHECK_FALSE(egraph::style(invocation).color);
+    invocation.color = egraph::ColorMode::always;
+    CHECK(egraph::style(invocation).color);
+    invocation.layout = egraph::Layout::lines;
+    CHECK_FALSE(egraph::style(invocation).human);
+    CHECK_FALSE(egraph::style(invocation).color);
+
+    invocation = parse("--layout human --color never stats");
+    CHECK(invocation.layout == egraph::Layout::human);
+    CHECK(invocation.color == egraph::ColorMode::never);
+    CHECK((egraph::style(invocation).human && !egraph::style(invocation).color));
+    CHECK_THROWS_AS(parse("--layout fancy stats"), CLI::ValidationError);
+}
+
 TEST_CASE("malformed command lines are rejected") {
     CHECK_THROWS_AS(parse(""), CLI::RequiredError);
     CHECK_THROWS_AS(parse("rdeps"), CLI::RequiredError);

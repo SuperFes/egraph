@@ -89,6 +89,11 @@ struct Check {
 using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Orphans,
                              Export, Stats, Rebuild, Check>;
 
+// How query results are written: for people (grouped, aligned, perhaps coloured) or as
+// tab-separated lines for scripts. auto picks people on a terminal.
+enum class Layout : std::uint8_t { automatic, human, lines };
+enum class ColorMode : std::uint8_t { automatic, always, never };
+
 struct Invocation {
     // Handed to egraph-build, which evaluates the packages under root with the portage
     // configuration under config_root. Unset ones are left to portage's defaults.
@@ -99,8 +104,21 @@ struct Invocation {
     // Run to refresh a stale store.
     std::string builder = "egraph-build";
     bool no_refresh = false;
+    Layout layout = Layout::automatic;
+    ColorMode color = ColorMode::automatic;
+    // Facts about where output goes, which main fills in: stdout is a terminal, and NO_COLOR is
+    // set to something.
+    bool terminal = false;
+    bool no_color = false;
     Command command;
 };
+
+// The layout and colouring an invocation resolves to. Lines are never coloured.
+struct Style {
+    bool human = false;
+    bool color = false;
+};
+[[nodiscard]] Style style(const Invocation& invocation);
 
 [[nodiscard]] std::filesystem::path store_path(const Invocation& invocation);
 

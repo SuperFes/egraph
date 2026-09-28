@@ -6,6 +6,7 @@
 #include "depclean.hpp"
 #include "freshness.hpp"
 #include "graph.hpp"
+#include "human.hpp"
 #include "json.hpp"
 #include "os.hpp"
 #include "store.hpp"
@@ -125,6 +126,31 @@ Exit execute(const Check&, const Invocation& invocation, std::ostream& out, std:
     return lines.empty() ? Exit::ok : Exit::drift;
 }
 
+struct Output {
+    bool human;
+    Painter paint;
+};
+
+Output output(const Invocation& invocation) {
+    const auto chosen = style(invocation);
+    return {.human = chosen.human, .paint = Painter{chosen.color}};
+}
+
+void write_lines(std::ostream& out, std::span<const std::string> lines) {
+    for (const auto& line : lines) {
+        out << line << '\n';
+    }
+}
+
+std::vector<std::string> cpvs(const Store& store, std::span<const std::uint32_t> ids) {
+    std::vector<std::string> found;
+    found.reserve(ids.size());
+    for (const auto id : ids) {
+        found.emplace_back(store.string(store.packages.at(id).cpv));
+    }
+    return found;
+}
+
 // Package ids for every argument, or nothing after reporting the first that names none.
 std::optional<std::vector<std::uint32_t>>
 resolve_all(const Store& store, const std::vector<std::string>& arguments, std::ostream& err) {
@@ -164,7 +190,12 @@ Exit edges(const std::vector<std::string>& packages, bool reverse, const Invocat
         const auto some = reverse ? graph.rdeps(id) : graph.deps(id);
         found.insert(found.end(), some.begin(), some.end());
     }
-    write_edges(out, *store, found);
+    const auto lines = edge_lines(*store, found);
+    if (const auto style = output(invocation); style.human) {
+        human_edges(out, lines, cpvs(*store, *ids), reverse, style.paint);
+    } else {
+        write_lines(out, lines);
+    }
     return Exit::ok;
 }
 
@@ -194,12 +225,18 @@ Exit execute(const Match& command, const Invocation& invocation, std::ostream& o
         }
         atoms.push_back(std::move(*atom));
     }
+    std::vector<std::string> lines;
     for (std::size_t i = 0; i < atoms.size(); ++i) {
         for (const auto& pkg : store->packages) {
             if (matches(*store, pkg, atoms.at(i))) {
-                out << command.atoms.at(i) << '\t' << store->string(pkg.cpv) << '\n';
+                lines.push_back(std::format("{}\t{}", command.atoms.at(i), store->string(pkg.cpv)));
             }
         }
+    }
+    if (const auto style = output(invocation); style.human) {
+        human_match(out, lines, command.atoms, style.paint);
+    } else {
+        write_lines(out, lines);
     }
     return Exit::ok;
 }
@@ -211,8 +248,11 @@ Exit execute(const Soname& command, const Invocation& invocation, std::ostream& 
         err << "egraph: " << store.error() << '\n';
         return Exit::failure;
     }
-    for (const auto& line : soname_users(*store, command.soname, command.providers)) {
-        out << line << '\n';
+    const auto lines = soname_users(*store, command.soname, command.providers);
+    if (const auto style = output(invocation); style.human) {
+        human_soname(out, lines, command.soname, command.providers, style.paint);
+    } else {
+        write_lines(out, lines);
     }
     return Exit::ok;
 }
@@ -223,8 +263,11 @@ Exit execute(const Broken&, const Invocation& invocation, std::ostream& out, std
         err << "egraph: " << store.error() << '\n';
         return Exit::failure;
     }
-    for (const auto& line : broken(*store)) {
-        out << line << '\n';
+    const auto lines = broken(*store);
+    if (const auto style = output(invocation); style.human) {
+        human_broken(out, lines, style.paint);
+    } else {
+        write_lines(out, lines);
     }
     return Exit::ok;
 }
@@ -242,8 +285,11 @@ Exit execute(const Orphans& command, const Invocation& invocation, std::ostream&
         return Exit::failure;
     }
     const auto kept = keep(*store, {.build_deps = command.build_deps});
-    for (const auto id : orphans(kept)) {
-        out << store->string(store->packages.at(id).cpv) << '\n';
+    const auto lines = cpvs(*store, orphans(kept));
+    if (const auto style = output(invocation); style.human) {
+        human_orphans(out, lines, style.paint);
+    } else {
+        write_lines(out, lines);
     }
     const auto unresolved = unresolved_lines(*store, kept);
     if (unresolved.empty()) {
@@ -281,7 +327,12 @@ Exit execute(const Why& command, const Invocation& invocation, std::ostream& out
         }
         out << (first ? "" : "\n");
         first = false;
-        write_path(out, *store, *path);
+        const auto lines = path_lines(*store, *path);
+        if (const auto style = output(invocation); style.human) {
+            human_path(out, lines, style.paint);
+        } else {
+            write_lines(out, lines);
+        }
     }
     return exit;
 }
@@ -349,6 +400,18 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->capture_default_str();
     app.add_flag("--no-refresh", invocation.no_refresh,
                  "Answer from a stale store instead of rebuilding it");
+    const std::map<std::string, Layout> layouts{
+        {"auto", Layout::automatic}, {"human", Layout::human}, {"lines", Layout::lines}};
+    app.add_option("--layout", invocation.layout,
+                   "Results for people, or as tab-separated lines for scripts (default auto: "
+                   "for people on a terminal)")
+        ->transform(CLI::CheckedTransformer(layouts).description("{auto,human,lines}"))
+        ->envname("EGRAPH_LAYOUT");
+    const std::map<std::string, ColorMode> colors{
+        {"auto", ColorMode::automatic}, {"always", ColorMode::always}, {"never", ColorMode::never}};
+    app.add_option("--color", invocation.color,
+                   "Colour the human layout (default auto: on a terminal, unless NO_COLOR is set)")
+        ->transform(CLI::CheckedTransformer(colors).description("{auto,always,never}"));
 
     add_field(add_command<Deps>(app, invocation, "What installed packages depend on"), invocation,
               "packages", &Deps::packages, "Installed cpvs, or cps for every installed version")
@@ -400,6 +463,16 @@ void configure(CLI::App& app, Invocation& invocation) {
     add_command<Stats>(app, invocation, "Store and graph statistics");
     add_command<Rebuild>(app, invocation, "Rebuild the store from scratch");
     add_command<Check>(app, invocation, "Diff the store against a fresh build");
+}
+
+Style style(const Invocation& invocation) {
+    const bool human = invocation.layout == Layout::human ||
+                       (invocation.layout == Layout::automatic && invocation.terminal);
+    const bool color =
+        human &&
+        (invocation.color == ColorMode::always ||
+         (invocation.color == ColorMode::automatic && invocation.terminal && !invocation.no_color));
+    return {.human = human, .color = color};
 }
 
 std::filesystem::path store_path(const Invocation& invocation) {

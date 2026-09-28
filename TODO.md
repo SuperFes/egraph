@@ -80,8 +80,9 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 Direction from the user (2026-09-27): output does not have to look like portage's; make it clean
 and organised, and a TUI (ncurses, or Notcurses) is welcome.
 
-- [ ] A human default: grouped and indented (by kind, by package), coloured on a tty, with the
-      current tab-separated lines kept behind a flag for scripts and the oracle tests.
+- [ ] `broken` in the human layout is 156 entries on the dev box, nearly all BDEPEND on removed
+      build tools; a runtime-only default (see Queries) would make it readable.
+- [ ] Box-drawing characters in `why` assume a UTF-8 terminal; fall back to ASCII otherwise.
 - [ ] Dependencies behind disabled USE flags, opt in and marked with the flag that would pull
       them in (`rdeps --possible`). The vdb only keeps reduced strings, so this needs the
       unreduced ones from the repository's metadata cache: the evaluated layer (step 9).

@@ -15,6 +15,7 @@ Update the status column as steps land.
 | 7 | Roots and orphans | done |
 | 8 | Consumers | not started |
 | 9 | Evaluated and candidate layers | not planned yet |
+| 10 | Output and UX | in progress |
 
 ## 0. Scaffold
 
@@ -91,3 +92,11 @@ Update the status column as steps land.
 - Effective USE, visibility and best visible version, with config fingerprints.
 - The `-uDN @world` fast path.
 - To be planned once 0-8 hold up.
+
+## 10. Output and UX
+
+Taken ahead of 8 and 9 at the user's direction: output need not look like portage's.
+
+- 10a (done): a human layout of every query on a terminal, tab-separated lines otherwise.
+- 10b: a TUI to browse the dependency tree, `why`, `orphans`, `broken` and `check`.
+- `rdeps --possible` (dependencies behind disabled USE flags) waits for the evaluated layer.

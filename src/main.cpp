@@ -1,4 +1,5 @@
 #include "cli.hpp"
+#include "os.hpp"
 
 #include <CLI/CLI.hpp>
 
@@ -9,6 +10,8 @@ int main(int argc, char** argv) {
     try {
         CLI::App app{"", "egraph"};
         egraph::Invocation invocation;
+        invocation.terminal = egraph::os::stdout_is_terminal();
+        invocation.no_color = !egraph::os::environment("NO_COLOR").value_or("").empty();
         egraph::configure(app, invocation);
         try {
             app.parse(argc, argv);

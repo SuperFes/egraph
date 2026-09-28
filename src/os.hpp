@@ -5,7 +5,9 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -29,5 +31,11 @@ struct SpawnError {
 
 // Runs argv (argv[0] looked up in PATH) with our stdio and environment, and waits for it.
 std::expected<int, SpawnError> run(const std::vector<std::string>& argv);
+
+// Whether standard output is a terminal.
+bool stdout_is_terminal();
+
+// The environment variable's value, if it is set.
+std::optional<std::string> environment(std::string_view name);
 
 } // namespace egraph::os

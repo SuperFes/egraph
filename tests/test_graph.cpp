@@ -72,9 +72,8 @@ TEST_CASE("edges run both ways") {
     CHECK(graph.deps(1).empty());
     CHECK(graph.rdeps(0).empty());
 
-    std::ostringstream out;
-    egraph::write_edges(out, store, graph.deps(0));
-    CHECK(out.str() == "app-misc/a-1\tRDEPEND\tdev-libs/b\tdev-libs/b-1\tany-of\n");
+    CHECK(egraph::edge_lines(store, graph.deps(0)) ==
+          std::vector<std::string>{"app-misc/a-1\tRDEPEND\tdev-libs/b\tdev-libs/b-1\tany-of"});
 }
 
 TEST_CASE("arguments name a cpv or what an atom matches") {

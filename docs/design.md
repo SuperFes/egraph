@@ -72,11 +72,19 @@ dependencies with defaults, repository) and means by it exactly what `vardb.matc
 
 ## Query output
 
-Plain text, one tab-separated record per line, sorted and without duplicates, so the output
-greps, diffs and compares against the oracle line for line:
+Two layouts of the same records. On a terminal, queries are laid out for people: grouped by the
+package asked about, aligned, coloured (`--color`, and `NO_COLOR` is honoured), with a
+dependency listed once with every kind it appears under, `why` drawn as a chain from its root,
+and counts at the end of `orphans` and `broken`. Piped, or with `--layout lines` (also
+`EGRAPH_LAYOUT`), the output is one tab-separated record per line, sorted and without
+duplicates, so it greps, diffs and compares against the oracle line for line. The human layouts
+(`src/human.cpp`) are built from those records and nothing else, so both carry the same
+information and the oracle tests cover both.
+
+The records are:
 
 - `deps` / `rdeps PKG...`: `parent kind atom child`, plus `any-of` for an alternative inside a
-  `||` group. `PKG` is a cpv or a cp (every installed version) until atoms land (roadmap 6b).
+  `||` group. `PKG` is a portage atom (or an exact cpv).
 - `soname NAME [--providers]`: `cpv multilib-category`.
 - `broken`: `cpv kind dependency`, one per top-level dependency nothing installed satisfies, with
   `||` groups rendered as portage's `paren_enclose` does.

@@ -4,7 +4,6 @@
 #include "store.hpp"
 
 #include <cstdint>
-#include <iosfwd>
 #include <optional>
 #include <string>
 #include <vector>
@@ -63,7 +62,7 @@ struct Path {
 [[nodiscard]] std::optional<Path> why(const Kept& kept, std::uint32_t package);
 
 // "@set<TAB>atom<TAB>cpv" for the root, then an edge_line per dependency.
-void write_path(std::ostream& out, const Store& store, const Path& path);
+[[nodiscard]] std::vector<std::string> path_lines(const Store& store, const Path& path);
 
 // "parent<TAB>kind<TAB>dependency" for each unresolved dependency, sorted.
 [[nodiscard]] std::vector<std::string> unresolved_lines(const Store& store, const Kept& kept);
