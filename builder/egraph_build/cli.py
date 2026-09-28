@@ -39,6 +39,24 @@ def parser():
         const="json",
         help="print the canonical JSON of the installed layer instead of writing the store",
     )
+    mode.add_argument(
+        "--pending",
+        dest="mode",
+        action="store_const",
+        const="pending",
+        help="write what each ENTRY of a merge list waits for, as JSON, to --output",
+    )
+    p.add_argument(
+        "--output",
+        type=Path,
+        help="file --pending writes, apart from anything portage prints",
+    )
+    p.add_argument(
+        "entries",
+        nargs="*",
+        metavar="ENTRY",
+        help="with --pending: a merge list entry, ebuild:CPV or binary:CPV",
+    )
     p.add_argument(
         "--store",
         type=Path,
@@ -73,6 +91,37 @@ def open_vardb(config_root, root, eprefix=None):
         config_root=config_root, target_root=root, eprefix=eprefix
     )
     return vartree(settings=settings).dbapi
+
+
+def open_trees(config_root, root, eprefix=None):
+    """The configuration, and the ebuild and binary package databases for its root."""
+    import portage
+
+    trees = portage.create_trees(
+        config_root=config_root, target_root=root, eprefix=eprefix
+    )
+    eroot = portage.config(config_root=config_root, target_root=root, eprefix=eprefix)[
+        "EROOT"
+    ]
+    tree = trees[eroot]
+    return tree["vartree"].settings, tree["porttree"].dbapi, tree["bintree"].dbapi
+
+
+def write_pending(args):
+    from egraph_build import pending
+
+    if args.output is None:
+        print("egraph-build: --pending needs --output", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        entries = [pending.parse_entry(entry) for entry in args.entries]
+    except ValueError as e:
+        print(f"egraph-build: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    settings, portdb, bindb = open_trees(args.config_root, args.root, args.eprefix)
+    result = pending.waits(settings, portdb, bindb, entries)
+    args.output.write_text(pending.to_json(result))
+    return EXIT_OK
 
 
 def _previous(path):
@@ -118,6 +167,11 @@ def main(argv=None):
         args = parser().parse_args(argv)
     except SystemExit as e:
         return EXIT_OK if e.code == 0 else EXIT_USAGE
+    if args.mode == "pending":
+        return write_pending(args)
+    if args.entries:
+        print("egraph-build: entries are for --pending", file=sys.stderr)
+        return EXIT_USAGE
     if args.mode == "json":
         from egraph_build import build, installed
 
