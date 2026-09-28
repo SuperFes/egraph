@@ -14,6 +14,14 @@ namespace egraph::tui {
 
 namespace {
 
+std::vector<std::string> lines(std::string_view text) {
+    std::vector<std::string> found;
+    for (const auto line : std::views::split(text, '\n')) {
+        found.emplace_back(std::string_view{line});
+    }
+    return found;
+}
+
 std::string folded(std::string_view text) {
     std::string out{text};
     for (auto& c : out) {
@@ -419,6 +427,8 @@ void App::open(std::uint32_t package) {
 void App::handle(const Key& key) {
     if (key.kind == KeyKind::closed) {
         done_ = true;
+    } else if (dialog_) {
+        dialog_.reset();
     } else if (!pages_.empty()) {
         handle_page(key);
     } else if (checked_) {
@@ -435,14 +445,13 @@ void App::finish_check(CheckResult result) {
     checked_->stage = Checked::Stage::checked;
     checked_->cursor = {};
     if (result) {
-        checked_->error.clear();
         checked_->drift = std::move(result->drift);
         if (update_ == Update::preview && !checked_->drift.empty()) {
             checked_->fresh = std::move(result->store);
         }
     } else {
-        checked_->error = std::move(result.error());
-        checked_->drift.clear();
+        checked_.reset();
+        show({.error = true, .title = "The check could not run", .lines = lines(result.error())});
     }
 }
 
@@ -450,12 +459,16 @@ void App::finish_rebuild(std::expected<Store, std::string> result) {
     if (!checked_) {
         return;
     }
-    checked_->stage = Checked::Stage::rebuilt;
-    checked_->cursor = {};
     if (!result) {
-        checked_->error = std::move(result.error());
+        // The drift still stands, and u can try again.
+        checked_->stage = Checked::Stage::checked;
+        show({.error = true,
+              .title = "The rebuild failed; the store is as it was",
+              .lines = lines(result.error())});
         return;
     }
+    checked_->stage = Checked::Stage::rebuilt;
+    checked_->cursor = {};
     checked_->drift.clear();
     adopt(std::move(*result), Source::saved);
 }
@@ -483,8 +496,7 @@ void App::handle_check(const Key& key) {
     } else if (is(key, U'r')) {
         checked = {};
     } else if (is(key, U'u')) {
-        if (checked.stage != Checked::Stage::checked || !checked.error.empty() ||
-            checked.drift.empty()) {
+        if (checked.stage != Checked::Stage::checked || checked.drift.empty()) {
             return;
         }
         if (update_ == Update::save) {
@@ -498,11 +510,17 @@ void App::handle_check(const Key& key) {
             adopt(std::move(fresh), Source::preview);
         }
     } else if (key.kind == KeyKind::enter || key.kind == KeyKind::right || is(key, U'l')) {
-        // Packages only a fresh build has are not in the store to open.
         if (checked.cursor.at < checked.drift.size()) {
-            if (const auto id =
-                    find(std::string_view{checked.drift.at(checked.cursor.at)}.substr(1))) {
+            const auto cpv = std::string_view{checked.drift.at(checked.cursor.at)}.substr(1);
+            if (const auto id = find(cpv)) {
                 open(*id);
+            } else {
+                show({.error = false,
+                      .title = std::format("{} is not in the store", cpv),
+                      .lines = {"It was installed after the store was built.",
+                                update_ == Update::save
+                                    ? "u rebuilds the store to include it."
+                                    : "u shows the fresh build, which has it."}});
             }
         }
     } else if (is_move(key)) {
@@ -657,6 +675,15 @@ std::size_t columns(std::string_view text) {
         std::ranges::count_if(text, [](char c) { return !is_continuation(c); }));
 }
 
+std::string repeat(std::string_view text, std::size_t count) {
+    std::string out;
+    out.reserve(text.size() * count);
+    for (std::size_t i = 0; i < count; ++i) {
+        out += text;
+    }
+    return out;
+}
+
 std::string clip(std::string_view text, std::size_t width) {
     std::size_t kept = 0;
     std::size_t bytes = 0;
@@ -705,7 +732,8 @@ DriftSign drift_sign(char sign) {
 }
 
 Exit open_and_run(const Store& store, GlyphSet glyphs, const Checker& check,
-                  const Rebuilder& rebuild, std::ostream& err) {
+                  const Rebuilder& rebuild, std::span<const std::string> warnings,
+                  std::ostream& err) {
 #if EGRAPH_HAVE_TUI
     auto screen = Screen::open();
     if (!screen) {
@@ -714,6 +742,9 @@ Exit open_and_run(const Store& store, GlyphSet glyphs, const Checker& check,
     }
     const auto graph = build_graph(store);
     App app{store, graph, rebuild ? Update::save : Update::preview};
+    if (!warnings.empty()) {
+        app.show({.error = false, .title = "Warning", .lines = {warnings.begin(), warnings.end()}});
+    }
     run(*screen, app, egraph::glyphs(glyphs), check, rebuild);
     return Exit::ok;
 #else
@@ -721,6 +752,7 @@ Exit open_and_run(const Store& store, GlyphSet glyphs, const Checker& check,
     (void)glyphs;
     (void)check;
     (void)rebuild;
+    (void)warnings;
     err << "egraph: tui: this egraph was built without Notcurses (meson -Dtui=enabled)\n";
     return Exit::not_implemented;
 #endif

@@ -23,6 +23,7 @@
 #include <optional>
 #include <ostream>
 #include <random>
+#include <sstream>
 #include <string_view>
 #include <utility>
 
@@ -425,10 +426,18 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
         err << "egraph: tui: standard output is not a terminal\n";
         return Exit::usage;
     }
-    const auto store = open_store(invocation, err);
+    // Warnings would vanish under the interface, so it repeats them.
+    std::stringstream warned;
+    const auto store = open_store(invocation, warned);
+    err << warned.str();
     if (!store) {
         err << "egraph: " << store.error() << '\n';
         return Exit::failure;
+    }
+    std::vector<std::string> warnings;
+    for (std::string line; std::getline(warned, line);) {
+        constexpr std::string_view prefix = "egraph: warning: ";
+        warnings.push_back(line.starts_with(prefix) ? line.substr(prefix.size()) : line);
     }
     // The builder cannot share the terminal the interface owns; its output is kept for errors.
     const auto check = [&invocation](const Store& stored) -> tui::CheckResult {
@@ -450,7 +459,7 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
             return load(path).transform_error([](const StoreError& e) { return e.message; });
         };
     }
-    return tui::open_and_run(*store, invocation.glyphs, check, rebuild, err);
+    return tui::open_and_run(*store, invocation.glyphs, check, rebuild, warnings, err);
 }
 
 Exit execute(const Stats&, const Invocation& invocation, std::ostream& out, std::ostream& err) {

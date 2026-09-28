@@ -474,10 +474,18 @@ TEST_CASE("c checks the store against a fresh build, showing a wait first") {
     CHECK(contains(text, "installed since the store was built"));
     CHECK(contains(text, "~ dev-libs/b-1"));
 
-    // What only the fresh build has cannot be opened; the rest opens its page, and esc comes
-    // back here, then to the list.
+    // What only the fresh build has cannot be opened, and says so; the rest opens its page, and
+    // esc comes back here, then to the list.
     app.handle(key(KeyKind::enter));
     CHECK(app.pages().empty());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "x/new-1 is not in the store");
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "u shows the fresh build, which has it."));
+    // The key that closes a dialog does nothing else.
+    app.handle(key(KeyKind::down));
+    CHECK_FALSE(app.dialog().has_value());
+    CHECK(app.checked()->cursor.at == 0);
     app.handle(key(KeyKind::down));
     app.handle(key(KeyKind::enter));
     REQUIRE(app.pages().size() == 1);
@@ -497,17 +505,50 @@ TEST_CASE("a check that cannot run shows why") {
     const auto store = sample();
     const auto graph = egraph::build_graph(store);
     egraph::tui::App app{store, graph};
-    FakeScreen screen{12, 100, {character(U'c'), character(U'j'), character(U'q')}};
-    const egraph::tui::Checker check = [](const egraph::Store&) -> egraph::tui::CheckResult {
-        return std::unexpected("egraph-build exited with status 1:\nTraceback\nKeyError: 'x'");
-    };
-    egraph::tui::run(screen, app, ascii, check);
-    CHECK(app.done());
+    FakeScreen screen{12, 100, {}};
+    app.handle(character(U'c'));
+    app.finish_check(
+        std::unexpected("egraph-build exited with status 1:\nTraceback\nKeyError: 'x'"));
+    egraph::tui::draw(screen, app, ascii);
+    // Back at the list, under the dialog.
+    CHECK_FALSE(app.checked().has_value());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->lines.size() == 3);
     const auto text = screen.text();
-    CHECK(contains(text, "! The check could not run"));
-    CHECK(contains(screen.line(3), "egraph-build exited with status 1:"));
-    CHECK(contains(screen.line(5), "KeyError: 'x'"));
-    CHECK(screen.line(11).starts_with(" r again"));
+    CHECK(contains(text, "+- ! The check could not run -"));
+    CHECK(contains(text, "|  egraph-build exited with status 1:"));
+    CHECK(contains(text, "|  KeyError: 'x'"));
+    CHECK(contains(text, "any key -+"));
+    CHECK(contains(screen.line(0), "2 of 2 packages"));
+    app.handle(character(U'q'));
+    CHECK_FALSE(app.done());
+    CHECK_FALSE(app.dialog().has_value());
+}
+
+TEST_CASE("a dialog sits centred in its frame and cuts what does not fit") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    app.show({.error = false, .title = "Warning", .lines = {"short", std::string(300, 'x')}});
+    FakeScreen screen{12, 40, {}};
+    egraph::tui::draw(screen, app, ascii);
+    // Six rows: the edges, a blank margin above and below, and two lines.
+    CHECK(screen.line(3) == " +- Warning --------------------------+ ");
+    CHECK(screen.line(4) == " |                                    | ");
+    CHECK(screen.line(5) == " |  short                             | ");
+    CHECK(screen.line(6) == " |  " + std::string(32, 'x') + "  | ");
+    CHECK(screen.line(7) == " |                                    | ");
+    CHECK(screen.line(8) == " +-------------------------- any key -+ ");
+
+    // More lines than rows: the first ones show, and the frame stays whole.
+    app.show({.error = true, .title = "Many", .lines = std::vector<std::string>(20, "line")});
+    FakeScreen small{8, 30, {}};
+    egraph::tui::draw(small, app, ascii);
+    CHECK(contains(small.line(0), "+- ! Many "));
+    CHECK(contains(small.line(2), "|  line"));
+    CHECK(contains(small.line(5), "|  line"));
+    CHECK_FALSE(contains(small.line(6), "line"));
+    CHECK(contains(small.line(7), "any key -+"));
 }
 
 TEST_CASE("a build-time dependency since replaced is history, not breakage") {
@@ -623,10 +664,13 @@ TEST_CASE("a failed rebuild leaves the store as it was") {
     CHECK(&app.store() == &store);
     CHECK(app.dependents(0) == 0);
     CHECK(contains(screen.text(), "! The rebuild failed; the store is as it was"));
-    CHECK(contains(screen.line(4), "PermissionError"));
-    // The check can run again.
-    app.handle(character(U'r'));
-    CHECK(app.check_requested());
+    CHECK(contains(screen.text(), "|  PermissionError"));
+    // The drift still shows under the dialog, and u can try again.
+    CHECK(contains(screen.text(), "differs from a fresh build  1"));
+    app.handle(key(KeyKind::escape));
+    CHECK(app.checked().has_value());
+    app.handle(character(U'u'));
+    CHECK(app.rebuild_requested());
 }
 
 TEST_CASE("u does nothing without drift to fix") {
@@ -649,8 +693,12 @@ TEST_CASE("u does nothing without drift to fix") {
         egraph::tui::run(screen, app, ascii, check, rebuild);
         CHECK(rebuilds == 0);
         CHECK(app.source() == egraph::tui::Source::opened);
-        REQUIRE(app.checked().has_value());
-        CHECK(app.checked()->stage == egraph::tui::Checked::Stage::checked);
-        CHECK_FALSE(contains(screen.line(11), "u "));
+        // A failed check closes its view; the dialog took the second u.
+        CHECK(app.checked().has_value() == !fails);
+        CHECK_FALSE(app.dialog().has_value());
+        if (!fails) {
+            CHECK(app.checked()->stage == egraph::tui::Checked::Stage::checked);
+            CHECK_FALSE(contains(screen.line(11), "u "));
+        }
     }
 }

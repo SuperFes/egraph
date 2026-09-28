@@ -111,6 +111,15 @@ struct Glyphs {
     std::string_view cycle;
     // Before what is installed in place of a dependency.
     std::string_view instead;
+    // A box's corners and sides.
+    struct Frame {
+        std::string_view top_left;
+        std::string_view top_right;
+        std::string_view bottom_left;
+        std::string_view bottom_right;
+        std::string_view across;
+        std::string_view down;
+    } frame;
     // Key hints.
     std::string_view move;
     std::string_view enter;

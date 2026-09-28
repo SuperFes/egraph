@@ -23,6 +23,7 @@
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -110,15 +111,22 @@ enum class Update : std::uint8_t { save, preview };
 // The store on screen: the one opened, one rebuilt since, or a fresh build that is not saved.
 enum class Source : std::uint8_t { opened, saved, preview };
 
-// The check view: waiting for a fresh build or a rebuild, or what either found.
+// The check view: waiting for a fresh build or a rebuild, or what either found. Either failing
+// shows a dialog instead.
 struct Checked {
     enum class Stage : std::uint8_t { checking, checked, rebuilding, rebuilt };
     Stage stage = Stage::checking;
-    std::string error;
     std::vector<std::string> drift;
     // The check's build, kept for a preview.
     std::optional<Store> fresh;
     Cursor cursor;
+};
+
+// A message over whatever is on screen, which the next key dismisses.
+struct Dialog {
+    bool error = true;
+    std::string title;
+    std::vector<std::string> lines;
 };
 
 // Which packages the list shows, before the search.
@@ -163,6 +171,8 @@ class App {
         return checked_ && checked_->stage == Checked::Stage::rebuilding;
     }
     void finish_rebuild(std::expected<Store, std::string> result);
+    [[nodiscard]] const std::optional<Dialog>& dialog() const { return dialog_; }
+    void show(Dialog dialog) { dialog_ = std::move(dialog); }
     [[nodiscard]] Update update() const { return update_; }
     [[nodiscard]] Source source() const { return source_; }
     // Distinct packages each package depends on, and that depend on it.
@@ -228,6 +238,7 @@ class App {
     List list_;
     std::optional<Checked> checked_;
     std::vector<Page> pages_;
+    std::optional<Dialog> dialog_;
     std::size_t height_ = 1;
     bool done_ = false;
 };
@@ -581,22 +592,7 @@ template <class S> void draw_check(S& screen, App& app, const Glyphs& glyph, Siz
         return;
     }
     const bool rebuilt = checked.stage == Stage::rebuilt;
-    if (!checked.error.empty()) {
-        put_spans(screen, 1, 1,
-                  {{std::format("{} {}", glyph.broken,
-                                rebuilt ? "The rebuild failed; the store is as it was"
-                                        : "The check could not run"),
-                    tone_pen(Tone::bad)}},
-                  size.cols);
-        unsigned row = first;
-        for (const auto line : std::views::split(checked.error, '\n')) {
-            if (row >= first + height) {
-                break;
-            }
-            put_spans(screen, row++, 3,
-                      {{std::string{std::string_view{line}}, tone_pen(Tone::note)}}, size.cols);
-        }
-    } else if (rebuilt && app.source() == Source::preview) {
+    if (rebuilt && app.source() == Source::preview) {
         put_spans(screen, 1, 1,
                   {{std::format("{} Showing the fresh build", glyph.good), tone_pen(Tone::good)},
                    {"   not saved: only root writes the store", tone_pen(Tone::note)}},
@@ -642,12 +638,71 @@ template <class S> void draw_check(S& screen, App& app, const Glyphs& glyph, Siz
     }
     std::vector<std::pair<std::string_view, std::string_view>> hints{
         {"r", "again"}, {"esc", "back"}, {"q", "quit"}};
-    if (!rebuilt && checked.error.empty() && !checked.drift.empty()) {
+    if (!rebuilt && !checked.drift.empty()) {
         hints.insert(hints.begin(), {{glyph.move, "move"},
                                      {glyph.enter, "open"},
                                      {"u", app.update() == Update::save ? "rebuild" : "preview"}});
     }
     draw_hints(screen, size.rows - 1, size.cols, hints);
+}
+
+// text repeated count times.
+[[nodiscard]] std::string repeat(std::string_view text, std::size_t count);
+
+// A dialog centred over the view: its title in the top edge, its lines inside a margin (cut to
+// fit), and how to close it in the bottom edge.
+template <class S>
+void draw_dialog(S& screen, const Dialog& dialog, const Glyphs& glyph, Size size) {
+    const Pen edge{.fg = palette::overlay, .bg = palette::mantle};
+    const Pen body{.fg = palette::text, .bg = palette::mantle};
+    auto title_pen = tone_pen(dialog.error ? Tone::bad : Tone::heading);
+    title_pen.bg = palette::mantle;
+    title_pen.bold = true;
+    const std::string closing = " any key ";
+    std::string title = dialog.error ? std::format(" {} {} ", glyph.broken, dialog.title)
+                                     : std::format(" {} ", dialog.title);
+    std::size_t widest = columns(title) + columns(closing);
+    for (const auto& line : dialog.lines) {
+        widest = std::max(widest, columns(line) + 4);
+    }
+    const auto width = std::min<std::size_t>(widest + 2, size.cols - 2);
+    const auto inner = width - 2;
+    const auto shown = std::min<std::size_t>(dialog.lines.size(), size.rows - 4);
+    const auto height = shown + 4;
+    const auto top = static_cast<unsigned>((size.rows - height) / 2);
+    const auto left = static_cast<unsigned>((size.cols - width) / 2);
+    const auto right = static_cast<unsigned>(left + width);
+
+    title = clip(title, inner - 1);
+    put_spans(screen, top, left,
+              {{std::format("{}{}", glyph.frame.top_left, glyph.frame.across), edge},
+               {title, title_pen},
+               {std::format("{}{}", repeat(glyph.frame.across, inner - 1 - columns(title)),
+                            glyph.frame.top_right),
+                edge}},
+              right);
+    const auto blank = [&](unsigned row, std::string_view text) {
+        const auto cut = clip(text, inner - 4);
+        put_spans(screen, row, left,
+                  {{std::string{glyph.frame.down}, edge},
+                   {std::format("  {}{}", cut, std::string(inner - 2 - columns(cut), ' ')), body},
+                   {std::string{glyph.frame.down}, edge}},
+                  right);
+    };
+    blank(top + 1, "");
+    for (std::size_t line = 0; line < shown; ++line) {
+        blank(top + 2 + static_cast<unsigned>(line), dialog.lines.at(line));
+    }
+    blank(static_cast<unsigned>(top + height - 2), "");
+    const auto key_room = std::min(columns(closing), inner - 1);
+    put_spans(
+        screen, static_cast<unsigned>(top + height - 1), left,
+        {{std::format("{}{}", glyph.frame.bottom_left,
+                      repeat(glyph.frame.across, inner - 1 - key_room)),
+          edge},
+         {clip(closing, key_room), {.fg = palette::mauve, .bg = palette::mantle, .bold = true}},
+         {std::format("{}{}", glyph.frame.across, glyph.frame.bottom_right), edge}},
+        right);
 }
 
 template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
@@ -660,6 +715,9 @@ template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
             draw_check(screen, app, glyph, size);
         } else {
             draw_list(screen, app, glyph, size);
+        }
+        if (app.dialog()) {
+            draw_dialog(screen, *app.dialog(), glyph, size);
         }
     }
     screen.render();
@@ -686,9 +744,10 @@ void run(S& screen, App& app, const Glyphs& glyph, const Checker& check,
     }
 }
 
-// Opens the terminal and runs the interface over store; errors go to err. Without a rebuilder, a
-// check's fresh build can only be previewed.
+// Opens the terminal and runs the interface over store, first showing any warnings from opening
+// it; errors go to err. Without a rebuilder, a check's fresh build can only be previewed.
 [[nodiscard]] Exit open_and_run(const Store& store, GlyphSet glyphs, const Checker& check,
-                                const Rebuilder& rebuild, std::ostream& err);
+                                const Rebuilder& rebuild, std::span<const std::string> warnings,
+                                std::ostream& err);
 
 } // namespace egraph::tui

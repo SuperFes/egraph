@@ -38,6 +38,16 @@ def wait_for(socket, text, seconds=10):
     raise AssertionError(f"{text!r} never appeared:\n{screen}")
 
 
+def wait_gone(socket, text, seconds=10):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        screen = tmux(socket, "capture-pane", "-p", "-t", "t").stdout
+        if text not in screen:
+            return screen
+        time.sleep(0.1)
+    raise AssertionError(f"{text!r} never went away:\n{screen}")
+
+
 def skip_without_tui():
     result = subprocess.run(
         [EGRAPH, "--store", "/nonexistent", "--no-refresh", "tui"], capture_output=True
@@ -106,6 +116,11 @@ def test_tui_previews_a_fresh_build_without_saving_it(system, tmp_path):
     tmux(socket, "new-session", "-d", "-s", "t", "-x", "100", "-y", "16", command)
     try:
         wait_for(socket, f"{packages - 1} of {packages - 1} packages")
+        # --no-refresh's warning would be lost under the interface, which repeats it.
+        screen = wait_for(socket, "answering from a stale store")
+        assert " Warning " in screen
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        wait_gone(socket, " Warning ")
         tmux(socket, "send-keys", "-t", "t", "c")
         screen = wait_for(socket, "differs from a fresh build", seconds=60)
         assert "dev-libs/alt-b-1" in screen
