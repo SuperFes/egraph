@@ -10,6 +10,7 @@
 #include "json.hpp"
 #include "os.hpp"
 #include "store.hpp"
+#include "tui.hpp"
 
 #include <CLI/CLI.hpp>
 
@@ -342,6 +343,23 @@ Exit execute(const Why& command, const Invocation& invocation, std::ostream& out
     return exit;
 }
 
+Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostream& err) {
+    if (!tui::available()) {
+        err << "egraph: tui: this egraph was built without Notcurses (meson -Dtui=enabled)\n";
+        return Exit::not_implemented;
+    }
+    if (!invocation.terminal) {
+        err << "egraph: tui: standard output is not a terminal\n";
+        return Exit::usage;
+    }
+    const auto store = open_store(invocation, err);
+    if (!store) {
+        err << "egraph: " << store.error() << '\n';
+        return Exit::failure;
+    }
+    return tui::open_and_run(*store, invocation.glyphs, err);
+}
+
 Exit execute(const Stats&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
     const auto store = open_store(invocation, err);
     if (!store) {
@@ -473,6 +491,7 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->transform(CLI::CheckedTransformer(directions).description("{reverse,forward,both}"));
 
     add_command<Stats>(app, invocation, "Store and graph statistics");
+    add_command<Tui>(app, invocation, "Browse the graph in a terminal interface");
     add_command<Rebuild>(app, invocation, "Rebuild the store from scratch");
     add_command<Check>(app, invocation, "Diff the store against a fresh build");
 }

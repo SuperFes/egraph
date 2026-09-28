@@ -1,11 +1,12 @@
 #include "cli.hpp"
+#include "tui.hpp"
 
 #include <CLI/CLI.hpp>
-#include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <sstream>
 #include <string>
+#include <variant>
 
 namespace {
 
@@ -123,6 +124,20 @@ TEST_CASE("the layout is for people on a terminal and lines otherwise") {
     CHECK(egraph::style(invocation).color == ColorDepth::none);
     CHECK_THROWS_AS(parse("--layout fancy stats"), CLI::ValidationError);
     CHECK_THROWS_AS(parse("--glyphs emoji stats"), CLI::ValidationError);
+}
+
+TEST_CASE("the interface needs a terminal, and a build with Notcurses") {
+    const auto invocation = parse("tui");
+    REQUIRE(std::holds_alternative<egraph::Tui>(invocation.command));
+    std::ostringstream out;
+    std::ostringstream err;
+    const auto exit = egraph::run(invocation, out, err);
+    if (egraph::tui::available()) {
+        CHECK(exit == egraph::Exit::usage);
+        CHECK(err.str() == "egraph: tui: standard output is not a terminal\n");
+    } else {
+        CHECK(exit == egraph::Exit::not_implemented);
+    }
 }
 
 TEST_CASE("malformed command lines are rejected") {

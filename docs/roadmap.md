@@ -97,6 +97,8 @@ Update the status column as steps land.
 
 Taken ahead of 8 and 9 at the user's direction: output need not look like portage's.
 
-- 10a (done): a human layout of every query on a terminal, tab-separated lines otherwise.
-- 10b: a TUI to browse the dependency tree, `why`, `orphans`, `broken` and `check`.
+- 10a (done): a human layout of every query on a terminal, tab-separated lines otherwise, with
+  colour, kind shorthand and Nerd Font glyphs.
+- 10b: a TUI to browse the dependency tree, `why`, `orphans`, `broken` and `check`. Step 1
+  (done): `egraph tui` on Notcurses, an optional meson feature, showing the store and quitting.
 - `rdeps --possible` (dependencies behind disabled USE flags) waits for the evaluated layer.

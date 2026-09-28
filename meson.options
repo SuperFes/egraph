@@ -4,3 +4,9 @@ option(
   value: '/Development/Gentoo/portage/lib',
   description: 'portage lib/ directory the builder tests import; empty uses the installed portage',
 )
+option(
+  'tui',
+  type: 'feature',
+  value: 'auto',
+  description: 'The terminal interface (egraph tui), which needs Notcurses',
+)

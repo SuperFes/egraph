@@ -87,8 +87,12 @@ struct Check {
     static constexpr std::string_view name = "check";
 };
 
+struct Tui {
+    static constexpr std::string_view name = "tui";
+};
+
 using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Orphans,
-                             Export, Stats, Rebuild, Check>;
+                             Export, Stats, Rebuild, Check, Tui>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

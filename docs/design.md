@@ -109,6 +109,14 @@ The records are:
   dependencies over build-time ones. A package depclean would remove gets a message on stderr and
   exit status 1.
 
+## Terminal interface
+
+`egraph tui` (roadmap 10b) is built when Notcurses is found (`-Dtui=auto`, the default). The
+Notcurses C API is confined to `src/screen.cpp` behind the value-typed `Screen` (keys, pens,
+cells), as `src/os.cpp` confines the OS; the app in `src/tui.hpp` is a template over the screen,
+so it is tested with a fake one and needs no terminal. It shares the human layout's palette and
+glyphs (`--glyphs`).
+
 ## Orphans: emulating depclean
 
 `orphans` is depclean's graph completion replayed over the store (`src/depclean.cpp`), not plain

@@ -36,15 +36,31 @@ endif
 
 cli11 = dependency('CLI11', version: '>=2.4')
 catch2 = dependency('catch2-with-main', version: '>=3.4')
+# System headers, so -Wunsafe-buffer-usage stays out of Notcurses' inline functions.
+notcurses = dependency(
+  'notcurses-core',
+  version: '>=3',
+  required: get_option('tui'),
+  include_type: 'system',
+)
 
 build_info_hpp = configure_file(
   input: 'src/build_info.hpp.in',
   output: 'build_info.hpp',
-  configuration: {'VERSION': meson.project_version()},
+  configuration: {
+    'VERSION': meson.project_version(),
+    'HAVE_TUI': notcurses.found() ? 1 : 0,
+  },
 )
+
+egraph_sources = []
+if notcurses.found()
+  egraph_sources += 'src/screen.cpp'
+endif
 
 egraph_lib = static_library(
   'egraph',
+  egraph_sources,
   'src/atom.cpp',
   'src/check.cpp',
   'src/cli.cpp',
@@ -56,14 +72,15 @@ egraph_lib = static_library(
   'src/os.cpp',
   'src/query.cpp',
   'src/store.cpp',
+  'src/tui.cpp',
   'src/version.cpp',
   build_info_hpp,
-  dependencies: cli11,
+  dependencies: [cli11, notcurses],
 )
 egraph_dep = declare_dependency(
   link_with: egraph_lib,
   include_directories: include_directories('src', '.'),
-  dependencies: cli11,
+  dependencies: [cli11, notcurses],
 )
 
 egraph_exe = executable('egraph', 'src/main.cpp', dependencies: egraph_dep, install: true)
@@ -79,6 +96,7 @@ unit_tests = executable(
   'tests/test_human.cpp',
   'tests/test_json.cpp',
   'tests/test_store.cpp',
+  'tests/test_tui.cpp',
   dependencies: [egraph_dep, catch2],
 )
 test('unit', unit_tests, protocol: 'exitcode')

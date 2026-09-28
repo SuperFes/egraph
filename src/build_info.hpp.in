@@ -1,5 +1,8 @@
 #pragma once
 
+// Whether egraph tui is built in (Notcurses was found).
+#define EGRAPH_HAVE_TUI @HAVE_TUI@
+
 #include <string_view>
 
 namespace egraph {

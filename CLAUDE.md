@@ -40,6 +40,7 @@ Keep this section in sync with reality.
 meson setup build && meson compile -C build          # egraph binary
 meson test -C build --print-errorlogs                 # Catch2 + pytest
 meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false && meson test -C build-san
+meson setup build-notui -Dtui=disabled && meson test -C build-notui   # without Notcurses
 clang-tidy -p build src/*.cpp                         # safety checks, config in .clang-tidy
 clang-format -i src/*.cpp src/*.hpp tests/*.cpp tests/*.hpp
 black builder
@@ -50,7 +51,12 @@ EGRAPH_SYSTEM_TESTS=1 PYTHONPATH=... pytest builder/tests         # also compare
 `meson test` puts the `portage_lib` option (default: the fork) on PYTHONPATH; the playground
 tests need a portage checkout for its test GPG keys.
 
-Toolchain on this machine: clang 23, gcc 16, meson 1.12, Catch2 3.15, CLI11 2.7, Python 3.14.
+Toolchain on this machine: clang 23, gcc 16, meson 1.12, Catch2 3.15, CLI11 2.7, Python 3.14,
+Notcurses 3.0.17 (the optional `tui` feature).
+
+`egraph tui` cannot run under a bare pty: Notcurses waits for the terminal to answer its
+capability queries. `builder/tests/test_tui.py` drives it in a private tmux server instead; the
+app itself (`src/tui.hpp`) is a template over its screen, tested with a fake one.
 
 ## Testing against portage
 
@@ -97,7 +103,8 @@ needs the heap.
 - Do not hold iterators or references into a container across a mutation of it.
 - Hand `argc`/`argv` straight to CLI11; never index `argv` (that is pointer arithmetic).
 - C APIs (process spawning, anything `std::filesystem` does not cover) live only in `src/os.cpp`
-  behind value-typed wrappers. If a task seems to need an unsafe construct, stop and ask.
+  behind value-typed wrappers, and Notcurses only in `src/screen.cpp` (the `Screen` class).
+  If a task seems to need an unsafe construct, stop and ask.
 - Errors are values: `std::expected` for anything fallible (I/O, parsing, spawning). Exceptions only
   for programmer errors.
 - Static dispatch by default (templates, `std::variant`, plain functions). An interface only when
