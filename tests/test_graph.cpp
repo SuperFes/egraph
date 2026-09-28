@@ -140,6 +140,21 @@ TEST_CASE("installed_instead finds what stands where a dependency wanted another
     CHECK(egraph::installed_instead(missing, none.front()).empty());
 }
 
+TEST_CASE("broken records split replaced build-time dependencies from the rest") {
+    const auto build = decoded(egraph::test::newer_wanted(true));
+    const auto records = egraph::broken_records(build);
+    CHECK(records.broken.empty());
+    CHECK(records.replaced == std::vector<std::string>{"app-misc/a-1\tBDEPEND\t"
+                                                       "|| ( >=dev-libs/b-2 dev-libs/missing )\t"
+                                                       "dev-libs/b-1"});
+    // The lines layout keeps portage's plain set.
+    CHECK(egraph::broken(build).size() == 1);
+
+    const auto run = egraph::broken_records(decoded(egraph::test::newer_wanted(false)));
+    CHECK(run.broken.size() == 1);
+    CHECK(run.replaced.empty());
+}
+
 TEST_CASE("neighborhoods follow the chosen direction to the chosen depth") {
     const auto store = sample();
     const auto graph = egraph::build_graph(store);

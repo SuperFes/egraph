@@ -189,12 +189,6 @@ std::vector<Row> kept_rows(const Store& store, const Kept& kept, std::uint32_t p
     return rows;
 }
 
-// A build-time dependency whose package is now installed at another version or slot only
-// records what the package was built with, not something it lacks.
-bool replaced(const Unsatisfied& dependency, std::span<const std::uint32_t> instead) {
-    return is_build_kind(dependency.kind) && !instead.empty();
-}
-
 // What package needs that nothing installed satisfies, then the build-time dependencies since
 // replaced; one row per dependency with its kinds and what is installed in its place.
 std::vector<Row> unsatisfied_rows(const Store& store, std::uint32_t package, bool build_deps) {

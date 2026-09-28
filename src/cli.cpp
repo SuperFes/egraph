@@ -323,11 +323,11 @@ Exit execute(const Broken&, const Invocation& invocation, std::ostream& out, std
         err << "egraph: " << store.error() << '\n';
         return Exit::failure;
     }
-    const auto lines = broken(*store);
     if (const auto style = output(invocation); style.human) {
-        human_broken(out, lines, style.theme);
+        const auto records = broken_records(*store);
+        human_broken(out, records.broken, records.replaced, style.theme);
     } else {
-        write_lines(out, lines);
+        write_lines(out, broken(*store));
     }
     return Exit::ok;
 }

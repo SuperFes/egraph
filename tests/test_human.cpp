@@ -111,14 +111,14 @@ TEST_CASE("orphans end with a count") {
 TEST_CASE("broken groups by package and counts") {
     const std::vector<std::string> records{
         "a/b-1\tPDEPEND\tx/gone",
-        "a/b-1\tRDEPEND\t|| ( x/y x/z )",
+        "a/b-1\tRDEPEND\t|| ( x/y x/z )\tx/y-0.9",
         "c/d-2\tBDEPEND\tx/old",
     };
     std::ostringstream out;
-    egraph::human_broken(out, records, plain);
+    egraph::human_broken(out, records, {}, plain);
     CHECK(out.str() == "! a/b-1\n"
                        "  P  x/gone\n"
-                       "  R  || ( x/y x/z )\n"
+                       "  R  || ( x/y x/z )  > x/y-0.9\n"
                        "\n"
                        "! c/d-2\n"
                        "  B  x/old\n"
@@ -126,8 +126,23 @@ TEST_CASE("broken groups by package and counts") {
                        "3 unsatisfied dependencies in 2 packages\n" +
                            legend);
     std::ostringstream none;
-    egraph::human_broken(none, {}, plain);
+    egraph::human_broken(none, {}, {}, plain);
     CHECK(none.str() == "+ Every dependency is satisfied.\n");
+}
+
+TEST_CASE("broken lists replaced build-time dependencies apart, and not as breakage") {
+    const std::vector<std::string> replaced{
+        "a/long-name-1\tBDEPEND\t>=x/automake-1.18:1.18\tx/automake-1.19",
+        "c/d-2\tDEPEND\t|| ( x/p:1 x/q:1 )\tx/p-2 x/q-2",
+    };
+    std::ostringstream out;
+    egraph::human_broken(out, {}, replaced, plain);
+    CHECK(out.str() == "+ Nothing is broken.\n"
+                       "\n"
+                       "Built with, since replaced  2\n"
+                       "  a/long-name-1  B  >=x/automake-1.18:1.18  > x/automake-1.19\n"
+                       "  c/d-2          D  || ( x/p:1 x/q:1 )  > x/p-2 x/q-2\n" +
+                           legend);
 }
 
 TEST_CASE("soname users group by multilib category") {

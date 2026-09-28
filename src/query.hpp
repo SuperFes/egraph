@@ -46,6 +46,19 @@ struct Unsatisfied {
 [[nodiscard]] std::vector<std::uint32_t> installed_instead(const Store& store,
                                                            const Unsatisfied& dependency);
 
+// A build-time dependency whose package is installed at another version or slot only records
+// what the package was built with, not something it lacks.
+[[nodiscard]] bool replaced(const Unsatisfied& dependency, std::span<const std::uint32_t> instead);
+
+// broken's records, each with "<TAB>cpv cpv..." appended for what is installed in its place when
+// anything is, split into the ones that break a package and the replaced ones.
+struct BrokenRecords {
+    std::vector<std::string> broken;
+    std::vector<std::string> replaced;
+};
+
+[[nodiscard]] BrokenRecords broken_records(const Store& store);
+
 // Each top-level dependency nothing installed satisfies: "cpv<TAB>kind<TAB>dependency", sorted.
 [[nodiscard]] std::vector<std::string> broken(const Store& store);
 

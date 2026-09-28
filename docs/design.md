@@ -133,7 +133,8 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   at another version or slot, typically an autotools slot pin after automake moved on, only
   records what the package was built with: it is listed apart as "since replaced" and does not
   make the package broken. Run-time ones still do, since the package may need what it asked
-  for.
+  for. `egraph broken`'s human layout makes the same split (`query::replaced`); its lines layout
+  stays portage's plain unsatisfied set.
 - A package page lists what it depends on, then what needs it, one row per package and atom
   with the kind matrix, as `deps` and `rdeps` do. Enter follows a row to that package's page, and
   the title bar keeps the trail; Esc or Backspace go back.

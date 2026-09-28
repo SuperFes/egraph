@@ -141,7 +141,10 @@ void human_path(std::ostream& out, std::span<const std::string> records, const T
 
 void human_orphans(std::ostream& out, std::span<const std::string> records, const Theme& theme);
 
-void human_broken(std::ostream& out, std::span<const std::string> records, const Theme& theme);
+// broken records, then the build-time dependencies since replaced; either may carry a fourth
+// field of what is installed in the dependency's place, cpvs separated by spaces.
+void human_broken(std::ostream& out, std::span<const std::string> broken,
+                  std::span<const std::string> replaced, const Theme& theme);
 
 void human_soname(std::ostream& out, std::span<const std::string> records, std::string_view soname,
                   bool providers, const Theme& theme);

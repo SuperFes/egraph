@@ -6,6 +6,7 @@
 #include <array>
 #include <format>
 #include <ostream>
+#include <ranges>
 #include <vector>
 
 namespace egraph {
@@ -452,32 +453,67 @@ void human_orphans(std::ostream& out, std::span<const std::string> records, cons
         << '\n';
 }
 
-void human_broken(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+void human_broken(std::ostream& out, std::span<const std::string> broken,
+                  std::span<const std::string> replaced, const Theme& theme) {
     const auto& paint = theme.paint;
-    const auto rows = split_all(records);
+    const auto& glyph = theme.glyph();
+    // What is installed in a dependency's place, from the record's fourth field.
+    const auto instead = [&](const Fields& row) {
+        std::string text;
+        if (row.size() > 3) {
+            text += "  " + paint(glyph.instead, Tone::note);
+            for (const auto cpv : std::views::split(row.at(3), ' ')) {
+                text += ' ' + paint_cpv(std::string_view{cpv}, paint);
+            }
+        }
+        return text;
+    };
+    const auto rows = split_all(broken);
     if (rows.empty()) {
-        out << paint(theme.glyph().good, Tone::good) << ' '
-            << paint("Every dependency is satisfied.", Tone::good) << '\n';
-        return;
+        out << paint(glyph.good, Tone::good) << ' '
+            << paint(replaced.empty() ? "Every dependency is satisfied." : "Nothing is broken.",
+                     Tone::good)
+            << '\n';
     }
     std::size_t packages = 0;
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const auto& row = rows.at(i);
         if (i == 0 || rows.at(i - 1).at(0) != row.at(0)) {
-            out << (i == 0 ? "" : "\n") << paint(theme.glyph().broken, Tone::bad) << ' '
+            out << (i == 0 ? "" : "\n") << paint(glyph.broken, Tone::bad) << ' '
                 << paint_cpv(row.at(0), paint) << '\n';
             ++packages;
         }
         out << "  " << kind_letter(row.at(1), paint) << "  " << paint_dependency(row.at(2), paint)
-            << '\n';
+            << instead(row) << '\n';
     }
-    out << '\n'
-        << paint(std::to_string(rows.size()), Tone::count)
-        << paint(rows.size() == 1 ? " unsatisfied dependency in " : " unsatisfied dependencies in ",
-                 Tone::note)
-        << paint(std::to_string(packages), Tone::count)
-        << paint(packages == 1 ? " package" : " packages", Tone::note) << '\n';
-    human_legend(out, theme);
+    if (!rows.empty()) {
+        out << '\n'
+            << paint(std::to_string(rows.size()), Tone::count)
+            << paint(rows.size() == 1 ? " unsatisfied dependency in "
+                                      : " unsatisfied dependencies in ",
+                     Tone::note)
+            << paint(std::to_string(packages), Tone::count)
+            << paint(packages == 1 ? " package" : " packages", Tone::note) << '\n';
+    }
+    // Build-time dependencies since replaced: what each package was built with, quietly.
+    const auto old = split_all(replaced);
+    if (!old.empty()) {
+        std::size_t width = 0;
+        for (const auto& row : old) {
+            width = std::max(width, row.at(0).size());
+        }
+        out << '\n'
+            << paint("Built with, since replaced", Tone::heading) << "  "
+            << paint(std::to_string(old.size()), Tone::count) << '\n';
+        for (const auto& row : old) {
+            out << "  " << paint_cpv(row.at(0), paint) << spaces(row.at(0).size(), width) << "  "
+                << kind_letter(row.at(1), paint) << "  " << paint(row.at(2), Tone::note)
+                << instead(row) << '\n';
+        }
+    }
+    if (!rows.empty() || !old.empty()) {
+        human_legend(out, theme);
+    }
 }
 
 void human_soname(std::ostream& out, std::span<const std::string> records, std::string_view soname,

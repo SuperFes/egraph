@@ -141,6 +141,30 @@ std::vector<std::uint32_t> installed_instead(const Store& store, const Unsatisfi
     return found;
 }
 
+bool replaced(const Unsatisfied& dependency, std::span<const std::uint32_t> instead) {
+    return is_build_kind(dependency.kind) && !instead.empty();
+}
+
+BrokenRecords broken_records(const Store& store) {
+    BrokenRecords records;
+    for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
+        for (const auto& dependency : unsatisfied(store, id)) {
+            const auto instead = installed_instead(store, dependency);
+            auto record = std::format("{}\t{}\t{}", store.string(store.packages.at(id).cpv),
+                                      dep_kinds.at(dependency.kind), render(store, dependency));
+            for (std::size_t i = 0; i < instead.size(); ++i) {
+                record += i == 0 ? '\t' : ' ';
+                record += store.string(store.packages.at(instead.at(i)).cpv);
+            }
+            (replaced(dependency, instead) ? records.replaced : records.broken)
+                .push_back(std::move(record));
+        }
+    }
+    sorted_unique(records.broken);
+    sorted_unique(records.replaced);
+    return records;
+}
+
 std::vector<std::string> broken(const Store& store) {
     std::vector<std::string> lines;
     for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
