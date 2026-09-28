@@ -295,3 +295,6 @@ process including load and the freshness check of 2,575 inputs.
 - Warm cache: the ebuild metadata of every installed package 2.24 s; `bestmatch-visible` for all
   2,293 installed cps 1.10 s; `match-visible` for them 1.89 s (4,881 cpvs); effective USE via
   `config.setcpv` 0.54 ms per package; `cp_list` over every cp 2.45 s.
+- The oracle's dynamic dependencies (`oracle.dynamic_dep_strings`, FakeVartree's rule rebuilt on
+  portage's public API plus one wrapped `_pkg_str`) equal FakeVartree's own for every installed
+  package in every scenario and for all 2,326 on the live system.

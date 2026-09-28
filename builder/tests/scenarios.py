@@ -236,4 +236,59 @@ SCENARIOS = {
             "app-misc/nocategory-1": {"EAPI": "8", "REQUIRES": "libz.so.1"},
         },
     },
+    # The repository side: ebuilds that changed under installed packages, versions masked by
+    # keyword, package.mask and license, a package that moved, and a USE default that changed.
+    "repository": {
+        "world": ["app-misc/dyn", "app-misc/slotop", "app-misc/gone", "app-misc/flags"],
+        "ebuilds": {
+            # The dependency changed without a revision bump.
+            "app-misc/dyn-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "RDEPEND": "dev-libs/new",
+            },
+            "dev-libs/new-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            # Built against lib:1; the ebuild's := keeps what it was built with.
+            "app-misc/slotop-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "RDEPEND": "dev-libs/lib:=",
+            },
+            "dev-libs/lib-1": {"EAPI": "8", "KEYWORDS": "x86", "SLOT": "1/1"},
+            "dev-libs/lib-2": {"EAPI": "8", "KEYWORDS": "x86", "SLOT": "2/2"},
+            "dev-libs/lib-2.1": {"EAPI": "8", "KEYWORDS": "x86", "SLOT": "2/2.1"},
+            # A newer version, but only on the testing keyword.
+            "app-misc/testing-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/testing-2": {"EAPI": "8", "KEYWORDS": "~x86"},
+            # The installed version is now in package.mask.
+            "app-misc/masked-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/masked-2": {"EAPI": "8", "KEYWORDS": "x86"},
+            # A license nobody accepted.
+            "app-misc/eula-1": {"EAPI": "8", "KEYWORDS": "x86", "LICENSE": "EULA"},
+            "app-misc/newname-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            # new is on by default now; old was on when it was built.
+            "app-misc/flags-1": {"EAPI": "8", "KEYWORDS": "x86", "IUSE": "+new old"},
+        },
+        "installed": {
+            "app-misc/dyn-1": {"EAPI": "8", "RDEPEND": "dev-libs/old"},
+            "dev-libs/old-1": {"EAPI": "8"},
+            "dev-libs/new-1": {"EAPI": "8"},
+            "app-misc/slotop-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib:1/1="},
+            "dev-libs/lib-1": {"EAPI": "8", "SLOT": "1/1"},
+            "dev-libs/lib-2": {"EAPI": "8", "SLOT": "2/2"},
+            "app-misc/testing-1": {"EAPI": "8"},
+            "app-misc/masked-2": {"EAPI": "8"},
+            "app-misc/eula-1": {"EAPI": "8", "LICENSE": "EULA"},
+            # Gone from the repository, and depending on a package that moved since.
+            "app-misc/gone-1": {"EAPI": "8", "RDEPEND": "app-misc/oldname"},
+            "app-misc/newname-1": {"EAPI": "8"},
+            "app-misc/flags-1": {"EAPI": "8", "IUSE": "+new old", "USE": "old"},
+        },
+        "user_config": {
+            "package.mask": ("=app-misc/masked-2",),
+            "make.conf": ('ACCEPT_LICENSE="* -EULA"',),
+        },
+        # Written to the repository's profiles/updates by the fixtures.
+        "updates": {"1Q-2026": ("move app-misc/oldname app-misc/newname",)},
+    },
 }

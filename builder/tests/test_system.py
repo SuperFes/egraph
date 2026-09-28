@@ -270,3 +270,22 @@ def test_affected_agrees_with_the_fork_on_the_live_vdb(
         assert answer["affected"] == sorted(
             neighborhood.affected_cpvs(index, [index.package(cpv).cp], [cpv], [])
         ), cpv
+
+
+def test_dynamic_deps_oracle_reads_what_emerge_reads_on_the_live_system(live_vardb):
+    from _emerge.actions import load_emerge_config
+    from _emerge.FakeVartree import FakeVartree
+
+    from egraph_build.model import DEP_KINDS
+
+    root_config = load_emerge_config().target_config
+    fake = FakeVartree(root_config, dynamic_deps=True)
+    fake.sync()
+    portdb = root_config.trees["porttree"].dbapi
+    vardb = root_config.trees["vartree"].dbapi
+    differing = []
+    for cpv in oracle.installed(vardb):
+        _, strings, _ = oracle.dynamic_dep_strings(vardb, portdb, cpv)
+        if strings != dict(zip(DEP_KINDS, fake.dbapi.aux_get(cpv, list(DEP_KINDS)))):
+            differing.append(cpv)
+    assert differing == []

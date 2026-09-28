@@ -157,3 +157,82 @@ def test_broken(playgrounds):
         ("app-misc/a-1", "RDEPEND", "dev-libs/lib[gtk]"),
         ("app-misc/a-1", "RDEPEND", "dev-libs/lib[qt(-)]"),
     }
+
+
+# The repository side, on the repository scenario.
+
+
+def repository(playgrounds):
+    system = playgrounds("repository")
+    return system.vardb, system.trees[system.eroot]["porttree"].dbapi
+
+
+@pytest.mark.parametrize(
+    "cpv, source, rdepend",
+    [
+        # Same version in the repository: the ebuild's dependency replaces the vdb's.
+        ("app-misc/dyn-1", "ebuild", "dev-libs/new"),
+        # The ebuild's := stays, and what it was built against is appended.
+        ("app-misc/slotop-1", "ebuild", "dev-libs/lib:= dev-libs/lib:1/1="),
+        # No ebuild any more: the vdb's, with the repository's move applied.
+        ("app-misc/gone-1", "moved", "app-misc/newname"),
+        ("dev-libs/old-1", "vdb", ""),
+    ],
+)
+def test_dynamic_dep_strings(playgrounds, cpv, source, rdepend):
+    vardb, portdb = repository(playgrounds)
+    found_source, strings, eapi = oracle.dynamic_dep_strings(vardb, portdb, cpv)
+    assert (found_source, strings["RDEPEND"], eapi) == (source, rdepend, "8")
+
+
+def test_dynamic_deps_match_what_the_ebuild_names(playgrounds):
+    vardb, portdb = repository(playgrounds)
+    assert oracle.dynamic_deps(vardb, portdb, "app-misc/dyn-1") == {
+        Edge("app-misc/dyn-1", "dev-libs/new-1", "RDEPEND", "dev-libs/new", False)
+    }
+    # lib:= matches either installed slot; the built lib:1/1= only slot 1.
+    assert {
+        (edge.child, edge.atom)
+        for edge in oracle.dynamic_deps(vardb, portdb, "app-misc/slotop-1")
+    } == {
+        ("dev-libs/lib-1", "dev-libs/lib:="),
+        ("dev-libs/lib-2", "dev-libs/lib:="),
+        ("dev-libs/lib-1", "dev-libs/lib:1/1="),
+    }
+    assert {
+        edge.child for edge in oracle.dynamic_deps(vardb, portdb, "app-misc/gone-1")
+    } == {"app-misc/newname-1"}
+
+
+def test_effective_use_is_what_the_ebuild_would_build_with(playgrounds):
+    _, portdb = repository(playgrounds)
+    # Built with old; the ebuild now turns new on by default and old off.
+    assert oracle.effective_use(portdb, "app-misc/flags-1") == ("new",)
+
+
+@pytest.mark.parametrize(
+    "cpv, reasons",
+    [
+        ("app-misc/testing-1", ()),
+        ("app-misc/testing-2", ("~x86 keyword",)),
+        ("app-misc/masked-2", ("package.mask",)),
+        ("app-misc/eula-1", ("EULA license(s)",)),
+    ],
+)
+def test_mask_reasons(playgrounds, cpv, reasons):
+    _, portdb = repository(playgrounds)
+    assert oracle.mask_reasons(portdb, cpv) == reasons
+
+
+@pytest.mark.parametrize(
+    "cp, best",
+    [
+        ("app-misc/testing", {"0": "app-misc/testing-1"}),
+        ("dev-libs/lib", {"1": "dev-libs/lib-1", "2": "dev-libs/lib-2.1"}),
+        ("app-misc/masked", {"0": "app-misc/masked-1"}),
+        ("app-misc/eula", {}),
+    ],
+)
+def test_best_visible_per_slot(playgrounds, cp, best):
+    _, portdb = repository(playgrounds)
+    assert oracle.best_visible(portdb, cp) == best

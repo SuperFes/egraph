@@ -25,11 +25,30 @@ def playground_arguments(name):
     is (it has no masking information yet).
     """
     arguments = dict(SCENARIOS[name])
+    arguments.pop("updates", None)
     arguments["installed"] = {
         cpv: {"KEYWORDS": "x86", **metadata}
         for cpv, metadata in arguments.get("installed", {}).items()
     }
     return arguments
+
+
+def make_playground(name):
+    """A scenario's playground, with the package moves ResolverPlayground cannot write itself."""
+    from portage.tests.resolver.ResolverPlayground import ResolverPlayground
+
+    playground = ResolverPlayground(**playground_arguments(name))
+    updates = SCENARIOS[name].get("updates", {})
+    if updates:
+        portdb = playground.trees[playground.eroot]["porttree"].dbapi
+        path = os.path.join(
+            portdb.getRepositoryPath("test_repo"), "profiles", "updates"
+        )
+        os.makedirs(path, exist_ok=True)
+        for quarter, lines in updates.items():
+            with open(os.path.join(path, quarter), "w") as f:
+                f.writelines(f"{line}\n" for line in lines)
+    return playground
 
 
 class System(NamedTuple):
@@ -99,14 +118,12 @@ def gnupg_home():
 @pytest.fixture(scope="session")
 def playgrounds(gnupg_home):
     """One throwaway system per scenario name, built on first use."""
-    from portage.tests.resolver.ResolverPlayground import ResolverPlayground
 
     built = {}
 
     def get(name):
         if name not in built:
-            playground = ResolverPlayground(**playground_arguments(name))
-            built[name] = playground
+            built[name] = make_playground(name)
         playground = built[name]
         trees = playground.trees
         return System(playground.eroot, trees[playground.eroot]["vartree"].dbapi, trees)
@@ -119,12 +136,11 @@ def playgrounds(gnupg_home):
 @pytest.fixture
 def mutable_playground(gnupg_home):
     """A throwaway system of its own, for tests that change it."""
-    from portage.tests.resolver.ResolverPlayground import ResolverPlayground
 
     made = []
 
     def make(name):
-        playground = ResolverPlayground(**playground_arguments(name))
+        playground = make_playground(name)
         made.append(playground)
         return playground
 

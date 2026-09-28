@@ -113,7 +113,7 @@ reimplements visibility or USE. The layer is its own store file (`evaluated.egra
 in `store-format.md`) with its own inputs, so that a sync does not touch the installed store and
 a merge refreshes only what it changed.
 
-- 9a: oracle first. `oracle.py` answers each new question the slow way: an installed package's
+- 9a (done): oracle first. `oracle.py` answers each new question the slow way: an installed package's
   dynamic dependencies (FakeVartree's rule: the ebuild's dependencies when the same version is
   in its repository and both EAPIs are supported, the built `:=` atoms kept; otherwise the vdb's
   with the repository's package moves applied), its effective USE, whether a cpv is visible and
