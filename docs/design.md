@@ -204,18 +204,22 @@ reachability, because depclean is choosier than reachability in ways users rely 
   is.
 - Unresolved runtime dependencies (RDEPEND, PDEPEND, IDEPEND) make depclean refuse; unresolved
   build-time ones do not.
+- The atoms of one dependency list (one kind of one package, or the `||` groups and virtuals
+  deferred from it) select together, as `_minimize_children` does: each selects its highest
+  installed match, and where they select several packages of one cp, the lowest go first while
+  every atom matching them matches another. Under dynamic deps this is common: the ebuild's
+  `lib:=` beside the `lib:1/1=` it was built with keeps slot 1 only.
 
 `why` walks the same traversal. It answers with the dependency that keeps a package, not with
 every root atom that happens to match it: an unslotted world atom matching two slots keeps only
 the higher one, and the other is explained by whatever depends on it.
 
-Dependencies are the ones the vdb recorded at merge time, as `emerge --dynamic-deps=n` reads
-them. emerge's default re-reads an installed package's dependencies from its ebuild when the same
-version is still in the repository; after an ebuild drops a dependency without a revision bump,
-depclean can remove what egraph keeps. On the dev box the two agree, although the vdb carries
-about 1,400 `>=sys-libs/glibc-*` runtime dependencies no ebuild states (only @system glibc is
-affected, so no answer changes). Offering dynamic dependencies needs the repository's metadata:
-the evaluated layer.
+Dependencies are the ones emerge reads by default (`--dynamic-deps=y`): an installed package's
+from its ebuild when the same version is still in its repository, from the evaluated store.
+`--dynamic-deps n` reads the ones the vdb recorded at merge time instead. Every query that
+follows dependencies (deps, rdeps, why, orphans, broken, affected) takes the option; the store
+is opened with the evaluated trees swapped in (`with_dynamic_deps`), so the queries themselves
+do not know which they read.
 
 In removal mode `dep_zapdeps` asks which packages are *available* (visible: unmasked, or with a
 visible equivalent ebuild). egraph has no masking information until the evaluated layer, so it

@@ -73,13 +73,32 @@ def test_incremental_agrees_with_full(live_vardb, tmp_path, monkeypatch):
 
 
 @pytest.fixture(scope="module")
-def live_store(live_vardb, live_layer, tmp_path_factory):
+def live_databases():
+    return cli.open_databases("/", "/")
+
+
+@pytest.fixture(scope="module")
+def live_evaluated(live_databases):
+    return evaluated.build(*live_databases)
+
+
+@pytest.fixture(scope="module")
+def live_store(live_vardb, live_layer, live_evaluated, tmp_path_factory):
     from egraph_build.profile import implicit_iuse
 
     path = tmp_path_factory.mktemp("live") / "installed.egraph"
     meta = store.Meta("0", "0", "/", 0, implicit_iuse(live_vardb.settings))
     store.write(path, store.encode(live_layer, meta))
+    evaluated_meta = store.EvaluatedMeta("0", "0", "/", 0, 0)
+    store.write(
+        store.evaluated_path(path),
+        store.encode_evaluated(live_evaluated, evaluated_meta),
+    )
     return path
+
+
+def live_portdb(dynamic_deps, live_databases):
+    return live_databases[1] if dynamic_deps else None
 
 
 def _egraph(path, *args):
@@ -95,24 +114,33 @@ def _egraph(path, *args):
 @pytest.mark.skipif(
     not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
 )
-def test_cpp_queries_agree_with_portage(live_vardb, live_store):
+def test_cpp_queries_agree_with_portage(
+    live_vardb, live_databases, live_store, dynamic_deps
+):
+    from conftest import dynamic_option
     from test_queries import parse_edges
 
+    portdb = live_portdb(dynamic_deps, live_databases)
+    option = dynamic_option(dynamic_deps)
     for (cpv,) in subjects_sample(live_vardb, "deps"):
-        assert parse_edges(_egraph(live_store, "deps", cpv)) == oracle.deps(
-            live_vardb, cpv
-        )
-        assert parse_edges(_egraph(live_store, "rdeps", cpv)) == oracle.rdeps(
-            live_vardb, cpv
-        )
+        found = parse_edges(_egraph(live_store, "deps", *option, cpv))
+        assert found == oracle.deps(live_vardb, cpv, portdb=portdb), cpv
+        found = parse_edges(_egraph(live_store, "rdeps", *option, cpv))
+        assert found == oracle.rdeps(live_vardb, cpv, portdb=portdb), cpv
 
 
 @pytest.mark.skipif(
     not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
 )
-def test_cpp_broken_agrees_with_portage(live_vardb, live_store):
-    expected = sorted("\t".join(item) for item in oracle.broken(live_vardb))
-    assert _egraph(live_store, "broken").splitlines() == expected
+def test_cpp_broken_agrees_with_portage(
+    live_vardb, live_databases, live_store, dynamic_deps
+):
+    from conftest import dynamic_option
+
+    portdb = live_portdb(dynamic_deps, live_databases)
+    expected = sorted("\t".join(item) for item in oracle.broken(live_vardb, portdb))
+    found = _egraph(live_store, "broken", *dynamic_option(dynamic_deps))
+    assert found.splitlines() == expected
 
 
 def subjects_sample(vardb, query):
@@ -157,40 +185,29 @@ def live_emerge_config():
 
 @pytest.fixture(scope="module")
 def live_depclean(live_emerge_config):
+    """depclean's answers by (with_bdeps, dynamic_deps)."""
     from depclean import depclean
 
     config = live_emerge_config
     return {
-        with_bdeps: depclean(config.trees, config.target_config.root, with_bdeps)
+        (with_bdeps, dynamic_deps): depclean(
+            config.trees, config.target_config.root, with_bdeps, dynamic_deps
+        )
         for with_bdeps in (True, False)
+        for dynamic_deps in (True, False)
     }
 
 
 @pytest.mark.skipif(
     not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
 )
-def test_orphans_with_dynamic_deps(live_store, live_emerge_config):
-    """emerge's default re-reads dependencies from the repository, which egraph does not; on a
-    system whose ebuilds have not dropped a dependency since merge, the answers still agree.
-    """
-    from depclean import depclean
-
-    config = live_emerge_config
-    expected = depclean(config.trees, config.target_config.root, dynamic_deps=True)
-    result = subprocess.run(
-        [os.environ["EGRAPH"], "--store", str(live_store), "--no-refresh", "orphans"],
-        capture_output=True,
-        text=True,
-    )
-    assert tuple(result.stdout.splitlines()) == expected.orphans
-
-
-@pytest.mark.skipif(
-    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
-)
 @pytest.mark.parametrize("with_bdeps", [True, False], ids=["bdeps", "no-bdeps"])
-def test_orphans_are_what_depclean_removes(live_store, live_depclean, with_bdeps):
-    expected = live_depclean[with_bdeps]
+def test_orphans_are_what_depclean_removes(
+    live_store, live_depclean, with_bdeps, dynamic_deps
+):
+    from conftest import dynamic_option
+
+    expected = live_depclean[with_bdeps, dynamic_deps]
     result = subprocess.run(
         [
             os.environ["EGRAPH"],
@@ -200,6 +217,7 @@ def test_orphans_are_what_depclean_removes(live_store, live_depclean, with_bdeps
             "orphans",
             "--with-bdeps",
             "y" if with_bdeps else "n",
+            *dynamic_option(dynamic_deps),
         ],
         capture_output=True,
         text=True,
@@ -211,12 +229,15 @@ def test_orphans_are_what_depclean_removes(live_store, live_depclean, with_bdeps
 @pytest.mark.skipif(
     not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
 )
-def test_why_explains_every_kept_package(live_vardb, live_store, live_depclean):
+def test_why_explains_every_kept_package(
+    live_vardb, live_store, live_depclean, dynamic_deps
+):
+    from conftest import dynamic_option
     from test_why import assert_explains, why
 
-    expected = live_depclean[True]
+    expected = live_depclean[True, dynamic_deps]
     for cpv in sorted(expected.kept):
-        result = why(live_store, cpv)
+        result = why(live_store, cpv, *dynamic_option(dynamic_deps))
         assert result.returncode == 0, result.stderr
         assert_explains(result.stdout, cpv, expected, live_vardb)
 
@@ -225,18 +246,29 @@ def test_why_explains_every_kept_package(live_vardb, live_store, live_depclean):
     not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
 )
 def test_affected_agrees_with_the_fork_on_the_live_vdb(
-    live_vardb, live_layer, tmp_path
+    live_vardb, live_store, live_emerge_config, dynamic_deps
 ):
+    """Against the fork's index over the vartree its depgraph uses: emerge's FakeVartree, which
+    reads dependencies from the ebuilds under --dynamic-deps=y."""
+    from _emerge.FakeVartree import FakeVartree
+
+    from conftest import dynamic_option
+
     graph = pytest.importorskip("portage.dbapi._InstalledGraph")
     neighborhood = pytest.importorskip("_emerge.resolver.neighborhood")
 
-    path = tmp_path / "installed.egraph"
-    store.write(path, store.encode(live_layer, store.Meta("0", "0", "/", 0)))
-    index = graph.InstalledGraph.from_vardb(live_vardb)
+    if dynamic_deps:
+        fake = FakeVartree(live_emerge_config.target_config, dynamic_deps=True)
+        fake.sync()
+        vardb = fake.dbapi
+    else:
+        vardb = live_vardb
+    index = graph.InstalledGraph.from_vardb(vardb)
 
     def ask(**request):
         result = subprocess.run(
-            [os.environ["EGRAPH"], "--store", str(path), "affected"],
+            [os.environ["EGRAPH"], "--store", str(live_store), "--no-refresh"]
+            + ["affected", *dynamic_option(dynamic_deps)],
             input=json.dumps(request),
             capture_output=True,
             text=True,
@@ -289,16 +321,6 @@ def test_dynamic_deps_oracle_reads_what_emerge_reads_on_the_live_system(live_var
         if strings != dict(zip(DEP_KINDS, fake.dbapi.aux_get(cpv, list(DEP_KINDS)))):
             differing.append(cpv)
     assert differing == []
-
-
-@pytest.fixture(scope="module")
-def live_databases():
-    return cli.open_databases("/", "/")
-
-
-@pytest.fixture(scope="module")
-def live_evaluated(live_databases):
-    return evaluated.build(*live_databases)
 
 
 def test_evaluated_dependencies_agree_with_the_oracle(live_databases, live_evaluated):

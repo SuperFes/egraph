@@ -8,6 +8,7 @@
 #include <array>
 #include <format>
 #include <functional>
+#include <iterator>
 #include <numeric>
 #include <optional>
 #include <string_view>
@@ -147,10 +148,11 @@ class Depclean {
         }
     }
 
-    // Keeps the highest installed package the atom matches, or records it as unresolved.
-    void pull(std::uint32_t parent, std::uint32_t kind, std::uint32_t index, bool choice) {
+    // Keeps child for the atom at index, or records the atom as unresolved without one.
+    void pull(std::uint32_t parent, std::uint32_t kind, std::uint32_t index, bool choice,
+              std::optional<std::uint32_t> child) {
         const auto& node = element(nodes_of(parent, kind), index);
-        if (const auto child = highest(store().ids_in(node.matches))) {
+        if (child) {
             kept_.pulls.push_back({.parent = parent,
                                    .child = *child,
                                    .kind = kind,
@@ -162,6 +164,76 @@ class Depclean {
         }
     }
 
+    // What each atom of one dependency list keeps, as emerge's _minimize_children decides: each
+    // atom selects the highest installed package it matches, and where the list's atoms select
+    // several packages of one cp, those go lowest first while every atom matching them matches
+    // another; each atom then keeps the highest package left that it matches.
+    void pull_all(std::uint32_t parent, std::uint32_t kind,
+                  const std::vector<std::pair<std::uint32_t, bool>>& atoms) {
+        const auto nodes = nodes_of(parent, kind);
+        std::vector<std::optional<std::uint32_t>> children;
+        children.reserve(atoms.size());
+        for (const auto& [index, choice] : atoms) {
+            children.push_back(highest(store().ids_in(element(nodes, index).matches)));
+        }
+
+        // The distinct packages selected in each cp.
+        std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> selected;
+        for (const auto& child : children) {
+            if (child) {
+                auto& pkgs = selected[store().packages.at(*child).cp];
+                if (std::ranges::find(pkgs, *child) == pkgs.end()) {
+                    pkgs.push_back(*child);
+                }
+            }
+        }
+        // Per distinct atom string, as emerge keys atoms, the selected packages it matches.
+        std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> left;
+        for (std::size_t i = 0; i < atoms.size(); ++i) {
+            const auto& child = children.at(i);
+            if (!child) {
+                continue;
+            }
+            const auto& pkgs = selected.at(store().packages.at(*child).cp);
+            if (pkgs.size() < 2) {
+                continue;
+            }
+            const auto& node = element(nodes, atoms.at(i).first);
+            auto [found, added] = left.try_emplace(node.atom);
+            if (added) {
+                const auto matches = store().ids_in(node.matches);
+                std::ranges::copy_if(
+                    pkgs, std::back_inserter(found->second),
+                    [&](std::uint32_t pkg) { return std::ranges::contains(matches, pkg); });
+            }
+        }
+        for (auto& [cp, pkgs] : selected) {
+            if (pkgs.size() < 2) {
+                continue;
+            }
+            std::ranges::sort(pkgs,
+                              [&](std::uint32_t a, std::uint32_t b) { return compare(a, b) < 0; });
+            for (const auto pkg : pkgs) {
+                const auto needed = std::ranges::any_of(left, [&](const auto& entry) {
+                    return entry.second.size() < 2 && std::ranges::contains(entry.second, pkg);
+                });
+                if (!needed) {
+                    for (auto& entry : left) {
+                        std::erase(entry.second, pkg);
+                    }
+                }
+            }
+        }
+        for (std::size_t i = 0; i < atoms.size(); ++i) {
+            const auto& [index, choice] = atoms.at(i);
+            auto child = children.at(i);
+            if (const auto found = left.find(element(nodes, index).atom); found != left.end()) {
+                child = highest(found->second);
+            }
+            pull(parent, kind, index, choice, child);
+        }
+    }
+
     void read(std::uint32_t pkg) {
         for (const auto kind : kind_order) {
             if (is_build_kind(kind) && !options_.build_deps) {
@@ -170,6 +242,7 @@ class Depclean {
             const auto nodes = nodes_of(pkg, kind);
             const auto inside = choices(nodes);
             Disjunction deferred{.parent = pkg, .kind = kind, .nodes = {}};
+            std::vector<std::pair<std::uint32_t, bool>> plain;
             for (std::uint32_t i = 0; i < nodes.size(); ++i) {
                 const auto& node = element(nodes, i);
                 if (inside.at(i)) {
@@ -179,9 +252,10 @@ class Depclean {
                     (node.type == NodeType::atom && facts(node.atom).is_virtual)) {
                     deferred.nodes.push_back(i);
                 } else if (node.type == NodeType::atom) {
-                    pull(pkg, kind, i, false);
+                    plain.emplace_back(i, false);
                 }
             }
+            pull_all(pkg, kind, plain);
             if (!deferred.nodes.empty()) {
                 disjunctions_.push_back(std::move(deferred));
             }
@@ -203,9 +277,7 @@ class Depclean {
             }
         }
         // Every group of the list is decided before any of the choices is kept.
-        for (const auto& [index, choice] : selected) {
-            pull(disjunction.parent, disjunction.kind, index, choice);
-        }
+        pull_all(disjunction.parent, disjunction.kind, selected);
     }
 
     // The atoms of the group or atom at index, nested || groups resolved.

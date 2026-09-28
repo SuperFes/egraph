@@ -24,8 +24,7 @@ class Depclean(NamedTuple):
 
 
 def depclean(trees, eroot, with_bdeps=True, dynamic_deps=False):
-    """depclean's answer. egraph reads dependencies as the vdb recorded them, so the default is
-    --dynamic-deps=n, not emerge's own default of re-reading them from the ebuild."""
+    """depclean's answer, with --dynamic-deps=n unless dynamic_deps."""
     import _emerge.emergelog
     from _emerge.actions import _calc_depclean
     from _emerge.Package import Package

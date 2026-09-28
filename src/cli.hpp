@@ -123,6 +123,9 @@ struct Invocation {
     // Run to refresh a stale store; unset, the egraph-build next to egraph, else the one in PATH.
     std::optional<std::string> builder;
     bool no_refresh = false;
+    // emerge --dynamic-deps: dependency queries read an installed package's dependencies from its
+    // ebuild when the same version is still in its repository (the evaluated store).
+    bool dynamic_deps = true;
     Layout layout = Layout::automatic;
     ColorMode color = ColorMode::automatic;
     GlyphSet glyphs = GlyphSet::nerd;

@@ -6,8 +6,9 @@ import subprocess
 import portage
 import pytest
 
+from conftest import dynamic_option, write_stores
 from depclean import depclean
-from egraph_build import installed, oracle, store
+from egraph_build import oracle
 
 EGRAPH = os.environ.get("EGRAPH")
 
@@ -71,18 +72,15 @@ def assert_explains(stdout, cpv, expected, vardb):
 @pytest.fixture
 def system(scenario, tmp_path):
     path = tmp_path / "installed.egraph"
-    store.write(
-        path,
-        store.encode(installed.build(scenario.vardb), store.Meta("0", "0", "/", 0)),
-    )
+    write_stores(scenario, path)
     return scenario, path
 
 
 @pytest.mark.parametrize("with_bdeps", [True, False], ids=["bdeps", "no-bdeps"])
-def test_why_is_a_shortest_chain_depclean_follows(system, with_bdeps):
+def test_why_is_a_shortest_chain_depclean_follows(system, with_bdeps, dynamic_deps):
     scenario, path = system
-    expected = depclean(scenario.trees, scenario.eroot, with_bdeps)
-    option = ("--with-bdeps", "y" if with_bdeps else "n")
+    expected = depclean(scenario.trees, scenario.eroot, with_bdeps, dynamic_deps)
+    option = ("--with-bdeps", "y" if with_bdeps else "n", *dynamic_option(dynamic_deps))
     for cpv in oracle.installed(scenario.vardb):
         result = why(path, cpv, *option)
         if cpv in expected.kept:
@@ -97,11 +95,8 @@ def test_why_is_a_shortest_chain_depclean_follows(system, with_bdeps):
 
 
 def test_why_explains_every_match(playgrounds, tmp_path):
-    vardb = playgrounds("roots").vardb
     path = tmp_path / "installed.egraph"
-    store.write(
-        path, store.encode(installed.build(vardb), store.Meta("0", "0", "/", 0))
-    )
+    write_stores(playgrounds("roots"), path)
     result = why(path, "sys-kernel/sources")
     assert result.returncode == 1
     assert result.stdout == "@selected\tsys-kernel/sources\tsys-kernel/sources-2\n"

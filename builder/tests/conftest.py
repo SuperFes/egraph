@@ -149,6 +149,42 @@ def mutable_playground(gnupg_home):
         playground.cleanup()
 
 
+def portdb(system):
+    return system.trees[system.eroot]["porttree"].dbapi
+
+
+def write_stores(system, path):
+    """The installed store at path and the evaluated one beside it, as one builder run writes
+    them."""
+    from egraph_build import evaluated, installed, store
+
+    store.write(
+        path, store.encode(installed.build(system.vardb), store.Meta("0", "0", "/", 0))
+    )
+    layer = evaluated.build(system.vardb, portdb(system))
+    meta = store.EvaluatedMeta("0", "0", "/", 0, 0)
+    store.write(store.evaluated_path(path), store.encode_evaluated(layer, meta))
+
+
+def fake_vartree(system):
+    """emerge's own view of the installed packages under --dynamic-deps=y (test code only)."""
+    from _emerge.FakeVartree import FakeVartree
+
+    fake = FakeVartree(system.trees[system.eroot]["root_config"], dynamic_deps=True)
+    fake.sync()
+    return fake
+
+
+@pytest.fixture(params=[True, False], ids=["dynamic-deps", "vdb-deps"])
+def dynamic_deps(request):
+    """emerge's --dynamic-deps, on as by default or off."""
+    return request.param
+
+
+def dynamic_option(dynamic_deps):
+    return ("--dynamic-deps", "y" if dynamic_deps else "n")
+
+
 @pytest.fixture(params=sorted(SCENARIOS))
 def scenario(request, playgrounds):
     return playgrounds(request.param)

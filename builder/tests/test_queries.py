@@ -7,7 +7,8 @@ import subprocess
 import pytest
 
 from compare import _sonames
-from egraph_build import installed, oracle, roots, store
+from conftest import dynamic_option, portdb, write_stores
+from egraph_build import oracle, roots
 from egraph_build.model import Edge
 
 EGRAPH = os.environ.get("EGRAPH")
@@ -39,33 +40,34 @@ def parse_edges(text):
 @pytest.fixture
 def system(scenario, tmp_path):
     path = tmp_path / "installed.egraph"
-    store.write(
-        path,
-        store.encode(installed.build(scenario.vardb), store.Meta("0", "0", "/", 0)),
-    )
+    write_stores(scenario, path)
     return scenario.vardb, path
 
 
-def test_deps_and_rdeps(system):
+def test_deps_and_rdeps(scenario, system, dynamic_deps):
     vardb, path = system
+    ebuilds = portdb(scenario) if dynamic_deps else None
+    option = dynamic_option(dynamic_deps)
     for cpv in oracle.installed(vardb):
-        assert parse_edges(egraph(path, "deps", cpv).stdout) == oracle.deps(vardb, cpv)
-        assert parse_edges(egraph(path, "rdeps", cpv).stdout) == oracle.rdeps(
-            vardb, cpv
-        )
+        found = parse_edges(egraph(path, "deps", *option, cpv).stdout)
+        assert found == oracle.deps(vardb, cpv, portdb=ebuilds), cpv
+        found = parse_edges(egraph(path, "rdeps", *option, cpv).stdout)
+        assert found == oracle.rdeps(vardb, cpv, portdb=ebuilds), cpv
 
 
 def test_a_cp_names_every_installed_version(playgrounds, tmp_path):
-    vardb = playgrounds("reference").vardb
+    reference = playgrounds("reference")
+    vardb = reference.vardb
     path = tmp_path / "installed.egraph"
-    store.write(
-        path, store.encode(installed.build(vardb), store.Meta("0", "0", "/", 0))
-    )
+    write_stores(reference, path)
     expected = oracle.rdeps(vardb, "dev-libs/lib-1") | oracle.rdeps(
         vardb, "dev-libs/lib-2"
     )
-    assert parse_edges(egraph(path, "rdeps", "dev-libs/lib").stdout) == expected
-    both = egraph(path, "deps", "app-misc/root-1", "app-misc/user-1").stdout
+    rdeps = egraph(path, "rdeps", "--dynamic-deps", "n", "dev-libs/lib").stdout
+    assert parse_edges(rdeps) == expected
+    both = egraph(
+        path, "deps", "--dynamic-deps", "n", "app-misc/root-1", "app-misc/user-1"
+    ).stdout
     assert parse_edges(both) == oracle.deps(vardb, "app-misc/root-1") | oracle.deps(
         vardb, "app-misc/user-1"
     )
@@ -93,10 +95,12 @@ def test_sonames(system):
             )
 
 
-def test_broken(system):
+def test_broken(scenario, system, dynamic_deps):
     vardb, path = system
-    expected = sorted("\t".join(item) for item in oracle.broken(vardb))
-    assert egraph(path, "broken").stdout.splitlines() == expected
+    ebuilds = portdb(scenario) if dynamic_deps else None
+    expected = sorted("\t".join(item) for item in oracle.broken(vardb, ebuilds))
+    found = egraph(path, "broken", *dynamic_option(dynamic_deps)).stdout
+    assert found.splitlines() == expected
 
 
 def test_stats(system):

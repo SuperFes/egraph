@@ -11,7 +11,7 @@ import subprocess
 
 import pytest
 
-from egraph_build import installed, store
+from conftest import dynamic_option, fake_vartree, write_stores
 
 EGRAPH = os.environ.get("EGRAPH")
 
@@ -34,17 +34,17 @@ KIND_SETS = [
 
 
 @pytest.fixture
-def system(scenario, tmp_path):
+def system(scenario, tmp_path, dynamic_deps):
+    """The fork's index as its depgraph builds it, over the vartree emerge would use."""
     path = tmp_path / "installed.egraph"
-    store.write(
-        path,
-        store.encode(installed.build(scenario.vardb), store.Meta("0", "0", "/", 0)),
-    )
-    index = index_module.InstalledGraph.from_vardb(scenario.vardb)
+    write_stores(scenario, path)
+    vardb = fake_vartree(scenario).dbapi if dynamic_deps else scenario.vardb
+    index = index_module.InstalledGraph.from_vardb(vardb)
 
     def ask(**request):
         result = subprocess.run(
-            [EGRAPH, "--store", str(path), "--no-refresh", "affected"],
+            [EGRAPH, "--store", str(path), "--no-refresh", "affected"]
+            + list(dynamic_option(dynamic_deps)),
             input=json.dumps(request),
             capture_output=True,
             text=True,

@@ -74,13 +74,9 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       use.force on unmet USE dependencies, package.provided, and new-style virtual expansion
       (depclean decides a virtual's `||` in its parent's context; egraph when the virtual is read).
 - [ ] `orphans --ignore-soname-deps=n` (keep soname providers), as emerge offers.
-- [ ] Dynamic dependencies (`--dynamic-deps=y`, emerge's default) for `orphans` and `why`: read
-      an installed package's dependencies from its ebuild when the same version is still in the
-      repository. Needs the evaluated layer's metadata.
 - [ ] `why --all`: every chain, or every root, rather than one shortest chain.
-- [ ] The fork uses `egraph affected` only with `--dynamic-deps=n`: under emerge's default its
-      FakeVartree reads dependencies from the ebuilds, which egraph cannot see until it has
-      dynamic dependencies itself (see `orphans` above).
+- [ ] The TUI reads the vdb's dependencies (`--dynamic-deps=n`); step 9g switches it, with the
+      check view's drift still comparing installed stores.
 
 ## Output and UX
 

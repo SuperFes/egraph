@@ -169,3 +169,46 @@ TEST_CASE("the evaluated store sits beside the installed one") {
     CHECK(egraph::evaluated_store_path("scratch") == "scratch.evaluated.egraph");
     CHECK(egraph::evaluated_store_path("a.b/store.x") == "a.b/store.evaluated.egraph");
 }
+
+TEST_CASE("dynamic dependencies replace the installed trees") {
+    auto evaluated = egraph::decode_evaluated(sample());
+    REQUIRE(evaluated.has_value());
+    const auto store =
+        egraph::with_dynamic_deps({.installed = installed(), .evaluated = *evaluated});
+
+    REQUIRE(store.packages.size() == 2);
+    const auto& a = store.packages.front();
+    CHECK(store.string(a.cpv) == "app-misc/a-1");
+    const auto rdepend = store.nodes_in(a.deps.at(4));
+    REQUIRE(rdepend.size() == 1);
+    CHECK(store.string(rdepend.front().atom) == "dev-libs/b:=");
+    REQUIRE(store.ids_in(rdepend.front().matches).size() == 1);
+    CHECK(store.ids_in(rdepend.front().matches).front() == 1);
+    // The installed RDEPEND error is the vdb's; the evaluated one replaces it.
+    REQUIRE(store.pairs_in(a.errors).size() == 1);
+    CHECK(store.string(store.pairs_in(a.errors).front().second) == "bad dep");
+    // Sonames and roots are the installed store's.
+    CHECK(store.required_in(a.required).size() == 1);
+    CHECK(store.roots.size() == 2);
+    CHECK(store.string(store.roots.front().atom) == "app-misc/a");
+}
+
+TEST_CASE("groups keep the empty atom through the merge") {
+    Bytes dependencies;
+    dependencies.varint(2);
+    dependencies.varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 2});
+    dependencies.varints({1, 0, 0}).list({});
+    dependencies.varints({0, 1, 4}).list({1});
+    dependencies.varints({2, 1, 3}).varint(0).varints({0, 0, 0, 0, 0});
+    auto evaluated = egraph::decode_evaluated(evaluated_with_section(4, dependencies));
+    REQUIRE(evaluated.has_value());
+    const auto store =
+        egraph::with_dynamic_deps({.installed = installed(), .evaluated = *evaluated});
+    const auto rdepend = store.nodes_in(store.packages.front().deps.at(4));
+    REQUIRE(rdepend.size() == 2);
+    CHECK(rdepend.front().type == egraph::NodeType::any_of);
+    CHECK(rdepend.front().atom == 0);
+    CHECK(rdepend.back().parent == 0);
+    CHECK(store.string(rdepend.back().atom) == "dev-libs/b:=");
+    CHECK(store.pairs_in(store.packages.front().errors).empty());
+}

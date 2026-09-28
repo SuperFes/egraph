@@ -2,6 +2,7 @@
 
 #include "encoding.hpp"
 
+#include <algorithm>
 #include <format>
 #include <optional>
 #include <utility>
@@ -141,6 +142,52 @@ std::expected<Stores, StoreError> load_stores(const std::filesystem::path& path)
         return std::unexpected(evaluated.error());
     }
     return Stores{.installed = std::move(*installed), .evaluated = std::move(*evaluated)};
+}
+
+Store with_dynamic_deps(Stores stores) {
+    auto& store = stores.installed;
+    const auto& evaluated = stores.evaluated;
+    // Evaluated strings follow the installed ones; 0 stays the empty string that groups use.
+    const auto offset = size32(store.strings.size());
+    const auto pool = size32(store.pool.size());
+    store.pool += evaluated.pool;
+    for (const auto range : evaluated.strings) {
+        store.strings.push_back({.first = pool + range.first, .count = range.count});
+    }
+    const auto string_id = [offset](std::uint32_t id) { return id == 0 ? 0 : offset + id; };
+    const auto is_dependency = [&store](std::uint32_t id) {
+        return std::ranges::contains(dep_kinds, store.string(id));
+    };
+
+    for (std::size_t i = 0; i < store.packages.size(); ++i) {
+        auto& pkg = store.packages.at(i);
+        const auto& dynamic = evaluated.packages.at(i);
+
+        // Copied out first: appending to pairs moves what pairs_in views.
+        const auto installed = store.pairs_in(pkg.errors);
+        std::vector<StringPair> kept(installed.begin(), installed.end());
+        std::erase_if(kept, [&](const StringPair& pair) { return is_dependency(pair.first); });
+        const auto first = size32(store.pairs.size());
+        store.pairs.insert(store.pairs.end(), kept.begin(), kept.end());
+        for (const auto pair : evaluated.pairs_in(dynamic.errors)) {
+            store.pairs.push_back(
+                {.first = string_id(pair.first), .second = string_id(pair.second)});
+        }
+        pkg.errors = {.first = first, .count = size32(store.pairs.size()) - first};
+
+        for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+            const auto nodes = evaluated.nodes_in(dynamic.deps.at(kind));
+            pkg.deps.at(kind) = {.first = size32(store.nodes.size()), .count = size32(nodes.size())};
+            for (auto node : nodes) {
+                const auto matches = evaluated.ids_in(node.matches);
+                node.atom = string_id(node.atom);
+                node.matches = {.first = size32(store.ids.size()), .count = size32(matches.size())};
+                store.ids.insert(store.ids.end(), matches.begin(), matches.end());
+                store.nodes.push_back(node);
+            }
+        }
+    }
+    return std::move(store);
 }
 
 std::filesystem::path evaluated_store_path(const std::filesystem::path& installed) {

@@ -136,6 +136,18 @@ std::expected<Store, std::string> open_store(const Invocation& invocation, std::
     return open_store(invocation, err, used);
 }
 
+// The store the dependency queries read: with --dynamic-deps y, its dependency trees are the
+// evaluated store's.
+std::expected<Store, std::string> open_dependencies(const Invocation& invocation,
+                                                    std::ostream& err) {
+    if (!invocation.dynamic_deps) {
+        return open_store(invocation, err);
+    }
+    return open_stores(invocation, err).transform([](Stores stores) {
+        return with_dynamic_deps(std::move(stores));
+    });
+}
+
 Exit execute(const std::monostate&, const Invocation&, std::ostream&, std::ostream& err) {
     err << "egraph: no command given\n";
     return Exit::usage;
@@ -150,8 +162,8 @@ Exit execute(const Rebuild&, const Invocation& invocation, std::ostream&, std::o
 }
 
 Exit execute(const Refresh&, const Invocation& invocation, std::ostream&, std::ostream& err) {
-    if (const auto store = open_store(invocation, err); !store) {
-        err << "egraph: " << store.error() << '\n';
+    if (const auto stores = open_stores(invocation, err); !stores) {
+        err << "egraph: " << stores.error() << '\n';
         return Exit::failure;
     }
     return Exit::ok;
@@ -376,7 +388,7 @@ resolve_all(const Store& store, const std::vector<std::string>& arguments, std::
 
 Exit edges(const std::vector<std::string>& packages, bool reverse, const Invocation& invocation,
            std::ostream& out, std::ostream& err) {
-    const auto store = open_store(invocation, err);
+    const auto store = open_dependencies(invocation, err);
     if (!store) {
         err << "egraph: " << store.error() << '\n';
         return Exit::failure;
@@ -459,7 +471,7 @@ Exit execute(const Soname& command, const Invocation& invocation, std::ostream& 
 }
 
 Exit execute(const Broken&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
-    const auto store = open_store(invocation, err);
+    const auto store = open_dependencies(invocation, err);
     if (!store) {
         err << "egraph: " << store.error() << '\n';
         return Exit::failure;
@@ -475,7 +487,7 @@ Exit execute(const Broken&, const Invocation& invocation, std::ostream& out, std
 
 Exit execute(const Orphans& command, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
-    const auto store = open_store(invocation, err);
+    const auto store = open_dependencies(invocation, err);
     if (!store) {
         err << "egraph: " << store.error() << '\n';
         return Exit::failure;
@@ -506,7 +518,7 @@ Exit execute(const Orphans& command, const Invocation& invocation, std::ostream&
 
 Exit execute(const Why& command, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
-    const auto store = open_store(invocation, err);
+    const auto store = open_dependencies(invocation, err);
     if (!store) {
         err << "egraph: " << store.error() << '\n';
         return Exit::failure;
@@ -623,7 +635,7 @@ Exit execute(const Affected& command, const Invocation& invocation, std::ostream
         err << "egraph: affected: " << request.error() << '\n';
         return Exit::usage;
     }
-    const auto store = open_store(invocation, err);
+    const auto store = open_dependencies(invocation, err);
     if (!store) {
         err << "egraph: " << store.error() << '\n';
         return Exit::failure;
@@ -730,15 +742,28 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->transform(CLI::CheckedTransformer(glyph_sets).description("{nerd,unicode,ascii}"))
         ->envname("EGRAPH_GLYPHS");
 
-    add_field(add_command<Deps>(app, invocation, "What installed packages depend on"), invocation,
-              "packages", &Deps::packages, "Installed cpvs, or cps for every installed version")
-        ->required();
-    add_field(add_command<Rdeps>(app, invocation, "What depends on installed packages"), invocation,
-              "packages", &Rdeps::packages, "Installed cpvs, or cps for every installed version")
-        ->required();
     const std::map<std::string, bool> yes_no{{"y", true}, {"n", false}};
-    CLI::App* why_cmd = add_command<Why>(
-        app, invocation, "Shortest chain of dependencies from a root set that keeps a package");
+    const auto add_dynamic_deps = [&invocation, &yes_no](CLI::App* sub) {
+        sub->add_option_function<bool>(
+               "--dynamic-deps",
+               [&invocation](const bool& value) { invocation.dynamic_deps = value; },
+               "Read an installed package's dependencies from its ebuild when the same version is "
+               "still in its repository, as emerge's option (default y)")
+            ->transform(CLI::CheckedTransformer(yes_no).description("{y,n}"));
+        return sub;
+    };
+    CLI::App* deps_cmd =
+        add_dynamic_deps(add_command<Deps>(app, invocation, "What installed packages depend on"));
+    add_field(deps_cmd, invocation, "packages", &Deps::packages,
+              "Installed cpvs, or cps for every installed version")
+        ->required();
+    CLI::App* rdeps_cmd =
+        add_dynamic_deps(add_command<Rdeps>(app, invocation, "What depends on installed packages"));
+    add_field(rdeps_cmd, invocation, "packages", &Rdeps::packages,
+              "Installed cpvs, or cps for every installed version")
+        ->required();
+    CLI::App* why_cmd = add_dynamic_deps(add_command<Why>(
+        app, invocation, "Shortest chain of dependencies from a root set that keeps a package"));
     add_field(why_cmd, invocation, "package", &Why::package,
               "Portage atom; every installed package it matches is explained")
         ->required();
@@ -754,9 +779,10 @@ void configure(CLI::App& app, Invocation& invocation) {
     soname->add_flag_callback(
         "--providers", [&invocation] { std::get<Soname>(invocation.command).providers = true; },
         "List the packages providing it instead");
-    add_command<Broken>(app, invocation, "Installed dependencies nothing installed satisfies");
-    CLI::App* orphans_cmd =
-        add_command<Orphans>(app, invocation, "Installed packages emerge --depclean would remove");
+    add_dynamic_deps(
+        add_command<Broken>(app, invocation, "Installed dependencies nothing installed satisfies"));
+    CLI::App* orphans_cmd = add_dynamic_deps(
+        add_command<Orphans>(app, invocation, "Installed packages emerge --depclean would remove"));
     add_field(orphans_cmd, invocation, "--with-bdeps", &Orphans::build_deps,
               "Whether build-time dependencies keep packages, as emerge's option (default y)")
         ->transform(CLI::CheckedTransformer(yes_no).description("{y,n}"));
@@ -788,9 +814,9 @@ void configure(CLI::App& app, Invocation& invocation) {
                          "Bring the store up to date if its inputs changed, printing nothing");
     add_command<Check>(app, invocation, "Diff the store against a fresh build");
     add_field(
-        add_command<Affected>(
+        add_dynamic_deps(add_command<Affected>(
             app, invocation,
-            "What a set of merges can affect, as JSON, for portage's neighborhood completion"),
+            "What a set of merges can affect, as JSON, for portage's neighborhood completion")),
         invocation, "--request", &Affected::request,
         "JSON request file (default -: standard input)");
 }

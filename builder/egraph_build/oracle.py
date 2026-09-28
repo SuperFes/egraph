@@ -35,31 +35,46 @@ def _flatten(tokens, choice, out):
             out.append((token, choice))
 
 
-def dep_atoms(vardb, cpv, kind):
-    """(Atom, choice) for every atom left in one dependency kind after USE reduction.
+def _dependency_strings(vardb, cpv, portdb):
+    """({kind: dependency string}, EAPI): the vdb's, or with portdb as --dynamic-deps=y reads them."""
+    if portdb is None:
+        keys = list(DEP_KINDS) + ["EAPI"]
+        found = dict(zip(keys, vardb.aux_get(cpv, keys)))
+        return found, found["EAPI"]
+    _, strings, eapi = dynamic.dependency_strings(vardb, portdb, cpv)
+    return strings, eapi
 
-    Raises InvalidDependString or InvalidAtom when portage cannot parse it.
-    """
-    depstring, use, eapi = vardb.aux_get(cpv, [kind, "USE", "EAPI"])
-    tokens = use_reduce(
-        depstring,
+
+def _reduced(vardb, cpv, kind, portdb=None):
+    strings, eapi = _dependency_strings(vardb, cpv, portdb)
+    (use,) = vardb.aux_get(cpv, ["USE"])
+    return use_reduce(
+        strings[kind],
         uselist=frozenset(use.split()),
         eapi=eapi or None,
         opconvert=False,
         token_class=Atom,
     )
+
+
+def dep_atoms(vardb, cpv, kind, portdb=None):
+    """(Atom, choice) for every atom left in one dependency kind after USE reduction.
+
+    With portdb, the dependencies are the ones emerge's default --dynamic-deps=y reads.
+    Raises InvalidDependString or InvalidAtom when portage cannot parse it.
+    """
     out = []
-    _flatten(tokens, False, out)
+    _flatten(_reduced(vardb, cpv, kind, portdb), False, out)
     return out
 
 
-def errors(vardb):
+def errors(vardb, portdb=None):
     """(cpv, key) of every dependency or soname string portage cannot parse."""
     found = set()
     for cpv in installed(vardb):
         for kind in DEP_KINDS:
             try:
-                dep_atoms(vardb, cpv, kind)
+                dep_atoms(vardb, cpv, kind, portdb)
             except (InvalidAtom, InvalidDependString):
                 found.add((cpv, kind))
         for key in ("PROVIDES", "REQUIRES"):
@@ -71,7 +86,7 @@ def errors(vardb):
     return frozenset(found)
 
 
-def deps(vardb, cpv, kinds=DEP_KINDS):
+def deps(vardb, cpv, kinds=DEP_KINDS, portdb=None):
     """Edges from cpv to the installed packages its atoms match.
 
     Blockers are constraints rather than dependencies and yield no edges. A
@@ -80,7 +95,7 @@ def deps(vardb, cpv, kinds=DEP_KINDS):
     edges = set()
     for kind in kinds:
         try:
-            atoms = dep_atoms(vardb, cpv, kind)
+            atoms = dep_atoms(vardb, cpv, kind, portdb)
         except (InvalidAtom, InvalidDependString):
             continue
         for atom, choice in atoms:
@@ -91,12 +106,12 @@ def deps(vardb, cpv, kinds=DEP_KINDS):
     return frozenset(edges)
 
 
-def rdeps(vardb, cpv, kinds=DEP_KINDS):
+def rdeps(vardb, cpv, kinds=DEP_KINDS, portdb=None):
     """Edges into cpv, found by evaluating every installed package."""
     return frozenset(
         edge
         for parent in installed(vardb)
-        for edge in deps(vardb, parent, kinds)
+        for edge in deps(vardb, parent, kinds, portdb)
         if edge.child == cpv
     )
 
@@ -157,18 +172,7 @@ def _any_of(vardb, alternatives):
     return False
 
 
-def _reduced(vardb, cpv, kind):
-    depstring, use, eapi = vardb.aux_get(cpv, [kind, "USE", "EAPI"])
-    return use_reduce(
-        depstring,
-        uselist=frozenset(use.split()),
-        eapi=eapi or None,
-        opconvert=False,
-        token_class=Atom,
-    )
-
-
-def broken(vardb):
+def broken(vardb, portdb=None):
     """(cpv, kind, dependency) for each top-level dependency nothing installed satisfies.
 
     Evaluated straight from portage's reduced dependency lists, with the dependency rendered
@@ -178,7 +182,7 @@ def broken(vardb):
     for cpv in installed(vardb):
         for kind in DEP_KINDS:
             try:
-                tokens = iter(_reduced(vardb, cpv, kind))
+                tokens = iter(_reduced(vardb, cpv, kind, portdb))
             except (InvalidAtom, InvalidDependString):
                 continue
             for token in tokens:
@@ -204,35 +208,11 @@ def dynamic_dep_strings(vardb, portdb, cpv):
 
 
 def dynamic_dep_atoms(vardb, portdb, cpv, kind):
-    """dep_atoms() over the dynamic dependency strings, reduced under the installed USE."""
-    _, strings, eapi = dynamic_dep_strings(vardb, portdb, cpv)
-    (use,) = vardb.aux_get(cpv, ["USE"])
-    tokens = use_reduce(
-        strings[kind],
-        uselist=frozenset(use.split()),
-        eapi=eapi or None,
-        opconvert=False,
-        token_class=Atom,
-    )
-    out = []
-    _flatten(tokens, False, out)
-    return out
+    return dep_atoms(vardb, cpv, kind, portdb)
 
 
 def dynamic_deps(vardb, portdb, cpv, kinds=DEP_KINDS):
-    """deps() as emerge's default --dynamic-deps=y sees them."""
-    edges = set()
-    for kind in kinds:
-        try:
-            atoms = dynamic_dep_atoms(vardb, portdb, cpv, kind)
-        except (InvalidAtom, InvalidDependString):
-            continue
-        for atom, choice in atoms:
-            if atom.blocker:
-                continue
-            for child in matches(vardb, atom):
-                edges.add(Edge(cpv, child, kind, str(atom), choice))
-    return frozenset(edges)
+    return deps(vardb, cpv, kinds, portdb)
 
 
 def effective_use(portdb, cpv):

@@ -81,6 +81,11 @@ struct Stores {
 // The installed store at path and the evaluated store beside it.
 [[nodiscard]] std::expected<Stores, StoreError> load_stores(const std::filesystem::path& path);
 
+// The installed store with every package's dependency trees and dependency parse errors replaced
+// by the evaluated store's, as emerge reads them under --dynamic-deps=y. Everything else, and
+// every package id, stays the installed store's.
+[[nodiscard]] Store with_dynamic_deps(Stores stores);
+
 // Beside the installed store: its last extension replaced by .evaluated.egraph.
 [[nodiscard]] std::filesystem::path evaluated_store_path(const std::filesystem::path& installed);
 

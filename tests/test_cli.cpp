@@ -93,6 +93,18 @@ TEST_CASE("orphans takes emerge's --with-bdeps") {
     CHECK_THROWS_AS(parse("orphans --with-bdeps maybe"), CLI::ValidationError);
 }
 
+TEST_CASE("dependency queries take emerge's --dynamic-deps, on by default") {
+    for (const auto* command :
+         {"deps a/b", "rdeps a/b", "why a/b", "orphans", "broken", "affected"}) {
+        CHECK(parse(command).dynamic_deps);
+        CHECK_FALSE(parse(std::string{command} + " --dynamic-deps n").dynamic_deps);
+        CHECK(parse(std::string{command} + " --dynamic-deps y").dynamic_deps);
+    }
+    CHECK_THROWS_AS(parse("orphans --dynamic-deps maybe"), CLI::ValidationError);
+    // Only the queries that follow dependencies take it.
+    CHECK_THROWS(parse("soname --dynamic-deps n libc.so.6"));
+}
+
 TEST_CASE("why takes one atom and emerge's --with-bdeps") {
     const auto why = std::get<egraph::Why>(parse("why --with-bdeps n dev-libs/a").command);
     CHECK(why.package == "dev-libs/a");

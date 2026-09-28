@@ -89,7 +89,7 @@ Update the status column as steps land.
   affected`, one call answering what `_complete_neighborhood` asks of the fork's
   `InstalledGraph`, held to the fork's own answers on every scenario and the live system. 8b
   (done): the fork asks it (`PORTAGE_DEPGRAPH_EGRAPH`), in shadow or strict mode against its
-  own index, or instead of it with dynamic deps off.
+  own index, or instead of it.
 - The graph viewer reads the store (done): one `egraph export --format json` in place of the
   fork's index, its edges USE-exact where the index's ignored USE dependencies. After a merge,
   portage's post_emerge hook refreshes the store (`egraph refresh`, installed under
@@ -130,9 +130,13 @@ a merge refreshes only what it changed.
   masks, moves, license groups and the metadata cache directories of installed categories;
   outside the main repository also the installed cps' package directories and ebuilds.
   `egraph export --evaluated` prints it as the builder's `--evaluated-json` does.
-- 9c: dynamic deps in queries. `--dynamic-deps y|n` on the queries that follow dependencies
-  (deps, rdeps, why, orphans, broken, affected), held to depclean with and without dynamic deps.
-  Then the fork's `on` mode can use egraph under emerge's default too.
+- 9c (done): dynamic deps in queries. `--dynamic-deps y|n` (default y) on the queries that
+  follow dependencies (deps, rdeps, why, orphans, broken, affected), held to the oracle, to
+  depclean and to the fork's index with and without dynamic deps, on every scenario and the live
+  system. The trees of the evaluated store replace the installed ones when the store is opened,
+  so every query runs unchanged. depclean's `_minimize_children` is now emulated: the ebuild's
+  `:=` atom beside the built one it appends selects the same package. The fork passes its own
+  setting, so its `on` mode uses egraph under emerge's default too.
 - 9d: `rdeps --possible`: the ebuilds' unreduced dependency strings, so that a dependency behind
   a disabled USE flag shows with the flag that would pull it in.
 - 9e: candidates. `egraph updates`: installed packages with a newer visible version in their

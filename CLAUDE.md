@@ -77,10 +77,12 @@ are strict xfails that must flip when the implementation lands.
 scenario. Any change to `src/atom.cpp` or `src/version.cpp` must keep it and the live-system run
 at zero differences.
 
-`builder/tests/depclean.py` runs portage's own depclean (`_calc_depclean`, test code only, with
-`--dynamic-deps=n` since egraph reads the vdb's dependencies). `test_orphans.py` holds `egraph
-orphans` to it and `test_why.py` checks every `why` chain against depclean's recorded parents, on
-every scenario with and without build-time deps; `test_system.py` does both on the live system. Scenario packages get an accepted
+`builder/tests/depclean.py` runs portage's own depclean (`_calc_depclean`, test code only).
+`test_orphans.py` holds `egraph orphans` to it and `test_why.py` checks every `why` chain against
+depclean's recorded parents, on every scenario with and without build-time deps and with and
+without dynamic deps (the `dynamic_deps` fixture); `test_system.py` does both on the live system.
+Test stores come from `conftest.write_stores`, which writes the evaluated store beside the
+installed one as a builder run does. Scenario packages get an accepted
 KEYWORDS in `conftest.py`, because depclean's `||` choices depend on visibility and egraph assumes
 every installed package is visible. Changes to `src/depclean.cpp` must keep both at zero
 differences.

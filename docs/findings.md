@@ -313,3 +313,17 @@ process including load and the freshness check of 2,575 inputs.
 - The builder matches the oracle on dependencies for a sample of 100 packages, and on visible
   candidates and the best version per slot for every installed cp; `egraph export --evaluated`
   reproduces the builder's JSON byte for byte on the live system.
+
+## Dynamic dependencies in queries (2026-09-28, roadmap step 9c)
+
+- depclean selects the atoms of one dependency list together (`_minimize_children`). With the
+  vdb's dependencies this never changed an answer here, but under dynamic deps every `:=` atom
+  of an ebuild sits beside the built `:SLOT/SUB=` atom FakeVartree appends, and with two slots
+  of the child installed the unbuilt one alone would keep the higher slot. egraph now emulates
+  it; the `repository` scenario pins the case.
+- A live `emerge --pretend --update @world` under the default `--dynamic-deps=y`, with the fork
+  in strict mode, asked `egraph affected --dynamic-deps y` three times and found no difference
+  from its own index over the FakeVartree.
+- That emerge costs 26.9G instructions and 21.1G cycles with `on`, against 30.75G and 24.3G with
+  the index (interleaved pairs within 0.2%): 12.5% of the instructions and 13% of the cycles,
+  now under emerge's default rather than only with `--dynamic-deps=n`.

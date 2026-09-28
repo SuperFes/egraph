@@ -3,7 +3,7 @@
 emerge re-reads an installed package's dependencies from its ebuild by default (--dynamic-deps=y).
 The oracle reproduces FakeVartree's rule with portage's public API; these tests hold it to
 FakeVartree itself (test code only, as depclean.py uses the resolver), and hold egraph to the
-oracle and to depclean. egraph's side lands with roadmap step 9c.
+oracle and to depclean.
 """
 
 import os
@@ -11,23 +11,12 @@ import subprocess
 
 import pytest
 
+from conftest import fake_vartree, portdb, write_stores
 from depclean import depclean
-from egraph_build import installed, oracle, store
+from egraph_build import oracle
 from egraph_build.model import DEP_KINDS, Edge
 
 EGRAPH = os.environ.get("EGRAPH")
-
-
-def fake_vartree(system):
-    from _emerge.FakeVartree import FakeVartree
-
-    fake = FakeVartree(system.trees[system.eroot]["root_config"], dynamic_deps=True)
-    fake.sync()
-    return fake
-
-
-def portdb(system):
-    return system.trees[system.eroot]["porttree"].dbapi
 
 
 def test_oracle_reads_what_emerge_reads(scenario):
@@ -43,10 +32,7 @@ def test_oracle_reads_what_emerge_reads(scenario):
 @pytest.fixture
 def stored(scenario, tmp_path):
     path = tmp_path / "installed.egraph"
-    store.write(
-        path,
-        store.encode(installed.build(scenario.vardb), store.Meta("0", "0", "/", 0)),
-    )
+    write_stores(scenario, path)
     return scenario, path
 
 
@@ -59,9 +45,6 @@ def egraph(path, *args):
 
 
 @pytest.mark.skipif(not EGRAPH, reason="set EGRAPH to the egraph binary")
-@pytest.mark.xfail(
-    strict=True, reason="egraph reads the vdb's dependencies until step 9c"
-)
 def test_egraph_deps_follow_the_ebuilds(stored):
     system, path = stored
     for cpv in oracle.installed(system.vardb):
@@ -75,12 +58,10 @@ def test_egraph_deps_follow_the_ebuilds(stored):
 
 
 @pytest.mark.skipif(not EGRAPH, reason="set EGRAPH to the egraph binary")
-@pytest.mark.xfail(
-    strict=True, reason="egraph reads the vdb's dependencies until step 9c"
-)
 def test_egraph_orphans_follow_the_ebuilds(stored):
     system, path = stored
     expected = depclean(system.trees, system.eroot, dynamic_deps=True)
     result = egraph(path, "orphans", "--dynamic-deps", "y")
-    assert result.returncode == 0, result.stderr
-    assert tuple(result.stdout.splitlines()) == expected.orphans
+    assert (result.returncode != 0) == (expected.returncode != 0), result.stderr
+    if expected.kept:
+        assert tuple(result.stdout.splitlines()) == expected.orphans
