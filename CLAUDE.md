@@ -38,6 +38,7 @@ Keep this section in sync with reality.
 
 ```sh
 meson setup build && meson compile -C build          # egraph, and build/egraph-build beside it
+meson install -C build --destdir /tmp/root           # also /etc/portage hooks (-Dportage_hooks)
 build/egraph orphans                                  # works in place; store in ~/.cache/egraph
 meson test -C build --print-errorlogs                 # Catch2 + pytest
 meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false && meson test -C build-san
@@ -123,7 +124,8 @@ needs the heap.
 ## Conventions
 
 - Naming: `PascalCase` types, `snake_case` functions and variables, both languages.
-- Keep the tree flat: `src/`, `tests/`, `builder/egraph_build/`, `builder/tests/`, `docs/`.
+- Keep the tree flat: `src/`, `tests/`, `builder/egraph_build/`, `builder/tests/`, `docs/`,
+  `hooks/` (the portage hooks `meson install` puts under `/etc/portage`).
 - Every feature lands as stub, then tests, then implementation; one roadmap step per commit series.
 - Any divergence from portage needs a test proving egraph is right, recorded in
   `docs/upstream-notes.md`.

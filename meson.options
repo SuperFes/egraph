@@ -5,6 +5,19 @@ option(
   description: 'portage lib/ directory the builder tests import; empty uses the installed portage',
 )
 option(
+  'portage_hooks',
+  type: 'boolean',
+  value: true,
+  description: 'Install portage hooks that refresh the store after each emerge: '
+  + '/etc/portage/bin/post_emerge, a dispatcher, and /etc/portage/post_emerge.d/egraph',
+)
+option(
+  'portage_config',
+  type: 'string',
+  value: '/etc/portage',
+  description: 'Where portage reads its configuration, and the hooks go: ${EPREFIX}/etc/portage',
+)
+option(
   'tui',
   type: 'feature',
   value: 'auto',

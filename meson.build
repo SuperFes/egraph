@@ -123,12 +123,34 @@ python.install_sources(
     'builder/egraph_build/installed.py',
     'builder/egraph_build/model.py',
     'builder/egraph_build/oracle.py',
+    'builder/egraph_build/pending.py',
     'builder/egraph_build/profile.py',
     'builder/egraph_build/roots.py',
     'builder/egraph_build/store.py',
   ),
   subdir: 'egraph_build',
 )
+
+# portage's post_emerge hook, as a dispatcher over /etc/portage/post_emerge.d, and egraph's entry
+# there, which refreshes the store after every emerge that changed the installed packages.
+egraph_hook = configure_file(
+  input: 'hooks/post_emerge.d/egraph.in',
+  output: 'post_emerge-egraph',
+  configuration: {'BINDIR': get_option('prefix') / get_option('bindir')},
+)
+if get_option('portage_hooks')
+  install_data(
+    'hooks/post_emerge',
+    install_dir: get_option('portage_config') / 'bin',
+    install_mode: 'rwxr-xr-x',
+  )
+  install_data(
+    egraph_hook,
+    install_dir: get_option('portage_config') / 'post_emerge.d',
+    rename: 'egraph',
+    install_mode: 'rwxr-xr-x',
+  )
+endif
 
 unit_tests = executable(
   'unit-tests',

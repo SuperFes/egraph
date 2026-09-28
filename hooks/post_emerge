@@ -1,0 +1,16 @@
+#!/bin/sh
+# portage runs /etc/portage/bin/post_emerge once at the end of an emerge that merged or unmerged
+# something, and only that one file. This runs every executable in /etc/portage/post_emerge.d
+# instead, in name order, as postsync.d does for syncs, so that more than one tool can hook in.
+# One hook failing does not stop the rest; the exit status says whether any did.
+
+dir="${PORTAGE_CONFIGROOT%/}/etc/portage/post_emerge.d"
+status=0
+for hook in "$dir"/*; do
+    [ -f "$hook" ] && [ -x "$hook" ] || continue
+    if ! "$hook"; then
+        echo "post_emerge: $hook failed" >&2
+        status=1
+    fi
+done
+exit "$status"

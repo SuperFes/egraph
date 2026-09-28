@@ -91,9 +91,9 @@ Update the status column as steps land.
   (done): the fork asks it (`PORTAGE_DEPGRAPH_EGRAPH`), in shadow or strict mode against its
   own index, or instead of it with dynamic deps off.
 - The graph viewer reads the store (done): one `egraph export --format json` in place of the
-  fork's index, its edges USE-exact where the index's ignored USE dependencies. After a merge the
-  fork refreshes the store itself (`egraph refresh` from `post_emerge`), so no resolution pays
-  for it.
+  fork's index, its edges USE-exact where the index's ignored USE dependencies. After a merge,
+  portage's post_emerge hook refreshes the store (`egraph refresh`, installed under
+  `/etc/portage`), so no resolution pays for it.
 
 ## 9. Evaluated and candidate layers
 
