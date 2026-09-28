@@ -16,6 +16,7 @@ Update the status column as steps land.
 | 8 | Consumers | not started |
 | 9 | Evaluated and candidate layers | not planned yet |
 | 10 | Output and UX | in progress |
+| 11 | Build monitor | planned |
 
 ## 0. Scaffold
 
@@ -107,5 +108,34 @@ Taken ahead of 8 and 9 at the user's direction: output need not look like portag
   pages open with `why`'s chain, and the list marks roots and orphans and can show only
   orphans, with or without build-time deps. Step 5 (done): broken packages, marked and
   filtered in the list, and their unsatisfied dependencies on their pages. Step 6 (done):
-  `check` from the list, the drift linked to package pages.
+  `check` from the list, the drift linked to package pages. Step 7 (done): `u` in the check
+  view rebuilds the store as root, or previews the fresh build for anyone else. Step 8 (done):
+  errors and notices in dialogs.
 - `rdeps --possible` (dependencies behind disabled USE flags) waits for the evaluated layer.
+
+## 11. Build monitor
+
+Watching an emerge that runs elsewhere, at the user's direction; egraph never starts or drives
+one. Not scheduled ahead of 8 and 9.
+
+- Source: portage's `FEATURES="observability"`, which publishes each running emerge as
+  `/run/portage/emerge-<pid>.json` (schema 1, world-readable; the socket beside it is root's
+  only), as `portageq jobs` reads it. A file whose pid is not its name's, or not alive, is
+  stale. The remaining merge list is mtimedb's `resume.mergelist`. Both are JSON, which the C++
+  side cannot read yet: nlohmann_json (header-only, value-typed, parses without exceptions) is
+  the candidate.
+- 11a: a build view in the TUI. Each running emerge with its progress (done of total, as a bar
+  and a percentage), and its tasks as a hierarchy with glyphs: kind (build, binary, merge,
+  waiting to merge), phase, a spinner while running, elapsed time, and the cgroup's CPU
+  parallelism and peak memory when `FEATURES=cgroup` reports them. The screen needs a read with
+  a timeout so the view refreshes about once a second.
+- 11b: pressure. CPU, available memory and load from `/proc`, and PSI from `/proc/pressure`
+  when the kernel has it on (`psi=1`; the dev box builds it disabled by default), as sparklines
+  with steve's thresholds (load average, minimum available memory) marked.
+- 11c: steve. Tokens in use of the total and its settings, through `stevie`'s getters; changed
+  live through its setters when `/dev/steve` is writable (root, or the `jobserver` group), and
+  read-only otherwise. Which process holds which tokens steve only prints to its log on
+  SIGUSR1; showing that needs an interface upstream.
+- 11d: the pending packages as a hierarchy under what they wait for, with the same glyphs,
+  spinners and bars, dropping out as they merge. Dependencies of versions not yet installed
+  need the evaluated layer (step 9), or a builder pass over just the merge list.
