@@ -14,8 +14,10 @@
 
 #include <CLI/CLI.hpp>
 
+#include <deque>
 #include <expected>
 #include <format>
+#include <fstream>
 #include <map>
 #include <numeric>
 #include <optional>
@@ -45,10 +47,12 @@ CLI::Option* add_field(CLI::App* sub, Invocation& invocation, std::string option
         std::move(description));
 }
 
-// Runs egraph-build; the error when it could not run or did not succeed.
-std::optional<std::string> run_builder(const Invocation& invocation, std::string_view mode,
-                                       const std::filesystem::path& path) {
-    const auto status = os::run(builder_command(invocation, mode, path));
+// Runs egraph-build, its output to log when given; the error when it could not run or did not
+// succeed.
+std::optional<std::string>
+run_builder(const Invocation& invocation, std::string_view mode, const std::filesystem::path& path,
+            const std::optional<std::filesystem::path>& log = std::nullopt) {
+    const auto status = os::run(builder_command(invocation, mode, path), log);
     if (!status) {
         return std::format("cannot build the store: {} (install egraph-build, or name it with "
                            "--builder or EGRAPH_BUILD)",
@@ -130,6 +134,37 @@ std::filesystem::path scratch_store() {
     return std::filesystem::temp_directory_path() / name;
 }
 
+// A full build into a scratch file, loaded; with a log, the builder's output goes there.
+std::expected<Store, std::string> fresh_build(const Invocation& invocation,
+                                              const std::optional<std::filesystem::path>& log) {
+    const auto path = scratch_store();
+    const auto error = run_builder(invocation, "--full", path, log);
+    auto built = error ? std::expected<Store, StoreError>{} : load(path);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+    if (error) {
+        return std::unexpected(*error);
+    }
+    return std::move(built).transform_error([](const StoreError& e) { return e.message; });
+}
+
+// The last count lines of a file, joined; empty when it cannot be read.
+std::string last_lines(const std::filesystem::path& path, std::size_t count) {
+    std::ifstream in{path};
+    std::deque<std::string> lines;
+    for (std::string line; std::getline(in, line);) {
+        lines.push_back(std::move(line));
+        if (lines.size() > count) {
+            lines.pop_front();
+        }
+    }
+    std::string joined;
+    for (const auto& line : lines) {
+        joined += (joined.empty() ? "" : "\n") + line;
+    }
+    return joined;
+}
+
 Exit execute(const Check&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
     // Deliberately not refreshed: the point is to compare what queries would read.
     const auto system = system_store_path(invocation);
@@ -138,20 +173,12 @@ Exit execute(const Check&, const Invocation& invocation, std::ostream& out, std:
         err << "egraph: " << stored.error().message << '\n';
         return Exit::failure;
     }
-    const auto path = scratch_store();
-    const auto error = run_builder(invocation, "--full", path);
-    const auto fresh = error ? std::expected<Store, StoreError>{} : load(path);
-    std::error_code ignored;
-    std::filesystem::remove(path, ignored);
-    if (error) {
-        err << "egraph: " << *error << '\n';
+    const auto built = fresh_build(invocation, std::nullopt);
+    if (!built) {
+        err << "egraph: " << built.error() << '\n';
         return Exit::failure;
     }
-    if (!fresh) {
-        err << "egraph: " << fresh.error().message << '\n';
-        return Exit::failure;
-    }
-    const auto lines = drift(*stored, *fresh);
+    const auto lines = drift(*stored, *built);
     for (const auto& line : lines) {
         out << line << '\n';
     }
@@ -388,7 +415,19 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
         err << "egraph: " << store.error() << '\n';
         return Exit::failure;
     }
-    return tui::open_and_run(*store, invocation.glyphs, err);
+    // The builder cannot share the terminal the interface owns; its output is kept for errors.
+    const auto check = [&invocation](const Store& stored) -> tui::CheckResult {
+        const auto log = std::filesystem::path{scratch_store()}.replace_extension(".log");
+        const auto built = fresh_build(invocation, log);
+        const auto output = last_lines(log, 8);
+        std::error_code ignored;
+        std::filesystem::remove(log, ignored);
+        if (!built) {
+            return std::unexpected(output.empty() ? built.error() : built.error() + ":\n" + output);
+        }
+        return drift(stored, *built);
+    };
+    return tui::open_and_run(*store, invocation.glyphs, check, err);
 }
 
 Exit execute(const Stats&, const Invocation& invocation, std::ostream& out, std::ostream& err) {

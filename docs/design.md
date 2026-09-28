@@ -123,6 +123,10 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   `egraph orphans` does, and `!` only broken packages, as `egraph broken` does. `b` leaves out
   build-time dependencies (DEPEND, BDEPEND) for both, as `--with-bdeps n` does for orphans.
   depclean runs once at start and again on `b`.
+- `c` runs `egraph check` from the list: a waiting view is drawn, then `run()` makes the fresh
+  build (the app itself never spawns anything) and lists the drift, each package's page a key
+  away. The builder's output goes to a log beside the scratch store rather than the terminal the
+  interface owns; if the build fails, its last lines are shown.
 - A package page starts with why it is kept (`why`'s chain from a root, or that depclean would
   remove it), then any dependencies nothing installed satisfies.
 - A package page lists what it depends on, then what needs it, one row per package and atom

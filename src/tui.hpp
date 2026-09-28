@@ -16,10 +16,12 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <functional>
 #include <iosfwd>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -86,6 +88,19 @@ struct Cursor {
     std::size_t top = 0;
 };
 
+// What `egraph check` finds: drift lines ("+cpv", "-cpv", "~cpv"), or why it could not run.
+using CheckResult = std::expected<std::vector<std::string>, std::string>;
+// Builds a fresh store and compares the given one with it.
+using Checker = std::function<CheckResult(const Store&)>;
+
+// The check view: waiting for a fresh build, or what it found.
+struct Checked {
+    bool running = true;
+    std::string error;
+    std::vector<std::string> drift;
+    Cursor cursor;
+};
+
 // Which packages the list shows, before the search.
 enum class Only : std::uint8_t { all, orphans, broken };
 
@@ -114,8 +129,13 @@ class App {
 
     [[nodiscard]] const Store& store() const { return store_.get(); }
     [[nodiscard]] const List& list() const { return list_; }
-    // Pages opened from the list, the one showing last; empty on the list.
+    // Pages opened from the list or the check view, the one showing last.
     [[nodiscard]] const std::vector<Page>& pages() const { return pages_; }
+    // Open from the list, under any pages opened from it.
+    [[nodiscard]] const std::optional<Checked>& checked() const { return checked_; }
+    // Whether the check view waits for a fresh build, which run() then makes.
+    [[nodiscard]] bool check_requested() const { return checked_ && checked_->running; }
+    void finish_check(CheckResult result);
     // Distinct packages each package depends on, and that depend on it.
     [[nodiscard]] std::size_t dependencies(std::uint32_t package) const {
         return dependencies_.at(package);
@@ -148,6 +168,9 @@ class App {
     void fold(Page& page);
     void handle_list(const Key& key);
     void handle_page(const Key& key);
+    void handle_check(const Key& key);
+    // The package with this cpv, if the store has it.
+    [[nodiscard]] std::optional<std::uint32_t> find(std::string_view cpv) const;
 
     std::reference_wrapper<const Store> store_;
     std::reference_wrapper<const Graph> graph_;
@@ -160,6 +183,7 @@ class App {
     Kept kept_;
     std::vector<std::optional<std::uint32_t>> root_of_;
     List list_;
+    std::optional<Checked> checked_;
     std::vector<Page> pages_;
     std::size_t height_ = 1;
     bool done_ = false;
@@ -329,6 +353,7 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
                     {"o", list.only == Only::orphans ? "all" : "orphans"},
                     {"!", list.only == Only::broken ? "all" : "broken"},
                     {"b", app.build_deps() ? "run time only" : "build deps"},
+                    {"c", "check"},
                     {"q", "quit"}});
     }
 }
@@ -456,24 +481,114 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
                 {"q", "quit"}});
 }
 
+// A drift line's sign, as a glyph and what it means.
+struct DriftSign {
+    std::string_view sign;
+    std::string_view meaning;
+    Tone tone;
+};
+
+[[nodiscard]] DriftSign drift_sign(char sign);
+
+template <class S> void draw_check(S& screen, App& app, const Glyphs& glyph, Size size) {
+    const auto& open = app.checked();
+    if (!open) {
+        return;
+    }
+    const auto& checked = *open;
+    draw_title(screen, size.cols,
+               {{std::format(" {} egraph ", glyph.package),
+                 {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
+                {std::format(" {} ", glyph.trail), tone_pen(Tone::note)},
+                {"check", tone_pen(Tone::name)}});
+    const unsigned first = 3;
+    const unsigned height = size.rows - first - 1;
+    app.set_height(height);
+    if (checked.running) {
+        put_spans(screen, 1, 1,
+                  {{"Building a fresh store to compare with; this takes a few seconds",
+                    tone_pen(Tone::note)}},
+                  size.cols);
+        draw_hints(screen, size.rows - 1, size.cols, {});
+        return;
+    }
+    if (!checked.error.empty()) {
+        put_spans(screen, 1, 1,
+                  {{std::format("{} The check could not run", glyph.broken), tone_pen(Tone::bad)}},
+                  size.cols);
+        unsigned row = first;
+        for (const auto line : std::views::split(checked.error, '\n')) {
+            if (row >= first + height) {
+                break;
+            }
+            put_spans(screen, row++, 3,
+                      {{std::string{std::string_view{line}}, tone_pen(Tone::note)}}, size.cols);
+        }
+    } else if (checked.drift.empty()) {
+        put_spans(
+            screen, 1, 1,
+            {{std::format("{} The store matches a fresh build", glyph.good), tone_pen(Tone::good)}},
+            size.cols);
+    } else {
+        put_spans(screen, 1, 1,
+                  {{std::format("The store differs from a fresh build  {}", checked.drift.size()),
+                    tone_pen(Tone::heading)},
+                   {"   egraph rebuild brings it up to date", tone_pen(Tone::note)}},
+                  size.cols);
+        for (unsigned line = 0; line < height; ++line) {
+            const auto index = checked.cursor.top + line;
+            if (index >= checked.drift.size()) {
+                break;
+            }
+            const auto& text = checked.drift.at(index);
+            const auto sign = drift_sign(text.front());
+            const bool selected = index == checked.cursor.at;
+            const auto bg = selected ? std::optional<Color>{palette::surface} : std::nullopt;
+            if (selected) {
+                screen.fill_row(first + line, {.fg = std::nullopt, .bg = palette::surface});
+            }
+            std::vector<Span> spans{marker(selected, glyph),
+                                    {std::format("{} ", sign.sign), tone_pen(sign.tone)}};
+            const auto cpv = std::string_view{text}.substr(1);
+            std::ranges::move(cpv_spans(cpv), std::back_inserter(spans));
+            spans.push_back({std::string(columns(cpv) < 44 ? 46 - columns(cpv) : 2, ' '), {}});
+            spans.push_back({std::string{sign.meaning}, tone_pen(Tone::note)});
+            put_spans(screen, first + line, 0, spans, size.cols, bg);
+        }
+    }
+    std::vector<std::pair<std::string_view, std::string_view>> hints{
+        {"r", "again"}, {"esc", "back"}, {"q", "quit"}};
+    if (!checked.drift.empty()) {
+        hints.insert(hints.begin(), {{glyph.move, "move"}, {glyph.enter, "open"}});
+    }
+    draw_hints(screen, size.rows - 1, size.cols, hints);
+}
+
 template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
     const auto size = screen.size();
     screen.clear();
     if (size.rows >= 5 && size.cols >= 10) {
-        if (app.pages().empty()) {
-            draw_list(screen, app, glyph, size);
-        } else {
+        if (!app.pages().empty()) {
             draw_page(screen, app, glyph, size);
+        } else if (app.checked()) {
+            draw_check(screen, app, glyph, size);
+        } else {
+            draw_list(screen, app, glyph, size);
         }
     }
     screen.render();
 }
 
-// Runs until the user quits or input ends.
-template <class S> void run(S& screen, App& app, const Glyphs& glyph) {
+// Runs until the user quits or input ends, making the fresh build a check asks for once the
+// waiting view is on screen.
+template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Checker& check) {
     draw(screen, app, glyph);
     while (!app.done()) {
-        app.handle(screen.read());
+        if (app.check_requested()) {
+            app.finish_check(check(app.store()));
+        } else {
+            app.handle(screen.read());
+        }
         if (!app.done()) {
             draw(screen, app, glyph);
         }
@@ -481,6 +596,7 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph) {
 }
 
 // Opens the terminal and runs the interface over store; errors go to err.
-[[nodiscard]] Exit open_and_run(const Store& store, GlyphSet glyphs, std::ostream& err);
+[[nodiscard]] Exit open_and_run(const Store& store, GlyphSet glyphs, const Checker& check,
+                                std::ostream& err);
 
 } // namespace egraph::tui

@@ -29,8 +29,11 @@ struct SpawnError {
     std::string message;
 };
 
-// Runs argv (argv[0] looked up in PATH) with our stdio and environment, and waits for it.
-std::expected<int, SpawnError> run(const std::vector<std::string>& argv);
+// Runs argv (argv[0] looked up in PATH) with our environment, and waits for it. With a log, the
+// child's stdout and stderr go to that file (replaced) and its stdin is /dev/null; otherwise it
+// shares our stdio.
+std::expected<int, SpawnError> run(const std::vector<std::string>& argv,
+                                   const std::optional<std::filesystem::path>& log = std::nullopt);
 
 // Whether this process could create or replace a file at path by renaming a new one over it:
 // the nearest existing directory above it is writable.

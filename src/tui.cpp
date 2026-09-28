@@ -374,10 +374,61 @@ void App::open(std::uint32_t package) {
 void App::handle(const Key& key) {
     if (key.kind == KeyKind::closed) {
         done_ = true;
-    } else if (pages_.empty()) {
-        handle_list(key);
-    } else {
+    } else if (!pages_.empty()) {
         handle_page(key);
+    } else if (checked_) {
+        handle_check(key);
+    } else {
+        handle_list(key);
+    }
+}
+
+void App::finish_check(CheckResult result) {
+    if (!checked_) {
+        return;
+    }
+    checked_->running = false;
+    checked_->cursor = {};
+    if (result) {
+        checked_->error.clear();
+        checked_->drift = std::move(*result);
+    } else {
+        checked_->error = std::move(result.error());
+        checked_->drift.clear();
+    }
+}
+
+std::optional<std::uint32_t> App::find(std::string_view cpv) const {
+    for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
+        if (store().string(store().packages.at(id).cpv) == cpv) {
+            return id;
+        }
+    }
+    return std::nullopt;
+}
+
+void App::handle_check(const Key& key) {
+    if (!checked_ || checked_->running) {
+        return;
+    }
+    auto& checked = *checked_;
+    if (is(key, U'q') || is(key, U'Q')) {
+        done_ = true;
+    } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace ||
+               key.kind == KeyKind::left || is(key, U'h')) {
+        checked_.reset();
+    } else if (is(key, U'r')) {
+        checked = {};
+    } else if (key.kind == KeyKind::enter || key.kind == KeyKind::right || is(key, U'l')) {
+        // Packages only a fresh build has are not in the store to open.
+        if (checked.cursor.at < checked.drift.size()) {
+            if (const auto id =
+                    find(std::string_view{checked.drift.at(checked.cursor.at)}.substr(1))) {
+                open(*id);
+            }
+        }
+    } else if (is_move(key)) {
+        move(checked.cursor, checked.drift.size(), key, height_);
     }
 }
 
@@ -410,6 +461,8 @@ void App::handle_list(const Key& key) {
     } else if (is(key, U'!')) {
         list_.only = list_.only == Only::broken ? Only::all : Only::broken;
         filter();
+    } else if (is(key, U'c')) {
+        checked_.emplace();
     } else if (is(key, U'b')) {
         build_deps_ = !build_deps_;
         recompute();
@@ -562,7 +615,18 @@ std::vector<Span> cpv_spans(std::string_view cpv) {
     return spans;
 }
 
-Exit open_and_run(const Store& store, GlyphSet glyphs, std::ostream& err) {
+DriftSign drift_sign(char sign) {
+    switch (sign) {
+    case '+':
+        return {.sign = "+", .meaning = "installed since the store was built", .tone = Tone::good};
+    case '-':
+        return {.sign = "-", .meaning = "gone since the store was built", .tone = Tone::bad};
+    default:
+        return {.sign = "~", .meaning = "changed since the store was built", .tone = Tone::choice};
+    }
+}
+
+Exit open_and_run(const Store& store, GlyphSet glyphs, const Checker& check, std::ostream& err) {
 #if EGRAPH_HAVE_TUI
     auto screen = Screen::open();
     if (!screen) {
@@ -571,11 +635,12 @@ Exit open_and_run(const Store& store, GlyphSet glyphs, std::ostream& err) {
     }
     const auto graph = build_graph(store);
     App app{store, graph};
-    run(*screen, app, egraph::glyphs(glyphs));
+    run(*screen, app, egraph::glyphs(glyphs), check);
     return Exit::ok;
 #else
     (void)store;
     (void)glyphs;
+    (void)check;
     err << "egraph: tui: this egraph was built without Notcurses (meson -Dtui=enabled)\n";
     return Exit::not_implemented;
 #endif

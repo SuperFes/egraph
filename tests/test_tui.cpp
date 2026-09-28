@@ -124,6 +124,10 @@ egraph::Store build_only() {
 
 const auto& ascii = egraph::glyphs(egraph::GlyphSet::ascii);
 
+const egraph::tui::Checker no_check = [](const egraph::Store&) -> egraph::tui::CheckResult {
+    return std::unexpected("no builder in tests");
+};
+
 bool contains(const std::string& text, std::string_view part) {
     return text.find(part) != std::string::npos;
 }
@@ -149,7 +153,7 @@ TEST_CASE("the list shows every package and quits on q") {
     const auto graph = egraph::build_graph(store);
     egraph::tui::App app{store, graph};
     FakeScreen screen{10, 100, {key(KeyKind::down), character(U'q'), character(U'z')}};
-    egraph::tui::run(screen, app, ascii);
+    egraph::tui::run(screen, app, ascii, no_check);
     CHECK(contains(screen.line(0), "2 of 2 packages"));
     // a-1 is marked as kept by @selected.
     CHECK(screen.line(3).starts_with("   @  app-misc/a-1"));
@@ -189,7 +193,7 @@ TEST_CASE("enter opens a package's page, and pages open from there") {
     const auto graph = egraph::build_graph(store);
     egraph::tui::App app{store, graph};
     FakeScreen screen{16, 80, {key(KeyKind::enter)}};
-    egraph::tui::run(screen, app, ascii);
+    egraph::tui::run(screen, app, ascii, no_check);
     REQUIRE(app.pages().size() == 1);
     const auto& page = app.pages().back();
     CHECK(page.package == 0);
@@ -222,7 +226,7 @@ TEST_CASE("the end of input quits, and small terminals get nothing drawn") {
     for (const unsigned rows : {0U, 1U, 4U, 5U}) {
         egraph::tui::App app{store, graph};
         FakeScreen screen{rows, 12, {}};
-        egraph::tui::run(screen, app, ascii);
+        egraph::tui::run(screen, app, ascii, no_check);
         CHECK(screen.renders == 1);
         CHECK(app.done());
     }
@@ -258,7 +262,7 @@ TEST_CASE("links unfold in place, and stop at a cycle") {
     const auto graph = egraph::build_graph(store);
     egraph::tui::App app{store, graph};
     FakeScreen screen{14, 80, {key(KeyKind::enter)}};
-    egraph::tui::run(screen, app, ascii);
+    egraph::tui::run(screen, app, ascii, no_check);
     REQUIRE(app.pages().size() == 1);
     CHECK(contains(screen.text(), "R.... + dev-libs/b-1"));
     CHECK(contains(screen.text(), "space unfold"));
@@ -438,4 +442,65 @@ TEST_CASE("without build-time dependencies, only run-time ones count as broken")
     app.handle(key(KeyKind::enter));
     const auto& rows = app.pages().back().rows;
     CHECK(std::ranges::none_of(rows, [](const auto& row) { return row.type == RowType::missing; }));
+}
+
+TEST_CASE("c checks the store against a fresh build, showing a wait first") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{12, 120, {character(U'c')}};
+    std::string waiting;
+    int checks = 0;
+    const egraph::tui::Checker check =
+        [&](const egraph::Store& stored) -> egraph::tui::CheckResult {
+        CHECK(&stored == &store);
+        waiting = screen.text();
+        ++checks;
+        return std::vector<std::string>{"+x/new-1", "~dev-libs/b-1"};
+    };
+    egraph::tui::run(screen, app, ascii, check);
+    CHECK(checks == 1);
+    CHECK(contains(waiting, "Building a fresh store"));
+    REQUIRE(app.checked().has_value());
+    CHECK_FALSE(app.checked()->running);
+    const auto text = screen.text();
+    CHECK(contains(text, "differs from a fresh build  2"));
+    CHECK(contains(text, " > + x/new-1"));
+    CHECK(contains(text, "installed since the store was built"));
+    CHECK(contains(text, "~ dev-libs/b-1"));
+
+    // What only the fresh build has cannot be opened; the rest opens its page, and esc comes
+    // back here, then to the list.
+    app.handle(key(KeyKind::enter));
+    CHECK(app.pages().empty());
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    CHECK(app.pages().back().package == 1);
+    app.handle(key(KeyKind::escape));
+    CHECK(app.checked().has_value());
+    app.handle(character(U'r'));
+    CHECK(app.check_requested());
+    app.finish_check(std::vector<std::string>{});
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "+ The store matches a fresh build"));
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.checked().has_value());
+}
+
+TEST_CASE("a check that cannot run shows why") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{12, 100, {character(U'c'), character(U'j'), character(U'q')}};
+    const egraph::tui::Checker check = [](const egraph::Store&) -> egraph::tui::CheckResult {
+        return std::unexpected("egraph-build exited with status 1:\nTraceback\nKeyError: 'x'");
+    };
+    egraph::tui::run(screen, app, ascii, check);
+    CHECK(app.done());
+    const auto text = screen.text();
+    CHECK(contains(text, "! The check could not run"));
+    CHECK(contains(screen.line(3), "egraph-build exited with status 1:"));
+    CHECK(contains(screen.line(5), "KeyError: 'x'"));
+    CHECK(screen.line(11).starts_with(" r again"));
 }

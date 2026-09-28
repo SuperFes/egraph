@@ -113,6 +113,16 @@ TEST_CASE("processes run and report how they ended") {
     CHECK(killed.error().message == "sh: killed by signal 9");
 }
 
+TEST_CASE("a process's output can go to a log instead of our terminal") {
+    const TempDir dir;
+    const auto log = dir.path() / "log";
+    write_text(log, "left over");
+    CHECK(egraph::os::run({"sh", "-c", "echo out; echo err >&2; cat"}, log) == 0);
+    CHECK(read_text(log) == "out\nerr\n");
+    const auto unwritable = egraph::os::run({"true"}, dir.path() / "missing" / "log");
+    REQUIRE_FALSE(unwritable.has_value());
+}
+
 TEST_CASE("the refresh command passes the roots through") {
     egraph::Invocation invocation;
     invocation.builder = "/usr/bin/egraph-build";
