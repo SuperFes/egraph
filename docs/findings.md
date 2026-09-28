@@ -270,3 +270,11 @@ process including load and the freshness check of 2,575 inputs.
   reads an installed package's dependencies from its ebuild when that version is still in the
   repository. egraph reads the vdb, as `--dynamic-deps=n` does, so the two indexes can differ
   there (see Roots: 1,393 packages' glibc dependencies are in the vdb and in no ebuild).
+- The fork asks it under `PORTAGE_DEPGRAPH_EGRAPH` (commit 2ad3b002d there): `shadow` and
+  `strict` compare it with the index, `on` uses it when dynamic deps are off. Its seven
+  neighborhood completion scenarios pass in strict mode, and a live `emerge --pretend --update
+  @world` in shadow mode asked egraph three times (once per backtrack; 298 seeds) with no
+  difference, with dynamic deps on or off.
+- That whole `emerge --pretend --update --dynamic-deps=n @world` costs 23.5G instructions and
+  15.1G cycles with `on`, against 26.7G and 17.4G with the index: 12% of the instructions and 13%
+  of the cycles of a resolution, interleaved runs agreeing within 1%.

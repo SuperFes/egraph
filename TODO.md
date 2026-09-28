@@ -31,6 +31,8 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 - [ ] An incremental refresh after a one-package upgrade costs 5.0G instructions against 8.3G for
       a full build, and nearly all of it is decoding and re-encoding the store in Python
       (`findings.md`). If refresh latency after a merge matters, that floor is the thing to cut.
+      It does now: the first emerge after a merge that asks `egraph affected` pays the refresh,
+      more than the 3G instructions egraph saves it.
 - [ ] Environment variables that change implicit IUSE (`USE_EXPAND` and friends set in the
       environment rather than make.conf) are not inputs, so a change there goes unnoticed.
 - [ ] `egraph` does not check the store's EROOT against its own roots; only the builder does, on
@@ -74,6 +76,9 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       an installed package's dependencies from its ebuild when the same version is still in the
       repository. Needs the evaluated layer's metadata.
 - [ ] `why --all`: every chain, or every root, rather than one shortest chain.
+- [ ] The fork uses `egraph affected` only with `--dynamic-deps=n`: under emerge's default its
+      FakeVartree reads dependencies from the ebuilds, which egraph cannot see until it has
+      dynamic dependencies itself (see `orphans` above).
 
 ## Output and UX
 

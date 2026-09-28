@@ -87,8 +87,9 @@ Update the status column as steps land.
 
 - The portage fork's `depgraph._installed_graph()` reads the store. 8a (done): `egraph
   affected`, one call answering what `_complete_neighborhood` asks of the fork's
-  `InstalledGraph`, held to the fork's own answers on every scenario and the live system. 8b:
-  the fork asks it, in shadow mode first against its own index.
+  `InstalledGraph`, held to the fork's own answers on every scenario and the live system. 8b
+  (done): the fork asks it (`PORTAGE_DEPGRAPH_EGRAPH`), in shadow or strict mode against its
+  own index, or instead of it with dynamic deps off.
 - The graph viewer reads the store.
 
 ## 9. Evaluated and candidate layers
