@@ -120,6 +120,18 @@ struct Glyphs {
         std::string_view across;
         std::string_view down;
     } frame;
+    // A running emerge's tasks: building, installing a binary package, merging, and built but
+    // waiting to merge.
+    std::string_view build;
+    std::string_view binary;
+    std::string_view merge;
+    std::string_view waiting;
+    // A spinner's frames, one code point each.
+    std::string_view spinner;
+    // A progress bar's full and empty cells, and cells filled by eighths (none in ascii).
+    std::string_view bar_full;
+    std::string_view bar_empty;
+    std::string_view bar_eighths;
     // Key hints.
     std::string_view move;
     std::string_view enter;

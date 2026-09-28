@@ -3,6 +3,8 @@
 #include <notcurses/notcurses.h>
 
 #include <array>
+#include <chrono>
+#include <ctime>
 #include <string>
 
 namespace egraph::tui {
@@ -38,8 +40,9 @@ Key translate(std::uint32_t id) {
         std::uint32_t id;
         KeyKind kind;
     };
-    const std::array<Named, 13> named{{
+    const std::array<Named, 14> named{{
         {NCKEY_RESIZE, KeyKind::resize},
+        {NCKEY_EOF, KeyKind::closed},
         {NCKEY_UP, KeyKind::up},
         {NCKEY_DOWN, KeyKind::down},
         {NCKEY_LEFT, KeyKind::left},
@@ -113,10 +116,23 @@ void Screen::render() {
     notcurses_render(terminal_.get());
 }
 
-Key Screen::read() {
+Key Screen::read(std::optional<std::chrono::milliseconds> timeout) {
+    // notcurses_get takes an absolute CLOCK_MONOTONIC deadline, which steady_clock is on Linux.
+    std::optional<timespec> deadline;
+    if (timeout) {
+        const auto at = std::chrono::steady_clock::now().time_since_epoch() + *timeout;
+        const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(at);
+        deadline = timespec{
+            .tv_sec = static_cast<time_t>(seconds.count()),
+            .tv_nsec = static_cast<long>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(at - seconds).count())};
+    }
     while (true) {
         ncinput input{};
-        const auto id = notcurses_get_blocking(terminal_.get(), &input);
+        const auto id = notcurses_get(terminal_.get(), deadline ? &*deadline : nullptr, &input);
+        if (id == 0) {
+            return {.kind = KeyKind::tick};
+        }
         // Terminals with the kitty protocol also report releases.
         if (input.evtype != NCTYPE_RELEASE) {
             return translate(id);

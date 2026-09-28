@@ -39,7 +39,8 @@ class FakeScreen {
         put(row, 0, std::string(cols_, ' '), pen);
     }
     void render() { ++renders; }
-    Key read() {
+    Key read(std::optional<std::chrono::milliseconds> timeout) {
+        timeouts.push_back(timeout);
         if (keys_.empty()) {
             return {.kind = KeyKind::closed};
         }
@@ -64,6 +65,8 @@ class FakeScreen {
     }
     [[nodiscard]] bool keys_left() const { return !keys_.empty(); }
     int renders = 0;
+    // Each read's timeout.
+    std::vector<std::optional<std::chrono::milliseconds>> timeouts;
 
   private:
     unsigned rows_;
@@ -158,7 +161,7 @@ TEST_CASE("the list shows every package and quits on q") {
     const auto graph = egraph::build_graph(store);
     egraph::tui::App app{store, graph};
     FakeScreen screen{10, 100, {key(KeyKind::down), character(U'q'), character(U'z')}};
-    egraph::tui::run(screen, app, ascii, no_check);
+    egraph::tui::run(screen, app, ascii, {.check = no_check});
     CHECK(contains(screen.line(0), "2 of 2 packages"));
     // a-1 is marked as kept by @selected.
     CHECK(screen.line(3).starts_with("   @  app-misc/a-1"));
@@ -198,7 +201,7 @@ TEST_CASE("enter opens a package's page, and pages open from there") {
     const auto graph = egraph::build_graph(store);
     egraph::tui::App app{store, graph};
     FakeScreen screen{16, 80, {key(KeyKind::enter)}};
-    egraph::tui::run(screen, app, ascii, no_check);
+    egraph::tui::run(screen, app, ascii, {.check = no_check});
     REQUIRE(app.pages().size() == 1);
     const auto& page = app.pages().back();
     CHECK(page.package == 0);
@@ -231,7 +234,7 @@ TEST_CASE("the end of input quits, and small terminals get nothing drawn") {
     for (const unsigned rows : {0U, 1U, 4U, 5U}) {
         egraph::tui::App app{store, graph};
         FakeScreen screen{rows, 12, {}};
-        egraph::tui::run(screen, app, ascii, no_check);
+        egraph::tui::run(screen, app, ascii, {.check = no_check});
         CHECK(screen.renders == 1);
         CHECK(app.done());
     }
@@ -267,7 +270,7 @@ TEST_CASE("links unfold in place, and stop at a cycle") {
     const auto graph = egraph::build_graph(store);
     egraph::tui::App app{store, graph};
     FakeScreen screen{14, 80, {key(KeyKind::enter)}};
-    egraph::tui::run(screen, app, ascii, no_check);
+    egraph::tui::run(screen, app, ascii, {.check = no_check});
     REQUIRE(app.pages().size() == 1);
     CHECK(contains(screen.text(), "R.... + dev-libs/b-1"));
     CHECK(contains(screen.text(), "space unfold"));
@@ -463,7 +466,7 @@ TEST_CASE("c checks the store against a fresh build, showing a wait first") {
         ++checks;
         return egraph::tui::Fresh{.store = sample(), .drift = {"+x/new-1", "~dev-libs/b-1"}};
     };
-    egraph::tui::run(screen, app, ascii, check);
+    egraph::tui::run(screen, app, ascii, {.check = check});
     CHECK(checks == 1);
     CHECK(contains(waiting, "Building a fresh store"));
     REQUIRE(app.checked().has_value());
@@ -588,7 +591,7 @@ TEST_CASE("u shows a check's fresh build without saving it") {
         ++rebuilds;
         return cyclic();
     };
-    egraph::tui::run(screen, app, ascii, cyclic_check, rebuild);
+    egraph::tui::run(screen, app, ascii, {.check = cyclic_check, .rebuild = rebuild});
     CHECK(contains(screen.text(), "u shows the fresh build, without saving it"));
     CHECK(contains(screen.line(11), "u preview"));
     app.handle(key(KeyKind::enter));
@@ -629,7 +632,7 @@ TEST_CASE("u rebuilds the store where it can be written") {
     const auto graph = egraph::build_graph(store);
     egraph::tui::App app{store, graph, egraph::tui::Update::save};
     FakeScreen screen{12, 120, {character(U'c')}};
-    egraph::tui::run(screen, app, ascii, cyclic_check);
+    egraph::tui::run(screen, app, ascii, {.check = cyclic_check});
     REQUIRE(app.checked().has_value());
     // Only a preview needs the check's build.
     CHECK_FALSE(app.checked()->fresh.has_value());
@@ -659,7 +662,7 @@ TEST_CASE("a failed rebuild leaves the store as it was") {
     const egraph::tui::Rebuilder rebuild = []() -> std::expected<egraph::Store, std::string> {
         return std::unexpected("egraph-build exited with status 1:\nPermissionError");
     };
-    egraph::tui::run(screen, app, ascii, cyclic_check, rebuild);
+    egraph::tui::run(screen, app, ascii, {.check = cyclic_check, .rebuild = rebuild});
     CHECK(app.source() == egraph::tui::Source::opened);
     CHECK(&app.store() == &store);
     CHECK(app.dependents(0) == 0);
@@ -690,7 +693,7 @@ TEST_CASE("u does nothing without drift to fix") {
             ++rebuilds;
             return sample();
         };
-        egraph::tui::run(screen, app, ascii, check, rebuild);
+        egraph::tui::run(screen, app, ascii, {.check = check, .rebuild = rebuild});
         CHECK(rebuilds == 0);
         CHECK(app.source() == egraph::tui::Source::opened);
         // A failed check closes its view; the dialog took the second u.
@@ -701,4 +704,150 @@ TEST_CASE("u does nothing without drift to fix") {
             CHECK_FALSE(contains(screen.line(11), "u "));
         }
     }
+}
+
+namespace {
+
+// dev-libs/b-2 compiling with cgroup counters, x/new-1 built and waiting to merge, and a
+// binary package that has not started a phase.
+std::vector<egraph::emerge::Snapshot> running_emerges() {
+    using egraph::emerge::TaskKind;
+    return {{.pid = 4321,
+             .timestamp = 0,
+             .jobs = {.running = 3, .max = 4, .completed = 13, .total = 40, .failed = 1},
+             .tasks = {{.cpv = "dev-libs/b-2",
+                        .kind = TaskKind::build,
+                        .phase = "compile",
+                        .pid = 5000,
+                        .elapsed = 100.5,
+                        .build_elapsed = 100.5,
+                        .resources = {.cpu_usec = 402000000, .mem_peak = 2097152}},
+                       {.cpv = "x/new-1",
+                        .kind = TaskKind::merge,
+                        .phase = "merge-wait",
+                        .merge_wait = true,
+                        .elapsed = 80,
+                        .build_elapsed = 55.25},
+                       {.cpv = "app-misc/baz-1", .binary = true}}}};
+}
+
+} // namespace
+
+TEST_CASE("durations, sizes, bars and spinners read at a glance") {
+    CHECK(egraph::tui::duration(0.4) == "0s");
+    CHECK(egraph::tui::duration(45) == "45s");
+    CHECK(egraph::tui::duration(100.5) == "1m40s");
+    CHECK(egraph::tui::duration(3725) == "1h02m");
+    CHECK(egraph::tui::duration(-3) == "0s");
+    CHECK(egraph::tui::byte_size(512) == "512 B");
+    CHECK(egraph::tui::byte_size(1536) == "1.5 KiB");
+    CHECK(egraph::tui::byte_size(2097152) == "2.0 MiB");
+    CHECK(egraph::tui::byte_size(5ULL << 30U) == "5.0 GiB");
+
+    const auto& unicode = egraph::glyphs(egraph::GlyphSet::unicode);
+    CHECK(egraph::tui::progress_bar(12, 40, 20, unicode) ==
+          "██████" + std::string{} + "░░░░░░░░░░░░░░");
+    // 6.5 cells: the half is an eighths glyph, where ascii rounds down.
+    CHECK(egraph::tui::progress_bar(13, 40, 20, unicode) == "██████▌░░░░░░░░░░░░░");
+    CHECK(egraph::tui::progress_bar(13, 40, 20, ascii) == "######--------------");
+    CHECK(egraph::tui::progress_bar(0, 0, 4, ascii) == "----");
+    CHECK(egraph::tui::progress_bar(9, 4, 4, ascii) == "####");
+
+    CHECK(egraph::tui::spinner_frame(0, unicode) == "⠋");
+    CHECK(egraph::tui::spinner_frame(11, unicode) == "⠙");
+    CHECK(egraph::tui::spinner_frame(2, ascii) == "-");
+}
+
+TEST_CASE("e watches the running emerges, reading them again each second") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{12, 140, {character(U'e'), key(KeyKind::tick), key(KeyKind::tick)}};
+    int reads = 0;
+    const egraph::tui::Watcher watch = [&] {
+        ++reads;
+        return running_emerges();
+    };
+    egraph::tui::run(screen, app, ascii, {.watch = watch});
+    CHECK(reads == 3);
+    REQUIRE(app.watched().has_value());
+    CHECK(app.watched()->frame == 3);
+    // The list waits for keys; the emerge view wakes to read again.
+    CHECK(screen.timeouts.front() == std::nullopt);
+    CHECK(screen.timeouts.back() == egraph::tui::watch_interval);
+
+    const auto text = screen.text();
+    CHECK(contains(screen.line(0), "egraph  > emerge"));
+    CHECK(contains(text, " * emerge 4321   3 of 4 jobs   13 of 40 done   ######--------------  32%"
+                         "   ! 1 failed"));
+    // The spinner turned once a read, and the kinds: built, waiting, binary.
+    CHECK(contains(text, " >   |- \\ b dev-libs/b-2"));
+    CHECK(contains(text, "compile             1m40s   4.0x CPU   2.0 MiB peak"));
+    CHECK(contains(text, "    |-   w x/new-1"));
+    CHECK(contains(text, "waiting to merge      55s"));
+    CHECK(contains(text, "    `- \\ p app-misc/baz-1"));
+    CHECK(contains(text, "starting"));
+    CHECK(contains(screen.line(11), "move"));
+}
+
+TEST_CASE("the emerge view says how to publish when nothing runs") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{12, 100, {character(U'e')}};
+    egraph::tui::run(screen, app, ascii, {});
+    CHECK(contains(screen.text(), "No emerge is publishing its progress"));
+    CHECK(contains(screen.text(), "FEATURES=\"observability\""));
+    // Moving or opening in an empty view does nothing.
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    CHECK(app.pages().empty());
+    CHECK_FALSE(app.dialog().has_value());
+}
+
+TEST_CASE("a task opens the page of its installed version, and esc comes back") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    app.handle(character(U'e'));
+    REQUIRE(app.watch_requested());
+    app.finish_watch(running_emerges());
+    CHECK_FALSE(app.watch_requested());
+    CHECK(app.refresh() == egraph::tui::watch_interval);
+
+    // dev-libs/b-2 is building; b-1 is what is installed.
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    CHECK(app.pages().back().package == 1);
+    // No reads while the page covers the view, and none are owed.
+    CHECK(app.refresh() == std::nullopt);
+    app.handle(key(KeyKind::tick));
+    CHECK_FALSE(app.watch_requested());
+    app.handle(key(KeyKind::escape));
+    CHECK(app.pages().empty());
+    CHECK(app.watch_requested());
+    app.finish_watch(running_emerges());
+
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    CHECK(app.pages().empty());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "No version of x/new is installed yet");
+    // A tick does not close the dialog.
+    app.handle(key(KeyKind::tick));
+    CHECK(app.dialog().has_value());
+    app.handle(key(KeyKind::escape));
+
+    // Fewer tasks on the next read keep the cursor on one of them.
+    app.handle(key(KeyKind::end));
+    CHECK(app.watched()->cursor.at == 2);
+    auto fewer = running_emerges();
+    fewer.front().tasks.pop_back();
+    app.handle(key(KeyKind::tick));
+    app.finish_watch(fewer);
+    CHECK(app.watched()->cursor.at == 1);
+
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.watched().has_value());
+    CHECK(app.refresh() == std::nullopt);
 }

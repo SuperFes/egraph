@@ -14,6 +14,20 @@ namespace egraph::tui {
 
 namespace {
 
+// Every task of every emerge, in order.
+std::vector<std::reference_wrapper<const emerge::Task>> tasks(const Watched& watched) {
+    std::vector<std::reference_wrapper<const emerge::Task>> all;
+    for (const auto& snapshot : watched.snapshots) {
+        all.insert(all.end(), snapshot.tasks.begin(), snapshot.tasks.end());
+    }
+    return all;
+}
+
+// count code points of text, after the first skip.
+std::string code_points(std::string_view text, std::size_t skip, std::size_t count) {
+    return clip(text, skip + count).substr(clip(text, skip).size());
+}
+
 std::vector<std::string> lines(std::string_view text) {
     std::vector<std::string> found;
     for (const auto line : std::views::split(text, '\n')) {
@@ -427,12 +441,22 @@ void App::open(std::uint32_t package) {
 void App::handle(const Key& key) {
     if (key.kind == KeyKind::closed) {
         done_ = true;
+    } else if (key.kind == KeyKind::tick) {
+        if (watched_ && pages_.empty()) {
+            watched_->due = true;
+        }
     } else if (dialog_) {
         dialog_.reset();
     } else if (!pages_.empty()) {
         handle_page(key);
+        // Back at the emerge view, whatever it shows is stale.
+        if (pages_.empty() && watched_) {
+            watched_->due = true;
+        }
     } else if (checked_) {
         handle_check(key);
+    } else if (watched_) {
+        handle_watch(key);
     } else {
         handle_list(key);
     }
@@ -471,6 +495,60 @@ void App::finish_rebuild(std::expected<Store, std::string> result) {
     checked_->cursor = {};
     checked_->drift.clear();
     adopt(std::move(*result), Source::saved);
+}
+
+bool App::watch_requested() const {
+    return watched_ && watched_->due && pages_.empty();
+}
+
+void App::finish_watch(std::vector<emerge::Snapshot> snapshots) {
+    if (!watched_) {
+        return;
+    }
+    auto& watched = *watched_;
+    watched.snapshots = std::move(snapshots);
+    watched.due = false;
+    ++watched.frame;
+    const auto count = tasks(watched).size();
+    watched.cursor.at = std::min(watched.cursor.at, count == 0 ? 0 : count - 1);
+}
+
+std::optional<std::chrono::milliseconds> App::refresh() const {
+    if (watched_ && pages_.empty()) {
+        return watch_interval;
+    }
+    return std::nullopt;
+}
+
+void App::handle_watch(const Key& key) {
+    if (!watched_) {
+        return;
+    }
+    auto& watched = *watched_;
+    const auto all = tasks(watched);
+    if (is(key, U'q') || is(key, U'Q')) {
+        done_ = true;
+    } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace ||
+               key.kind == KeyKind::left || is(key, U'h')) {
+        watched_.reset();
+    } else if (key.kind == KeyKind::enter || key.kind == KeyKind::right || is(key, U'l')) {
+        if (watched.cursor.at >= all.size()) {
+            return;
+        }
+        // What is building is not installed yet; its page is the installed version's.
+        const auto parts = split_cpv(all.at(watched.cursor.at).get().cpv);
+        const auto cp = std::format("{}/{}", parts.category, parts.name);
+        const auto installed = resolve(store(), cp);
+        if (installed && !installed->empty()) {
+            open(installed->back());
+        } else {
+            show({.error = false,
+                  .title = std::format("No version of {} is installed yet", cp),
+                  .lines = {"Pages show installed packages, and it has none so far."}});
+        }
+    } else if (is_move(key)) {
+        move(watched.cursor, all.size(), key, height_);
+    }
 }
 
 std::optional<std::uint32_t> App::find(std::string_view cpv) const {
@@ -559,6 +637,8 @@ void App::handle_list(const Key& key) {
         filter();
     } else if (is(key, U'c')) {
         checked_.emplace();
+    } else if (is(key, U'e')) {
+        watched_.emplace();
     } else if (is(key, U'b')) {
         build_deps_ = !build_deps_;
         recompute();
@@ -675,6 +755,62 @@ std::size_t columns(std::string_view text) {
         std::ranges::count_if(text, [](char c) { return !is_continuation(c); }));
 }
 
+std::string duration(double seconds) {
+    const auto whole = seconds > 0 ? static_cast<std::uint64_t>(seconds) : 0;
+    if (whole < 60) {
+        return std::format("{}s", whole);
+    }
+    if (whole < 3600) {
+        return std::format("{}m{:02}s", whole / 60, whole % 60);
+    }
+    return std::format("{}h{:02}m", whole / 3600, whole % 3600 / 60);
+}
+
+std::string byte_size(std::uint64_t bytes) {
+    if (bytes < 1024) {
+        return std::format("{} B", bytes);
+    }
+    constexpr std::array<std::string_view, 5> units{"KiB", "MiB", "GiB", "TiB", "PiB"};
+    auto value = static_cast<double>(bytes) / 1024;
+    std::size_t unit = 0;
+    while (value >= 1024 && unit + 1 < units.size()) {
+        value /= 1024;
+        ++unit;
+    }
+    return std::format("{:.1f} {}", value, units.at(unit));
+}
+
+std::string progress_bar(std::uint64_t done, std::uint64_t total, std::size_t width,
+                         const Glyphs& glyph) {
+    const auto eighths = columns(glyph.bar_eighths);
+    // In eighths of a cell, whether or not the glyphs can show them.
+    const auto filled = total == 0 ? 0 : std::min(done, total) * width * 8 / total;
+    const auto full = static_cast<std::size_t>(filled / 8);
+    const auto part = static_cast<std::size_t>(filled % 8);
+    std::string bar = repeat(glyph.bar_full, full);
+    std::size_t used = full;
+    if (part > 0 && eighths >= 7 && used < width) {
+        bar += code_points(glyph.bar_eighths, part - 1, 1);
+        ++used;
+    }
+    return bar + repeat(glyph.bar_empty, width - used);
+}
+
+std::string spinner_frame(std::size_t count, const Glyphs& glyph) {
+    const auto frames = columns(glyph.spinner);
+    return frames == 0 ? std::string{} : code_points(glyph.spinner, count % frames, 1);
+}
+
+std::string task_state(const emerge::Task& task) {
+    if (task.merge_wait) {
+        return "waiting to merge";
+    }
+    if (!task.phase.empty()) {
+        return task.phase;
+    }
+    return task.kind == emerge::TaskKind::merge ? "merging" : "starting";
+}
+
 std::string repeat(std::string_view text, std::size_t count) {
     std::string out;
     out.reserve(text.size() * count);
@@ -731,9 +867,8 @@ DriftSign drift_sign(char sign) {
     }
 }
 
-Exit open_and_run(const Store& store, GlyphSet glyphs, const Checker& check,
-                  const Rebuilder& rebuild, std::span<const std::string> warnings,
-                  std::ostream& err) {
+Exit open_and_run(const Store& store, GlyphSet glyphs, const Services& services,
+                  std::span<const std::string> warnings, std::ostream& err) {
 #if EGRAPH_HAVE_TUI
     auto screen = Screen::open();
     if (!screen) {
@@ -741,17 +876,16 @@ Exit open_and_run(const Store& store, GlyphSet glyphs, const Checker& check,
         return Exit::failure;
     }
     const auto graph = build_graph(store);
-    App app{store, graph, rebuild ? Update::save : Update::preview};
+    App app{store, graph, services.rebuild ? Update::save : Update::preview};
     if (!warnings.empty()) {
         app.show({.error = false, .title = "Warning", .lines = {warnings.begin(), warnings.end()}});
     }
-    run(*screen, app, egraph::glyphs(glyphs), check, rebuild);
+    run(*screen, app, egraph::glyphs(glyphs), services);
     return Exit::ok;
 #else
     (void)store;
     (void)glyphs;
-    (void)check;
-    (void)rebuild;
+    (void)services;
     (void)warnings;
     err << "egraph: tui: this egraph was built without Notcurses (meson -Dtui=enabled)\n";
     return Exit::not_implemented;

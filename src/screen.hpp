@@ -3,6 +3,7 @@
 // A full-screen terminal, and the only place egraph calls Notcurses (in screen.cpp, which is
 // built only with the tui feature). Like os.hpp, everything here is values.
 
+#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <memory>
@@ -46,6 +47,8 @@ enum class KeyKind : std::uint8_t {
     resize,
     // Input ended or failed.
     closed,
+    // Nothing was pressed before read's timeout.
+    tick,
     other,
 };
 
@@ -72,8 +75,8 @@ class Screen {
     // Paints a whole row in pen's background.
     void fill_row(unsigned row, const Pen& pen);
     void render();
-    // Waits for the next key press.
-    Key read();
+    // Waits for the next key press, or with a timeout at most that long.
+    Key read(std::optional<std::chrono::milliseconds> timeout = std::nullopt);
 
   private:
     struct Stop {

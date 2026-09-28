@@ -1,5 +1,6 @@
 """egraph tui in a real terminal: a private tmux server stands in for one."""
 
+import json
 import os
 import shutil
 import subprocess
@@ -137,3 +138,65 @@ def test_tui_previews_a_fresh_build_without_saving_it(system, tmp_path):
     assert path.read_bytes() == before
     assert builds(system)[-1].startswith("--full --store ")
     assert str(path) not in builds(system)[-1]
+
+
+def test_tui_watches_running_emerges(playgrounds, tmp_path):
+    skip_without_tui()
+    path = tmp_path / "installed.egraph"
+    store.write(
+        path,
+        store.encode(
+            installed.build(playgrounds("roots").vardb), store.Meta("0", "0", "/", 0)
+        ),
+    )
+    # A live pid, as emerge's own would be.
+    pid = os.getpid()
+    run_dir = tmp_path / "run" / "portage"
+    run_dir.mkdir(parents=True)
+
+    def publish(completed, phase):
+        snapshot = {
+            "type": "snapshot",
+            "schema": 1,
+            "emerge_pid": pid,
+            "timestamp": time.time(),
+            "jobs": {"running": 1, "max": 2, "completed": completed, "total": 4},
+            "tasks": [
+                {
+                    "cpv": "dev-libs/a-2",
+                    "kind": "build",
+                    "phase": phase,
+                    "binary": False,
+                    "merge_wait": False,
+                    "elapsed": 3.0,
+                    "build_elapsed": 3.0,
+                }
+            ],
+        }
+        (run_dir / f"emerge-{pid}.json").write_text(json.dumps(snapshot))
+
+    publish(1, "compile")
+    socket = f"egraph-test-{os.getpid()}"
+    command = (
+        f"{EGRAPH} --store {path} --eprefix {tmp_path} --no-refresh tui;"
+        " echo EXIT=$?; sleep 30"
+    )
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "120", "-y", "16", command)
+    try:
+        wait_for(socket, "/ to search")
+        tmux(socket, "send-keys", "-t", "t", "e")
+        screen = wait_for(socket, f"emerge {pid}")
+        assert "1 of 4 done" in screen
+        assert "dev-libs/a-2" in screen
+        assert "compile" in screen
+        # Read again on its own, with no key pressed.
+        publish(3, "install")
+        screen = wait_for(socket, "3 of 4 done")
+        assert "install" in screen
+        # The installed version's page.
+        tmux(socket, "send-keys", "-t", "t", "Enter")
+        wait_for(socket, "Depends on")
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")

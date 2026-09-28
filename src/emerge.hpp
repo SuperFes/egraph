@@ -15,35 +15,35 @@ namespace egraph::emerge {
 
 // A build's cgroup counters (FEATURES="cgroup"); whatever the kernel did not report is unset.
 struct Resources {
-    std::optional<std::uint64_t> cpu_usec;
-    std::optional<std::uint64_t> mem_current;
-    std::optional<std::uint64_t> mem_peak;
-    std::optional<std::uint64_t> io_read_bytes;
-    std::optional<std::uint64_t> io_write_bytes;
+    std::optional<std::uint64_t> cpu_usec{};
+    std::optional<std::uint64_t> mem_current{};
+    std::optional<std::uint64_t> mem_peak{};
+    std::optional<std::uint64_t> io_read_bytes{};
+    std::optional<std::uint64_t> io_write_bytes{};
 };
 
 enum class TaskKind : std::uint8_t { build, merge };
 
 // One package an emerge is building or merging.
 struct Task {
-    std::string cpv;
+    std::string cpv{};
     TaskKind kind = TaskKind::build;
     // The ebuild phase, "merge-wait" once built and waiting to merge, or empty before the first.
-    std::string phase;
+    std::string phase{};
     // Installed from a binary package rather than built.
     bool binary = false;
     bool merge_wait = false;
-    std::optional<std::int64_t> pid;
+    std::optional<std::int64_t> pid{};
     // Seconds since the build started, and of the build itself (frozen once it is done).
-    std::optional<double> elapsed;
-    std::optional<double> build_elapsed;
-    Resources resources;
+    std::optional<double> elapsed{};
+    std::optional<double> build_elapsed{};
+    Resources resources{};
 };
 
 struct Jobs {
     std::uint64_t running = 0;
     // Unset for --jobs without a limit.
-    std::optional<std::uint64_t> max;
+    std::optional<std::uint64_t> max{};
     std::uint64_t completed = 0;
     std::uint64_t total = 0;
     std::uint64_t failed = 0;
@@ -55,8 +55,8 @@ struct Snapshot {
     std::int64_t pid = 0;
     // When emerge wrote it, in seconds since the epoch.
     double timestamp = 0;
-    Jobs jobs;
-    std::vector<Task> tasks;
+    Jobs jobs{};
+    std::vector<Task> tasks{};
 };
 
 // A schema 1 snapshot. Fields missing or of the wrong type take their defaults; anything that is

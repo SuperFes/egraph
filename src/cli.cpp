@@ -4,6 +4,7 @@
 #include "build_info.hpp"
 #include "check.hpp"
 #include "depclean.hpp"
+#include "emerge.hpp"
 #include "freshness.hpp"
 #include "graph.hpp"
 #include "human.hpp"
@@ -459,7 +460,10 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
             return load(path).transform_error([](const StoreError& e) { return e.message; });
         };
     }
-    return tui::open_and_run(*store, invocation.glyphs, check, rebuild, warnings, err);
+    const auto run_dir = emerge::status_dir(invocation.eprefix.value_or(""));
+    const auto watch = [run_dir] { return emerge::read_snapshots(run_dir); };
+    return tui::open_and_run(*store, invocation.glyphs,
+                             {.check = check, .rebuild = rebuild, .watch = watch}, warnings, err);
 }
 
 Exit execute(const Stats&, const Invocation& invocation, std::ostream& out, std::ostream& err) {

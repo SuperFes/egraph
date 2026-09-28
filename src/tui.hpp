@@ -6,6 +6,7 @@
 
 #include "cli.hpp"
 #include "depclean.hpp"
+#include "emerge.hpp"
 #include "graph.hpp"
 #include "human.hpp"
 #include "query.hpp"
@@ -14,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -105,6 +107,30 @@ using Checker = std::function<CheckResult(const Store&)>;
 // Writes a fresh store over the one on disk and loads it, or says why it could not.
 using Rebuilder = std::function<std::expected<Store, std::string>()>;
 
+// Reads the running emerges' snapshots.
+using Watcher = std::function<std::vector<emerge::Snapshot>()>;
+
+// What the interface asks of the world outside it: run() calls these, the app never does.
+struct Services {
+    Checker check{};
+    // Empty where the store cannot be written, so that a check's fresh build is only previewed.
+    Rebuilder rebuild{};
+    Watcher watch{};
+};
+
+// How often the emerge view reads the snapshots again.
+inline constexpr std::chrono::milliseconds watch_interval{1000};
+
+// The emerge view: the running emerges as last read, and whether a read is due.
+struct Watched {
+    std::vector<emerge::Snapshot> snapshots;
+    bool due = true;
+    // Reads so far, which turn the spinners.
+    std::size_t frame = 0;
+    // Over the tasks of every emerge, in order.
+    Cursor cursor;
+};
+
 // What u does in the check view: rebuild the store on disk and show it, or only show the check's
 // fresh build, for users who cannot write the store.
 enum class Update : std::uint8_t { save, preview };
@@ -171,6 +197,13 @@ class App {
         return checked_ && checked_->stage == Checked::Stage::rebuilding;
     }
     void finish_rebuild(std::expected<Store, std::string> result);
+    // Open from the list, under any pages opened from it.
+    [[nodiscard]] const std::optional<Watched>& watched() const { return watched_; }
+    // Whether the emerge view is showing and due to read the snapshots, which run() then does.
+    [[nodiscard]] bool watch_requested() const;
+    void finish_watch(std::vector<emerge::Snapshot> snapshots);
+    // How long run() waits for a key before the view needs drawing again; unset waits for one.
+    [[nodiscard]] std::optional<std::chrono::milliseconds> refresh() const;
     [[nodiscard]] const std::optional<Dialog>& dialog() const { return dialog_; }
     void show(Dialog dialog) { dialog_ = std::move(dialog); }
     [[nodiscard]] Update update() const { return update_; }
@@ -218,6 +251,7 @@ class App {
     void handle_list(const Key& key);
     void handle_page(const Key& key);
     void handle_check(const Key& key);
+    void handle_watch(const Key& key);
     // The package with this cpv, if the store has it.
     [[nodiscard]] std::optional<std::uint32_t> find(std::string_view cpv) const;
 
@@ -237,6 +271,7 @@ class App {
     std::vector<std::optional<std::uint32_t>> root_of_;
     List list_;
     std::optional<Checked> checked_;
+    std::optional<Watched> watched_;
     std::vector<Page> pages_;
     std::optional<Dialog> dialog_;
     std::size_t height_ = 1;
@@ -286,7 +321,7 @@ void draw_hints(S& screen, unsigned row, unsigned width,
     for (const auto& [key, meaning] : hints) {
         spans.push_back(
             {std::string{key}, {.fg = palette::mauve, .bg = palette::mantle, .bold = true}});
-        spans.push_back({std::format(" {}   ", meaning), bar});
+        spans.push_back({std::format(" {}  ", meaning), bar});
     }
     put_spans(screen, row, 0, spans, width);
 }
@@ -417,6 +452,7 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
                     {"!", list.only == Only::broken ? "all" : "broken"},
                     {"b", app.build_deps() ? "run time only" : "build deps"},
                     {"c", "check"},
+                    {"e", "emerges"},
                     {"q", "quit"}});
     }
 }
@@ -705,6 +741,138 @@ void draw_dialog(S& screen, const Dialog& dialog, const Glyphs& glyph, Size size
         right);
 }
 
+// "45s", "1m40s", "1h02m": seconds, rounded down, in at most two units.
+[[nodiscard]] std::string duration(double seconds);
+// "512 B", "1.5 KiB", "2.0 MiB".
+[[nodiscard]] std::string byte_size(std::uint64_t bytes);
+// done of total as width cells: full ones, one filled by eighths where the glyphs have them, then
+// empty ones.
+[[nodiscard]] std::string progress_bar(std::uint64_t done, std::uint64_t total, std::size_t width,
+                                       const Glyphs& glyph);
+// The spinner's frame for a count, cycling.
+[[nodiscard]] std::string spinner_frame(std::size_t count, const Glyphs& glyph);
+
+// What a task is doing, in words.
+[[nodiscard]] std::string task_state(const emerge::Task& task);
+
+// A task's row after the tree: a spinner while it runs, its kind, cpv, state, elapsed time, and
+// its cgroup's CPU parallelism and peak memory when reported.
+inline std::vector<Span> task_spans(const emerge::Task& task, std::size_t frame,
+                                    const Glyphs& glyph) {
+    const bool waiting = task.merge_wait;
+    const auto kind = waiting                                ? glyph.waiting
+                      : task.kind == emerge::TaskKind::merge ? glyph.merge
+                      : task.binary                          ? glyph.binary
+                                                             : glyph.build;
+    std::vector<Span> spans{
+        {waiting ? std::string{" "} : spinner_frame(frame, glyph), tone_pen(Tone::heading)},
+        {std::format(" {} ", kind), tone_pen(waiting ? Tone::note : Tone::build)}};
+    std::ranges::move(cpv_spans(task.cpv), std::back_inserter(spans));
+    const auto used = columns(task.cpv);
+    spans.push_back({std::string(used < 44 ? 46 - used : 2, ' '), {}});
+    const auto state = task_state(task);
+    spans.push_back({std::format("{:<18}", state), tone_pen(waiting ? Tone::note : Tone::choice)});
+    // A waiting task's own time stopped when its build did.
+    const auto elapsed = waiting && task.build_elapsed ? task.build_elapsed : task.elapsed;
+    spans.push_back({std::format("{:>7}", elapsed ? duration(*elapsed) : std::string{}),
+                     tone_pen(Tone::version)});
+    if (task.resources.cpu_usec && task.build_elapsed && *task.build_elapsed > 0) {
+        const auto busy = static_cast<double>(*task.resources.cpu_usec) / 1e6 / *task.build_elapsed;
+        spans.push_back({std::format("   {:.1f}x CPU", busy), tone_pen(Tone::note)});
+    }
+    if (task.resources.mem_peak) {
+        spans.push_back(
+            {std::format("   {} peak", byte_size(*task.resources.mem_peak)), tone_pen(Tone::note)});
+    }
+    return spans;
+}
+
+// An emerge's heading: its pid, jobs, and progress as a bar and a percentage.
+inline std::vector<Span> emerge_spans(const emerge::Snapshot& snapshot, const Glyphs& glyph) {
+    const auto& jobs = snapshot.jobs;
+    const auto percent = jobs.total == 0 ? 0 : jobs.completed * 100 / jobs.total;
+    std::vector<Span> spans{
+        {std::format(" {} emerge {}", glyph.package, snapshot.pid), tone_pen(Tone::heading)},
+        {jobs.max ? std::format("   {} of {} jobs", jobs.running, *jobs.max)
+                  : std::format("   {} jobs", jobs.running),
+         tone_pen(Tone::note)},
+        {std::format("   {} of {} done   ", jobs.completed, jobs.total), tone_pen(Tone::note)},
+        {progress_bar(jobs.completed, jobs.total, 20, glyph), tone_pen(Tone::good)},
+        {std::format(" {:>3}%", percent), tone_pen(Tone::heading)}};
+    if (jobs.failed > 0) {
+        spans.push_back(
+            {std::format("   {} {} failed", glyph.broken, jobs.failed), tone_pen(Tone::bad)});
+    }
+    return spans;
+}
+
+template <class S> void draw_watch(S& screen, App& app, const Glyphs& glyph, Size size) {
+    const auto& open = app.watched();
+    if (!open) {
+        return;
+    }
+    const auto& watched = *open;
+    draw_title(screen, app, size.cols,
+               {{std::format(" {} egraph ", glyph.package),
+                 {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
+                {std::format(" {} ", glyph.trail), tone_pen(Tone::note)},
+                {"emerge", tone_pen(Tone::name)}});
+    const unsigned first = 2;
+    const unsigned height = size.rows - first - 1;
+    app.set_height(height);
+    if (watched.snapshots.empty()) {
+        put_spans(screen, 1, 1, {{"No emerge is publishing its progress", tone_pen(Tone::heading)}},
+                  size.cols);
+        put_spans(screen, 3, 3,
+                  {{"emerge publishes it to /run/portage with FEATURES=\"observability\";",
+                    tone_pen(Tone::note)}},
+                  size.cols);
+        put_spans(screen, 4, 3, {{"this view reads it again every second.", tone_pen(Tone::note)}},
+                  size.cols);
+        draw_hints(screen, size.rows - 1, size.cols, {{"esc", "back"}, {"q", "quit"}});
+        return;
+    }
+    // Every line, with the selected one's index, then a window that keeps it in view.
+    struct Line {
+        std::vector<Span> spans;
+        bool selected = false;
+    };
+    std::vector<Line> lines;
+    std::size_t task_index = 0;
+    std::size_t selected_line = 0;
+    for (const auto& snapshot : watched.snapshots) {
+        if (!lines.empty()) {
+            lines.push_back({});
+        }
+        lines.push_back({.spans = emerge_spans(snapshot, glyph)});
+        for (std::size_t at = 0; at < snapshot.tasks.size(); ++at) {
+            const bool selected = task_index++ == watched.cursor.at;
+            if (selected) {
+                selected_line = lines.size();
+            }
+            std::vector<Span> spans{
+                marker(selected, glyph),
+                {std::format("  {} ", at + 1 == snapshot.tasks.size() ? glyph.branch : glyph.tee),
+                 tone_pen(Tone::note)}};
+            std::ranges::move(task_spans(snapshot.tasks.at(at), watched.frame, glyph),
+                              std::back_inserter(spans));
+            lines.push_back({.spans = std::move(spans), .selected = selected});
+        }
+    }
+    const auto top = selected_line >= height ? selected_line - height + 1 : 0;
+    for (unsigned line = 0; line < height && top + line < lines.size(); ++line) {
+        const auto& shown = lines.at(top + line);
+        const auto bg =
+            shown.selected ? std::optional<Color>{palette::surface} : std::optional<Color>{};
+        if (shown.selected) {
+            screen.fill_row(first + line, {.fg = std::nullopt, .bg = palette::surface});
+        }
+        put_spans(screen, first + line, 0, shown.spans, size.cols, bg);
+    }
+    draw_hints(screen, size.rows - 1, size.cols,
+               {{glyph.move, "move"}, {glyph.enter, "open"}, {"esc", "back"}, {"q", "quit"}});
+}
+
 template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
     const auto size = screen.size();
     screen.clear();
@@ -713,6 +881,8 @@ template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
             draw_page(screen, app, glyph, size);
         } else if (app.checked()) {
             draw_check(screen, app, glyph, size);
+        } else if (app.watched()) {
+            draw_watch(screen, app, glyph, size);
         } else {
             draw_list(screen, app, glyph, size);
         }
@@ -725,18 +895,20 @@ template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
 
 // Runs until the user quits or input ends, making the fresh build a check asks for, or the
 // rebuild, once the waiting view is on screen.
-template <class S>
-void run(S& screen, App& app, const Glyphs& glyph, const Checker& check,
-         const Rebuilder& rebuild = {}) {
+template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Services& services) {
     draw(screen, app, glyph);
     while (!app.done()) {
         if (app.check_requested()) {
-            app.finish_check(check(app.store()));
+            app.finish_check(services.check ? services.check(app.store())
+                                            : std::unexpected(std::string{"no way to check"}));
         } else if (app.rebuild_requested()) {
-            app.finish_rebuild(rebuild ? rebuild()
-                                       : std::unexpected(std::string{"no way to rebuild"}));
+            app.finish_rebuild(services.rebuild
+                                   ? services.rebuild()
+                                   : std::unexpected(std::string{"no way to rebuild"}));
+        } else if (app.watch_requested()) {
+            app.finish_watch(services.watch ? services.watch() : std::vector<emerge::Snapshot>{});
         } else {
-            app.handle(screen.read());
+            app.handle(screen.read(app.refresh()));
         }
         if (!app.done()) {
             draw(screen, app, glyph);
@@ -745,9 +917,8 @@ void run(S& screen, App& app, const Glyphs& glyph, const Checker& check,
 }
 
 // Opens the terminal and runs the interface over store, first showing any warnings from opening
-// it; errors go to err. Without a rebuilder, a check's fresh build can only be previewed.
-[[nodiscard]] Exit open_and_run(const Store& store, GlyphSet glyphs, const Checker& check,
-                                const Rebuilder& rebuild, std::span<const std::string> warnings,
-                                std::ostream& err);
+// it; errors go to err.
+[[nodiscard]] Exit open_and_run(const Store& store, GlyphSet glyphs, const Services& services,
+                                std::span<const std::string> warnings, std::ostream& err);
 
 } // namespace egraph::tui

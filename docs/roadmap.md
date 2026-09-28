@@ -16,7 +16,7 @@ Update the status column as steps land.
 | 8 | Consumers | not started |
 | 9 | Evaluated and candidate layers | not planned yet |
 | 10 | Output and UX | in progress |
-| 11 | Build monitor | planned |
+| 11 | Build monitor | in progress |
 
 ## 0. Scaffold
 
@@ -124,7 +124,7 @@ one. Not scheduled ahead of 8 and 9.
   stale. The remaining merge list is mtimedb's `resume.mergelist`. Both are JSON, which the C++
   side cannot read yet: nlohmann_json (header-only, value-typed, parses without exceptions) is
   the candidate.
-- 11a: a build view in the TUI. Each running emerge with its progress (done of total, as a bar
+- 11a (done): a build view in the TUI. Each running emerge with its progress (done of total, as a bar
   and a percentage), and its tasks as a hierarchy with glyphs: kind (build, binary, merge,
   waiting to merge), phase, a spinner while running, elapsed time, and the cgroup's CPU
   parallelism and peak memory when `FEATURES=cgroup` reports them. The screen needs a read with

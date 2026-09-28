@@ -52,9 +52,8 @@ EGRAPH_SYSTEM_TESTS=1 PYTHONPATH=... pytest builder/tests         # also compare
 `meson test` puts the `portage_lib` option (default: the fork) on PYTHONPATH; the playground
 tests need a portage checkout for its test GPG keys.
 
-Toolchain on this machine: clang 23, gcc 16, meson 1.12, Catch2 3.15, CLI11 2.7, nlohmann_json 3.12,
-Python 3.14,
-Notcurses 3.0.17 (the optional `tui` feature).
+Toolchain on this machine: clang 23, gcc 16, meson 1.12, Catch2 3.15, CLI11 2.7, nlohmann_json
+3.12, Python 3.14, Notcurses 3.0.17 (the optional `tui` feature).
 
 `egraph tui` cannot run under a bare pty: Notcurses waits for the terminal to answer its
 capability queries. `builder/tests/test_tui.py` drives it in a private tmux server instead; the

@@ -196,7 +196,14 @@ TEST_CASE("every glyph set fills every glyph") {
                                 glyph.frame.bottom_left,
                                 glyph.frame.bottom_right,
                                 glyph.frame.across,
-                                glyph.frame.down}) {
+                                glyph.frame.down,
+                                glyph.build,
+                                glyph.binary,
+                                glyph.merge,
+                                glyph.waiting,
+                                glyph.spinner,
+                                glyph.bar_full,
+                                glyph.bar_empty}) {
             CHECK_FALSE(text.empty());
         }
     }

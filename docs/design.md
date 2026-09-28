@@ -131,6 +131,13 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   written through the builder's atomic rename) and shows the result. Anyone else gets a preview:
   the check's own fresh build replaces the store in memory only, and the title bar says it is not
   saved. The user's cache store is left alone either way; it is refreshed on the next query.
+- `e` watches the running emerges, from the snapshots portage publishes with
+  `FEATURES="observability"` (`src/emerge.hpp`): each emerge's jobs and progress as a bar, and
+  its tasks under it with a spinner, kind, phase, elapsed time and, with `FEATURES=cgroup`, CPU
+  parallelism and peak memory. The view reads them again every second (the screen's read takes a
+  timeout, and a tick with no key is a key of its own), and not while a page covers it. A task
+  opens the page of its package's installed version. egraph only watches; it never starts an
+  emerge.
 - Errors and notices are dialogs over the view, which the next key closes without acting on it:
   a failed check or rebuild (the drift stays listed underneath, and `u` can try again), a
   package only the fresh build has, and warnings from opening the store (`--no-refresh` on a
