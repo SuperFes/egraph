@@ -6,6 +6,7 @@
 #include <optional>
 #include <ostream>
 #include <ranges>
+#include <span>
 #include <tuple>
 
 namespace egraph::tui {
@@ -188,30 +189,49 @@ std::vector<Row> kept_rows(const Store& store, const Kept& kept, std::uint32_t p
     return rows;
 }
 
-// What package needs that nothing installed satisfies, one row per dependency with its kinds.
+// A build-time dependency whose package is now installed at another version or slot only
+// records what the package was built with, not something it lacks.
+bool replaced(const Unsatisfied& dependency, std::span<const std::uint32_t> instead) {
+    return is_build_kind(dependency.kind) && !instead.empty();
+}
+
+// What package needs that nothing installed satisfies, then the build-time dependencies since
+// replaced; one row per dependency with its kinds and what is installed in its place.
 std::vector<Row> unsatisfied_rows(const Store& store, std::uint32_t package, bool build_deps) {
     std::vector<Row> missing;
     for (const auto& dependency : unsatisfied(store, package)) {
         if (!build_deps && is_build_kind(dependency.kind)) {
             continue;
         }
+        auto instead = installed_instead(store, dependency);
+        const auto type = replaced(dependency, instead) ? RowType::replaced : RowType::missing;
         auto text = render(store, dependency);
-        auto row = std::ranges::find(missing, text, &Row::text);
+        auto row = std::ranges::find_if(
+            missing, [&](const Row& other) { return other.type == type && other.text == text; });
         if (row == missing.end()) {
-            missing.push_back(text_row(RowType::missing, std::move(text)));
+            missing.push_back(text_row(type, std::move(text)));
             row = missing.end() - 1;
+            row->instead = std::move(instead);
         }
         if (const auto index = shorthand_of(dependency.kind); index < kind_shorthands.size()) {
             row->link.kinds.at(index) = true;
         }
     }
-    if (missing.empty()) {
-        return {};
+    std::vector<Row> rows;
+    for (const auto type : {RowType::missing, RowType::replaced}) {
+        const auto count = std::ranges::count(missing, type, &Row::type);
+        if (count == 0) {
+            continue;
+        }
+        rows.push_back(text_row(
+            RowType::heading,
+            std::format("{}  {}",
+                        type == RowType::missing ? "Not installed" : "Built with, since replaced",
+                        count)));
+        std::ranges::copy_if(missing, std::back_inserter(rows),
+                             [&](const Row& row) { return row.type == type; });
+        rows.push_back(text_row(RowType::note, ""));
     }
-    std::vector<Row> rows{
-        text_row(RowType::heading, std::format("Not installed  {}", missing.size()))};
-    std::ranges::move(missing, std::back_inserter(rows));
-    rows.push_back(text_row(RowType::note, ""));
     return rows;
 }
 
@@ -312,10 +332,18 @@ App::App(const Store& store, const Graph& graph) : store_(store), graph_(graph) 
         const auto [first, last] = std::ranges::unique(children);
         children.erase(first, last);
         dependencies_.at(id) = children.size();
-        const auto missing = unsatisfied(store, id);
-        broken_.push_back(missing.size());
-        broken_at_run_time_.push_back(static_cast<std::size_t>(std::ranges::count_if(
-            missing, [](const Unsatisfied& found) { return !is_build_kind(found.kind); })));
+        std::size_t broken = 0;
+        std::size_t at_run_time = 0;
+        for (const auto& dependency : unsatisfied(store, id)) {
+            if (!is_build_kind(dependency.kind)) {
+                ++at_run_time;
+                ++broken;
+            } else if (!replaced(dependency, installed_instead(store, dependency))) {
+                ++broken;
+            }
+        }
+        broken_.push_back(broken);
+        broken_at_run_time_.push_back(at_run_time);
         for (const auto child : children) {
             ++dependents_.at(child);
         }

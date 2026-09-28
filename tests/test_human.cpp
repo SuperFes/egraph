@@ -160,7 +160,8 @@ TEST_CASE("every glyph set fills every glyph") {
         for (const auto text :
              {glyph.package, glyph.selected, glyph.system, glyph.profile, glyph.set, glyph.orphan,
               glyph.broken, glyph.soname, glyph.search, glyph.good, glyph.choice, glyph.branch,
-              glyph.absent, glyph.tee, glyph.rail, glyph.folded, glyph.unfolded, glyph.cycle}) {
+              glyph.absent, glyph.tee, glyph.rail, glyph.folded, glyph.unfolded, glyph.cycle,
+              glyph.instead}) {
             CHECK_FALSE(text.empty());
         }
     }

@@ -41,6 +41,11 @@ struct Unsatisfied {
 
 [[nodiscard]] std::string render(const Store& store, const Unsatisfied& dependency);
 
+// Installed packages with the category and name of an atom in the dependency: what stands where
+// it asked for another version or slot. Sorted ids; empty when nothing of the kind is installed.
+[[nodiscard]] std::vector<std::uint32_t> installed_instead(const Store& store,
+                                                           const Unsatisfied& dependency);
+
 // Each top-level dependency nothing installed satisfies: "cpv<TAB>kind<TAB>dependency", sorted.
 [[nodiscard]] std::vector<std::string> broken(const Store& store);
 

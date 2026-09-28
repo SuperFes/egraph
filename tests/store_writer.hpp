@@ -164,6 +164,54 @@ inline std::vector<std::byte> with_rdepend(std::uint64_t count,
     return with_section(4, packages);
 }
 
+// The sample with more strings after sample_strings, and one more section replaced.
+inline std::vector<std::byte> with_strings(std::initializer_list<std::string_view> extra,
+                                           std::uint64_t id, const Bytes& bytes) {
+    Bytes strings;
+    strings.varint(sample_strings.size() + extra.size());
+    for (const auto value : sample_strings) {
+        strings.text(value);
+    }
+    for (const auto value : extra) {
+        strings.text(value);
+    }
+    auto sections = sample_sections();
+    for (auto& section : sections) {
+        if (section.id == 3) {
+            section.bytes = strings.bytes();
+        } else if (section.id == id) {
+            section.bytes = bytes.bytes();
+        }
+    }
+    return assemble(sections);
+}
+
+// a-1 and b-1, where a-1 has only BDEPEND (build_time) or RDEPEND: || ( >=dev-libs/b-2
+// dev-libs/missing ) with b-1 installed, string 17 being the first atom.
+inline std::vector<std::byte> newer_wanted(bool build_time) {
+    Bytes packages;
+    packages.varint(2);
+    packages.varints({1, 2, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
+    const auto group = [](Bytes& out) {
+        out.varint(3);
+        out.varints({1, 0, 0}).list({});
+        out.varints({0, 1, 17}).list({});
+        out.varints({0, 1, 14}).list({});
+    };
+    if (build_time) {
+        group(packages);
+        packages.varint(0).varint(0).varint(0).varint(0);
+    } else {
+        packages.varint(0).varint(0).varint(0).varint(0);
+        group(packages);
+    }
+    packages.varint(0).varint(0);
+    packages.varints({8, 7, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
+    packages.varint(0).varint(0).varint(0).varint(0).varint(0);
+    packages.varint(0).varint(0);
+    return with_strings({">=dev-libs/b-2"}, 4, packages);
+}
+
 // The sample without inputs, which is therefore always fresh.
 inline std::vector<std::byte> fresh_sample() {
     return with_section(2, Bytes{}.varint(0));

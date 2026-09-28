@@ -504,3 +504,29 @@ TEST_CASE("a check that cannot run shows why") {
     CHECK(contains(screen.line(5), "KeyError: 'x'"));
     CHECK(screen.line(11).starts_with(" r again"));
 }
+
+TEST_CASE("a build-time dependency since replaced is history, not breakage") {
+    for (const bool build_time : {true, false}) {
+        auto decoded = egraph::decode(egraph::test::newer_wanted(build_time));
+        REQUIRE(decoded.has_value());
+        const auto& store = *decoded;
+        const auto graph = egraph::build_graph(store);
+        egraph::tui::App app{store, graph};
+        FakeScreen screen{16, 120, {}};
+        egraph::tui::draw(screen, app, ascii);
+        app.handle(key(KeyKind::enter));
+        egraph::tui::draw(screen, app, ascii);
+        const auto text = screen.text();
+        if (build_time) {
+            CHECK(app.broken(0) == 0);
+            CHECK(contains(text, "Built with, since replaced  1"));
+            CHECK(contains(text, "....B   || ( >=dev-libs/b-2 dev-libs/missing )  > dev-libs/b-1"));
+            CHECK_FALSE(contains(text, "Not installed"));
+        } else {
+            // At run time the package may still need what it asked for.
+            CHECK(app.broken(0) == 1);
+            CHECK(contains(text, "Not installed  1"));
+            CHECK(contains(text, "R.... ! || ( >=dev-libs/b-2 dev-libs/missing )  > dev-libs/b-1"));
+        }
+    }
+}

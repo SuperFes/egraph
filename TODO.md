@@ -87,6 +87,8 @@ and organised, and a TUI (ncurses, or Notcurses) is welcome.
 - [ ] Dependencies behind disabled USE flags, opt in and marked with the flag that would pull
       them in (`rdeps --possible`). The vdb only keeps reduced strings, so this needs the
       unreduced ones from the repository's metadata cache: the evaluated layer (step 9).
+- [ ] `egraph broken`'s human layout could separate replaced build-time dependencies as the
+      TUI does; the lines layout stays portage's plain unsatisfied set.
 - [ ] TUI, next steps: dialogs for errors; `rebuild` from the check view; later, possibly
       showing the build's progress.
 

@@ -128,7 +128,12 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   away. The builder's output goes to a log beside the scratch store rather than the terminal the
   interface owns; if the build fails, its last lines are shown.
 - A package page starts with why it is kept (`why`'s chain from a root, or that depclean would
-  remove it), then any dependencies nothing installed satisfies.
+  remove it), then any dependencies nothing installed satisfies, each with what is installed
+  under its name instead. A build-time dependency (DEPEND, BDEPEND) whose package is installed
+  at another version or slot, typically an autotools slot pin after automake moved on, only
+  records what the package was built with: it is listed apart as "since replaced" and does not
+  make the package broken. Run-time ones still do, since the package may need what it asked
+  for.
 - A package page lists what it depends on, then what needs it, one row per package and atom
   with the kind matrix, as `deps` and `rdeps` do. Enter follows a row to that package's page, and
   the title bar keeps the trail; Esc or Backspace go back.

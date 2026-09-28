@@ -109,6 +109,8 @@ struct Glyphs {
     std::string_view folded;
     std::string_view unfolded;
     std::string_view cycle;
+    // Before what is installed in place of a dependency.
+    std::string_view instead;
     // Key hints.
     std::string_view move;
     std::string_view enter;

@@ -125,6 +125,21 @@ TEST_CASE("unsatisfied names each broken dependency by kind and node") {
     CHECK(egraph::render(store, found.back()) == "dev-libs/missing");
 }
 
+TEST_CASE("installed_instead finds what stands where a dependency wanted another version") {
+    const auto store = decoded(egraph::test::newer_wanted(false));
+    const auto found = egraph::unsatisfied(store, 0);
+    REQUIRE(found.size() == 1);
+    CHECK(egraph::render(store, found.front()) == "|| ( >=dev-libs/b-2 dev-libs/missing )");
+    CHECK(egraph::installed_instead(store, found.front()) == std::vector<std::uint32_t>{1});
+
+    // Nothing named dev-libs/missing is installed at all.
+    const auto missing =
+        decoded(egraph::test::with_rdepend(1, [](Bytes& b) { b.varints({0, 0, 14}).list({}); }));
+    const auto none = egraph::unsatisfied(missing, 0);
+    REQUIRE(none.size() == 1);
+    CHECK(egraph::installed_instead(missing, none.front()).empty());
+}
+
 TEST_CASE("neighborhoods follow the chosen direction to the chosen depth") {
     const auto store = sample();
     const auto graph = egraph::build_graph(store);

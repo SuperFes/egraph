@@ -57,9 +57,10 @@ struct Link {
 
 // A root row names a root set and atom; path rows are the chain that root keeps the page
 // package through, the link holding the dependency that pulls each one in.
-// An alert is a note that needs attention; a missing row is an unsatisfied dependency, its text
-// rendered as portage does and its kinds in link.kinds.
-enum class RowType : std::uint8_t { heading, note, alert, missing, link, root, path };
+// An alert is a note that needs attention. A missing row is an unsatisfied dependency, its text
+// rendered as portage does and its kinds in link.kinds; a replaced row is a build-time one whose
+// package is now installed at another version or slot.
+enum class RowType : std::uint8_t { heading, note, alert, missing, replaced, link, root, path };
 
 // A page row. Links at depth 0 are the page package's own; unfolding a link puts its links,
 // in the same direction, one level deeper right below it.
@@ -76,6 +77,8 @@ struct Row {
     // whether that level's line continues past this row.
     bool last = false;
     std::vector<bool> rails;
+    // For missing and replaced rows: installed packages with the dependency's name.
+    std::vector<std::uint32_t> instead;
 };
 
 // Sets each row's last and rails, walking up from the bottom: a level's line continues past a
@@ -412,7 +415,9 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
                       {{std::format("{} {}", glyph.orphan, row.text), tone_pen(Tone::bad)}},
                       size.cols);
             break;
-        case RowType::missing: {
+        case RowType::missing:
+        case RowType::replaced: {
+            const bool bad = row.type == RowType::missing;
             std::vector<Span> spans{{"   ", {}}};
             for (std::size_t k = 0; k < kind_shorthands.size(); ++k) {
                 const auto& kind = kind_shorthands.at(k);
@@ -420,8 +425,19 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
                                     ? Span{std::string{kind.letter}, tone_pen(kind.tone)}
                                     : Span{std::string{glyph.absent}, tone_pen(Tone::note)});
             }
-            spans.push_back({std::format(" {} ", glyph.broken), tone_pen(Tone::bad)});
-            spans.push_back({row.text, tone_pen(Tone::bad)});
+            spans.push_back({std::format(" {} ", bad ? glyph.broken : " "), tone_pen(Tone::bad)});
+            spans.push_back({row.text, tone_pen(bad ? Tone::bad : Tone::note)});
+            if (!row.instead.empty()) {
+                spans.push_back({std::format("  {} ", glyph.instead), tone_pen(Tone::note)});
+                for (std::size_t i = 0; i < row.instead.size(); ++i) {
+                    if (i > 0) {
+                        spans.push_back({", ", tone_pen(Tone::note)});
+                    }
+                    std::ranges::move(
+                        cpv_spans(store.string(store.packages.at(row.instead.at(i)).cpv)),
+                        std::back_inserter(spans));
+                }
+            }
             put_spans(screen, at, 0, spans, size.cols);
             break;
         }

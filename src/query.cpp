@@ -1,5 +1,7 @@
 #include "query.hpp"
 
+#include "atom.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <format>
@@ -108,6 +110,35 @@ std::vector<Unsatisfied> unsatisfied(const Store& store, std::uint32_t package) 
 std::string render(const Store& store, const Unsatisfied& dependency) {
     const auto& pkg = store.packages.at(dependency.package);
     return render(store, store.nodes_in(pkg.deps.at(dependency.kind)), dependency.node);
+}
+
+std::vector<std::uint32_t> installed_instead(const Store& store, const Unsatisfied& dependency) {
+    const auto& pkg = store.packages.at(dependency.package);
+    const auto nodes = store.nodes_in(pkg.deps.at(dependency.kind));
+    // The node and every node below it; children follow their parents.
+    const auto within = [&](std::uint32_t index) {
+        while (index != no_parent && index != dependency.node) {
+            index = element(nodes, index).parent;
+        }
+        return index == dependency.node;
+    };
+    std::vector<std::string> cps;
+    for (auto i = dependency.node; i < nodes.size(); ++i) {
+        const auto& node = element(nodes, i);
+        if (node.type != NodeType::atom || !within(i)) {
+            continue;
+        }
+        if (const auto atom = parse_atom(store.string(node.atom))) {
+            cps.push_back(atom->cp);
+        }
+    }
+    std::vector<std::uint32_t> found;
+    for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
+        if (std::ranges::contains(cps, store.string(store.packages.at(id).cp))) {
+            found.push_back(id);
+        }
+    }
+    return found;
 }
 
 std::vector<std::string> broken(const Store& store) {
