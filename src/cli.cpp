@@ -10,6 +10,7 @@
 #include "human.hpp"
 #include "json.hpp"
 #include "os.hpp"
+#include "pressure.hpp"
 #include "store.hpp"
 #include "tui.hpp"
 
@@ -462,8 +463,10 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
     }
     const auto run_dir = emerge::status_dir(invocation.eprefix.value_or(""));
     const auto watch = [run_dir] { return emerge::read_snapshots(run_dir); };
+    const auto sample = [] { return pressure::read_sample(); };
     return tui::open_and_run(*store, invocation.glyphs,
-                             {.check = check, .rebuild = rebuild, .watch = watch}, warnings, err);
+                             {.check = check, .rebuild = rebuild, .watch = watch, .sample = sample},
+                             warnings, err);
 }
 
 Exit execute(const Stats&, const Invocation& invocation, std::ostream& out, std::ostream& err) {

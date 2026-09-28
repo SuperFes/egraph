@@ -129,7 +129,7 @@ one. Not scheduled ahead of 8 and 9.
   waiting to merge), phase, a spinner while running, elapsed time, and the cgroup's CPU
   parallelism and peak memory when `FEATURES=cgroup` reports them. The screen needs a read with
   a timeout so the view refreshes about once a second.
-- 11b: pressure. CPU, available memory and load from `/proc`, and PSI from `/proc/pressure`
+- 11b (done): pressure. CPU, available memory and load from `/proc`, and PSI from `/proc/pressure`
   when the kernel has it on (`psi=1`; the dev box builds it disabled by default), as sparklines
   with steve's thresholds (load average, minimum available memory) marked.
 - 11c: steve. Tokens in use of the total and its settings, through `stevie`'s getters; changed

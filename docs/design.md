@@ -137,7 +137,11 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   parallelism and peak memory. The view reads them again every second (the screen's read takes a
   timeout, and a tick with no key is a key of its own), and not while a page covers it. A task
   opens the page of its package's installed version. egraph only watches; it never starts an
-  emerge.
+  emerge. Below the emerges, where the terminal has room, a panel graphs the system over the
+  last four minutes (`src/pressure.hpp`): CPU use between readings of `/proc/stat`, memory in
+  use against `MemAvailable`, the one-minute load, and PSI's stall percentages when the kernel
+  keeps them. Readings past steve's limits (load average, minimum available memory) are drawn
+  in the bad tone, since that is when steve holds jobs back.
 - Errors and notices are dialogs over the view, which the next key closes without acting on it:
   a failed check or rebuild (the drift stays listed underneath, and `u` can try again), a
   package only the fresh build has, and warnings from opening the store (`--no-refresh` on a

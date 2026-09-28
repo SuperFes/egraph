@@ -203,7 +203,8 @@ TEST_CASE("every glyph set fills every glyph") {
                                 glyph.waiting,
                                 glyph.spinner,
                                 glyph.bar_full,
-                                glyph.bar_empty}) {
+                                glyph.bar_empty,
+                                glyph.spark}) {
             CHECK_FALSE(text.empty());
         }
     }

@@ -851,3 +851,86 @@ TEST_CASE("a task opens the page of its installed version, and esc comes back") 
     CHECK_FALSE(app.watched().has_value());
     CHECK(app.refresh() == std::nullopt);
 }
+
+namespace {
+
+std::string joined(const std::vector<egraph::tui::Span>& spans) {
+    std::string text;
+    for (const auto& span : spans) {
+        text += span.text;
+    }
+    return text;
+}
+
+// Two seconds of a 4-CPU machine with 8 GiB, half of the CPU time busy between them.
+egraph::pressure::History two_samples(bool psi) {
+    egraph::pressure::History history;
+    const auto stalls = psi ? egraph::pressure::Stalls{.cpu = 12.5, .memory = 0.0, .io = 3.25}
+                            : egraph::pressure::Stalls{};
+    for (std::uint64_t tick = 1; tick <= 2; ++tick) {
+        history.add({.cpu = egraph::pressure::CpuTimes{.busy = tick * 200, .total = tick * 400},
+                     .cpus = 4,
+                     .mem_total = 8ULL << 30U,
+                     .mem_available = (8ULL - tick * 2) << 30U,
+                     .load = 2.0 * static_cast<double>(tick),
+                     .stalls = stalls});
+    }
+    return history;
+}
+
+} // namespace
+
+TEST_CASE("sparklines scale to their maximum and mark what crosses the limit") {
+    const auto& unicode = egraph::glyphs(egraph::GlyphSet::unicode);
+    const std::vector<std::optional<double>> values{0.0, 50.0, std::nullopt, 100.0, 200.0};
+    const auto spans = egraph::tui::sparkline(values, 100, 7, unicode, egraph::Tone::choice, 60);
+    // Two blanks for the time before the first reading, one for the missing one.
+    CHECK(joined(spans) == "  ▁▅ ██");
+    // The last two cross the limit: one span for them, in the bad tone.
+    REQUIRE(spans.size() == 2);
+    CHECK(spans.back().text == "██");
+    CHECK(spans.back().pen.fg->red == egraph::tui::tone_pen(egraph::Tone::bad).fg->red);
+    // Only the last width values show.
+    CHECK(joined(egraph::tui::sparkline(values, 100, 2, unicode, egraph::Tone::choice)) == "██");
+    CHECK(joined(egraph::tui::sparkline({}, 100, 3, ascii, egraph::Tone::choice)) == "   ");
+}
+
+TEST_CASE("the pressure panel shows CPU, memory, load and stalls, with steve's limits") {
+    const auto lines = egraph::tui::pressure_lines(
+        two_samples(true), {.load = 3.0, .min_available = 4ULL << 30U}, 4, ascii);
+    REQUIRE(lines.size() == egraph::tui::pressure_rows);
+    CHECK(joined(lines.at(0)) == " System");
+    // The first sample has nothing to measure CPU against. Load's second reading is over steve's
+    // limit, drawn in the bad tone; memory's is at it, which is not.
+    CHECK(joined(lines.at(1)) == " CPU         =     50%   4 CPUs");
+    CHECK(joined(lines.at(2)) ==
+          " Memory     -=  4.0 GiB available of 8.0 GiB   steve waits under 4.0 GiB");
+    CHECK(joined(lines.at(3)) == " Load       =#    4.00   steve waits over 3");
+    CHECK(joined(lines.at(4)) == " Stalls   cpu 12.5%  memory 0.0%  io 3.2%   of the last 10 s");
+
+    const auto bare = egraph::tui::pressure_lines(two_samples(false), {}, 4, ascii);
+    CHECK(contains(joined(bare.at(4)), "psi=1"));
+    CHECK_FALSE(contains(joined(bare.at(3)), "steve"));
+    const auto empty = egraph::tui::pressure_lines(egraph::pressure::History{}, {}, 4, ascii);
+    CHECK(joined(empty.at(1)) == " CPU                -");
+}
+
+TEST_CASE("the emerge view shows the pressure panel where it fits") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    app.handle(character(U'e'));
+    const auto history = two_samples(false);
+    app.finish_watch(running_emerges(), *history.latest());
+    FakeScreen tall{16, 120, {}};
+    egraph::tui::draw(tall, app, ascii);
+    CHECK(tall.line(9) == std::string(120, ' '));
+    CHECK(tall.line(10).starts_with(" System"));
+    CHECK(tall.line(12).starts_with(" Memory"));
+    CHECK(tall.line(14).starts_with(" Stalls"));
+    // Room for the emerge and its three tasks above.
+    CHECK(contains(tall.text(), "app-misc/baz-1"));
+    FakeScreen short_screen{12, 120, {}};
+    egraph::tui::draw(short_screen, app, ascii);
+    CHECK_FALSE(contains(short_screen.text(), " System"));
+}

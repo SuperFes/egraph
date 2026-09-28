@@ -132,6 +132,8 @@ struct Glyphs {
     std::string_view bar_full;
     std::string_view bar_empty;
     std::string_view bar_eighths;
+    // A sparkline's eight levels, lowest first.
+    std::string_view spark;
     // Key hints.
     std::string_view move;
     std::string_view enter;

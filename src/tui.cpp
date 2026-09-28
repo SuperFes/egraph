@@ -2,6 +2,7 @@
 
 #include "build_info.hpp"
 
+#include <cmath>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -501,12 +502,15 @@ bool App::watch_requested() const {
     return watched_ && watched_->due && pages_.empty();
 }
 
-void App::finish_watch(std::vector<emerge::Snapshot> snapshots) {
+void App::finish_watch(std::vector<emerge::Snapshot> snapshots, const pressure::Sample& sample) {
     if (!watched_) {
         return;
     }
     auto& watched = *watched_;
     watched.snapshots = std::move(snapshots);
+    if (sample.cpu || sample.mem_available || sample.load) {
+        watched.history.add(sample);
+    }
     watched.due = false;
     ++watched.frame;
     const auto count = tasks(watched).size();
@@ -799,6 +803,133 @@ std::string progress_bar(std::uint64_t done, std::uint64_t total, std::size_t wi
 std::string spinner_frame(std::size_t count, const Glyphs& glyph) {
     const auto frames = columns(glyph.spinner);
     return frames == 0 ? std::string{} : code_points(glyph.spinner, count % frames, 1);
+}
+
+std::vector<Span> sparkline(const std::vector<std::optional<double>>& values, double max,
+                            std::size_t width, const Glyphs& glyph, Tone tone,
+                            std::optional<double> limit) {
+    const auto levels = columns(glyph.spark);
+    std::vector<Span> spans;
+    // Each cell joins the span before it when it is drawn in the same tone.
+    std::optional<Tone> last_tone;
+    const auto add = [&](std::string cell, Tone cell_tone) {
+        if (last_tone == cell_tone) {
+            spans.back().text += cell;
+        } else {
+            spans.push_back({std::move(cell), tone_pen(cell_tone)});
+            last_tone = cell_tone;
+        }
+    };
+    const auto shown = std::min(values.size(), width);
+    for (std::size_t i = shown; i < width; ++i) {
+        add(" ", tone);
+    }
+    for (std::size_t i = values.size() - shown; i < values.size(); ++i) {
+        const auto& value = values.at(i);
+        if (!value || levels == 0) {
+            add(" ", tone);
+            continue;
+        }
+        const auto scaled = max > 0 ? std::clamp(*value / max, 0.0, 1.0) : 0.0;
+        const auto level =
+            static_cast<std::size_t>(std::lround(scaled * static_cast<double>(levels - 1)));
+        add(code_points(glyph.spark, level, 1), limit && *value > *limit ? Tone::bad : tone);
+    }
+    return spans;
+}
+
+std::vector<std::vector<Span>> pressure_lines(const pressure::History& history,
+                                              const Limits& limits, std::size_t width,
+                                              const Glyphs& glyph) {
+    const auto& readings = history.readings();
+    const auto& latest = history.latest();
+    const auto series = [&](auto value) {
+        std::vector<std::optional<double>> values;
+        values.reserve(readings.size());
+        for (const auto& reading : readings) {
+            values.push_back(value(reading));
+        }
+        return values;
+    };
+    const auto label = [](std::string_view name) {
+        return Span{std::format(" {:<9}", name), tone_pen(Tone::heading)};
+    };
+    const auto note = [](std::string text) { return Span{std::move(text), tone_pen(Tone::note)}; };
+    const auto last = [](const std::vector<std::optional<double>>& values) {
+        return values.empty() ? std::nullopt : values.back();
+    };
+    std::vector<std::vector<Span>> lines{{{" System", tone_pen(Tone::heading)}}};
+
+    const auto cpu = series([](const pressure::Reading& r) {
+        return r.cpu_busy ? std::optional<double>{*r.cpu_busy * 100} : std::nullopt;
+    });
+    auto line = std::vector<Span>{label("CPU")};
+    std::ranges::move(sparkline(cpu, 100, width, glyph, Tone::choice), std::back_inserter(line));
+    const auto cpu_now = last(cpu);
+    line.push_back(
+        {cpu_now ? std::format("  {:>5.0f}%", *cpu_now) : "      -", tone_pen(Tone::version)});
+    if (latest && latest->cpus > 0) {
+        line.push_back(note(std::format("   {} CPUs", latest->cpus)));
+    }
+    lines.push_back(std::move(line));
+
+    // Memory in use, so that higher is harder pressed like the rest.
+    const auto total = latest && latest->mem_total ? static_cast<double>(*latest->mem_total) : 0.0;
+    const auto used = series([&](const pressure::Reading& r) {
+        return r.mem_available && total > 0
+                   ? std::optional<double>{total - static_cast<double>(*r.mem_available)}
+                   : std::nullopt;
+    });
+    const auto used_limit =
+        limits.min_available && total > 0
+            ? std::optional<double>{total - static_cast<double>(*limits.min_available)}
+            : std::nullopt;
+    line = {label("Memory")};
+    std::ranges::move(sparkline(used, total, width, glyph, Tone::host, used_limit),
+                      std::back_inserter(line));
+    if (latest && latest->mem_available && latest->mem_total) {
+        line.push_back({std::format("  {} available of {}", byte_size(*latest->mem_available),
+                                    byte_size(*latest->mem_total)),
+                        tone_pen(Tone::version)});
+    }
+    if (limits.min_available) {
+        line.push_back(
+            note(std::format("   steve waits under {}", byte_size(*limits.min_available))));
+    }
+    lines.push_back(std::move(line));
+
+    const auto load = series([](const pressure::Reading& r) { return r.load; });
+    auto load_max =
+        std::max(latest ? static_cast<double>(latest->cpus) : 0.0, limits.load.value_or(0.0));
+    for (const auto& value : load) {
+        load_max = std::max(load_max, value.value_or(0.0));
+    }
+    line = {label("Load")};
+    std::ranges::move(sparkline(load, load_max, width, glyph, Tone::runtime, limits.load),
+                      std::back_inserter(line));
+    const auto load_now = last(load);
+    line.push_back(
+        {load_now ? std::format("  {:>6.2f}", *load_now) : "       -", tone_pen(Tone::version)});
+    if (limits.load) {
+        line.push_back(note(std::format("   steve waits over {:g}", *limits.load)));
+    }
+    lines.push_back(std::move(line));
+
+    line = {label("Stalls")};
+    const auto stalls = latest ? latest->stalls : pressure::Stalls{};
+    if (stalls.cpu || stalls.memory || stalls.io) {
+        const auto percent = [](std::optional<double> value) {
+            return value ? std::format("{:.1f}%", *value) : std::string{"-"};
+        };
+        line.push_back({std::format("cpu {}  memory {}  io {}", percent(stalls.cpu),
+                                    percent(stalls.memory), percent(stalls.io)),
+                        tone_pen(Tone::version)});
+        line.push_back(note("   of the last 10 s"));
+    } else {
+        line.push_back(note("not kept by this kernel; psi=1 on its command line turns them on"));
+    }
+    lines.push_back(std::move(line));
+    return lines;
 }
 
 std::string task_state(const emerge::Task& task) {

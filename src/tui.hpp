@@ -9,6 +9,7 @@
 #include "emerge.hpp"
 #include "graph.hpp"
 #include "human.hpp"
+#include "pressure.hpp"
 #include "query.hpp"
 #include "screen.hpp"
 #include "store.hpp"
@@ -110,12 +111,22 @@ using Rebuilder = std::function<std::expected<Store, std::string>()>;
 // Reads the running emerges' snapshots.
 using Watcher = std::function<std::vector<emerge::Snapshot>()>;
 
+// Reads /proc for the pressure graphs.
+using Sampler = std::function<pressure::Sample()>;
+
 // What the interface asks of the world outside it: run() calls these, the app never does.
 struct Services {
     Checker check{};
     // Empty where the store cannot be written, so that a check's fresh build is only previewed.
     Rebuilder rebuild{};
     Watcher watch{};
+    Sampler sample{};
+};
+
+// Where steve stops handing out jobs, marked on the pressure graphs when known.
+struct Limits {
+    std::optional<double> load{};
+    std::optional<std::uint64_t> min_available{};
 };
 
 // How often the emerge view reads the snapshots again.
@@ -127,6 +138,8 @@ struct Watched {
     bool due = true;
     // Reads so far, which turn the spinners.
     std::size_t frame = 0;
+    pressure::History history;
+    Limits limits;
     // Over the tasks of every emerge, in order.
     Cursor cursor;
 };
@@ -201,7 +214,7 @@ class App {
     [[nodiscard]] const std::optional<Watched>& watched() const { return watched_; }
     // Whether the emerge view is showing and due to read the snapshots, which run() then does.
     [[nodiscard]] bool watch_requested() const;
-    void finish_watch(std::vector<emerge::Snapshot> snapshots);
+    void finish_watch(std::vector<emerge::Snapshot> snapshots, const pressure::Sample& sample = {});
     // How long run() waits for a key before the view needs drawing again; unset waits for one.
     [[nodiscard]] std::optional<std::chrono::milliseconds> refresh() const;
     [[nodiscard]] const std::optional<Dialog>& dialog() const { return dialog_; }
@@ -806,6 +819,20 @@ inline std::vector<Span> emerge_spans(const emerge::Snapshot& snapshot, const Gl
     return spans;
 }
 
+// The last width values as a sparkline scaled to max, right-aligned. Cells over limit are in the
+// bad tone, the rest in tone; a missing value is a blank cell.
+[[nodiscard]] std::vector<Span> sparkline(const std::vector<std::optional<double>>& values,
+                                          double max, std::size_t width, const Glyphs& glyph,
+                                          Tone tone, std::optional<double> limit = std::nullopt);
+
+// Rows the pressure panel takes: a heading and a graph each for CPU, memory, load and stalls.
+inline constexpr unsigned pressure_rows = 5;
+
+// The pressure panel from row down: what the history holds, with steve's limits marked.
+[[nodiscard]] std::vector<std::vector<Span>> pressure_lines(const pressure::History& history,
+                                                            const Limits& limits, std::size_t width,
+                                                            const Glyphs& glyph);
+
 template <class S> void draw_watch(S& screen, App& app, const Glyphs& glyph, Size size) {
     const auto& open = app.watched();
     if (!open) {
@@ -818,8 +845,17 @@ template <class S> void draw_watch(S& screen, App& app, const Glyphs& glyph, Siz
                 {std::format(" {} ", glyph.trail), tone_pen(Tone::note)},
                 {"emerge", tone_pen(Tone::name)}});
     const unsigned first = 2;
-    const unsigned height = size.rows - first - 1;
+    // The pressure panel sits above the hints, a blank line above it, where there is room.
+    const bool panel = size.rows >= first + pressure_rows + 6;
+    const unsigned height = size.rows - first - 1 - (panel ? pressure_rows + 1 : 0);
     app.set_height(height);
+    if (panel) {
+        const auto graph = std::clamp<std::size_t>(size.cols > 60 ? size.cols - 60 : 0, 8, 120);
+        unsigned row = size.rows - 1 - pressure_rows;
+        for (const auto& spans : pressure_lines(watched.history, watched.limits, graph, glyph)) {
+            put_spans(screen, row++, 0, spans, size.cols);
+        }
+    }
     if (watched.snapshots.empty()) {
         put_spans(screen, 1, 1, {{"No emerge is publishing its progress", tone_pen(Tone::heading)}},
                   size.cols);
@@ -906,7 +942,8 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
                                    ? services.rebuild()
                                    : std::unexpected(std::string{"no way to rebuild"}));
         } else if (app.watch_requested()) {
-            app.finish_watch(services.watch ? services.watch() : std::vector<emerge::Snapshot>{});
+            app.finish_watch(services.watch ? services.watch() : std::vector<emerge::Snapshot>{},
+                             services.sample ? services.sample() : pressure::Sample{});
         } else {
             app.handle(screen.read(app.refresh()));
         }
