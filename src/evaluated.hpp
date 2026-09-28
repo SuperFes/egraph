@@ -6,13 +6,14 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
 
 namespace egraph {
 
-inline constexpr std::uint32_t evaluated_format_version = 2;
+inline constexpr std::uint32_t evaluated_format_version = 3;
 
 // Where an installed package's dependency strings came from under --dynamic-deps=y.
 enum class DepSource : std::uint8_t { ebuild, vdb, moved };
@@ -30,6 +31,19 @@ struct Dependencies {
     std::array<Range, dep_kinds.size()> deps;
     // In Evaluated::possible.
     Range possible;
+    // An ebuild of the same version is visible, as emerge requires of an installed package it
+    // keeps when an ebuild in its slot is visible.
+    bool visible = true;
+    // Its installed metadata is masked (keywords, package.mask, license and the like) under
+    // --dynamic-deps=y, and under =n: depclean passes over a masked package unless visible.
+    bool masked = false;
+    bool vdb_masked = false;
+    // Index into Evaluated::candidates: the best visible version in its slot, when emerge -u
+    // would replace the package with it (rebuild empty) or --newuse would rebuild it from it.
+    std::optional<std::uint32_t> target;
+    // String ids in Evaluated::ids: the flags --newuse rebuilds it for, as emerge shows them
+    // ("flag*", "-flag%", "(-flag%*)"); those with a * are --changed-use's.
+    Range rebuild;
 };
 
 // A dependency the ebuild would add with flags toggled that the installed build left as they are.

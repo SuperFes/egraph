@@ -25,8 +25,7 @@ Each layer has its own inputs and invalidation, and is proven independently.
 | Layer | Contents | Depends on | Status |
 |---|---|---|---|
 | Installed | installed packages, exact dependency edges, sonames, blockers, roots | `/var/db/pkg`, world file, profile (for @system) | first |
-| Evaluated | installed packages' dependencies as emerge reads them by default, and what their ebuilds would add with flags toggled; the visible versions of installed cps with effective USE, and why installed ones are masked | repo metadata, `/etc/portage`, profile, the installed store | stored (9b-9d) |
-| Candidate | best visible version per cp, pending updates and rebuilds | both of the above | later |
+| Evaluated | installed packages' dependencies as emerge reads them by default, and what their ebuilds would add with flags toggled; how `emerge -u` and depclean weigh each (visibility, masks, the version it would move to, the flags `--newuse` rebuilds it for); the visible versions of installed cps with effective USE, and why installed ones are masked | repo metadata, `/etc/portage`, profile, the installed store | stored (9b-9e) |
 
 The evaluated layer is its own file beside the installed store (`installed.evaluated.egraph`),
 written by the same builder run and keyed to that installed store: it names packages by the
@@ -229,11 +228,29 @@ the call depgraph uses for test dependencies, decide what the chain selects. Onl
 user can make count: flags in the ebuild's IUSE that the profile does not mask (to turn on) or
 force (to turn off); arch, elibc and other implicit flags never do.
 
-In removal mode `dep_zapdeps` asks which packages are *available* (visible: unmasked, or with a
-visible equivalent ebuild). egraph has no masking information until the evaluated layer, so it
-takes every installed package as visible, which is the usual state of a live system. An
-installed package that is masked and gone from the repository can make depclean choose
-differently among `||` alternatives. On the dev box both modes agree exactly with depclean.
+`updates` lists what `emerge --update @installed` would replace: @installed holds a slot atom per
+installed package, so each is weighed against the best visible version in its slot (of one
+version, the repository of highest priority). It is replaced when that version is newer, or
+when its own version has no visible ebuild (depgraph's `_equiv_ebuild_visible`: the one in its
+repository, else any), which can mean a downgrade. `-N` (`--newuse`) and `-U` (`--changed-use`)
+add rebuilds of the same version for changed USE, with depgraph's `_reinstall_for_flags` and
+the flags in emerge's notation (`flag*` changed, `flag%` new in IUSE, `(-flag%)` gone from it).
+The builder decides all of it; the C++ side only labels upgrades and downgrades by version.
+egraph does not resolve, so it lists a newer version that an installed dependent's bound (such
+as `<dev-python/astroid-4.1`) holds back, which emerge keeps; it never lists new slots or
+slot-operator rebuilds, which are the resolver's.
+
+In removal mode `dep_zapdeps` asks which packages are *available*: an installed package whose
+own metadata is masked (keywords, `package.mask`, license, invalid strings; under dynamic deps
+with the ebuild's EAPI, KEYWORDS and dependencies, as FakeVartree reads them) is available only
+when an ebuild of its version is visible. Such a package loses a `||` choice to an available
+alternative, and among several installed matches an atom selects an unmasked one, then a
+visible one (`_select_pkg_from_installed`). The evaluated store holds both bits per package; the
+masks only where depclean weighs them (a package that is not visible, or one of several
+installed versions of a cp), since the license check alone would add a fifth to the build. The
+first of `_select_pkg_from_installed`'s filters (`package.mask` and licenses, but not keywords,
+with packages already in the graph let through) is left out: it differs from the second only
+when both kinds of mask meet among one atom's matches.
 
 ## Roots and exit codes
 

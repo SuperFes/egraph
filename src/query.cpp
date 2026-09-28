@@ -1,6 +1,7 @@
 #include "query.hpp"
 
 #include "atom.hpp"
+#include "version.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -87,6 +88,58 @@ std::vector<std::string> possible_lines(const Evaluated& evaluated,
         }
     }
     sorted_unique(lines);
+    return lines;
+}
+
+namespace {
+
+// "upgrade", "downgrade" or "rebuild", by the versions of two cpvs of cp.
+std::string_view update_kind(std::string_view cp, std::string_view from, std::string_view to) {
+    const auto version = [&cp](std::string_view cpv) {
+        return parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
+    };
+    const auto old = version(from);
+    const auto target = version(to);
+    const int order = old && target ? vercmp(*target, *old) : 0;
+    return order > 0 ? "upgrade" : order < 0 ? "downgrade" : "rebuild";
+}
+
+// A --changed-use flag: its state changed, which emerge marks with a *.
+bool state_changed(std::string_view flag) {
+    return flag.ends_with('*') || flag.ends_with("*)");
+}
+
+} // namespace
+
+std::vector<std::string> update_lines(const Evaluated& evaluated, UseRebuilds rebuilds) {
+    std::vector<std::string> lines;
+    for (const auto& pkg : evaluated.packages) {
+        if (!pkg.target) {
+            continue;
+        }
+        const auto& target = evaluated.candidates.at(*pkg.target);
+        const auto cpv = evaluated.string(pkg.cpv);
+        const auto to = evaluated.string(target.cpv);
+        const auto repo = evaluated.string(target.repo);
+        if (pkg.rebuild.count == 0) {
+            lines.push_back(std::format("{}\t{}\t{}\t{}", cpv,
+                                        update_kind(evaluated.string(target.cp), cpv, to), to,
+                                        repo));
+            continue;
+        }
+        std::string flags;
+        for (const auto id : evaluated.ids_in(pkg.rebuild)) {
+            const auto flag = evaluated.string(id);
+            if (rebuilds == UseRebuilds::all ||
+                (rebuilds == UseRebuilds::changed && state_changed(flag))) {
+                flags += flags.empty() ? "" : " ";
+                flags += flag;
+            }
+        }
+        if (!flags.empty()) {
+            lines.push_back(std::format("{}\trebuild\t{}\t{}\t{}", cpv, to, repo, flags));
+        }
+    }
     return lines;
 }
 

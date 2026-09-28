@@ -27,6 +27,17 @@ namespace egraph {
 [[nodiscard]] std::vector<std::string>
 possible_lines(const Evaluated& evaluated, std::span<const std::uint32_t> packages, bool reverse);
 
+// The rebuilds for USE that updates lists beside replacements: none (as emerge -u), the ones
+// --changed-use makes, or all --newuse makes.
+enum class UseRebuilds : std::uint8_t { none, changed, all };
+
+// What emerge -u @installed would replace, as "cpv<TAB>kind<TAB>target cpv<TAB>repo": kind
+// upgrade, downgrade, or rebuild when the installed package is masked and the target has its
+// version. With rebuilds, each USE rebuild too, kind rebuild with "<TAB>flags" appended, the
+// flags in emerge's notation, space-separated. In the installed packages' order.
+[[nodiscard]] std::vector<std::string> update_lines(const Evaluated& evaluated,
+                                                    UseRebuilds rebuilds);
+
 // Consumers (or providers) of a soname: one "cpv<TAB>multilib category" line each, sorted.
 [[nodiscard]] std::vector<std::string> soname_users(const Store& store, std::string_view soname,
                                                     bool providers);

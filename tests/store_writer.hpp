@@ -226,8 +226,12 @@ inline std::vector<std::byte> fresh_sample() {
 //   a-1 from its ebuild, EAPI 8, RDEPEND dev-libs/b:= matching b-1, with an RDEPEND error;
 //   possibly RDEPEND dev-libs/b (matching b-1) with flag on, and BDEPEND dev-libs/gone, an
 //   alternative matching nothing, with flag on and minimal off.
-//   b-1 from the vdb, with no dependencies.
-// Candidates of app-misc/a: a-1, visible, USE and IUSE "flag"; a-2, masked by keyword.
+//   --newuse would rebuild it for flag* and -new%, --changed-use for flag*.
+//   a-1 is masked only without dynamic deps.
+//   b-1 from the vdb, with no dependencies, masked and not visible, and replaced by b-2 under
+//   emerge -u.
+// Candidates of app-misc/a: a-1, visible, USE and IUSE "flag"; a-2, masked by keyword; of
+// dev-libs/b: b-2, visible.
 inline constexpr std::initializer_list<std::string_view> evaluated_strings{"",
                                                                            "app-misc/a-1",
                                                                            "dev-libs/b-1",
@@ -243,7 +247,10 @@ inline constexpr std::initializer_list<std::string_view> evaluated_strings{"",
                                                                            "bad dep",
                                                                            "dev-libs/b",
                                                                            "dev-libs/gone",
-                                                                           "-minimal"};
+                                                                           "-minimal",
+                                                                           "flag*",
+                                                                           "-new%",
+                                                                           "dev-libs/b-2"};
 
 inline std::vector<Section> evaluated_sections() {
     Bytes meta;
@@ -268,14 +275,18 @@ inline std::vector<Section> evaluated_sections() {
     dependencies.varint(2);
     dependencies.varints({4, 13, 0}).list({1}).list({8});
     dependencies.varints({0, 14, 1}).list({}).list({8, 15});
+    // Visible, masked, masked without dynamic deps, target (candidate 0 plus 1), rebuild.
+    dependencies.varints({1, 0, 1, 1}).list({16, 17});
     // b-1.
     dependencies.varints({2, 1, 3}).varint(0);
     dependencies.varint(0).varint(0).varint(0).varint(0).varint(0).varint(0);
+    dependencies.varints({0, 1, 1, 3}).list({});
 
     Bytes candidates;
-    candidates.varint(2);
+    candidates.varint(3);
     candidates.varints({5, 1, 7, 6, 6}).list({8}).list({8}).list({});
     candidates.varints({5, 9, 7, 6, 6}).list({}).list({8}).list({10});
+    candidates.varints({13, 18, 7, 6, 6}).list({}).list({}).list({});
 
     return {{.id = 1, .bytes = meta.bytes()},
             {.id = 2, .bytes = inputs.bytes()},

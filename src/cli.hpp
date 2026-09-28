@@ -69,6 +69,11 @@ struct Orphans {
     bool build_deps = true;
 };
 
+struct Updates {
+    static constexpr std::string_view name = "updates";
+    UseRebuilds rebuilds = UseRebuilds::none;
+};
+
 enum class ExportFormat : std::uint8_t { dot, json };
 
 struct Export {
@@ -110,7 +115,7 @@ struct Affected {
 };
 
 using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Orphans,
-                             Export, Stats, Rebuild, Refresh, Check, Tui, Affected>;
+                             Updates, Export, Stats, Rebuild, Refresh, Check, Tui, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

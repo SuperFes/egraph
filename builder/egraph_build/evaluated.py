@@ -6,6 +6,7 @@ cp, the versions it could move to, with the USE each would be built with now. Po
 the evaluation, as for the installed layer.
 """
 
+import collections
 import json
 from typing import NamedTuple
 
@@ -13,7 +14,7 @@ from portage.dep import Atom, use_reduce
 from portage.exception import InvalidAtom, InvalidDependString
 from portage.versions import cpv_getkey
 
-from egraph_build import dynamic, installed
+from egraph_build import dynamic, installed, masks
 from egraph_build.model import DEP_KINDS
 
 SOURCES = dynamic.SOURCES
@@ -66,6 +67,24 @@ class Dependencies(NamedTuple):
     # Possible entries sorted by kind, atom, choice and flags; only the ebuild's strings keep
     # the conditionals they come from.
     possible: tuple = ()
+    # An ebuild of the same version is visible, as emerge requires of an installed package it
+    # keeps when an ebuild in its slot is visible (depgraph's _equiv_ebuild_visible).
+    visible: bool = True
+    # Its installed metadata is masked (keywords, package.mask, license and the like), as
+    # depgraph's Package.masks has it under --dynamic-deps=y, which reads the EAPI, KEYWORDS and
+    # dependencies of the same version's ebuild when source is EBUILD: depclean passes over it
+    # unless visible. Only for a package depclean weighs it for, one not visible or beside
+    # another installed version of its cp; False for the rest.
+    masked: bool = False
+    # The same under --dynamic-deps=n, from the vdb alone.
+    vdb_masked: bool = False
+    # (cpv, repo) of the best visible version in its slot, when emerge -u would replace it with
+    # that (a different version, or any when it is not visible) or --newuse would rebuild it.
+    target: tuple = None
+    # The flags --newuse rebuilds it for when target is not a replacement, as emerge shows
+    # them: "flag*" or "-flag*" changed, "flag%*" or "-flag%" new in IUSE, "(-flag%*)" or
+    # "(-flag%)" gone from it (* when it was on). Those with a * are --changed-use's.
+    rebuild: tuple = ()
 
 
 class Candidate(NamedTuple):
@@ -124,9 +143,8 @@ def _iuse(metadata):
     return frozenset(flag.lstrip("+-") for flag in metadata["IUSE"].split())
 
 
-class UseToggles:
-    """The toggles the user could make on an ebuild: its explicit IUSE, less what the profile
-    masks (for a flag that is off) or forces (for a flag that is on).
+class EbuildUse:
+    """What the profile masks and forces on installed versions' ebuilds.
 
     read_candidates records what it sees of each ebuild as it passes; the rest go through a
     config of this one's own, which setcpv changes package by package.
@@ -149,30 +167,43 @@ class UseToggles:
             iuse & frozenset(settings.useforce),
         )
 
-    def __call__(self, cpv, repo, use):
-        states = self._states.get((cpv, repo))
-        if states is None:
-            from portage.package.ebuild.config import config
+    def _set(self, cpv, repo):
+        from portage.package.ebuild.config import config
 
-            if self._settings is None:
-                self._settings = config(clone=self._portdb.settings)
-            metadata = dict(
-                zip(
-                    _CANDIDATE_KEYS,
-                    self._portdb.aux_get(
-                        cpv, list(_CANDIDATE_KEYS), myrepo=repo or None
-                    ),
-                )
+        if self._settings is None:
+            self._settings = config(clone=self._portdb.settings)
+        metadata = dict(
+            zip(
+                _CANDIDATE_KEYS,
+                self._portdb.aux_get(cpv, list(_CANDIDATE_KEYS), myrepo=repo or None),
             )
-            self._settings.setcpv(cpv, mydb=metadata)
-            self._current = metadata
-            self.record(cpv, repo, _iuse(metadata), self._settings)
-            states = self._states[(cpv, repo)]
-        iuse, masked, forced = states
+        )
+        self._settings.setcpv(cpv, mydb=metadata)
+        self._current = metadata
+        self.record(cpv, repo, _iuse(metadata), self._settings)
+        return self._settings
+
+    def _state(self, cpv, repo):
+        if (cpv, repo) not in self._states:
+            self._set(cpv, repo)
+        return self._states[(cpv, repo)]
+
+    def toggles(self, cpv, repo, use):
+        """The toggles the user could make on the ebuild: its explicit IUSE, less what the
+        profile masks (for a flag that is off) or forces (for a flag that is on)."""
+        iuse, masked, forced = self._state(cpv, repo)
         return frozenset(
             {f"-{flag}" for flag in (iuse & use) - forced}
             | {flag for flag in iuse - use - masked}
         )
+
+    def forced(self, cpv, repo, flags):
+        """The flags the profile masks or forces on the ebuild, in or out of its IUSE."""
+        iuse, masked, forced = self._state(cpv, repo)
+        if flags <= iuse:
+            return flags & (masked | forced)
+        settings = self._set(cpv, repo)
+        return flags & (frozenset(settings.usemask) | frozenset(settings.useforce))
 
 
 def _paren_reduce(depstr):
@@ -273,15 +304,16 @@ def possible_dependencies(strings, use, eapi, toggles, match, deps):
     return tuple(sorted(entries, key=_possible_order))
 
 
-def read_dependencies(vardb, portdb, cpv, match, updates, use_toggles=None):
-    """cpv's Dependencies; use_toggles, a UseToggles, is made here when not given."""
+def read_dependencies(vardb, portdb, cpv, match, updates, ebuild_use=None):
+    """cpv's Dependencies, without its update; ebuild_use, an EbuildUse, is made here when not
+    given."""
     source, strings, eapi = dynamic.dependency_strings(vardb, portdb, cpv, updates)
     use, repo = vardb.aux_get(cpv, ["USE", "repository"])
     use = frozenset(use.split())
     deps, errors = installed.dependency_trees(strings, use, eapi, match)
     possible = ()
     if source == "ebuild":
-        toggles = (use_toggles or UseToggles(portdb))(cpv, repo, use)
+        toggles = (ebuild_use or EbuildUse(portdb)).toggles(cpv, repo, use)
         possible = possible_dependencies(strings, use, eapi, toggles, match, deps)
     return Dependencies(
         cpv=str(cpv),
@@ -293,11 +325,89 @@ def read_dependencies(vardb, portdb, cpv, match, updates, use_toggles=None):
     )
 
 
-def read_candidates(portdb, settings, cp, installed_cpvs, use_toggles=None):
+def _version(cpv):
+    from portage.versions import cpv_getversion
+
+    return cpv_getversion(cpv)
+
+
+def rebuild_flags(old_use, old_iuse, use, iuse, forced):
+    """depgraph's _reinstall_for_flags under --newuse, in emerge's notation (Dependencies)."""
+    changed = (old_iuse & old_use) ^ (iuse & use)
+    flags = ((old_iuse ^ iuse) - forced) | changed
+    found = []
+    for flag in sorted(flags):
+        star = "*" if flag in changed else ""
+        if flag in iuse:
+            sign = "" if flag in use else "-"
+            added = "" if flag in old_iuse else "%"
+            found.append(f"{sign}{flag}{added}{star}")
+        else:
+            found.append(f"(-{flag}%{star})")
+    return tuple(found)
+
+
+def read_masked(vardb, portdb, settings, cpv, updates):
+    """cpv's masked and vdb_masked (Dependencies); settings is a config clone of vardb's."""
+    metadata = dict(zip(masks.KEYS, vardb.aux_get(cpv, list(masks.KEYS))))
+    vdb_masked = masks.masked(settings, cpv, metadata)
+    source, strings, eapi = dynamic.dependency_strings(vardb, portdb, cpv, updates)
+    if source != "ebuild":
+        return {"masked": vdb_masked, "vdb_masked": vdb_masked}
+    # FakeVartree's view: the ebuild's EAPI, KEYWORDS and dependencies.
+    (keywords,) = portdb.aux_get(cpv, ["KEYWORDS"], myrepo=metadata["repository"])
+    metadata.update(strings, EAPI=eapi, KEYWORDS=keywords)
+    return {"masked": masks.masked(settings, cpv, metadata), "vdb_masked": vdb_masked}
+
+
+def read_update(vardb, cpv, candidates, repositories, ebuild_use):
+    """cpv's visible, target and rebuild (Dependencies) against its cp's candidates, as emerge
+    -u @installed weighs it; repositories highest priority first, as portdb lists them.
+    """
+    from portage.versions import vercmp
+
+    slot, use, iuse, repo = vardb.aux_get(cpv, ["SLOT", "USE", "IUSE", "repository"])
+    same = [c for c in candidates if c.cpv == cpv]
+    # Its own repository's ebuild when there is one, else any.
+    visible = any(not c.reasons for c in [c for c in same if c.repo == repo] or same)
+    rank = {name: -i for i, name in enumerate(repositories)}
+    slot = slot.partition("/")[0]
+    best = None
+    for c in candidates:
+        if c.reasons or c.slot != slot:
+            continue
+        # Of one version, the ebuild in the repository of highest priority.
+        if (
+            best is None
+            or (
+                vercmp(_version(c.cpv), _version(best.cpv))
+                or rank[c.repo] - rank[best.repo]
+            )
+            > 0
+        ):
+            best = c
+    if best is None:
+        return {"visible": visible}
+    order = vercmp(_version(best.cpv), _version(cpv))
+    if order > 0 or not visible:
+        return {"visible": visible, "target": (best.cpv, best.repo)}
+    if order < 0:
+        # Its visible ebuild moved to another slot.
+        return {"visible": visible}
+    old_use, old_iuse = frozenset(use.split()), _iuse({"IUSE": iuse})
+    new_use, new_iuse = frozenset(best.use), frozenset(best.iuse)
+    forced = ebuild_use.forced(best.cpv, best.repo, old_iuse ^ new_iuse)
+    rebuild = rebuild_flags(old_use, old_iuse, new_use, new_iuse, forced)
+    if not rebuild:
+        return {"visible": visible}
+    return {"visible": visible, "target": (best.cpv, best.repo), "rebuild": rebuild}
+
+
+def read_candidates(portdb, settings, cp, installed_cpvs, ebuild_use=None):
     """Every visible version of cp in every repository, and each masked one installed.
 
-    settings is a config clone of portdb's, which this changes package by package; use_toggles,
-    a UseToggles, records each installed version it sets.
+    settings is a config clone of portdb's, which this changes package by package; ebuild_use,
+    an EbuildUse, records each installed version it sets.
     """
     from portage.dep import Atom
     from portage.package.ebuild.getmaskingstatus import getmaskingstatus
@@ -334,8 +444,8 @@ def read_candidates(portdb, settings, cp, installed_cpvs, use_toggles=None):
             settings.setcpv(cpv, mydb=metadata)
             current = metadata
             iuse = _iuse(metadata)
-            if use_toggles is not None and cpv in installed_cpvs:
-                use_toggles.record(cpv, repo, iuse, settings)
+            if ebuild_use is not None and cpv in installed_cpvs:
+                ebuild_use.record(cpv, repo, iuse, settings)
             slot, _, sub_slot = metadata["SLOT"].partition("/")
             found.append(
                 Candidate(
@@ -362,17 +472,27 @@ def build(vardb, portdb, match=None):
     settings = config(clone=portdb.settings)
     installed_cpvs = frozenset(cpvs)
     # Candidates first: they set a config to every installed ebuild the toggles need.
-    use_toggles = UseToggles(portdb)
-    candidates = []
+    ebuild_use = EbuildUse(portdb)
+    by_cp = {}
     for cp in sorted({cpv_getkey(cpv) for cpv in cpvs}):
-        candidates.extend(
-            read_candidates(portdb, settings, cp, installed_cpvs, use_toggles)
-        )
-    packages = [
-        read_dependencies(vardb, portdb, cpv, match, updates, use_toggles)
-        for cpv in cpvs
-    ]
-    return EvaluatedLayer(packages, candidates)
+        by_cp[cp] = read_candidates(portdb, settings, cp, installed_cpvs, ebuild_use)
+    repositories = portdb.getRepositories()
+    installed_settings = config(clone=vardb.settings)
+    versions = collections.Counter(cpv_getkey(cpv) for cpv in cpvs)
+    packages = []
+    for cpv in cpvs:
+        cp = cpv_getkey(cpv)
+        pkg = read_dependencies(
+            vardb, portdb, cpv, match, updates, ebuild_use
+        )._replace(**read_update(vardb, cpv, by_cp[cp], repositories, ebuild_use))
+        # Masks are costly (the license check above all), and depclean only weighs them for a
+        # package that is not visible or shares its cp with another installed version.
+        if not pkg.visible or versions[cp] > 1:
+            pkg = pkg._replace(
+                **read_masked(vardb, portdb, installed_settings, cpv, updates)
+            )
+        packages.append(pkg)
+    return EvaluatedLayer(packages, [c for found in by_cp.values() for c in found])
 
 
 def to_json(layer):
@@ -394,6 +514,15 @@ def to_json(layer):
                 }
                 for p in pkg.possible
             ],
+            "visible": pkg.visible,
+            "masked": pkg.masked,
+            "vdb_masked": pkg.vdb_masked,
+            "target": (
+                None
+                if pkg.target is None
+                else {"cpv": pkg.target[0], "repo": pkg.target[1]}
+            ),
+            "rebuild": list(pkg.rebuild),
         }
         for pkg in layer
     ]
@@ -410,5 +539,5 @@ def to_json(layer):
         }
         for c in layer.candidates()
     ]
-    document = {"format": 2, "packages": packages, "candidates": candidates}
+    document = {"format": 3, "packages": packages, "candidates": candidates}
     return json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"

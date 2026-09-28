@@ -8,6 +8,7 @@ from portage.exception import InvalidAtom, InvalidDependString
 from portage.versions import cpv_getkey
 
 import compare
+import update
 from egraph_build import evaluated, oracle
 from egraph_build.model import DEP_KINDS, Edge
 
@@ -222,3 +223,135 @@ def test_possible_dependencies_by_hand(playgrounds):
     }
     # The vdb's strings are reduced already.
     assert all(not pkg.possible for pkg in layer if pkg.source != evaluated.EBUILD)
+
+
+# Updates, held to emerge -u @installed.
+
+USE_MODES = [(False, False), (True, False), (False, True)]
+
+
+@pytest.mark.parametrize(
+    "newuse, changed_use", USE_MODES, ids=["update", "newuse", "changed-use"]
+)
+def test_updates_follow_emerge(scenario, newuse, changed_use):
+    found = update.updates(scenario.trees, scenario.eroot, newuse, changed_use)
+    if not found.success:
+        pytest.skip("emerge cannot resolve @installed here")
+    assert compare.layer_updates(build(scenario), newuse, changed_use) == found.replaced
+
+
+def weighed(layer):
+    """The packages whose masks the layer holds: not visible, or beside another installed
+    version of their cp."""
+    versions = collections.Counter(cpv_getkey(pkg.cpv) for pkg in layer)
+    return {
+        pkg.cpv for pkg in layer if not pkg.visible or versions[cpv_getkey(pkg.cpv)] > 1
+    }
+
+
+def test_masked_is_emerges(scenario, dynamic_deps):
+    layer = build(scenario)
+    found = {pkg.cpv: pkg.masked if dynamic_deps else pkg.vdb_masked for pkg in layer}
+    expected = update.masked(scenario.trees, scenario.eroot, dynamic_deps)
+    for cpv in found:
+        assert found[cpv] == (expected[cpv] if cpv in weighed(layer) else False), cpv
+
+
+@pytest.mark.parametrize(
+    "cpv, masked, vdb_masked, visible",
+    [
+        ("dev-libs/gone-1", True, True, False),
+        # Visible, and alone in its cp: depclean never weighs its masks.
+        ("dev-libs/stale-1", False, False, True),
+        ("dev-libs/kept-1", False, False, False),
+        ("dev-libs/multi-2", True, True, False),
+    ],
+)
+def test_masked_installed_packages(playgrounds, cpv, masked, vdb_masked, visible):
+    pkg = build(playgrounds("masked-installed")).package(cpv)
+    assert (pkg.masked, pkg.vdb_masked, pkg.visible) == (masked, vdb_masked, visible)
+
+
+@pytest.mark.parametrize(
+    "cpv", ["app-misc/bad-1", "app-misc/nocategory-1"], ids=["dependency", "soname"]
+)
+def test_unparsable_metadata_masks(playgrounds, cpv):
+    name = "reference" if cpv == "app-misc/bad-1" else "sonames"
+    pkg = build(playgrounds(name)).package(cpv)
+    assert (pkg.masked, pkg.vdb_masked) == (True, True)
+
+
+def test_visible_is_emerges(scenario):
+    assert {pkg.cpv: pkg.visible for pkg in build(scenario)} == update.equiv_visible(
+        scenario.trees, scenario.eroot
+    )
+
+
+@pytest.mark.parametrize(
+    "cpv, visible, target, rebuild",
+    [
+        ("app-misc/up-1", True, ("app-misc/up-2", "test_repo"), ()),
+        ("app-misc/rev-1", True, ("app-misc/rev-1-r1", "test_repo"), ()),
+        ("dev-libs/slotted-1", True, ("dev-libs/slotted-1.1", "test_repo"), ()),
+        ("dev-libs/slotted-2", True, None, ()),
+        ("app-misc/testing-1", True, None, ()),
+        ("app-misc/past-2", False, ("app-misc/past-3", "test_repo"), ()),
+        ("app-misc/down-2", False, ("app-misc/down-1", "test_repo"), ()),
+        ("app-misc/gone-2", False, ("app-misc/gone-1", "test_repo"), ()),
+        ("app-misc/moved-1", True, None, ()),
+        ("app-misc/twin-1", True, ("app-misc/twin-1", "overlay"), ("extra%*",)),
+        ("app-misc/both-1", True, ("app-misc/both-2", "test_repo"), ()),
+        (
+            "app-misc/use-1",
+            True,
+            ("app-misc/use-1", "test_repo"),
+            (
+                "(-gone_off%)",
+                "(-gone_on%*)",
+                "-new_off%",
+                "new_on%*",
+                "-turned_off*",
+                "turned_on*",
+            ),
+        ),
+        (
+            "app-misc/iuse-1",
+            True,
+            ("app-misc/iuse-1", "test_repo"),
+            ("(-gone_off%)", "-new_off%"),
+        ),
+    ],
+)
+def test_updates_by_hand(playgrounds, cpv, visible, target, rebuild):
+    pkg = build(playgrounds("updates")).package(cpv)
+    assert (pkg.visible, pkg.target, pkg.rebuild) == (visible, target, rebuild)
+
+
+def test_a_changed_default_rebuilds(repository):
+    pkg = repository.package("app-misc/flags-1")
+    assert pkg.target == ("app-misc/flags-1", "test_repo")
+    assert pkg.rebuild == ("new*", "-old*")
+
+
+@pytest.mark.parametrize(
+    "old_use, old_iuse, use, iuse, forced, flags",
+    [
+        ("", "", "", "", "", ()),
+        ("a", "a", "a", "a", "", ()),
+        ("", "a", "a", "a", "", ("a*",)),
+        ("a", "a", "", "a", "", ("-a*",)),
+        ("", "", "a", "a", "", ("a%*",)),
+        ("", "", "", "a", "", ("-a%",)),
+        ("", "", "", "a", "a", ()),
+        ("a", "a", "", "", "", ("(-a%*)",)),
+        ("a", "a", "", "", "a", ("(-a%*)",)),
+        ("", "a", "", "", "", ("(-a%)",)),
+        # Flags outside IUSE, like the arch, never count.
+        ("x86", "", "amd64", "", "", ()),
+    ],
+)
+def test_rebuild_flags(old_use, old_iuse, use, iuse, forced, flags):
+    sets = [
+        frozenset(value.split()) for value in (old_use, old_iuse, use, iuse, forced)
+    ]
+    assert evaluated.rebuild_flags(*sets) == flags

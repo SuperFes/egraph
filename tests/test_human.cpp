@@ -127,6 +127,30 @@ TEST_CASE("orphans end with a count") {
     CHECK(none.str() == "+ Nothing to remove.\n");
 }
 
+TEST_CASE("updates line up versions and repositories, and count each kind") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{
+                              "app-misc/up-1\tupgrade\tapp-misc/up-10\ttest_repo",
+                              "app-misc/down-2\tdowngrade\tapp-misc/down-1\toverlay",
+                              "app-misc/use-1\trebuild\tapp-misc/use-1\ttest_repo\ta%* -b%",
+                          },
+                          plain);
+    CHECK(out.str() == "U app-misc/up    1 > 10  ::test_repo\n"
+                       "D app-misc/down  2 > 1   ::overlay\n"
+                       "R app-misc/use   1       ::test_repo  a%* -b%\n"
+                       "\n1 upgrade, 1 downgrade, 1 rebuild\n"
+                       "\nflag* changed  flag% new in IUSE  (-flag%) gone from it\n");
+    std::ostringstream two;
+    egraph::human_updates(
+        two, std::vector<std::string>{"a/b-1\tupgrade\ta/b-2\tr", "a/c-1\tupgrade\ta/c-2\tr"},
+        plain);
+    CHECK(two.str() == "U a/b  1 > 2  ::r\nU a/c  1 > 2  ::r\n\n2 upgrades\n");
+    std::ostringstream none;
+    egraph::human_updates(none, {}, plain);
+    CHECK(none.str() == "+ Nothing to update.\n");
+}
+
 TEST_CASE("broken groups by package and counts") {
     const std::vector<std::string> records{
         "a/b-1\tPDEPEND\tx/gone",
@@ -210,6 +234,9 @@ TEST_CASE("every glyph set fills every glyph") {
                                 glyph.unfolded,
                                 glyph.cycle,
                                 glyph.instead,
+                                glyph.upgrade,
+                                glyph.downgrade,
+                                glyph.rebuild,
                                 glyph.frame.top_left,
                                 glyph.frame.top_right,
                                 glyph.frame.bottom_left,

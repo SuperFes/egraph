@@ -142,11 +142,13 @@ a merge refreshes only what it changed.
   package in the evaluated store. Only flags in the ebuild's IUSE that the profile neither
   masks (to turn on) nor forces (to turn off) count. Held to an oracle that tries every set of
   toggles on the scenarios and every single toggle on a live sample.
-- 9e: candidates. `egraph updates`: installed packages with a newer visible version in their
-  slot, and those whose effective USE no longer matches what they were built with (as
-  `--newuse` and `--changed-use` see it), held to `emerge -pu`/`-puDN @world` on scenarios where
-  the resolver has no choices to make, with every divergence recorded. The visibility bit lets
-  `orphans` treat masked installed packages as depclean does.
+- 9e (done): `egraph updates [-N|-U]`: what `emerge -pu @installed` would replace (a newer
+  visible version in the slot, or another one when the installed version has no visible
+  ebuild), and with `--newuse` or `--changed-use` what it would rebuild for USE, with the flags.
+  Held exactly to emerge on every scenario in all three modes; on the live system it lists
+  everything emerge does, plus what dependents' bounds hold back (recorded in findings). The
+  evaluated store's visibility and mask bits let `orphans` and `why` pass over masked installed
+  packages as depclean does, in both `--dynamic-deps` modes.
 - 9f: freshness and hooks. Incremental rebuilds from the categories whose metadata changed; a
   `postsync.d` entry installed beside the `post_emerge` one, and the post_emerge entry refreshing
   both stores.

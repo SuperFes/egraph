@@ -111,6 +111,10 @@ struct Glyphs {
     std::string_view cycle;
     // Before what is installed in place of a dependency.
     std::string_view instead;
+    // A pending update: a newer version, an older one, and the same one rebuilt.
+    std::string_view upgrade;
+    std::string_view downgrade;
+    std::string_view rebuild;
     // A box's corners and sides.
     struct Frame {
         std::string_view top_left;
@@ -174,6 +178,9 @@ void human_broken(std::ostream& out, std::span<const std::string> broken,
 
 void human_soname(std::ostream& out, std::span<const std::string> records, std::string_view soname,
                   bool providers, const Theme& theme);
+
+// updates records: one line per package, its versions or the flags it would be rebuilt for.
+void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme);
 
 // match records, one block per atom in the given order.
 void human_match(std::ostream& out, std::span<const std::string> records,

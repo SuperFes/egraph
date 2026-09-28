@@ -30,7 +30,7 @@ template <class T> const T& element(std::span<const T> items, std::size_t index)
 // What depclean's choice logic asks of one atom.
 struct AtomFacts {
     bool is_virtual = false;
-    // Some installed package matches it when its USE dependencies are ignored.
+    // The installed package it selects when its USE dependencies are ignored is available.
     bool available = false;
     // Some installed package has its cp.
     bool cp_installed = false;
@@ -43,6 +43,7 @@ struct Choice {
     bool available = true;
     bool use_satisfied = true;
     bool in_graph = true;
+    bool all_installed = true;
     bool some_installed = false;
     bool cp_installed = false;
     // (cp string id, package): the highest installed package the choice selects in each cp.
@@ -67,7 +68,7 @@ class Depclean {
 
     Kept run() {
         for (std::uint32_t root = 0; root < store().roots.size(); ++root) {
-            if (const auto child = highest(store().ids_in(store().roots.at(root).matches))) {
+            if (const auto child = select(store().ids_in(store().roots.at(root).matches))) {
                 kept_.roots.push_back({.root = root, .child = *child});
                 add(*child);
             }
@@ -117,6 +118,42 @@ class Depclean {
         return best;
     }
 
+    const Masking& masking(std::uint32_t pkg) const {
+        static constexpr Masking unmasked;
+        return options_.masking.empty() ? unmasked : options_.masking.at(pkg);
+    }
+
+    // What the composite dbapi dep_zapdeps asks lets through: a masked installed package only
+    // when an ebuild of its version is visible.
+    bool usable(std::uint32_t pkg) const {
+        const auto& found = masking(pkg);
+        return !found.masked || found.visible;
+    }
+
+    // _select_pkg_from_installed: of several matches, the unmasked ones, and of those the
+    // visible ones, when there are any; then the highest.
+    std::optional<std::uint32_t> select(std::span<const std::uint32_t> ids) const {
+        if (ids.size() < 2 || options_.masking.empty()) {
+            return highest(ids);
+        }
+        std::vector<std::uint32_t> kept;
+        std::ranges::copy_if(ids, std::back_inserter(kept),
+                             [&](std::uint32_t id) { return !masking(id).masked; });
+        if (kept.empty()) {
+            return highest(ids);
+        }
+        std::vector<std::uint32_t> visible;
+        std::ranges::copy_if(kept, std::back_inserter(visible),
+                             [&](std::uint32_t id) { return masking(id).visible; });
+        return highest(visible.empty() ? kept : visible);
+    }
+
+    // A package the composite dbapi selects for ids, if it lets it through.
+    bool selects_usable(std::span<const std::uint32_t> ids) const {
+        const auto pkg = select(ids);
+        return pkg && usable(*pkg);
+    }
+
     AtomFacts facts(std::uint32_t atom_string) {
         if (const auto found = facts_.find(atom_string); found != facts_.end()) {
             return found->second;
@@ -132,9 +169,12 @@ class Depclean {
             const auto installed = by_cp_.find(atom->cp);
             if (installed != by_cp_.end()) {
                 facts.cp_installed = true;
-                facts.available = std::ranges::any_of(installed->second, [&](std::uint32_t id) {
-                    return matches(store(), store().packages.at(id), *atom);
-                });
+                std::vector<std::uint32_t> ids;
+                std::ranges::copy_if(installed->second, std::back_inserter(ids),
+                                     [&](std::uint32_t id) {
+                                         return matches(store(), store().packages.at(id), *atom);
+                                     });
+                facts.available = selects_usable(ids);
             }
         }
         facts_.emplace(atom_string, facts);
@@ -174,7 +214,7 @@ class Depclean {
         std::vector<std::optional<std::uint32_t>> children;
         children.reserve(atoms.size());
         for (const auto& [index, choice] : atoms) {
-            children.push_back(highest(store().ids_in(element(nodes, index).matches)));
+            children.push_back(select(store().ids_in(element(nodes, index).matches)));
         }
 
         // The distinct packages selected in each cp.
@@ -312,7 +352,8 @@ class Depclean {
             const auto atom_facts = facts(node.atom);
             const auto ids = store().ids_in(node.matches);
             choice.available = choice.available && atom_facts.available;
-            choice.use_satisfied = choice.use_satisfied && !ids.empty();
+            choice.use_satisfied = choice.use_satisfied && selects_usable(ids);
+            choice.all_installed = choice.all_installed && !ids.empty();
             choice.some_installed = choice.some_installed || !ids.empty();
             choice.cp_installed = choice.cp_installed || atom_facts.cp_installed;
             if (!atom_facts.is_virtual && std::ranges::none_of(ids, [&](std::uint32_t id) {
@@ -320,7 +361,13 @@ class Depclean {
                 })) {
                 choice.in_graph = false;
             }
-            if (const auto best = highest(ids)) {
+            if (!choice.available) {
+                // dep_zapdeps stops weighing versions at the first atom nothing available
+                // matches, and counts only an available alternative as in the graph.
+                choice.in_graph = false;
+                continue;
+            }
+            if (const auto best = select(ids)) {
                 const auto cp = store().packages.at(*best).cp;
                 const auto known = std::ranges::find(
                     choice.selects, cp, &std::pair<std::uint32_t, std::uint32_t>::first);
@@ -375,25 +422,27 @@ class Depclean {
         bin = std::move(sorted);
     }
 
-    // dep_zapdeps for one || group, every installed package taken as visible: an alternative
-    // whose atoms are all installed wins, with USE dependencies met before without, and failing
-    // that one with some of them installed. Appends the chosen alternative's atoms.
+    // dep_zapdeps for one || group: an alternative whose atoms are all installed and available
+    // wins, with USE dependencies met before without, and failing that one with all, then some
+    // of them installed. Appends the chosen alternative's atoms.
     void choose(std::span<const Node> nodes, std::uint32_t group,
                 std::vector<std::uint32_t>& atoms) {
         // Bins in the order dep_zapdeps tries them.
-        std::array<std::vector<Choice>, 5> bins;
+        std::array<std::vector<Choice>, 6> bins;
         for (std::uint32_t i = group + 1; i < nodes.size(); ++i) {
             if (element(nodes, i).parent != group) {
                 continue;
             }
             auto choice = classify(nodes, i);
-            std::size_t bin = 4;
+            std::size_t bin = 5;
             if (choice.available) {
                 bin = choice.use_satisfied ? 0 : 1;
-            } else if (choice.some_installed) {
+            } else if (choice.all_installed) {
                 bin = 2;
-            } else if (choice.cp_installed) {
+            } else if (choice.some_installed) {
                 bin = 3;
+            } else if (choice.cp_installed) {
+                bin = 4;
             }
             bins.at(bin).push_back(std::move(choice));
         }

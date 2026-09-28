@@ -243,7 +243,7 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string_list(out, evaluated, candidate.use);
         out << '}';
     }
-    out << R"(],"format":2,"packages":[)";
+    out << R"(],"format":3,"packages":[)";
     first = true;
     for (const auto& pkg : evaluated.packages) {
         out << (first ? "{\"cpv\":" : ",{\"cpv\":");
@@ -258,7 +258,7 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string(out, evaluated, pkg.eapi);
         out << ",\"errors\":";
         write_pairs(out, evaluated, pkg.errors);
-        out << ",\"possible\":[";
+        out << ",\"masked\":" << (pkg.masked ? "true" : "false") << ",\"possible\":[";
         bool first_possible = true;
         for (const auto& entry : evaluated.possible_in(pkg.possible)) {
             out << (first_possible ? "{\"atom\":" : ",{\"atom\":");
@@ -275,7 +275,22 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
             }
             out << "]}";
         }
-        out << R"(],"source":")" << sources.at(static_cast<std::size_t>(pkg.source)) << R"("})";
+        out << "],\"rebuild\":";
+        write_string_list(out, evaluated, pkg.rebuild);
+        out << R"(,"source":")" << sources.at(static_cast<std::size_t>(pkg.source))
+            << R"(","target":)";
+        if (const auto index = pkg.target) {
+            const auto& target = evaluated.candidates.at(*index);
+            out << "{\"cpv\":";
+            write_string(out, evaluated, target.cpv);
+            out << ",\"repo\":";
+            write_string(out, evaluated, target.repo);
+            out << '}';
+        } else {
+            out << "null";
+        }
+        out << ",\"vdb_masked\":" << (pkg.vdb_masked ? "true" : "false")
+            << ",\"visible\":" << (pkg.visible ? "true" : "false") << '}';
     }
     out << "]}\n";
 }

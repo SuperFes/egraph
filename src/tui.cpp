@@ -374,7 +374,7 @@ void App::adopt(Store store, Source source) {
 }
 
 void App::recompute() {
-    kept_ = keep(store(), {.build_deps = build_deps_});
+    kept_ = keep(store(), {.build_deps = build_deps_, .masking = {}});
     root_of_.assign(store().packages.size(), std::nullopt);
     for (const auto& pull : kept_.roots) {
         auto& root = root_of_.at(pull.child);

@@ -64,15 +64,27 @@ TEST_CASE("the sample evaluated store decodes") {
     CHECK(possible.back().choice);
     CHECK(evaluated->ids_in(possible.back().matches).empty());
     CHECK(evaluated->string(evaluated->ids_in(possible.back().flags).back()) == "-minimal");
-    CHECK(evaluated->packages.back().source == egraph::DepSource::vdb);
-    CHECK(evaluated->possible_in(evaluated->packages.back().possible).empty());
+    CHECK(a.visible);
+    CHECK_FALSE(a.masked);
+    CHECK(a.vdb_masked);
+    CHECK(a.target == 0);
+    REQUIRE(evaluated->ids_in(a.rebuild).size() == 2);
+    CHECK(evaluated->string(evaluated->ids_in(a.rebuild).front()) == "flag*");
+    const auto& b = evaluated->packages.back();
+    CHECK(b.source == egraph::DepSource::vdb);
+    CHECK(evaluated->possible_in(b.possible).empty());
+    CHECK_FALSE(b.visible);
+    CHECK(b.masked);
+    CHECK(b.vdb_masked);
+    CHECK(b.target == 2);
+    CHECK(evaluated->ids_in(b.rebuild).empty());
 
-    REQUIRE(evaluated->candidates.size() == 2);
+    REQUIRE(evaluated->candidates.size() == 3);
     const auto& visible = evaluated->candidates.front();
     CHECK(evaluated->string(visible.cpv) == "app-misc/a-1");
     CHECK(visible.visible());
     CHECK(evaluated->ids_in(visible.use).size() == 1);
-    const auto& masked = evaluated->candidates.back();
+    const auto& masked = evaluated->candidates.at(1);
     CHECK_FALSE(masked.visible());
     CHECK(evaluated->string(evaluated->ids_in(masked.reasons).front()) == "~amd64 keyword");
 }
@@ -138,6 +150,24 @@ TEST_CASE("evaluated records are checked") {
     CHECK_THAT(rejection(evaluated_with_section(4, bad_choice)),
                Catch::Matchers::StartsWith("dependencies: choice 2 out of range 2"));
 
+    Bytes bad_visible;
+    bad_visible.varint(1).varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0, 0});
+    bad_visible.varints({2, 0, 0, 0}).list({});
+    CHECK_THAT(rejection(evaluated_with_section(4, bad_visible)),
+               Catch::Matchers::StartsWith("dependencies: visible 2 out of range 2"));
+
+    Bytes bad_target;
+    bad_target.varint(1).varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0, 0});
+    bad_target.varints({1, 0, 0, 4}).list({});
+    CHECK_THAT(rejection(evaluated_with_section(4, bad_target)),
+               Catch::Matchers::StartsWith("dependencies: candidate 4 out of range 4"));
+
+    Bytes bad_masked;
+    bad_masked.varint(1).varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0, 0});
+    bad_masked.varints({1, 0, 2, 0}).list({});
+    CHECK_THAT(rejection(evaluated_with_section(4, bad_masked)),
+               Catch::Matchers::StartsWith("dependencies: masked 2 out of range 2"));
+
     Bytes trailing;
     trailing.varint(0).varint(0);
     CHECK_THAT(rejection(evaluated_with_section(5, trailing)),
@@ -157,8 +187,8 @@ TEST_CASE("an evaluated store loads only beside its installed store") {
     // b-1's record names another package.
     Bytes swapped;
     swapped.varint(2);
-    swapped.varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0, 0});
-    swapped.varints({1, 1, 3}).varint(0).varints({0, 0, 0, 0, 0, 0});
+    swapped.varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0});
+    swapped.varints({1, 1, 3}).varint(0).varints({0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0});
     egraph::test::write_bytes(path, evaluated_with_section(4, swapped));
     const auto mismatched = egraph::load_evaluated(path, store);
     REQUIRE_FALSE(mismatched.has_value());
@@ -166,7 +196,7 @@ TEST_CASE("an evaluated store loads only beside its installed store") {
           path.string() + ": package 1 is app-misc/a-1, not the installed store's dev-libs/b-1");
 
     Bytes one;
-    one.varint(1).varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0, 0});
+    one.varint(1).varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0});
     egraph::test::write_bytes(path, evaluated_with_section(4, one));
     const auto short_one = egraph::load_evaluated(path, store);
     REQUIRE_FALSE(short_one.has_value());
@@ -221,8 +251,8 @@ TEST_CASE("groups keep the empty atom through the merge") {
     dependencies.varint(2);
     dependencies.varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 2});
     dependencies.varints({1, 0, 0}).list({});
-    dependencies.varints({0, 1, 4}).list({1}).varint(0);
-    dependencies.varints({2, 1, 3}).varint(0).varints({0, 0, 0, 0, 0, 0});
+    dependencies.varints({0, 1, 4}).list({1}).varints({0, 1, 0, 0, 0, 0});
+    dependencies.varints({2, 1, 3}).varint(0).varints({0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0});
     auto evaluated = egraph::decode_evaluated(evaluated_with_section(4, dependencies));
     REQUIRE(evaluated.has_value());
     const auto store = egraph::with_dynamic_deps(installed(), *evaluated);
@@ -244,4 +274,35 @@ TEST_CASE("possible dependencies are listed with their toggles") {
     CHECK(egraph::possible_lines(*evaluated, std::vector<std::uint32_t>{1}, true) == a);
     CHECK(egraph::possible_lines(*evaluated, std::vector<std::uint32_t>{0}, true).empty());
     CHECK(egraph::possible_lines(*evaluated, std::vector<std::uint32_t>{1}, false).empty());
+}
+
+TEST_CASE("updates are what emerge -u would replace, and rebuild for USE when asked") {
+    const auto evaluated = egraph::decode_evaluated(sample());
+    REQUIRE(evaluated.has_value());
+    const std::vector<std::string> upgrade{"dev-libs/b-1\tupgrade\tdev-libs/b-2\ttest_repo"};
+    CHECK(egraph::update_lines(*evaluated, egraph::UseRebuilds::none) == upgrade);
+    CHECK(egraph::update_lines(*evaluated, egraph::UseRebuilds::changed) ==
+          std::vector<std::string>{"app-misc/a-1\trebuild\tapp-misc/a-1\ttest_repo\tflag*",
+                                   upgrade.front()});
+    CHECK(egraph::update_lines(*evaluated, egraph::UseRebuilds::all) ==
+          std::vector<std::string>{"app-misc/a-1\trebuild\tapp-misc/a-1\ttest_repo\tflag* -new%",
+                                   upgrade.front()});
+}
+
+TEST_CASE("an update's kind follows the versions") {
+    const auto lines = [](std::uint64_t visible, std::uint64_t target) {
+        Bytes dependencies;
+        dependencies.varint(2);
+        dependencies.varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0, 0});
+        dependencies.varints({visible, 0, 0, target}).list({});
+        dependencies.varints({2, 1, 3}).varint(0).varints({0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0});
+        const auto evaluated = egraph::decode_evaluated(evaluated_with_section(4, dependencies));
+        REQUIRE(evaluated.has_value());
+        return egraph::update_lines(*evaluated, egraph::UseRebuilds::none);
+    };
+    CHECK(lines(1, 2) ==
+          std::vector<std::string>{"app-misc/a-1\tupgrade\tapp-misc/a-2\ttest_repo"});
+    // Masked, and replaced by the same version from the target's repository.
+    CHECK(lines(0, 1) ==
+          std::vector<std::string>{"app-misc/a-1\trebuild\tapp-misc/a-1\ttest_repo"});
 }

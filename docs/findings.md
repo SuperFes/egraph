@@ -346,3 +346,32 @@ process including load and the freshness check of 2,575 inputs.
 - That emerge costs 26.9G instructions and 21.1G cycles with `on`, against 30.75G and 24.3G with
   the index (interleaved pairs within 0.2%): 12.5% of the instructions and 13% of the cycles,
   now under emerge's default rather than only with `--dynamic-deps=n`.
+
+## Updates and masked installed packages (2026-09-28, roadmap step 9e)
+
+- Live system (2,326 installed): `emerge -pu @installed` replaces 20 packages and pulls in one
+  new slot as an update's dependency (`media-video/ffmpeg-chromium`). `egraph updates` lists
+  29, the same 20 with the same targets and 9 more that installed dependents hold back: bounds
+  (`<dev-python/astroid-4.1` from pylint, `=llvm-runtimes/libclc-22*` from mesa,
+  `~sys-firmware/edk2-bin-202408` from qemu, `=cosmic-base/pop-launcher-1.9*` against the 9999
+  ebuild, `<app-misc/openrgb-1.0` from its plugins), sub-slot pins (`:0/3` on
+  `media-libs/libdisplay-info`, `:0/10.06=` on `app-text/ghostscript-gpl`), and the openrgb
+  plugins, whose updates need the held openrgb. With `-N` emerge adds 2 rebuilds
+  (gentoo-sources 7.2.6 and 7.2.7, `experimental* symlink*`) and egraph 3: the third, app-crypt/gcr
+  losing `gtk`, is held by gnome-keyring's `gcr[gtk]`. `-U` finds the same rebuilds.
+- emerge takes about 30 s for `-pu @installed`; `egraph updates -N` costs 91.3M instructions,
+  almost all of it loading the two stores.
+- One installed package has no visible ebuild of its version (an opera release since removed)
+  and none has masked metadata, so `orphans` answers as before; every depclean comparison stays
+  exact in both modes.
+- The evaluated pass costs 65.3G instructions against 64.2G (+1.8%; the updates alone +1.1%).
+  Masks for every installed package cost 78.8G (+22%), most of it `getMissingLicenses`
+  expanding the license groups on every call; depclean only weighs them for a package that is
+  not visible or shares its cp with another installed version, so only those get them. The
+  store grows by 5 bytes or more per package, to 1.29 MB with inputs.
+- Portage details the scenarios pinned: depgraph masks an ebuild with invalid metadata (a
+  conditional on a flag outside IUSE) that `match-visible` counts as visible; of one version in
+  two repositories emerge weighs the higher priority's (`getRepositories()` lists repositories
+  highest priority first); an installed version whose ebuild is gone is replaced even by an
+  older visible one; under dynamic deps FakeVartree reads KEYWORDS from the ebuild, so an
+  installed package built from `~x86` is unmasked once its ebuild is stable.

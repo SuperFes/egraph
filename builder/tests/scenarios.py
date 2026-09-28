@@ -298,9 +298,17 @@ SCENARIOS = {
     },
     # Dependencies behind flags the installed build left off: nested, negated, inside and around
     # ||, on a use-masked and a use-forced flag, on an arch flag, behind a contradiction, already
-    # depended on, not installed, and one whose USE dependency follows the flag.
+    # depended on, not installed, and one whose USE dependency follows the flag. x86 is implicit,
+    # as the arch is in a real profile: the ebuild would be invalid otherwise.
     "possible": {
         "world": ["app-misc/host"],
+        "user_config": {
+            "make.conf": [
+                'USE_EXPAND_IMPLICIT="ARCH"',
+                'USE_EXPAND_UNPREFIXED="ARCH"',
+                'USE_EXPAND_VALUES_ARCH="x86 amd64"',
+            ],
+        },
         "ebuilds": {
             "app-misc/host-1": {
                 "EAPI": "8",
@@ -358,6 +366,118 @@ SCENARIOS = {
         "profile": {
             "package.use.mask": ("app-misc/host masked",),
             "package.use.force": ("app-misc/host forced",),
+        },
+    },
+    # Installed packages masked by their own metadata (a keyword no longer accepted): depclean
+    # takes one as unavailable unless an ebuild of its version is visible, so a || group passes
+    # over it, and among several installed matches an atom selects an unmasked one.
+    "masked-installed": {
+        "world": ["app-misc/top"],
+        "ebuilds": {"dev-libs/stale-1": {"EAPI": "8", "KEYWORDS": "x86"}},
+        "installed": {
+            "app-misc/top-1": {
+                "EAPI": "8",
+                "RDEPEND": " ".join(
+                    (
+                        "|| ( dev-libs/gone dev-libs/kept )",
+                        "|| ( dev-libs/stale dev-libs/spare )",
+                        "dev-libs/multi",
+                    )
+                ),
+            },
+            "dev-libs/gone-1": {"EAPI": "8", "KEYWORDS": "~x86"},
+            "dev-libs/kept-1": {"EAPI": "8"},
+            "dev-libs/stale-1": {"EAPI": "8", "KEYWORDS": "~x86"},
+            "dev-libs/spare-1": {"EAPI": "8"},
+            "dev-libs/multi-1": {"EAPI": "8", "SLOT": "1"},
+            "dev-libs/multi-2": {"EAPI": "8", "SLOT": "2", "KEYWORDS": "~x86"},
+        },
+    },
+    # What emerge -u @installed would change, with and without --newuse or --changed-use: an
+    # upgrade, a revision, newer slots beside installed ones, a testing version, masked installed
+    # versions with a newer and with only an older visible one, a newer installed version whose
+    # ebuild is gone, an ebuild left in another repository, one version in two repositories,
+    # an upgrade that also changes USE, and every way a flag can differ from its installed build.
+    "updates": {
+        "world": [
+            "app-misc/up",
+            "app-misc/rev",
+            "dev-libs/slotted:1",
+            "dev-libs/slotted:2",
+            "app-misc/testing",
+            "app-misc/past",
+            "app-misc/down",
+            "app-misc/gone",
+            "app-misc/moved",
+            "app-misc/twin",
+            "app-misc/both",
+            "app-misc/use",
+            "app-misc/iuse",
+        ],
+        "ebuilds": {
+            "app-misc/up-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/up-2": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/rev-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/rev-1-r1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "dev-libs/slotted-1": {"EAPI": "8", "KEYWORDS": "x86", "SLOT": "1"},
+            "dev-libs/slotted-1.1": {"EAPI": "8", "KEYWORDS": "x86", "SLOT": "1"},
+            "dev-libs/slotted-2": {"EAPI": "8", "KEYWORDS": "x86", "SLOT": "2"},
+            "dev-libs/slotted-3": {"EAPI": "8", "KEYWORDS": "x86", "SLOT": "3"},
+            "app-misc/testing-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/testing-2": {"EAPI": "8", "KEYWORDS": "~x86"},
+            "app-misc/past-2": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/past-3": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/down-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/down-2": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/gone-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/moved-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/twin-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/both-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/both-2": {"EAPI": "8", "KEYWORDS": "x86", "IUSE": "+extra"},
+            "app-misc/use-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "IUSE": "+new_on new_off new_masked +turned_on turned_off +same",
+            },
+            "app-misc/iuse-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "IUSE": "new_off new_masked",
+            },
+            "app-misc/only-1::overlay": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/twin-1::overlay": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "IUSE": "+extra",
+            },
+        },
+        "installed": {
+            "app-misc/up-1": {"EAPI": "8"},
+            "app-misc/rev-1": {"EAPI": "8"},
+            "dev-libs/slotted-1": {"EAPI": "8", "SLOT": "1"},
+            "dev-libs/slotted-2": {"EAPI": "8", "SLOT": "2"},
+            "app-misc/testing-1": {"EAPI": "8"},
+            "app-misc/past-2": {"EAPI": "8"},
+            "app-misc/down-2": {"EAPI": "8"},
+            "app-misc/gone-2": {"EAPI": "8"},
+            "app-misc/moved-1::overlay": {"EAPI": "8"},
+            "app-misc/twin-1": {"EAPI": "8"},
+            "app-misc/both-1": {"EAPI": "8"},
+            "app-misc/use-1": {
+                "EAPI": "8",
+                "IUSE": "gone_on gone_off turned_on turned_off same",
+                "USE": "gone_on turned_off same",
+            },
+            "app-misc/iuse-1": {"EAPI": "8", "IUSE": "gone_off"},
+        },
+        "user_config": {
+            "package.mask": ("=app-misc/past-2", "=app-misc/down-2"),
+        },
+        "profile": {
+            "package.use.mask": (
+                "app-misc/use new_masked",
+                "app-misc/iuse new_masked",
+            ),
         },
     },
 }

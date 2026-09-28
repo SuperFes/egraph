@@ -1,6 +1,6 @@
 # Store format
 
-Status: format version 4 (evaluated store: 1), implemented by `builder/egraph_build/store.py`
+Status: format version 4 (evaluated store: 3), implemented by `builder/egraph_build/store.py`
 (writer and a Python reader) and `src/store.cpp` and `src/evaluated.cpp` (C++ readers). Any
 layout change bumps the version.
 
@@ -109,7 +109,7 @@ The installed packages as emerge sees them against the repositories: their depen
 store it was built against, named after it (`installed.egraph` → `installed.evaluated.egraph`:
 the last extension replaced by `.evaluated.egraph`), and is written by the same builder run.
 
-It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 2.
+It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 3.
 Package ids are the installed store's, so an evaluated store is current only while the installed
 store beside it has the build start recorded in its meta, and its own inputs stat the same.
 
@@ -123,7 +123,8 @@ store beside it has the build start recorded in its meta, and its own inputs sta
 
 All five sections are required.
 
-A dependency record is how emerge reads the package's dependencies by default:
+A dependency record is how emerge reads the package's dependencies by default, and how it
+weighs the package against its repositories under `--update`:
 
 1. String id of the cpv, which must be the installed package's at the same index.
 2. Source: 0 ebuild (the same version is in the package's repository and portage supports both
@@ -148,6 +149,25 @@ A dependency record is how emerge reads the package's dependencies by default:
    conditional on the flags the chain needs toggled (its `subset`), under the installed USE with
    them toggled, less the atoms the reduced list holds already. Blockers are left out. An atom
    several chains add keeps each minimal set of flags.
+7. Visible: 1 when an ebuild of the same version is visible (the one in the package's
+   repository when that has one, else any), as depgraph's `_equiv_ebuild_visible` asks; else 0.
+8. Masked: 1 when the package's installed metadata is masked (invalid strings, its CHOST, EAPI,
+   keywords, properties, restrictions, `package.mask`, its license), as depgraph's
+   `Package.masks` has it under `--dynamic-deps=y`, which reads the EAPI, KEYWORDS and
+   dependencies of the same version's ebuild for source 0; else 0. depclean passes over a
+   masked package unless it is visible. Only computed where depclean weighs it, for a package
+   that is not visible or shares its cp with another installed version; 0 elsewhere.
+9. VDB masked: the same under `--dynamic-deps=n`, from the vdb alone.
+10. Target: 0, or 1 plus the index of a candidate: the best visible version in the package's
+    slot (of one version, the repository of highest priority), when `emerge -u` would replace
+    the package with it or `--newuse` would rebuild the package from it. It replaces the package
+    when the rebuild list is empty: the candidate is newer, or the package is not visible and
+    the candidate is any other version or repository.
+11. Rebuild: list of string ids, the flags `--newuse` would rebuild the package for, when the
+    target has its version and it is visible, as emerge shows them: `flag*` and `-flag*` changed
+    state, `flag%*` and `-flag%` new in IUSE, `(-flag%*)` and `(-flag%)` gone from IUSE, with a
+    `*` when the flag's state changed. Those with a `*` are `--changed-use`'s. Flags new in or
+    gone from IUSE count only when the profile neither masks nor forces them on the target.
 
 A candidate is one version of an installed cp in one repository: every visible one, and each
 masked one that is installed.

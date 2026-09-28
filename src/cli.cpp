@@ -150,6 +150,29 @@ std::expected<Store, std::string> open_dependencies(const Invocation& invocation
     });
 }
 
+// What depclean reads: the dependency queries' store, and what its visibility checks see of each
+// installed package, which the evaluated store holds under either --dynamic-deps.
+struct DepcleanView {
+    Store store;
+    std::vector<Masking> masking;
+};
+
+std::expected<DepcleanView, std::string> open_depclean(const Invocation& invocation,
+                                                       std::ostream& err) {
+    return open_stores(invocation, err).transform([&invocation](Stores stores) {
+        std::vector<Masking> masking;
+        masking.reserve(stores.evaluated.packages.size());
+        for (const auto& pkg : stores.evaluated.packages) {
+            masking.push_back({.masked = invocation.dynamic_deps ? pkg.masked : pkg.vdb_masked,
+                               .visible = pkg.visible});
+        }
+        auto store = invocation.dynamic_deps
+                         ? with_dynamic_deps(std::move(stores.installed), stores.evaluated)
+                         : std::move(stores.installed);
+        return DepcleanView{.store = std::move(store), .masking = std::move(masking)};
+    });
+}
+
 Exit execute(const std::monostate&, const Invocation&, std::ostream&, std::ostream& err) {
     err << "egraph: no command given\n";
     return Exit::usage;
@@ -505,24 +528,26 @@ Exit execute(const Broken&, const Invocation& invocation, std::ostream& out, std
 
 Exit execute(const Orphans& command, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
-    const auto store = open_dependencies(invocation, err);
-    if (!store) {
-        err << "egraph: " << store.error() << '\n';
+    auto view = open_depclean(invocation, err);
+    if (!view) {
+        err << "egraph: " << view.error() << '\n';
         return Exit::failure;
     }
+    const auto& store = view->store;
     // Everything would be an orphan; depclean refuses, and so do we.
-    if (store->roots.empty()) {
+    if (store.roots.empty()) {
         err << "egraph: orphans: the @world set is empty\n";
         return Exit::failure;
     }
-    const auto kept = keep(*store, {.build_deps = command.build_deps});
-    const auto lines = cpvs(*store, orphans(kept));
+    const auto kept =
+        keep(store, {.build_deps = command.build_deps, .masking = std::move(view->masking)});
+    const auto lines = cpvs(store, orphans(kept));
     if (const auto style = output(invocation); style.human) {
         human_orphans(out, lines, style.theme);
     } else {
         write_lines(out, lines);
     }
-    const auto unresolved = unresolved_lines(*store, kept);
+    const auto unresolved = unresolved_lines(store, kept);
     if (unresolved.empty()) {
         return Exit::ok;
     }
@@ -534,32 +559,50 @@ Exit execute(const Orphans& command, const Invocation& invocation, std::ostream&
     return Exit::failure;
 }
 
-Exit execute(const Why& command, const Invocation& invocation, std::ostream& out,
+Exit execute(const Updates& command, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
-    const auto store = open_dependencies(invocation, err);
-    if (!store) {
-        err << "egraph: " << store.error() << '\n';
+    const auto stores = open_stores(invocation, err);
+    if (!stores) {
+        err << "egraph: " << stores.error() << '\n';
         return Exit::failure;
     }
-    const auto ids = resolve_all(*store, {command.package}, err);
+    const auto lines = update_lines(stores->evaluated, command.rebuilds);
+    if (const auto style = output(invocation); style.human) {
+        human_updates(out, lines, style.theme);
+    } else {
+        write_lines(out, lines);
+    }
+    return Exit::ok;
+}
+
+Exit execute(const Why& command, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    auto view = open_depclean(invocation, err);
+    if (!view) {
+        err << "egraph: " << view.error() << '\n';
+        return Exit::failure;
+    }
+    const auto& store = view->store;
+    const auto ids = resolve_all(store, {command.package}, err);
     if (!ids) {
         return Exit::failure;
     }
-    const auto kept = keep(*store, {.build_deps = command.build_deps});
+    const auto kept =
+        keep(store, {.build_deps = command.build_deps, .masking = std::move(view->masking)});
     auto exit = Exit::ok;
     bool first = true;
     const auto style = output(invocation);
     for (const auto id : *ids) {
         const auto path = why(kept, id);
         if (!path) {
-            err << "egraph: why: " << store->string(store->packages.at(id).cpv)
+            err << "egraph: why: " << store.string(store.packages.at(id).cpv)
                 << ": nothing keeps it; depclean would remove it\n";
             exit = Exit::failure;
             continue;
         }
         out << (first ? "" : "\n");
         first = false;
-        const auto lines = path_lines(*store, *path);
+        const auto lines = path_lines(store, *path);
         if (style.human) {
             human_path(out, lines, style.theme);
         } else {
@@ -812,6 +855,21 @@ void configure(CLI::App& app, Invocation& invocation) {
     add_field(orphans_cmd, invocation, "--with-bdeps", &Orphans::build_deps,
               "Whether build-time dependencies keep packages, as emerge's option (default y)")
         ->transform(CLI::CheckedTransformer(yes_no).description("{y,n}"));
+
+    CLI::App* updates_cmd = add_command<Updates>(
+        app, invocation, "Installed packages emerge -u @installed would replace or rebuild");
+    updates_cmd->add_flag_callback(
+        "-N,--newuse",
+        [&invocation] { std::get<Updates>(invocation.command).rebuilds = UseRebuilds::all; },
+        "Also the rebuilds emerge --newuse makes for changed USE or IUSE");
+    updates_cmd->add_flag_callback(
+        "-U,--changed-use",
+        [&invocation] {
+            auto& rebuilds = std::get<Updates>(invocation.command).rebuilds;
+            // --newuse takes in --changed-use's, as in emerge.
+            rebuilds = rebuilds == UseRebuilds::all ? rebuilds : UseRebuilds::changed;
+        },
+        "Also the rebuilds emerge --changed-use makes for changed USE");
 
     CLI::App* export_cmd = add_command<Export>(app, invocation, "Export part of the graph");
     const std::map<std::string, ExportFormat> formats{{"dot", ExportFormat::dot},

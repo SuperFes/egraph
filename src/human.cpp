@@ -75,6 +75,9 @@ constexpr Glyphs nerd_glyphs{
     .unfolded = "▾",
     .cycle = "↻",
     .instead = "→",
+    .upgrade = "\uF0AA",
+    .downgrade = "\uF0AB",
+    .rebuild = "\uF021",
     .frame = {.top_left = "╭",
               .top_right = "╮",
               .bottom_left = "╰",
@@ -117,6 +120,9 @@ constexpr Glyphs unicode_glyphs{
     .unfolded = "▾",
     .cycle = "↻",
     .instead = "→",
+    .upgrade = "↑",
+    .downgrade = "↓",
+    .rebuild = "↺",
     .frame = {.top_left = "╭",
               .top_right = "╮",
               .bottom_left = "╰",
@@ -159,6 +165,9 @@ constexpr Glyphs ascii_glyphs{
     .unfolded = "-",
     .cycle = "^",
     .instead = ">",
+    .upgrade = "U",
+    .downgrade = "D",
+    .rebuild = "R",
     .frame = {.top_left = "+",
               .top_right = "+",
               .bottom_left = "+",
@@ -541,6 +550,79 @@ void human_orphans(std::ostream& out, std::span<const std::string> records, cons
                                      : " packages depclean would remove",
                  Tone::note)
         << '\n';
+}
+
+void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto& glyph = theme.glyph();
+    const auto rows = split_all(records);
+    if (rows.empty()) {
+        out << paint(glyph.good, Tone::good) << ' ' << paint("Nothing to update.", Tone::good)
+            << '\n';
+        return;
+    }
+    std::size_t cp_width = 0;
+    std::size_t version_width = 0;
+    // " > version" when any row moves to another version, so every repo lines up.
+    std::size_t move_width = 0;
+    for (const auto& row : rows) {
+        const auto parts = split_cpv(row.at(0));
+        cp_width = std::max(cp_width, parts.category.size() + 1 + parts.name.size());
+        version_width = std::max(version_width, parts.version.size());
+        if (row.at(1) != "rebuild") {
+            move_width = std::max(move_width, 3 + split_cpv(row.at(2)).version.size());
+        }
+    }
+    std::array<std::size_t, 3> counts{};
+    bool flags = false;
+    for (const auto& row : rows) {
+        const auto old = split_cpv(row.at(0));
+        const auto target = split_cpv(row.at(2));
+        const auto cp = row.at(0).substr(0, old.category.size() + 1 + old.name.size());
+        const bool up = row.at(1) == "upgrade";
+        const bool down = row.at(1) == "downgrade";
+        ++counts.at(up ? 0 : down ? 1 : 2);
+        out << (up     ? paint(glyph.upgrade, Tone::good)
+                : down ? paint(glyph.downgrade, Tone::bad)
+                       : paint(glyph.rebuild, Tone::use))
+            << ' ' << paint_cpv(cp, paint) << spaces(cp.size(), cp_width) << "  "
+            << paint(old.version, Tone::version) << spaces(old.version.size(), version_width);
+        if (up || down) {
+            out << ' ' << paint(glyph.instead, Tone::note) << ' '
+                << paint(target.version, up ? Tone::good : Tone::bad)
+                << spaces(3 + target.version.size(), move_width);
+        } else {
+            out << spaces(0, move_width);
+        }
+        out << "  " << paint("::" + std::string{row.at(3)}, Tone::repo);
+        if (row.size() > 4) {
+            flags = true;
+            out << ' ';
+            for (const auto flag : std::views::split(row.at(4), ' ')) {
+                const std::string_view text{flag};
+                out << ' ' << paint(text, text.contains('*') ? Tone::use : Tone::note);
+            }
+        }
+        out << '\n';
+    }
+    constexpr std::array<std::array<std::string_view, 2>, 3> nouns{
+        {{" upgrade", " upgrades"}, {" downgrade", " downgrades"}, {" rebuild", " rebuilds"}}};
+    out << '\n';
+    bool first = true;
+    for (std::size_t i = 0; i < counts.size(); ++i) {
+        if (counts.at(i) == 0) {
+            continue;
+        }
+        out << (first ? "" : paint(", ", Tone::note))
+            << paint(std::to_string(counts.at(i)), Tone::count)
+            << paint(nouns.at(i).at(counts.at(i) == 1 ? 0 : 1), Tone::note);
+        first = false;
+    }
+    out << '\n';
+    if (flags) {
+        out << '\n'
+            << paint("flag* changed  flag% new in IUSE  (-flag%) gone from it", Tone::note) << '\n';
+    }
 }
 
 void human_broken(std::ostream& out, std::span<const std::string> broken,

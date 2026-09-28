@@ -93,6 +93,21 @@ TEST_CASE("orphans takes emerge's --with-bdeps") {
     CHECK_THROWS_AS(parse("orphans --with-bdeps maybe"), CLI::ValidationError);
 }
 
+TEST_CASE("updates takes emerge's --newuse and --changed-use") {
+    using egraph::UseRebuilds;
+    const auto rebuilds = [](const std::string& command) {
+        return std::get<egraph::Updates>(parse(command).command).rebuilds;
+    };
+    CHECK(rebuilds("updates") == UseRebuilds::none);
+    CHECK(rebuilds("updates --newuse") == UseRebuilds::all);
+    CHECK(rebuilds("updates -N") == UseRebuilds::all);
+    CHECK(rebuilds("updates --changed-use") == UseRebuilds::changed);
+    CHECK(rebuilds("updates -U") == UseRebuilds::changed);
+    CHECK(rebuilds("updates -U -N") == UseRebuilds::all);
+    CHECK(rebuilds("updates -N -U") == UseRebuilds::all);
+    CHECK_THROWS(parse("updates --dynamic-deps n"));
+}
+
 TEST_CASE("dependency queries take emerge's --dynamic-deps, on by default") {
     for (const auto* command :
          {"deps a/b", "rdeps a/b", "why a/b", "orphans", "broken", "affected"}) {

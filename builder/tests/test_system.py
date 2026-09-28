@@ -402,3 +402,54 @@ def test_cpp_possible_dependencies_are_the_evaluated_layers(live_evaluated, live
         assert possible == {(e, f) for e, f in every if e.parent == cpv}, cpv
         _, possible = parse_possible(_egraph(live_store, "rdeps", "--possible", cpv))
         assert possible == {(e, f) for e, f in every if e.child == cpv}, cpv
+
+
+@pytest.fixture(scope="module")
+def live_updates(live_emerge_config):
+    """emerge -pu @installed's answers by (newuse, changed_use)."""
+    from test_evaluated import USE_MODES
+    from update import updates
+
+    config = live_emerge_config
+    return {
+        mode: updates(config.trees, config.target_config.root, *mode)
+        for mode in USE_MODES
+    }
+
+
+@pytest.mark.parametrize(
+    "newuse, changed_use",
+    [(False, False), (True, False), (False, True)],
+    ids=["update", "newuse", "changed-use"],
+)
+def test_updates_cover_emerges(live_evaluated, live_updates, newuse, changed_use):
+    """Everything emerge replaces, as egraph names it. egraph also lists what the resolver holds
+    back for an installed dependent's bound (docs/findings.md)."""
+    from compare import layer_updates
+
+    expected = live_updates[newuse, changed_use].replaced
+    found = layer_updates(live_evaluated, newuse, changed_use)
+    assert {cpv: found.get(cpv) for cpv in expected} == expected
+
+
+def test_visible_is_emerges(live_emerge_config, live_evaluated):
+    from update import equiv_visible
+
+    config = live_emerge_config
+    expected = equiv_visible(config.trees, config.target_config.root)
+    assert {pkg.cpv: pkg.visible for pkg in live_evaluated} == expected
+
+
+@pytest.mark.parametrize("dynamic", [True, False], ids=["dynamic-deps", "vdb-deps"])
+def test_masked_is_emerges(live_emerge_config, live_evaluated, dynamic):
+    from update import masked
+
+    config = live_emerge_config
+    expected = masked(config.trees, config.target_config.root, dynamic)
+    from test_evaluated import weighed
+
+    found = {
+        pkg.cpv: pkg.masked if dynamic else pkg.vdb_masked for pkg in live_evaluated
+    }
+    kept = weighed(live_evaluated)
+    assert found == {cpv: masked and cpv in kept for cpv, masked in expected.items()}

@@ -106,3 +106,31 @@ def possible_mismatches(vardb, portdb, cpv, found, deps, size=None):
                 if not covered:
                     problems.append(f"{edge} with {chosen}: missing")
     return problems
+
+
+def rebuild_flag(flag):
+    """A rebuild flag's name, without emerge's markers."""
+    return flag.strip("()").lstrip("-").rstrip("%*")
+
+
+def layer_updates(layer, newuse=False, changed_use=False):
+    """{installed cpv: update.Replacement} as the layer answers emerge -u @installed, with -N
+    or -U."""
+    from update import Replacement
+
+    found = {}
+    for pkg in layer:
+        if pkg.target is None:
+            continue
+        cpv, repo = pkg.target
+        if not pkg.rebuild:
+            found[pkg.cpv] = Replacement(cpv, repo)
+            continue
+        flags = frozenset(
+            rebuild_flag(flag)
+            for flag in pkg.rebuild
+            if newuse or (changed_use and flag.rstrip(")").endswith("*"))
+        )
+        if flags:
+            found[pkg.cpv] = Replacement(cpv, repo, flags)
+    return found

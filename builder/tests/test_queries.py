@@ -109,6 +109,93 @@ def test_possible_dependencies_name_their_flags(playgrounds, tmp_path):
     assert result.returncode == 2
 
 
+def parse_updates(text):
+    """{installed cpv: (kind, update.Replacement)} from updates output."""
+    from compare import rebuild_flag
+    from update import Replacement
+
+    found = {}
+    for line in text.splitlines():
+        cpv, kind, target, repo, *flags = line.split("\t")
+        names = (
+            frozenset(rebuild_flag(flag) for flag in flags[0].split())
+            if flags
+            else None
+        )
+        found[cpv] = (kind, Replacement(target, repo, names))
+    return found
+
+
+@pytest.mark.parametrize(
+    "option, newuse, changed_use",
+    [(None, False, False), ("--newuse", True, False), ("--changed-use", False, True)],
+    ids=["update", "newuse", "changed-use"],
+)
+def test_updates_are_emerges(scenario, system, option, newuse, changed_use):
+    from portage.versions import cpv_getversion, vercmp
+
+    import update
+
+    expected = update.updates(scenario.trees, scenario.eroot, newuse, changed_use)
+    if not expected.success:
+        pytest.skip("emerge cannot resolve @installed here")
+    _, path = system
+    found = parse_updates(egraph(path, "updates", *filter(None, [option])).stdout)
+    assert {cpv: replacement for cpv, (_, replacement) in found.items()} == (
+        expected.replaced
+    )
+    for cpv, (kind, replacement) in found.items():
+        order = vercmp(cpv_getversion(replacement.cpv), cpv_getversion(cpv))
+        assert kind == (
+            "upgrade" if order > 0 else "downgrade" if order < 0 else "rebuild"
+        )
+
+
+def test_updates_by_hand(playgrounds, tmp_path):
+    path = tmp_path / "installed.egraph"
+    write_stores(playgrounds("updates"), path)
+    replaced = [
+        "app-misc/both-1\tupgrade\tapp-misc/both-2\ttest_repo",
+        "app-misc/down-2\tdowngrade\tapp-misc/down-1\ttest_repo",
+        "app-misc/gone-2\tdowngrade\tapp-misc/gone-1\ttest_repo",
+        "app-misc/past-2\tupgrade\tapp-misc/past-3\ttest_repo",
+        "app-misc/rev-1\tupgrade\tapp-misc/rev-1-r1\ttest_repo",
+        "app-misc/up-1\tupgrade\tapp-misc/up-2\ttest_repo",
+        "dev-libs/slotted-1\tupgrade\tdev-libs/slotted-1.1\ttest_repo",
+    ]
+    rebuilt = [
+        "app-misc/iuse-1\trebuild\tapp-misc/iuse-1\ttest_repo\t(-gone_off%) -new_off%",
+        "app-misc/twin-1\trebuild\tapp-misc/twin-1\toverlay\textra%*",
+        "app-misc/use-1\trebuild\tapp-misc/use-1\ttest_repo\t"
+        "(-gone_off%) (-gone_on%*) -new_off% new_on%* -turned_off* turned_on*",
+    ]
+    changed = [
+        "app-misc/twin-1\trebuild\tapp-misc/twin-1\toverlay\textra%*",
+        "app-misc/use-1\trebuild\tapp-misc/use-1\ttest_repo\t"
+        "(-gone_on%*) new_on%* -turned_off* turned_on*",
+    ]
+    assert egraph(path, "updates").stdout.splitlines() == replaced
+    assert egraph(path, "updates", "-N").stdout.splitlines() == sorted(
+        replaced + rebuilt
+    )
+    assert egraph(path, "updates", "-U").stdout.splitlines() == sorted(
+        replaced + changed
+    )
+    human = egraph(
+        path, "--layout", "human", "--color", "never", "--glyphs", "ascii", "updates"
+    ).stdout
+    assert human == (
+        "U app-misc/both     1 > 2     ::test_repo\n"
+        "D app-misc/down     2 > 1     ::test_repo\n"
+        "D app-misc/gone     2 > 1     ::test_repo\n"
+        "U app-misc/past     2 > 3     ::test_repo\n"
+        "U app-misc/rev      1 > 1-r1  ::test_repo\n"
+        "U app-misc/up       1 > 2     ::test_repo\n"
+        "U dev-libs/slotted  1 > 1.1   ::test_repo\n"
+        "\n5 upgrades, 2 downgrades\n"
+    )
+
+
 def test_a_cp_names_every_installed_version(playgrounds, tmp_path):
     reference = playgrounds("reference")
     vardb = reference.vardb

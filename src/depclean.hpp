@@ -10,9 +10,19 @@
 
 namespace egraph {
 
+// What depclean's visibility checks see of an installed package.
+struct Masking {
+    // Its installed metadata is masked: keywords, package.mask, a license and the like.
+    bool masked = false;
+    // An ebuild of its version is visible.
+    bool visible = true;
+};
+
 struct KeepOptions {
     // emerge --with-bdeps: keep what DEPEND and BDEPEND pull in.
     bool build_deps = true;
+    // Per installed package, from the evaluated store; empty takes every package as unmasked.
+    std::vector<Masking> masking;
 };
 
 // A root atom keeping the installed package it selects.
@@ -43,9 +53,11 @@ struct Kept {
 };
 
 // Emulates emerge --depclean's graph completion over the installed packages: start from the root
-// sets, select the highest installed match of every atom, follow every dependency kind (build
-// time ones only with build_deps), and resolve || groups last, preferring an alternative that is
-// already kept, then the first one installed. Sonames and blockers are not followed.
+// sets, select the highest installed match of every atom (unmasked ones first, then visible ones),
+// follow every dependency kind (build time ones only with build_deps), and resolve || groups
+// last, preferring an alternative that is already kept, then the first one installed. A masked
+// package that is not visible is unavailable to a || group. Sonames and blockers are not
+// followed.
 [[nodiscard]] Kept keep(const Store& store, const KeepOptions& options);
 
 // Installed packages depclean would remove, as ids in cpv order.

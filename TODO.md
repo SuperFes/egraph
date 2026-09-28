@@ -67,16 +67,31 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 - [ ] Queries rebuild the edge index on every run (about 20M instructions on the live store). If
       that ever dominates, the store could carry it.
 
-- [ ] `orphans` takes every installed package as visible. A masked installed package without a
-      visible ebuild is unavailable to depclean's `||` choice and its multi-slot preference; the
-      evaluated layer (step 9) can store a visibility bit. Add a scenario with such a package then.
+- [ ] depclean's `_select_pkg_from_installed` first keeps matches not masked by `package.mask`
+      or a license (keywords do not count, and packages already in the graph pass); egraph
+      goes straight to its second filter, any mask. They differ only when both kinds meet among
+      one atom's installed matches.
 - [ ] `orphans` ignores the rest of `dep_zapdeps` that needs more than the vdb: use.mask and
       use.force on unmet USE dependencies, package.provided, and new-style virtual expansion
       (depclean decides a virtual's `||` in its parent's context; egraph when the virtual is read).
 - [ ] `orphans --ignore-soname-deps=n` (keep soname providers), as emerge offers.
 - [ ] `why --all`: every chain, or every root, rather than one shortest chain.
-- [ ] The TUI reads the vdb's dependencies (`--dynamic-deps=n`) and shows no possible ones; step
-      9g switches it, with the check view's drift still comparing installed stores.
+- [ ] The TUI reads the vdb's dependencies (`--dynamic-deps=n`), shows no possible ones and
+      takes every installed package as unmasked; step 9g switches it, with the check view's
+      drift still comparing installed stores.
+
+## Updates
+
+- [ ] `updates` lists a newer version an installed dependent's bound holds back (10 of 32 on the
+      dev box: `<dev-python/astroid-4.1`, `~sys-firmware/edk2-bin-202408`, `gcr[gtk]` against
+      a rebuild without gtk). The dependents' dynamic deps could name each holder
+      ("held by pylint-4.0.9"), matched against the candidate with its USE; cascades (a plugin
+      update needing a held one) would still need resolution.
+- [ ] Candidates count an ebuild visible when `match-visible` does, but depgraph also masks one
+      whose metadata is invalid (a conditional on a flag outside its IUSE, say). Package-level
+      validation (`_validate_deps`) would have to run per candidate.
+- [ ] New slots (`emerge -uD` pulling `foo:2` for an unslotted `foo` with `foo:1` installed)
+      and slot-operator rebuilds are resolver decisions `updates` leaves out.
 
 ## Output and UX
 

@@ -77,7 +77,10 @@ are strict xfails that must flip when the implementation lands.
 scenario. Any change to `src/atom.cpp` or `src/version.cpp` must keep it and the live-system run
 at zero differences.
 
-`builder/tests/depclean.py` runs portage's own depclean (`_calc_depclean`, test code only).
+`builder/tests/depclean.py` runs portage's own depclean (`_calc_depclean`, test code only), and
+`builder/tests/update.py` its `emerge --pretend --update @installed` (with `--newuse` or
+`--changed-use`) and depgraph's visibility and mask checks, for `egraph updates` and the
+evaluated store's bits.
 `test_orphans.py` holds `egraph orphans` to it and `test_why.py` checks every `why` chain against
 depclean's recorded parents, on every scenario with and without build-time deps and with and
 without dynamic deps (the `dynamic_deps` fixture); `test_system.py` does both on the live system.

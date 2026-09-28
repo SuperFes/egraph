@@ -21,8 +21,8 @@ def playground_arguments(name):
     """A scenario's ResolverPlayground arguments.
 
     Installed packages get the playground's accepted keyword unless they set their own, so they
-    are visible: depclean prefers visible packages, and egraph assumes every installed package
-    is (it has no masking information yet).
+    are unmasked: depclean passes over a masked installed package without a visible ebuild, and
+    most scenario packages have none.
     """
     arguments = dict(SCENARIOS[name])
     arguments.pop("updates", None)

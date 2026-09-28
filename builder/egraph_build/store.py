@@ -33,7 +33,7 @@ INPUT_FILE, INPUT_DIRECTORY, INPUT_SYMLINK, INPUT_MISSING = range(4)
 DEFAULT_PATH = "var/cache/egraph/installed.egraph"
 
 EVALUATED_MAGIC = b"EGRAPHEV"
-EVALUATED_FORMAT_VERSION = 2
+EVALUATED_FORMAT_VERSION = 3
 SECTION_DEPENDENCIES, SECTION_CANDIDATES = range(4, 6)
 EVALUATED_SECTIONS = (
     SECTION_META,
@@ -237,6 +237,8 @@ def encode_evaluated(layer, meta, inputs=()):
     """The evaluated store bytes for an EvaluatedLayer, its EvaluatedMeta and its Inputs."""
     strings = _Strings()
     index = {cpv: i for i, cpv in enumerate(layer.installed())}
+    candidates = layer.candidates()
+    candidate_index = {(c.cpv, c.repo): i for i, c in enumerate(candidates)}
     sections = {}
 
     w = _Writer()
@@ -266,9 +268,13 @@ def encode_evaluated(layer, meta, inputs=()):
             w.varint(int(p.choice))
             w.ids([index[cpv] for cpv in p.matches])
             w.ids([strings(flag) for flag in p.flags])
+        w.varint(int(pkg.visible))
+        w.varint(int(pkg.masked))
+        w.varint(int(pkg.vdb_masked))
+        w.varint(0 if pkg.target is None else candidate_index[pkg.target] + 1)
+        w.ids([strings(flag) for flag in pkg.rebuild])
     sections[SECTION_DEPENDENCIES] = w.out
 
-    candidates = layer.candidates()
     w = _Writer()
     w.varint(len(candidates))
     for c in candidates:
@@ -505,23 +511,16 @@ def decode_evaluated(data):
             matches = r.ids(count)
             flags = tuple(strings[i] for i in r.ids(nstrings))
             possible.append((kind, atom, choice, matches, flags))
-        raw.append((cpv, source, eapi, errors, deps, possible))
-    r.done()
-    cpvs = [cpv for cpv, *_ in raw]
-    packages = [
-        Dependencies(
-            cpv,
-            source,
-            eapi,
-            errors,
-            _named(deps, cpvs),
-            tuple(
-                Possible(kind, atom, choice, tuple(cpvs[i] for i in matches), flags)
-                for kind, atom, choice, matches, flags in possible
-            ),
+        # visible, masked, vdb_masked, target, rebuild
+        weighed = (
+            bool(r.varint(2)),
+            bool(r.varint(2)),
+            bool(r.varint(2)),
+            r.varint(),
+            tuple(strings[i] for i in r.ids(nstrings)),
         )
-        for cpv, source, eapi, errors, deps, possible in raw
-    ]
+        raw.append((cpv, source, eapi, errors, deps, possible, weighed))
+    r.done()
 
     r = _Reader(sections[SECTION_CANDIDATES], "candidates")
     candidates = []
@@ -530,6 +529,35 @@ def decode_evaluated(data):
         lists = [tuple(strings[i] for i in r.ids(nstrings)) for _ in range(3)]
         candidates.append(Candidate(*fields, *lists))
     r.done()
+
+    cpvs = [cpv for cpv, *_ in raw]
+    packages = []
+    for cpv, source, eapi, errors, deps, possible, weighed in raw:
+        visible, masked, vdb_masked, target, rebuild = weighed
+        if target > len(candidates):
+            raise StoreError(f"dependencies: {cpv}'s target {target} out of range")
+        packages.append(
+            Dependencies(
+                cpv,
+                source,
+                eapi,
+                errors,
+                _named(deps, cpvs),
+                tuple(
+                    Possible(kind, atom, choice, tuple(cpvs[i] for i in matches), flags)
+                    for kind, atom, choice, matches, flags in possible
+                ),
+                visible,
+                masked,
+                vdb_masked,
+                (
+                    (candidates[target - 1].cpv, candidates[target - 1].repo)
+                    if target
+                    else None
+                ),
+                rebuild,
+            )
+        )
     return meta, inputs, EvaluatedLayer(packages, candidates)
 
 
