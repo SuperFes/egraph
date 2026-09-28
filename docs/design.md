@@ -291,7 +291,11 @@ Each consumer runs in shadow mode against the tool it replaces before anyone rel
 
 - CLI queries: `deps`, `rdeps`, `why`, `soname`, `broken`, `orphans`, `export`, `stats`.
 - The portage fork's neighborhood completion (`depgraph._installed_graph()`), by querying `egraph`,
-  which removes the 0.37 s index build from every emerge run. The Python store reader decodes the
+  which removes the 0.37 s index build from every emerge run. `egraph affected` takes one JSON
+  request per root (the kinds and seeds of the reachable set, the cps being merged, the cpvs
+  they replace, their blockers) and answers the reachable set, what the blockers match, and the
+  affected packages, matching atoms by version and slot as the fork's `InstalledGraph` does
+  (`src/affected.hpp`). The Python store reader decodes the
   live store in about 0.3 s and exists for tests only.
 - The graph viewer (`~/.local/bin/portage-graph-view`) reading the store instead of building its own.
 - The update fast path, once the candidate layer exists: `-uDN @world` becomes a set difference,

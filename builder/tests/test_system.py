@@ -218,3 +218,55 @@ def test_why_explains_every_kept_package(live_vardb, live_store, live_depclean):
         result = why(live_store, cpv)
         assert result.returncode == 0, result.stderr
         assert_explains(result.stdout, cpv, expected, live_vardb)
+
+
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+def test_affected_agrees_with_the_fork_on_the_live_vdb(
+    live_vardb, live_layer, tmp_path
+):
+    graph = pytest.importorskip("portage.dbapi._InstalledGraph")
+    neighborhood = pytest.importorskip("_emerge.resolver.neighborhood")
+    import random
+
+    path = tmp_path / "installed.egraph"
+    store.write(path, store.encode(live_layer, store.Meta("0", "0", "/", 0)))
+    index = graph.InstalledGraph.from_vardb(live_vardb)
+
+    def ask(**request):
+        result = subprocess.run(
+            [os.environ["EGRAPH"], "--store", str(path), "affected"],
+            input=json.dumps(request),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(result.stdout)
+
+    kinds = ["RDEPEND", "IDEPEND", "PDEPEND", "DEPEND", "BDEPEND", "SONAME"]
+    cpvs = sorted(pkg.cpv for pkg in index)
+    cps = sorted(
+        {pkg.cp for pkg in index} | {edge.atom.cp for pkg in index for edge in pkg.deps}
+    )
+    blockers = sorted(
+        {str(edge.atom) for pkg in index for edge in pkg.deps if edge.atom.blocker}
+    )
+    blocked = sorted({c for a in blockers for c in index.matches(graph.Atom(a))})
+    everything = ask(
+        kinds=kinds, seeds=cpvs, changed=cps, replaced=cpvs, blockers=blockers
+    )
+    assert everything["reachable"] == sorted(index.reachable(cpvs, set(kinds)))
+    assert everything["blocked"] == blocked
+    assert everything["affected"] == sorted(
+        neighborhood.affected_cpvs(index, cps, cpvs, blocked)
+    )
+    rng = random.Random(0)
+    for cpv in rng.sample(cpvs, min(SAMPLE, len(cpvs))):
+        answer = ask(
+            kinds=kinds, seeds=[cpv], replaced=[cpv], changed=[index.package(cpv).cp]
+        )
+        assert answer["reachable"] == sorted(index.reachable([cpv], set(kinds))), cpv
+        assert answer["affected"] == sorted(
+            neighborhood.affected_cpvs(index, [index.package(cpv).cp], [cpv], [])
+        ), cpv

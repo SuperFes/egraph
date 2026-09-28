@@ -62,6 +62,7 @@ endif
 egraph_lib = static_library(
   'egraph',
   egraph_sources,
+  'src/affected.cpp',
   'src/atom.cpp',
   'src/check.cpp',
   'src/cli.cpp',
@@ -131,6 +132,7 @@ python.install_sources(
 
 unit_tests = executable(
   'unit-tests',
+  'tests/test_affected.cpp',
   'tests/test_atom.cpp',
   'tests/test_check.cpp',
   'tests/test_cli.cpp',

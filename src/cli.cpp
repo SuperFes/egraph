@@ -1,5 +1,7 @@
 #include "cli.hpp"
 
+#include "affected.hpp"
+
 #include "atom.hpp"
 #include "build_info.hpp"
 #include "check.hpp"
@@ -21,6 +23,7 @@
 #include <expected>
 #include <format>
 #include <fstream>
+#include <iostream>
 #include <map>
 #include <numeric>
 #include <optional>
@@ -577,6 +580,33 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
         warnings, err);
 }
 
+Exit execute(const Affected& command, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    std::ostringstream text;
+    if (command.request == "-") {
+        text << std::cin.rdbuf();
+    } else {
+        std::ifstream in{command.request};
+        if (!in) {
+            err << "egraph: affected: cannot read " << command.request << '\n';
+            return Exit::failure;
+        }
+        text << in.rdbuf();
+    }
+    const auto request = parse_request(text.str());
+    if (!request) {
+        err << "egraph: affected: " << request.error() << '\n';
+        return Exit::usage;
+    }
+    const auto store = open_store(invocation, err);
+    if (!store) {
+        err << "egraph: " << store.error() << '\n';
+        return Exit::failure;
+    }
+    out << to_json(affected(*store, *request));
+    return Exit::ok;
+}
+
 Exit execute(const Stats&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
     std::filesystem::path used;
     const auto store = open_store(invocation, err, used);
@@ -713,6 +743,12 @@ void configure(CLI::App& app, Invocation& invocation) {
     add_command<Tui>(app, invocation, "Browse the graph in a terminal interface");
     add_command<Rebuild>(app, invocation, "Rebuild the store from scratch");
     add_command<Check>(app, invocation, "Diff the store against a fresh build");
+    add_field(
+        add_command<Affected>(
+            app, invocation,
+            "What a set of merges can affect, as JSON, for portage's neighborhood completion"),
+        invocation, "--request", &Affected::request,
+        "JSON request file (default -: standard input)");
 }
 
 Style style(const Invocation& invocation) {

@@ -91,8 +91,15 @@ struct Tui {
     static constexpr std::string_view name = "tui";
 };
 
+// For portage's neighborhood completion: see affected.hpp.
+struct Affected {
+    static constexpr std::string_view name = "affected";
+    // The JSON request; - is standard input.
+    std::string request = "-";
+};
+
 using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Orphans,
-                             Export, Stats, Rebuild, Check, Tui>;
+                             Export, Stats, Rebuild, Check, Tui, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

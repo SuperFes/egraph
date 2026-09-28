@@ -254,3 +254,19 @@ process including load and the freshness check of 2,575 inputs.
   dependencies). Against emerge's default dynamic deps, 1,393 packages' `>=sys-libs/glibc-*`
   runtime dependencies, present in the vdb but in no ebuild, are invisible to depclean; that
   changes paths to glibc and nothing else. `why` costs 88M instructions and 34M cycles.
+
+## Consumers: neighborhood completion (2026-09-27, roadmap step 8)
+
+- `egraph affected` answers everything the fork's `_complete_neighborhood` asks of its
+  `InstalledGraph` (reachable, blocker matches, affected) in one call, matching atoms by version
+  and slot as the fork does. On the live system it agrees with the fork on the whole vdb at once
+  (every cpv as seed, changed and replaced, every blocker) and on 200 sampled packages one at a
+  time; the scenarios agree for every cp, cpv and blocker.
+- A realistic request (214 world packages as seeds, glib changed and replaced, runtime kinds
+  and sonames): the fork's index build plus its queries cost 5.1G instructions and 3.0G cycles
+  above Python and portage's own start-up (0.77G); `egraph affected`, process start included,
+  costs 0.14G instructions and 0.065G cycles, about 36 times fewer instructions.
+- The depgraph's vartree is a FakeVartree, which under emerge's default `--dynamic-deps=y`
+  reads an installed package's dependencies from its ebuild when that version is still in the
+  repository. egraph reads the vdb, as `--dynamic-deps=n` does, so the two indexes can differ
+  there (see Roots: 1,393 packages' glibc dependencies are in the vdb and in no ebuild).

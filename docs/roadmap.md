@@ -13,7 +13,7 @@ Update the status column as steps land.
 | 5 | `rebuild` and `check` | done |
 | 6 | Queries | done |
 | 7 | Roots and orphans | done |
-| 8 | Consumers | not started |
+| 8 | Consumers | in progress |
 | 9 | Evaluated and candidate layers | not planned yet |
 | 10 | Output and UX | in progress |
 | 11 | Build monitor | done |
@@ -85,7 +85,10 @@ Update the status column as steps land.
 
 ## 8. Consumers
 
-- The portage fork's `depgraph._installed_graph()` reads the store.
+- The portage fork's `depgraph._installed_graph()` reads the store. 8a (done): `egraph
+  affected`, one call answering what `_complete_neighborhood` asks of the fork's
+  `InstalledGraph`, held to the fork's own answers on every scenario and the live system. 8b:
+  the fork asks it, in shadow mode first against its own index.
 - The graph viewer reads the store.
 
 ## 9. Evaluated and candidate layers
