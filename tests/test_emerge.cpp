@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <string>
 
 namespace {
@@ -134,4 +135,85 @@ TEST_CASE("only live emerges' snapshots are read, by pid") {
     CHECK(found.at(1).pid == 4321);
 
     CHECK(egraph::emerge::read_snapshots(dir.path() / "missing", proc).empty());
+}
+
+namespace {
+
+std::vector<egraph::emerge::Pending> pending_list(std::initializer_list<std::string_view> cpvs) {
+    std::vector<egraph::emerge::Pending> list;
+    for (const auto cpv : cpvs) {
+        list.push_back({.kind = "ebuild", .root = "/", .cpv = std::string{cpv}});
+    }
+    return list;
+}
+
+} // namespace
+
+TEST_CASE("the merge list is mtimedb's resume mergelist") {
+    CHECK(egraph::emerge::mtimedb_path("") == "/var/cache/edb/mtimedb");
+    CHECK(egraph::emerge::mtimedb_path("/p") == "/p/var/cache/edb/mtimedb");
+    const auto list = egraph::emerge::parse_mergelist(R"({
+      "info": {}, "resume": {"favorites": ["games-util/lutris"], "myopts": {"--jobs": 4},
+        "mergelist": [["ebuild", "/", "net-libs/webkit-gtk-2.54.0-r410", "merge"],
+                      ["binary", "/", "games-util/lutris-0.5.22-r1", "merge"],
+                      ["ebuild", "/"], "junk"]},
+      "resume_backup": {"mergelist": [["ebuild", "/", "x/old-1", "merge"]]}})");
+    REQUIRE(list.size() == 2);
+    CHECK(list.at(0).cpv == "net-libs/webkit-gtk-2.54.0-r410");
+    CHECK(list.at(0).kind == "ebuild");
+    CHECK(list.at(1).kind == "binary");
+    CHECK(list.at(1).root == "/");
+    // No emerge running, or an interrupted one's list kept for --resume only in resume_backup.
+    CHECK(egraph::emerge::parse_mergelist(R"({"resume_backup": {"mergelist": []}})").empty());
+    CHECK(egraph::emerge::parse_mergelist("{").empty());
+}
+
+TEST_CASE("waits are read as the builder writes them") {
+    const auto waits = egraph::emerge::parse_waits(
+        R"({"games-util/lutris-0.5.22-r1": ["net-libs/webkit-gtk-2.54.0-r410"], "x/y-1": []})");
+    REQUIRE(waits.has_value());
+    CHECK(waits->at("games-util/lutris-0.5.22-r1") ==
+          std::vector<std::string>{"net-libs/webkit-gtk-2.54.0-r410"});
+    CHECK(waits->at("x/y-1").empty());
+    CHECK_FALSE(egraph::emerge::parse_waits("[]").has_value());
+    CHECK_FALSE(egraph::emerge::parse_waits(R"({"x/y-1": [1]})").has_value());
+    CHECK_FALSE(egraph::emerge::parse_waits("{").has_value());
+}
+
+TEST_CASE("the merge list hangs each package under what it waits for last") {
+    // lib and tool first; app waits for lib, plugin for app and lib, doc for nothing earlier;
+    // lib's run-time loop back to plugin is left to emerge's order.
+    const auto list = pending_list({"dev-libs/lib-1", "dev-util/tool-1", "app-misc/app-1",
+                                    "app-misc/plugin-1", "app-doc/doc-1"});
+    const egraph::emerge::Waits waits{{"dev-libs/lib-1", {"app-misc/plugin-1"}},
+                                      {"app-misc/app-1", {"dev-libs/lib-1", "dev-util/tool-1"}},
+                                      {"app-misc/plugin-1", {"app-misc/app-1", "dev-libs/lib-1"}},
+                                      {"app-doc/doc-1", {"x/merged-already-1"}}};
+    const auto tree = egraph::emerge::hierarchy(list, waits);
+    REQUIRE(tree.size() == 5);
+    std::vector<std::pair<std::string, std::size_t>> shape;
+    for (const auto& branch : tree) {
+        shape.emplace_back(branch.cpv, branch.depth);
+    }
+    CHECK(shape == std::vector<std::pair<std::string, std::size_t>>{{"dev-libs/lib-1", 1},
+                                                                    {"dev-util/tool-1", 1},
+                                                                    {"app-misc/app-1", 2},
+                                                                    {"app-misc/plugin-1", 3},
+                                                                    {"app-doc/doc-1", 1}});
+    // Counts every pending wait, the loop included; not what already merged.
+    CHECK(tree.at(0).waiting_for == 1);
+    CHECK(tree.at(2).waiting_for == 2);
+    CHECK(tree.at(3).waiting_for == 2);
+    CHECK(tree.at(4).waiting_for == 0);
+    // lib and tool have siblings after them at the top; plugin is app's only child.
+    CHECK_FALSE(tree.at(0).last);
+    CHECK_FALSE(tree.at(1).last);
+    CHECK(tree.at(3).last);
+    CHECK(tree.at(4).last);
+    // The top level's line runs on past app and plugin, down to doc.
+    CHECK(tree.at(3).rails == std::vector<bool>{true, false});
+
+    // Without waits yet, a flat list in merge order.
+    const auto flat = egraph::emerge::hierarchy(list, {});
+    CHECK(std::ranges::all_of(flat, [](const auto& branch) { return branch.depth == 1; }));
 }

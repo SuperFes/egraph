@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <charconv>
+#include <format>
 #include <fstream>
+#include <ranges>
 #include <sstream>
 #include <system_error>
 
@@ -155,6 +157,112 @@ std::vector<Snapshot> read_snapshots(const std::filesystem::path& dir,
     }
     std::ranges::sort(found, {}, &Snapshot::pid);
     return found;
+}
+
+std::filesystem::path mtimedb_path(const std::filesystem::path& eprefix) {
+    return std::filesystem::path{"/"} / eprefix.relative_path() / "var/cache/edb/mtimedb";
+}
+
+std::vector<Pending> parse_mergelist(std::string_view mtimedb) {
+    const auto json = Json::parse(mtimedb, nullptr, false);
+    if (json.is_discarded() || !json.is_object()) {
+        return {};
+    }
+    const auto list = value_of<Json>(object_of(json, "resume"), "mergelist", &Json::is_array);
+    if (!list) {
+        return {};
+    }
+    std::vector<Pending> pending;
+    for (const auto& entry : *list) {
+        // [kind, root, cpv, operation], as a Package iterates.
+        if (!entry.is_array() || entry.size() < 3 ||
+            !std::ranges::all_of(entry, &Json::is_string)) {
+            continue;
+        }
+        pending.push_back({.kind = entry.at(0).get<std::string>(),
+                           .root = entry.at(1).get<std::string>(),
+                           .cpv = entry.at(2).get<std::string>()});
+    }
+    return pending;
+}
+
+std::expected<Waits, std::string> parse_waits(std::string_view text) {
+    const auto json = Json::parse(text, nullptr, false);
+    if (json.is_discarded() || !json.is_object()) {
+        return std::unexpected("not a JSON object");
+    }
+    Waits waits;
+    for (const auto& [cpv, list] : json.items()) {
+        if (!list.is_array() || !std::ranges::all_of(list, &Json::is_string)) {
+            return std::unexpected(std::format("{}: not a list of cpvs", cpv));
+        }
+        auto& found = waits[cpv];
+        for (const auto& other : list) {
+            found.push_back(other.get<std::string>());
+        }
+    }
+    return waits;
+}
+
+std::vector<Branch> hierarchy(const std::vector<Pending>& pending, const Waits& waits) {
+    std::map<std::string_view, std::size_t, std::less<>> position;
+    for (std::size_t at = 0; at < pending.size(); ++at) {
+        position.emplace(pending.at(at).cpv, at);
+    }
+    // Each package's parent: what it waits for that merges last before it.
+    std::vector<std::optional<std::size_t>> parent(pending.size());
+    std::vector<std::size_t> waiting_for(pending.size(), 0);
+    std::vector<std::vector<std::size_t>> children(pending.size());
+    std::vector<std::size_t> top;
+    for (std::size_t at = 0; at < pending.size(); ++at) {
+        if (const auto found = waits.find(pending.at(at).cpv); found != waits.end()) {
+            for (const auto& other : found->second) {
+                const auto where = position.find(other);
+                if (where == position.end() || where->second == at) {
+                    continue;
+                }
+                ++waiting_for.at(at);
+                auto& chosen = parent.at(at);
+                if (where->second < at && where->second >= chosen.value_or(0)) {
+                    chosen = where->second;
+                }
+            }
+        }
+        if (const auto& chosen = parent.at(at)) {
+            children.at(*chosen).push_back(at);
+        } else {
+            top.push_back(at);
+        }
+    }
+    // Depth first, in merge order; parents come before their children, so a stack will do.
+    std::vector<Branch> tree;
+    std::vector<std::pair<std::size_t, std::size_t>> stack;
+    for (const auto root : std::ranges::reverse_view(top)) {
+        stack.emplace_back(root, 1);
+    }
+    while (!stack.empty()) {
+        const auto [at, depth] = stack.back();
+        stack.pop_back();
+        tree.push_back(
+            {.cpv = pending.at(at).cpv, .depth = depth, .waiting_for = waiting_for.at(at)});
+        for (const auto child : std::ranges::reverse_view(children.at(at))) {
+            stack.emplace_back(child, depth + 1);
+        }
+    }
+    // Tree lines, walking up from the bottom as tui::thread does.
+    std::vector<bool> later;
+    for (auto& branch : std::ranges::reverse_view(tree)) {
+        const auto depth = branch.depth;
+        later.resize(std::max(later.size(), depth + 1), false);
+        branch.last = !later.at(depth);
+        branch.rails.assign(depth - 1, false);
+        for (std::size_t level = 1; level < depth; ++level) {
+            branch.rails.at(level - 1) = later.at(level);
+        }
+        later.at(depth) = true;
+        std::fill(later.begin() + static_cast<std::ptrdiff_t>(depth) + 1, later.end(), false);
+    }
+    return tree;
 }
 
 } // namespace egraph::emerge

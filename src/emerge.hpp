@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -70,5 +71,43 @@ struct Snapshot {
 // inside and that process exists under proc; one left behind by an emerge that died is not.
 [[nodiscard]] std::vector<Snapshot> read_snapshots(const std::filesystem::path& dir,
                                                    const std::filesystem::path& proc = "/proc");
+
+// A package emerge has yet to merge, from mtimedb's resume mergelist; emerge drops each one once
+// it has merged.
+struct Pending {
+    // "ebuild" or "binary".
+    std::string kind{};
+    std::string root{};
+    std::string cpv{};
+};
+
+// ${EPREFIX}/var/cache/edb/mtimedb, where emerge keeps its merge list.
+[[nodiscard]] std::filesystem::path mtimedb_path(const std::filesystem::path& eprefix);
+
+// The merge list's packages in merge order; empty when no emerge left one.
+[[nodiscard]] std::vector<Pending> parse_mergelist(std::string_view mtimedb);
+
+// For each pending cpv, the others it waits for, as egraph-build --pending writes them.
+using Waits = std::map<std::string, std::vector<std::string>, std::less<>>;
+[[nodiscard]] std::expected<Waits, std::string> parse_waits(std::string_view text);
+
+// A pending package's place in the merge list's hierarchy.
+struct Branch {
+    std::string cpv{};
+    // 1 at the top.
+    std::size_t depth = 1;
+    // How many other pending packages it waits for, wherever they sit.
+    std::size_t waiting_for = 0;
+    // Tree lines, as tui::Row has them: whether it is its parent's last child, and for each
+    // level from 1 to depth - 1 whether that level's line continues past it.
+    bool last = false;
+    std::vector<bool> rails{};
+};
+
+// The merge list as a tree in merge order: each package under the one it waits for that merges
+// last before it, and at the top what waits for nothing earlier. Waits on packages that merge
+// after it are left out, as emerge's own order breaks those cycles.
+[[nodiscard]] std::vector<Branch> hierarchy(const std::vector<Pending>& pending,
+                                            const Waits& waits);
 
 } // namespace egraph::emerge
