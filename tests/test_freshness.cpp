@@ -204,3 +204,96 @@ TEST_CASE("a failing builder fails the query") {
     CHECK(err.str() == std::format("egraph: {} exited with status 7\n", builder.string()));
     CHECK(out.str().empty());
 }
+
+TEST_CASE("egraph-build is looked for next to egraph, then in PATH") {
+    const TempDir dir;
+    egraph::Invocation invocation;
+    CHECK(egraph::builder_program(invocation) == "egraph-build");
+    invocation.program_dir = dir.path();
+    CHECK(egraph::builder_program(invocation) == "egraph-build");
+    write_text(dir.path() / "egraph-build", "");
+    CHECK(egraph::builder_program(invocation) == (dir.path() / "egraph-build").string());
+    invocation.builder = "/opt/egraph-build";
+    CHECK(egraph::builder_program(invocation) == "/opt/egraph-build");
+}
+
+TEST_CASE("the user's store is named after the root") {
+    egraph::Invocation invocation;
+    CHECK_FALSE(egraph::user_store_path(invocation).has_value());
+    invocation.cache_home = "/home/u/.cache";
+    CHECK(egraph::user_store_path(invocation) ==
+          fs::path{"/home/u/.cache/egraph/installed.egraph"});
+    invocation.root = "/mnt/gentoo";
+    invocation.eprefix = "/prefix";
+    CHECK(egraph::user_store_path(invocation) ==
+          fs::path{"/home/u/.cache/egraph/installed-mnt-gentoo-prefix.egraph"});
+}
+
+namespace {
+
+// A root whose system store directory only root could write, holding store.
+struct ReadOnlyRoot {
+    explicit ReadOnlyRoot(const fs::path& root, const std::vector<std::byte>& store)
+        : directory(root / "var/cache/egraph") {
+        fs::create_directories(directory);
+        write_bytes(directory / "installed.egraph", store);
+        fs::permissions(directory, fs::perms::owner_read | fs::perms::owner_exec);
+    }
+    ~ReadOnlyRoot() { fs::permissions(directory, fs::perms::owner_all); }
+    ReadOnlyRoot(const ReadOnlyRoot&) = delete;
+    ReadOnlyRoot& operator=(const ReadOnlyRoot&) = delete;
+    ReadOnlyRoot(ReadOnlyRoot&&) = delete;
+    ReadOnlyRoot& operator=(ReadOnlyRoot&&) = delete;
+
+    fs::path directory;
+};
+
+} // namespace
+
+TEST_CASE("a system store only root can write is read when current, else the user's is kept") {
+    const TempDir dir;
+    auto invocation = export_json({}, fake_builder(dir.path(), fresh_sample(), 0));
+    invocation.store.reset();
+    invocation.root = dir.path() / "root";
+    invocation.cache_home = dir.path() / "cache";
+    const auto user = egraph::user_store_path(invocation).value_or(fs::path{});
+    fs::create_directories(invocation.root);
+    CHECK(egraph::store_path(invocation) == egraph::system_store_path(invocation));
+
+    SECTION("current") {
+        const ReadOnlyRoot root{invocation.root, fresh_sample()};
+        if (egraph::os::can_create(egraph::system_store_path(invocation))) {
+            SKIP("running as root: every directory is writable");
+        }
+        CHECK(egraph::store_path(invocation) == user);
+        std::ostringstream out;
+        std::ostringstream err;
+        REQUIRE(egraph::run(invocation, out, err) == egraph::Exit::ok);
+        CHECK_THAT(out.str(), ContainsSubstring("app-misc/a-1"));
+        CHECK_FALSE(fs::exists(dir.path() / "args"));
+    }
+    SECTION("stale") {
+        const ReadOnlyRoot root{invocation.root,
+                                egraph::test::assemble(egraph::test::sample_sections())};
+        if (egraph::os::can_create(egraph::system_store_path(invocation))) {
+            SKIP("running as root: every directory is writable");
+        }
+        std::ostringstream out;
+        std::ostringstream err;
+        REQUIRE(egraph::run(invocation, out, err) == egraph::Exit::ok);
+        CHECK(read_text(dir.path() / "args") == std::format("--incremental --store {} --root {}\n",
+                                                            user.string(),
+                                                            invocation.root.string()));
+        CHECK(egraph::load(user).has_value());
+    }
+}
+
+TEST_CASE("a builder that cannot run says how to name one") {
+    const TempDir dir;
+    auto invocation = export_json(dir.path() / "installed.egraph", "/nonexistent/egraph-build");
+    std::ostringstream out;
+    std::ostringstream err;
+    CHECK(egraph::run(invocation, out, err) == egraph::Exit::failure);
+    CHECK_THAT(err.str(), ContainsSubstring("cannot build the store: /nonexistent/egraph-build: "
+                                            "No such file or directory (install egraph-build"));
+}

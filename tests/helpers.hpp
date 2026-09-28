@@ -62,7 +62,8 @@ inline std::string read_text(const std::filesystem::path& path) {
 inline std::filesystem::path fake_builder(const std::filesystem::path& dir,
                                           const std::vector<std::byte>& prepared, int status) {
     const auto script = dir / "egraph-build";
-    write_text(script, std::format("#!/bin/sh\necho \"$@\" > '{}'\ncp '{}' \"$3\"\nexit {}\n",
+    write_text(script, std::format("#!/bin/sh\necho \"$@\" > '{}'\nmkdir -p \"$(dirname \"$3\")\"\n"
+                                   "cp '{}' \"$3\"\nexit {}\n",
                                    (dir / "args").string(), (dir / "prepared").string(), status));
     std::filesystem::permissions(script, std::filesystem::perms::owner_all);
     write_bytes(dir / "prepared", prepared);

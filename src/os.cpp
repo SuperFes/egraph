@@ -78,6 +78,21 @@ std::expected<int, SpawnError> run(const std::vector<std::string>& argv) {
     return std::unexpected(SpawnError{std::format("{}: stopped", args.front())});
 }
 
+bool can_create(const std::filesystem::path& path) {
+    std::error_code error;
+    auto dir = path.parent_path();
+    while (!dir.empty() && !std::filesystem::exists(dir, error) && dir != dir.parent_path()) {
+        dir = dir.parent_path();
+    }
+    return !dir.empty() && access(dir.c_str(), W_OK) == 0;
+}
+
+std::filesystem::path executable() {
+    std::error_code error;
+    auto path = std::filesystem::read_symlink("/proc/self/exe", error);
+    return error ? std::filesystem::path{} : path;
+}
+
 bool stdout_is_terminal() {
     return isatty(STDOUT_FILENO) == 1;
 }

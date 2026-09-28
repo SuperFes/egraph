@@ -106,8 +106,8 @@ struct Invocation {
     std::optional<std::filesystem::path> config_root;
     std::optional<std::filesystem::path> eprefix;
     std::optional<std::filesystem::path> store;
-    // Run to refresh a stale store.
-    std::string builder = "egraph-build";
+    // Run to refresh a stale store; unset, the egraph-build next to egraph, else the one in PATH.
+    std::optional<std::string> builder;
     bool no_refresh = false;
     Layout layout = Layout::automatic;
     ColorMode color = ColorMode::automatic;
@@ -117,6 +117,10 @@ struct Invocation {
     bool terminal = false;
     bool no_color = false;
     bool truecolor = false;
+    // Where the running egraph is, and the user's cache directory ($XDG_CACHE_HOME, or
+    // ~/.cache), which main fills in.
+    std::filesystem::path program_dir;
+    std::optional<std::filesystem::path> cache_home;
     Command command;
 };
 
@@ -127,7 +131,18 @@ struct Style {
 };
 [[nodiscard]] Style style(const Invocation& invocation);
 
+// The store under the root: ${ROOT}${EPREFIX}/var/cache/egraph/installed.egraph.
+[[nodiscard]] std::filesystem::path system_store_path(const Invocation& invocation);
+
+// The user's own store for the root, in the cache directory; nullopt without one.
+[[nodiscard]] std::optional<std::filesystem::path> user_store_path(const Invocation& invocation);
+
+// The store to build or refresh: --store, else the system store when this process can write it,
+// else the user's.
 [[nodiscard]] std::filesystem::path store_path(const Invocation& invocation);
+
+// The egraph-build command to run.
+[[nodiscard]] std::string builder_program(const Invocation& invocation);
 
 // The egraph-build command line that writes the store at path; mode is --full or
 // --incremental.

@@ -32,6 +32,13 @@ struct SpawnError {
 // Runs argv (argv[0] looked up in PATH) with our stdio and environment, and waits for it.
 std::expected<int, SpawnError> run(const std::vector<std::string>& argv);
 
+// Whether this process could create or replace a file at path by renaming a new one over it:
+// the nearest existing directory above it is writable.
+bool can_create(const std::filesystem::path& path);
+
+// The running executable, from /proc/self/exe; empty if that cannot be read.
+std::filesystem::path executable();
+
 // Whether standard output is a terminal.
 bool stdout_is_terminal();
 

@@ -85,6 +85,46 @@ egraph_dep = declare_dependency(
 
 egraph_exe = executable('egraph', 'src/main.cpp', dependencies: egraph_dep, install: true)
 
+# egraph looks for egraph-build next to itself, then in PATH. In the build directory that is a
+# wrapper running the builder from the source tree, under the portage in portage_lib (the
+# installed one when empty); installed, it is a script over the installed package.
+python = import('python').find_installation('python3')
+builder_path = [meson.project_source_root() / 'builder']
+if get_option('portage_lib') != ''
+  builder_path += get_option('portage_lib')
+endif
+configure_file(
+  input: 'builder/egraph-build.in',
+  output: 'egraph-build',
+  configuration: {'PYTHON': python.full_path(), 'PYTHONPATH': ':'.join(builder_path)},
+)
+builder_script = configure_file(
+  input: 'builder/egraph-build.py.in',
+  output: 'egraph-build.py',
+  configuration: {'PYTHON': python.full_path()},
+)
+install_data(
+  builder_script,
+  install_dir: get_option('bindir'),
+  rename: 'egraph-build',
+  install_mode: 'rwxr-xr-x',
+)
+python.install_sources(
+  files(
+    'builder/egraph_build/__init__.py',
+    'builder/egraph_build/__main__.py',
+    'builder/egraph_build/build.py',
+    'builder/egraph_build/cli.py',
+    'builder/egraph_build/installed.py',
+    'builder/egraph_build/model.py',
+    'builder/egraph_build/oracle.py',
+    'builder/egraph_build/profile.py',
+    'builder/egraph_build/roots.py',
+    'builder/egraph_build/store.py',
+  ),
+  subdir: 'egraph_build',
+)
+
 unit_tests = executable(
   'unit-tests',
   'tests/test_atom.cpp',
@@ -99,13 +139,23 @@ unit_tests = executable(
   'tests/test_tui.cpp',
   dependencies: [egraph_dep, catch2],
 )
-test('unit', unit_tests, protocol: 'exitcode')
+# Tests set egraph's options themselves, whatever the user's environment says.
+egraph_variables = ['EGRAPH_STORE', 'EGRAPH_BUILD', 'EGRAPH_LAYOUT', 'EGRAPH_GLYPHS', 'ROOT',
+                    'PORTAGE_CONFIGROOT', 'PORTAGE_OVERRIDE_EPREFIX']
+unit_env = environment()
+foreach variable : egraph_variables
+  unit_env.unset(variable)
+endforeach
+test('unit', unit_tests, protocol: 'exitcode', env: unit_env)
 
 # The builder imports portage, so its tests run under whichever portage is on PYTHONPATH:
 # the fork by default, since ResolverPlayground needs portage's test GPG keys from a checkout.
 pytest = find_program('pytest', required: false)
 if pytest.found()
   builder_env = environment()
+  foreach variable : egraph_variables
+    builder_env.unset(variable)
+  endforeach
   # The golden tests run the C++ reader on stores the Python writer produced.
   builder_env.set('EGRAPH', egraph_exe.full_path())
   if get_option('portage_lib') != ''

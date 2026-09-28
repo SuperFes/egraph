@@ -4,6 +4,7 @@
 #include <CLI/CLI.hpp>
 
 #include <exception>
+#include <filesystem>
 #include <iostream>
 
 int main(int argc, char** argv) {
@@ -14,6 +15,13 @@ int main(int argc, char** argv) {
         invocation.no_color = !egraph::os::environment("NO_COLOR").value_or("").empty();
         const auto colorterm = egraph::os::environment("COLORTERM").value_or("");
         invocation.truecolor = colorterm == "truecolor" || colorterm == "24bit";
+        invocation.program_dir = egraph::os::executable().parent_path();
+        if (const auto xdg = egraph::os::environment("XDG_CACHE_HOME");
+            xdg && std::filesystem::path{*xdg}.is_absolute()) {
+            invocation.cache_home = *xdg;
+        } else if (const auto home = egraph::os::environment("HOME"); home && !home->empty()) {
+            invocation.cache_home = std::filesystem::path{*home} / ".cache";
+        }
         egraph::configure(app, invocation);
         try {
             app.parse(argc, argv);

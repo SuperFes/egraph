@@ -37,7 +37,8 @@ layer; port its semantics, then extend them (see roadmap).
 Keep this section in sync with reality.
 
 ```sh
-meson setup build && meson compile -C build          # egraph binary
+meson setup build && meson compile -C build          # egraph, and build/egraph-build beside it
+build/egraph orphans                                  # works in place; store in ~/.cache/egraph
 meson test -C build --print-errorlogs                 # Catch2 + pytest
 meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false && meson test -C build-san
 meson setup build-notui -Dtui=disabled && meson test -C build-notui   # without Notcurses

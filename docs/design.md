@@ -217,6 +217,18 @@ One file, no directory trees: `${EROOT}/var/cache/egraph/installed.egraph` by de
 with `--store` or `EGRAPH_STORE`. Written as a temp file plus rename, so readers never see a
 partial store.
 
+Users who cannot write the system store still get current answers: a current system store is
+read as is, and otherwise egraph keeps the user's own store,
+`${XDG_CACHE_HOME:-~/.cache}/egraph/installed.egraph` (`installed-mnt-gentoo.egraph` for
+`--root /mnt/gentoo`), which `rebuild` also writes. The vdb is world-readable, so the builder
+needs no privileges.
+
+egraph runs the `egraph-build` next to itself if there is one, else the one in `PATH`
+(`--builder` and `EGRAPH_BUILD` override both). `meson install` puts both in `bindir` and the
+package in site-packages, so the installed builder imports the installed portage. The build
+directory gets a wrapper running the builder from the source tree under the `portage_lib` option
+(the fork by default; empty for the installed portage), so `build/egraph` works in place.
+
 ## Consumers
 
 Each consumer runs in shadow mode against the tool it replaces before anyone relies on it.
@@ -231,5 +243,3 @@ Each consumer runs in shadow mode against the tool it replaces before anyone rel
 
 ## Open questions
 
-- **Unprivileged refresh:** proposed fallback is a store in `$XDG_CACHE_HOME/egraph/` when the
-  system store is stale and unwritable, so non-root queries are never wrong.

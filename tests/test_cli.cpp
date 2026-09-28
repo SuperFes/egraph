@@ -30,7 +30,7 @@ TEST_CASE("a package argument lands in its command") {
     CHECK(invocation.root == std::filesystem::path{"/"});
     CHECK_FALSE(invocation.config_root.has_value());
     CHECK_FALSE(invocation.eprefix.has_value());
-    CHECK(invocation.builder == "egraph-build");
+    CHECK_FALSE(invocation.builder.has_value());
 }
 
 TEST_CASE("roots are passed through") {

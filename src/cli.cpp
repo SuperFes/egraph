@@ -50,17 +50,42 @@ std::optional<std::string> run_builder(const Invocation& invocation, std::string
                                        const std::filesystem::path& path) {
     const auto status = os::run(builder_command(invocation, mode, path));
     if (!status) {
-        return status.error().message;
+        return std::format("cannot build the store: {} (install egraph-build, or name it with "
+                           "--builder or EGRAPH_BUILD)",
+                           status.error().message);
     }
     if (*status != 0) {
-        return std::format("{} exited with status {}", invocation.builder, *status);
+        return std::format("{} exited with status {}", builder_program(invocation), *status);
     }
     return std::nullopt;
 }
 
 // The store, refreshed through egraph-build first if its inputs changed.
-std::expected<Store, std::string> open_store(const Invocation& invocation, std::ostream& err) {
+// A store that loads and is current, or nullopt.
+std::optional<Store> fresh(const std::filesystem::path& path) {
+    auto store = load(path);
+    if (store && !staleness(*store)) {
+        return std::move(*store);
+    }
+    return std::nullopt;
+}
+
+// The store, refreshed through egraph-build first if its inputs changed; used is the file it
+// came from. Without --store, a current system store is read even when only root can refresh it;
+// otherwise the user's own store is kept current instead.
+std::expected<Store, std::string> open_store(const Invocation& invocation, std::ostream& err,
+                                             std::filesystem::path& used) {
     const auto path = store_path(invocation);
+    used = path;
+    if (!invocation.store) {
+        const auto system = system_store_path(invocation);
+        if (system != path) {
+            if (auto store = fresh(system)) {
+                used = system;
+                return std::move(*store);
+            }
+        }
+    }
     auto store = load(path);
     if (store) {
         const auto reason = staleness(*store);
@@ -78,6 +103,11 @@ std::expected<Store, std::string> open_store(const Invocation& invocation, std::
         return std::unexpected(std::move(*error));
     }
     return load(path).transform_error([](const StoreError& error) { return error.message; });
+}
+
+std::expected<Store, std::string> open_store(const Invocation& invocation, std::ostream& err) {
+    std::filesystem::path used;
+    return open_store(invocation, err, used);
 }
 
 Exit execute(const std::monostate&, const Invocation&, std::ostream&, std::ostream& err) {
@@ -101,8 +131,9 @@ std::filesystem::path scratch_store() {
 }
 
 Exit execute(const Check&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
-    // Deliberately not refreshed: the point is to compare what is stored.
-    const auto stored = load(store_path(invocation));
+    // Deliberately not refreshed: the point is to compare what queries would read.
+    const auto system = system_store_path(invocation);
+    const auto stored = load(!invocation.store && fresh(system) ? system : store_path(invocation));
     if (!stored) {
         err << "egraph: " << stored.error().message << '\n';
         return Exit::failure;
@@ -361,12 +392,13 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
 }
 
 Exit execute(const Stats&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
-    const auto store = open_store(invocation, err);
+    std::filesystem::path used;
+    const auto store = open_store(invocation, err, used);
     if (!store) {
         err << "egraph: " << store.error() << '\n';
         return Exit::failure;
     }
-    write_stats(out, *store, build_graph(*store), store_path(invocation));
+    write_stats(out, *store, build_graph(*store), used);
     return Exit::ok;
 }
 
@@ -418,9 +450,10 @@ void configure(CLI::App& app, Invocation& invocation) {
                    "Store file to read (default: ${ROOT}${EPREFIX}/var/cache/egraph/"
                    "installed.egraph)")
         ->envname("EGRAPH_STORE");
-    app.add_option("--builder", invocation.builder, "egraph-build command that refreshes the store")
-        ->envname("EGRAPH_BUILD")
-        ->capture_default_str();
+    app.add_option("--builder", invocation.builder,
+                   "egraph-build command that refreshes the store (default: the one next to "
+                   "egraph, else egraph-build in PATH)")
+        ->envname("EGRAPH_BUILD");
     app.add_flag("--no-refresh", invocation.no_refresh,
                  "Answer from a stale store instead of rebuilding it");
     const std::map<std::string, Layout> layouts{
@@ -510,15 +543,53 @@ Style style(const Invocation& invocation) {
             .color = invocation.truecolor ? ColorDepth::truecolor : ColorDepth::palette};
 }
 
+std::filesystem::path system_store_path(const Invocation& invocation) {
+    return default_store_path(invocation.root, invocation.eprefix.value_or(""));
+}
+
+std::optional<std::filesystem::path> user_store_path(const Invocation& invocation) {
+    if (!invocation.cache_home) {
+        return std::nullopt;
+    }
+    // One store per EROOT: installed.egraph for /, installed-mnt-gentoo.egraph for /mnt/gentoo.
+    auto eroot = (invocation.root / invocation.eprefix.value_or("").relative_path())
+                     .lexically_normal()
+                     .string();
+    while (eroot.ends_with('/')) {
+        eroot.pop_back();
+    }
+    std::ranges::replace(eroot, '/', '-');
+    return *invocation.cache_home / "egraph" / std::format("installed{}.egraph", eroot);
+}
+
 std::filesystem::path store_path(const Invocation& invocation) {
-    return invocation.store.value_or(
-        default_store_path(invocation.root, invocation.eprefix.value_or("")));
+    if (invocation.store) {
+        return *invocation.store;
+    }
+    auto system = system_store_path(invocation);
+    if (os::can_create(system)) {
+        return system;
+    }
+    return user_store_path(invocation).value_or(system);
+}
+
+std::string builder_program(const Invocation& invocation) {
+    if (invocation.builder) {
+        return *invocation.builder;
+    }
+    const auto beside = invocation.program_dir / "egraph-build";
+    std::error_code error;
+    if (!invocation.program_dir.empty() && std::filesystem::exists(beside, error)) {
+        return beside.string();
+    }
+    return "egraph-build";
 }
 
 std::vector<std::string> builder_command(const Invocation& invocation, std::string_view mode,
                                          const std::filesystem::path& path) {
-    std::vector<std::string> argv{invocation.builder, std::string{mode}, "--store",
-                                  path.string(),      "--root",          invocation.root.string()};
+    std::vector<std::string> argv{
+        builder_program(invocation), std::string{mode}, "--store", path.string(), "--root",
+        invocation.root.string()};
     if (invocation.config_root) {
         argv.insert(argv.end(), {"--config-root", invocation.config_root->string()});
     }

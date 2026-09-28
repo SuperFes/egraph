@@ -1,0 +1,5 @@
+#!@PYTHON@
+# egraph-build, installed next to egraph; the egraph_build package is in site-packages.
+from egraph_build.cli import main
+
+raise SystemExit(main())

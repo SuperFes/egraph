@@ -102,6 +102,7 @@ and organised, and a TUI (ncurses, or Notcurses) is welcome.
 
 - [x] pytest is only installed for python3.13 here, not 3.14: install `dev-python/pytest` for
       3.14, or make meson pick an interpreter that has it.
-- [ ] Install `egraph-build` through meson so `egraph` can find it without PYTHONPATH.
+- [ ] The installed `egraph-build` imports the system portage (3.0.82 here); the tests run
+      against the fork. Run the suite with `-Dportage_lib=` too, or in CI.
 - [ ] CLI11's CheckedTransformer error for a bad `--format` prints the enum map
       (`{dot->0,json->1} OR {0,1}`).

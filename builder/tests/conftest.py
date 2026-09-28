@@ -52,8 +52,9 @@ def portage_environment():
     if "portage.data" in sys.modules:
         importlib.reload(portage.data)
     portage._internal_caller = True
-    # The tests read egraph's tab-separated lines, whatever the user prefers.
-    os.environ.pop("EGRAPH_LAYOUT", None)
+    # The tests choose egraph's store, builder and layout, whatever the user's environment says.
+    for variable in ("EGRAPH_STORE", "EGRAPH_BUILD", "EGRAPH_LAYOUT", "EGRAPH_GLYPHS"):
+        os.environ.pop(variable, None)
     # Never read the running system's config by accident.
     portage._disable_legacy_globals()
     yield
