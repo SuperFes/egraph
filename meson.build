@@ -36,6 +36,7 @@ endif
 
 cli11 = dependency('CLI11', version: '>=2.4')
 catch2 = dependency('catch2-with-main', version: '>=3.4')
+json = dependency('nlohmann_json', version: '>=3.10', include_type: 'system')
 # System headers, so -Wunsafe-buffer-usage stays out of Notcurses' inline functions.
 notcurses = dependency(
   'notcurses-core',
@@ -65,6 +66,7 @@ egraph_lib = static_library(
   'src/check.cpp',
   'src/cli.cpp',
   'src/depclean.cpp',
+  'src/emerge.cpp',
   'src/freshness.cpp',
   'src/graph.cpp',
   'src/human.cpp',
@@ -75,7 +77,7 @@ egraph_lib = static_library(
   'src/tui.cpp',
   'src/version.cpp',
   build_info_hpp,
-  dependencies: [cli11, notcurses],
+  dependencies: [cli11, json, notcurses],
 )
 egraph_dep = declare_dependency(
   link_with: egraph_lib,
@@ -131,6 +133,7 @@ unit_tests = executable(
   'tests/test_check.cpp',
   'tests/test_cli.cpp',
   'tests/test_depclean.cpp',
+  'tests/test_emerge.cpp',
   'tests/test_freshness.cpp',
   'tests/test_graph.cpp',
   'tests/test_human.cpp',
