@@ -8,21 +8,13 @@
 #include <optional>
 #include <ostream>
 #include <ranges>
+#include <set>
 #include <span>
 #include <tuple>
 
 namespace egraph::tui {
 
 namespace {
-
-// Every task of every emerge, in order.
-std::vector<std::reference_wrapper<const emerge::Task>> tasks(const Watched& watched) {
-    std::vector<std::reference_wrapper<const emerge::Task>> all;
-    for (const auto& snapshot : watched.snapshots) {
-        all.insert(all.end(), snapshot.tasks.begin(), snapshot.tasks.end());
-    }
-    return all;
-}
 
 // count code points of text, after the first skip.
 std::string code_points(std::string_view text, std::size_t skip, std::size_t count) {
@@ -294,18 +286,7 @@ bool available() {
 }
 
 void thread(std::vector<Row>& rows) {
-    std::vector<bool> later;
-    for (auto& row : std::ranges::reverse_view(rows)) {
-        const auto depth = selectable(row) ? row.depth : 0;
-        later.resize(std::max(later.size(), depth + 1), false);
-        row.last = !later.at(depth);
-        row.rails.assign(depth > 1 ? depth - 1 : 0, false);
-        for (std::size_t level = 1; level < depth; ++level) {
-            row.rails.at(level - 1) = later.at(level);
-        }
-        later.at(depth) = true;
-        std::fill(later.begin() + static_cast<std::ptrdiff_t>(depth) + 1, later.end(), false);
-    }
+    thread_tree(rows, [](const Row& row) { return selectable(row) ? row.depth : 0; });
 }
 
 std::vector<Link> links(const Store& store, const Graph& graph, std::uint32_t package,
@@ -503,13 +484,20 @@ bool App::watch_requested() const {
 }
 
 void App::finish_watch(std::vector<emerge::Snapshot> snapshots, const pressure::Sample& sample,
-                       std::optional<steve::Status> steve) {
+                       std::optional<steve::Status> steve,
+                       std::vector<emerge::Pending> merge_list) {
     if (!watched_) {
         return;
     }
     auto& watched = *watched_;
     watched.snapshots = std::move(snapshots);
     watched.steve = std::move(steve);
+    watched.merge_list = std::move(merge_list);
+    if (watched.merge_list.empty()) {
+        watched.waits.clear();
+        watched.planned.clear();
+        watched.plan_error.reset();
+    }
     if (!watched.steve || !watched.steve->live) {
         watched.editing.reset();
     }
@@ -518,8 +506,53 @@ void App::finish_watch(std::vector<emerge::Snapshot> snapshots, const pressure::
     }
     watched.due = false;
     ++watched.frame;
-    const auto count = tasks(watched).size();
+    const auto count = watch_rows(watched).size();
     watched.cursor.at = std::min(watched.cursor.at, count == 0 ? 0 : count - 1);
+}
+
+namespace {
+
+std::vector<std::string> sorted_cpvs(const std::vector<emerge::Pending>& list) {
+    std::vector<std::string> cpvs;
+    cpvs.reserve(list.size());
+    for (const auto& pending : list) {
+        cpvs.push_back(pending.cpv);
+    }
+    std::ranges::sort(cpvs);
+    return cpvs;
+}
+
+} // namespace
+
+std::optional<std::vector<emerge::Pending>> App::plan_requested() const {
+    if (!watched_ || !pages_.empty()) {
+        return std::nullopt;
+    }
+    const auto& watched = *watched_;
+    const bool unknown = std::ranges::any_of(watched.merge_list, [&](const auto& pending) {
+        return !watched.waits.contains(pending.cpv);
+    });
+    // Asked for this very list already: it failed, and asking again will not help.
+    if (!unknown || sorted_cpvs(watched.merge_list) == watched.planned) {
+        return std::nullopt;
+    }
+    return watched.merge_list;
+}
+
+void App::finish_plan(std::expected<emerge::Waits, std::string> result) {
+    if (!watched_) {
+        return;
+    }
+    auto& watched = *watched_;
+    watched.planned = sorted_cpvs(watched.merge_list);
+    if (!result) {
+        watched.plan_error = std::move(result.error());
+        return;
+    }
+    watched.plan_error.reset();
+    for (auto& [cpv, waits] : *result) {
+        watched.waits.insert_or_assign(cpv, std::move(waits));
+    }
 }
 
 std::optional<SteveChange> App::steve_change_requested() const {
@@ -589,7 +622,7 @@ void App::handle_watch(const Key& key) {
         handle_steve(key);
         return;
     }
-    const auto all = tasks(watched);
+    const auto all = watch_rows(watched);
     if (is(key, U'q') || is(key, U'Q')) {
         done_ = true;
     } else if (is(key, U's')) {
@@ -613,7 +646,7 @@ void App::handle_watch(const Key& key) {
             return;
         }
         // What is building is not installed yet; its page is the installed version's.
-        const auto parts = split_cpv(all.at(watched.cursor.at).get().cpv);
+        const auto parts = split_cpv(all.at(watched.cursor.at).cpv);
         const auto cp = std::format("{}/{}", parts.category, parts.name);
         const auto installed = resolve(store(), cp);
         if (installed && !installed->empty()) {
@@ -1003,6 +1036,65 @@ std::vector<std::vector<Span>> pressure_lines(const pressure::History& history,
     }
     lines.push_back(std::move(line));
     return lines;
+}
+
+std::size_t rows_owner(const Watched& watched) {
+    std::set<std::string_view, std::less<>> listed;
+    for (const auto& pending : watched.merge_list) {
+        listed.insert(pending.cpv);
+    }
+    std::size_t owner = watched.snapshots.size();
+    std::size_t most = 0;
+    for (std::size_t at = 0; at < watched.snapshots.size(); ++at) {
+        const auto& tasks = watched.snapshots.at(at).tasks;
+        const auto count = static_cast<std::size_t>(std::ranges::count_if(
+            tasks, [&](const emerge::Task& task) { return listed.contains(task.cpv); }));
+        if (count > most) {
+            owner = at;
+            most = count;
+        }
+    }
+    // One emerge between tasks still owns the list it left.
+    if (owner == watched.snapshots.size() && watched.snapshots.size() == 1 && !listed.empty()) {
+        owner = 0;
+    }
+    return owner;
+}
+
+std::vector<WatchRow> watch_rows(const Watched& watched) {
+    const auto owner = rows_owner(watched);
+    std::vector<WatchRow> all;
+    for (std::size_t at = 0; at < watched.snapshots.size(); ++at) {
+        const auto& tasks = watched.snapshots.at(at).tasks;
+        std::vector<WatchRow> rows;
+        const auto listed = [&](const emerge::Task& task) {
+            return at == owner && std::ranges::any_of(watched.merge_list, [&](const auto& pending) {
+                       return pending.cpv == task.cpv;
+                   });
+        };
+        for (const auto& task : tasks) {
+            if (!listed(task)) {
+                rows.push_back({.snapshot = at, .cpv = task.cpv, .task = task});
+            }
+        }
+        if (at == owner) {
+            for (const auto& branch : emerge::hierarchy(watched.merge_list, watched.waits)) {
+                const auto task = std::ranges::find(tasks, branch.cpv, &emerge::Task::cpv);
+                const auto pending =
+                    std::ranges::find(watched.merge_list, branch.cpv, &emerge::Pending::cpv);
+                rows.push_back(
+                    {.snapshot = at,
+                     .cpv = branch.cpv,
+                     .task = task == tasks.end() ? std::nullopt : std::optional{*task},
+                     .waiting_for = branch.waiting_for,
+                     .binary = pending != watched.merge_list.end() && pending->kind == "binary",
+                     .depth = branch.depth});
+            }
+        }
+        thread_tree(rows, [](const WatchRow& row) { return row.depth; });
+        std::ranges::move(rows, std::back_inserter(all));
+    }
+    return all;
 }
 
 Limits limits_of(const std::optional<steve::Status>& steve) {

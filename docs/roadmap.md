@@ -16,7 +16,7 @@ Update the status column as steps land.
 | 8 | Consumers | not started |
 | 9 | Evaluated and candidate layers | not planned yet |
 | 10 | Output and UX | in progress |
-| 11 | Build monitor | in progress |
+| 11 | Build monitor | done |
 
 ## 0. Scaffold
 
@@ -136,6 +136,7 @@ one. Not scheduled ahead of 8 and 9.
   live through its setters when `/dev/steve` is writable (root, or the `jobserver` group), and
   read-only otherwise. Which process holds which tokens steve only prints to its log on
   SIGUSR1; showing that needs an interface upstream.
-- 11d: the pending packages as a hierarchy under what they wait for, with the same glyphs,
-  spinners and bars, dropping out as they merge. Dependencies of versions not yet installed
-  need the evaluated layer (step 9), or a builder pass over just the merge list.
+- 11d (done): the pending packages as a hierarchy under what they wait for, with the same
+  glyphs and spinners, dropping out as they merge. Dependencies of versions not yet installed
+  come from a builder pass over just the merge list (`egraph-build --pending`), not the
+  evaluated layer.

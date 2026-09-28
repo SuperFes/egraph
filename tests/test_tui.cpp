@@ -1084,3 +1084,148 @@ TEST_CASE("run makes steve's changes through stevie and reads the result") {
     CHECK(contains(screen.text(), " 13 "));
     CHECK(contains(screen.line(19), "+/- change"));
 }
+
+namespace {
+
+// lib is building; app waits for it and plugin for app; doc is a binary package waiting for
+// nothing. x/other-1 runs but is not on the list.
+egraph::emerge::Snapshot building_lib() {
+    return {.pid = 4321,
+            .timestamp = 0,
+            .jobs = {.running = 2, .max = 4, .completed = 1, .total = 5},
+            .tasks = {{.cpv = "x/other-1", .phase = "compile"},
+                      {.cpv = "dev-libs/lib-1", .phase = "configure"}}};
+}
+
+std::vector<egraph::emerge::Pending> lib_merge_list() {
+    return {{.kind = "ebuild", .root = "/", .cpv = "dev-libs/lib-1"},
+            {.kind = "ebuild", .root = "/", .cpv = "app-misc/app-1"},
+            {.kind = "ebuild", .root = "/", .cpv = "app-misc/plugin-1"},
+            {.kind = "binary", .root = "/", .cpv = "app-doc/doc-1"}};
+}
+
+const egraph::emerge::Waits lib_waits{{"dev-libs/lib-1", {}},
+                                      {"app-misc/app-1", {"dev-libs/lib-1"}},
+                                      {"app-misc/plugin-1", {"app-misc/app-1"}},
+                                      {"app-doc/doc-1", {}}};
+
+} // namespace
+
+TEST_CASE("the merge list hangs under the emerge that runs it, what is running on top") {
+    egraph::tui::Watched watched;
+    watched.snapshots = {{.pid = 99, .timestamp = 0, .tasks = {{.cpv = "y/elsewhere-1"}}},
+                         building_lib()};
+    watched.merge_list = lib_merge_list();
+    watched.waits = lib_waits;
+    CHECK(egraph::tui::rows_owner(watched) == 1);
+    const auto rows = egraph::tui::watch_rows(watched);
+    std::vector<std::tuple<std::size_t, std::string, std::size_t, bool>> shape;
+    for (const auto& row : rows) {
+        shape.emplace_back(row.snapshot, row.cpv, row.depth, row.task.has_value());
+    }
+    CHECK(shape == std::vector<std::tuple<std::size_t, std::string, std::size_t, bool>>{
+                       {0, "y/elsewhere-1", 1, true},
+                       {1, "x/other-1", 1, true},
+                       {1, "dev-libs/lib-1", 1, true},
+                       {1, "app-misc/app-1", 2, false},
+                       {1, "app-misc/plugin-1", 3, false},
+                       {1, "app-doc/doc-1", 1, false}});
+    CHECK(rows.at(0).last);
+    CHECK_FALSE(rows.at(2).last);
+    CHECK(rows.at(3).waiting_for == 1);
+    CHECK(rows.at(5).binary);
+    CHECK(rows.at(5).last);
+    // The top level's line passes app and plugin on its way to doc.
+    CHECK(rows.at(4).rails == std::vector<bool>{true, false});
+
+    // Without the list, only what runs.
+    watched.merge_list.clear();
+    CHECK(egraph::tui::watch_rows(watched).size() == 3);
+}
+
+TEST_CASE("the emerge view draws the merge list as a tree that says what can start") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    app.handle(character(U'e'));
+    app.finish_watch({building_lib()}, {}, std::nullopt, lib_merge_list());
+    REQUIRE(app.plan_requested().has_value());
+    app.finish_plan(lib_waits);
+    FakeScreen screen{12, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    const auto text = screen.text();
+    CHECK(contains(text, "  |- / b x/other-1"));
+    CHECK(contains(text, "  |- / b dev-libs/lib-1"));
+    CHECK(contains(text, "  | `-   o app-misc/app-1"));
+    CHECK(contains(text, "waits for 1"));
+    CHECK(contains(text, "  |   `-   o app-misc/plugin-1"));
+    CHECK(contains(text, "  `-   p app-doc/doc-1"));
+    CHECK(contains(text, "ready"));
+}
+
+TEST_CASE("the merge list is planned once, and a failure is not asked again") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    app.handle(character(U'e'));
+    app.finish_watch({building_lib()}, {}, std::nullopt, lib_merge_list());
+    const auto asked = app.plan_requested();
+    REQUIRE(asked.has_value());
+    CHECK(asked->size() == 4);
+    app.finish_plan(std::unexpected("no ebuild for dev-libs/lib-1"));
+    CHECK_FALSE(app.plan_requested().has_value());
+    FakeScreen screen{12, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(),
+                   "! what the merge list waits for is unknown: no ebuild for dev-libs/lib-1"));
+    // A flat list meanwhile, every package at the top.
+    CHECK(contains(screen.text(), "  |-   o app-misc/plugin-1"));
+
+    // The list changes as packages merge: a smaller one is still asked, being new.
+    auto shorter = lib_merge_list();
+    shorter.erase(shorter.begin());
+    app.handle(key(KeyKind::tick));
+    app.finish_watch({building_lib()}, {}, std::nullopt, shorter);
+    REQUIRE(app.plan_requested().has_value());
+    app.finish_plan(lib_waits);
+    CHECK_FALSE(app.watched()->plan_error.has_value());
+    // Known now; what merges drops out without asking again.
+    shorter.erase(shorter.begin());
+    app.handle(key(KeyKind::tick));
+    app.finish_watch({building_lib()}, {}, std::nullopt, shorter);
+    CHECK_FALSE(app.plan_requested().has_value());
+    // No list, no plan, and nothing kept of the last one.
+    app.handle(key(KeyKind::tick));
+    app.finish_watch({building_lib()});
+    CHECK(app.watched()->waits.empty());
+}
+
+TEST_CASE("run reads the merge list each second and plans it once") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{16, 120, {character(U'e'), key(KeyKind::tick), key(KeyKind::tick)}};
+    int reads = 0;
+    int plans = 0;
+    egraph::tui::run(screen, app, ascii,
+                     {.watch = [] { return std::vector{building_lib()}; },
+                      .merge_list =
+                          [&] {
+                              ++reads;
+                              return lib_merge_list();
+                          },
+                      .plan = [&](const std::vector<egraph::emerge::Pending>& list)
+                          -> std::expected<egraph::emerge::Waits, std::string> {
+                          ++plans;
+                          CHECK(list.size() == 4);
+                          return lib_waits;
+                      }});
+    CHECK(reads == 3);
+    CHECK(plans == 1);
+    CHECK(contains(screen.text(), "waits for 1"));
+    // Enter on a package that is only on the list opens nothing installed, and says so.
+    app.handle(key(KeyKind::end));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "No version of app-doc/doc is installed yet");
+}

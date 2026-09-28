@@ -150,6 +150,12 @@ struct Style {
                                                        std::string_view mode,
                                                        const std::filesystem::path& path);
 
+// The egraph-build command line that writes what each merge list entry ("ebuild:cpv" or
+// "binary:cpv") waits for to output.
+[[nodiscard]] std::vector<std::string> pending_command(const Invocation& invocation,
+                                                       const std::filesystem::path& output,
+                                                       const std::vector<std::string>& entries);
+
 // Declares every option and subcommand on app; app.parse() then fills invocation, which must
 // outlive the parse.
 void configure(CLI::App& app, Invocation& invocation);

@@ -142,6 +142,15 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   use against `MemAvailable`, the one-minute load, and PSI's stall percentages when the kernel
   keeps them. Readings past steve's limits (load average, minimum available memory) are drawn
   in the bad tone, since that is when steve holds jobs back.
+- Under the emerge running most of it, the merge list (mtimedb's `resume.mergelist`, which
+  emerge shrinks as packages merge) is a tree: each package under the one it waits for that
+  merges last before it, what runs now on top with its spinner, the rest marked ready or with
+  how many they wait for. What each waits for comes from `egraph-build --pending`
+  (`builder/egraph_build/pending.py`), once per new list: its DEPEND, BDEPEND, RDEPEND and
+  IDEPEND (not PDEPEND) reduced under the USE it is built with, matched against the rest of the
+  list. Waits on packages later in merge order are left out, as emerge's order breaks those
+  cycles; within an any-of group every pending member counts, since which one the resolver
+  chose is not recorded. A failed pass is shown once and not retried for the same list.
 - steve's line under the graphs shows how many of its jobs are handed out and its settings,
   read each second through `stevie`'s getters (`src/steve.hpp`). Where `/dev/steve` is not
   open to the user (root, or the `jobserver` group), they come from steve's command line in

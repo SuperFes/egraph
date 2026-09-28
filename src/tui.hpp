@@ -88,7 +88,23 @@ struct Row {
 };
 
 // Sets each row's last and rails, walking up from the bottom: a level's line continues past a
-// row when a sibling at that level follows before anything shallower does.
+// row when a sibling at that level follows before anything shallower does. depth_of gives a
+// row's depth, 0 for one outside the tree.
+template <class T, class Depth> void thread_tree(std::vector<T>& rows, Depth depth_of) {
+    std::vector<bool> later;
+    for (auto& row : std::ranges::reverse_view(rows)) {
+        const std::size_t depth = depth_of(row);
+        later.resize(std::max(later.size(), depth + 1), false);
+        row.last = !later.at(depth);
+        row.rails.assign(depth > 1 ? depth - 1 : 0, false);
+        for (std::size_t level = 1; level < depth; ++level) {
+            row.rails.at(level - 1) = later.at(level);
+        }
+        later.at(depth) = true;
+        std::fill(later.begin() + static_cast<std::ptrdiff_t>(depth) + 1, later.end(), false);
+    }
+}
+
 void thread(std::vector<Row>& rows);
 
 // A scrolling list's selected entry and first visible one.
@@ -120,6 +136,11 @@ using SteveReader = std::function<std::optional<steve::Status>()>;
 // Changes one of steve's settings.
 using SteveSetter = std::function<std::expected<void, std::string>(steve::Setting, double)>;
 
+// The running emerge's merge list, and what each of its packages waits for.
+using MergeListReader = std::function<std::vector<emerge::Pending>()>;
+using Planner =
+    std::function<std::expected<emerge::Waits, std::string>(const std::vector<emerge::Pending>&)>;
+
 // What the interface asks of the world outside it: run() calls these, the app never does.
 struct Services {
     Checker check{};
@@ -129,7 +150,30 @@ struct Services {
     Sampler sample{};
     SteveReader steve{};
     SteveSetter set_steve{};
+    MergeListReader merge_list{};
+    Planner plan{};
 };
+
+struct Watched;
+
+// A line under an emerge in its view: a running task, or a package on its merge list placed
+// under what it waits for.
+struct WatchRow {
+    std::size_t snapshot = 0;
+    std::string cpv{};
+    // Running now.
+    std::optional<emerge::Task> task{};
+    // For a merge list package: how many others it waits for.
+    std::optional<std::size_t> waiting_for{};
+    bool binary = false;
+    std::size_t depth = 1;
+    bool last = true;
+    std::vector<bool> rails{};
+};
+
+// The rows under each emerge, in order. The merge list belongs to the emerge running most of
+// its packages (the only one, if there is one); its tasks not on the list come first.
+[[nodiscard]] std::vector<WatchRow> watch_rows(const Watched& watched);
 
 // Where steve stops handing out jobs, marked on the pressure graphs when known.
 struct Limits {
@@ -159,6 +203,11 @@ struct Watched {
     // The setting being changed, as an index into steve::all_settings.
     std::optional<std::size_t> editing;
     std::optional<SteveChange> change;
+    std::vector<emerge::Pending> merge_list;
+    emerge::Waits waits;
+    // The cpvs last asked of the planner, so a failure is not asked again every second.
+    std::vector<std::string> planned;
+    std::optional<std::string> plan_error;
     // Over the tasks of every emerge, in order.
     Cursor cursor;
 };
@@ -234,7 +283,11 @@ class App {
     // Whether the emerge view is showing and due to read the snapshots, which run() then does.
     [[nodiscard]] bool watch_requested() const;
     void finish_watch(std::vector<emerge::Snapshot> snapshots, const pressure::Sample& sample = {},
-                      std::optional<steve::Status> steve = std::nullopt);
+                      std::optional<steve::Status> steve = std::nullopt,
+                      std::vector<emerge::Pending> merge_list = {});
+    // The merge list, when some of its packages' waits are not known yet.
+    [[nodiscard]] std::optional<std::vector<emerge::Pending>> plan_requested() const;
+    void finish_plan(std::expected<emerge::Waits, std::string> result);
     // A change to steve waiting for run() to make it.
     [[nodiscard]] std::optional<SteveChange> steve_change_requested() const;
     void finish_steve_change(const std::expected<void, std::string>& result);
@@ -824,6 +877,26 @@ inline std::vector<Span> task_spans(const emerge::Task& task, std::size_t frame,
     return spans;
 }
 
+// A merge list package that is not running yet: its kind, cpv, and whether it can start.
+inline std::vector<Span> row_spans(const WatchRow& row, std::size_t frame, const Glyphs& glyph) {
+    if (row.task) {
+        return task_spans(*row.task, frame, glyph);
+    }
+    const auto waiting_for = row.waiting_for.value_or(0);
+    const bool ready = waiting_for == 0;
+    std::vector<Span> spans{{std::format("  {} ", row.binary ? glyph.binary : glyph.queued),
+                             tone_pen(ready ? Tone::good : Tone::note)}};
+    std::ranges::move(cpv_spans(row.cpv), std::back_inserter(spans));
+    const auto used = columns(row.cpv);
+    spans.push_back({std::string(used < 44 ? 46 - used : 2, ' '), {}});
+    spans.push_back(ready ? Span{"ready", tone_pen(Tone::good)}
+                          : Span{std::format("waits for {}", waiting_for), tone_pen(Tone::note)});
+    return spans;
+}
+
+// Which emerge the merge list belongs to, as watch_rows decides.
+[[nodiscard]] std::size_t rows_owner(const Watched& watched);
+
 // An emerge's heading: its pid, jobs, and progress as a bar and a percentage.
 inline std::vector<Span> emerge_spans(const emerge::Snapshot& snapshot, const Glyphs& glyph) {
     const auto& jobs = snapshot.jobs;
@@ -921,24 +994,36 @@ template <class S> void draw_watch(S& screen, App& app, const Glyphs& glyph, Siz
         bool selected = false;
     };
     std::vector<Line> lines;
-    std::size_t task_index = 0;
+    const auto rows = watch_rows(watched);
     std::size_t selected_line = 0;
-    for (const auto& snapshot : watched.snapshots) {
+    for (std::size_t snapshot = 0; snapshot < watched.snapshots.size(); ++snapshot) {
         if (!lines.empty()) {
             lines.push_back({});
         }
-        lines.push_back({.spans = emerge_spans(snapshot, glyph)});
-        for (std::size_t at = 0; at < snapshot.tasks.size(); ++at) {
-            const bool selected = task_index++ == watched.cursor.at;
+        lines.push_back({.spans = emerge_spans(watched.snapshots.at(snapshot), glyph)});
+        if (watched.plan_error && snapshot == rows_owner(watched)) {
+            lines.push_back({.spans = {{std::format("   {} what the merge list waits for is "
+                                                    "unknown: {}",
+                                                    glyph.broken, *watched.plan_error),
+                                        tone_pen(Tone::note)}}});
+        }
+        for (std::size_t at = 0; at < rows.size(); ++at) {
+            const auto& row = rows.at(at);
+            if (row.snapshot != snapshot) {
+                continue;
+            }
+            const bool selected = at == watched.cursor.at;
             if (selected) {
                 selected_line = lines.size();
             }
-            std::vector<Span> spans{
-                marker(selected, glyph),
-                {std::format("  {} ", at + 1 == snapshot.tasks.size() ? glyph.branch : glyph.tee),
-                 tone_pen(Tone::note)}};
-            std::ranges::move(task_spans(snapshot.tasks.at(at), watched.frame, glyph),
-                              std::back_inserter(spans));
+            std::vector<Span> spans{marker(selected, glyph), {"  ", {}}};
+            std::string prefix;
+            for (const bool rail : row.rails) {
+                prefix += rail ? std::string{glyph.rail} : std::string{"  "};
+            }
+            prefix += std::format("{} ", row.last ? glyph.branch : glyph.tee);
+            spans.push_back({std::move(prefix), tone_pen(Tone::note)});
+            std::ranges::move(row_spans(row, watched.frame, glyph), std::back_inserter(spans));
             lines.push_back({.spans = std::move(spans), .selected = selected});
         }
     }
@@ -994,7 +1079,12 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
         } else if (app.watch_requested()) {
             app.finish_watch(services.watch ? services.watch() : std::vector<emerge::Snapshot>{},
                              services.sample ? services.sample() : pressure::Sample{},
-                             services.steve ? services.steve() : std::nullopt);
+                             services.steve ? services.steve() : std::nullopt,
+                             services.merge_list ? services.merge_list()
+                                                 : std::vector<emerge::Pending>{});
+        } else if (const auto list = app.plan_requested()) {
+            app.finish_plan(services.plan ? services.plan(*list)
+                                          : std::unexpected(std::string{"no way to plan"}));
         } else {
             app.handle(screen.read(app.refresh()));
         }

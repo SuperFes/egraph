@@ -180,6 +180,55 @@ std::expected<std::string, std::string> output_of(const std::vector<std::string>
     return output;
 }
 
+// The same root, however it is spelled: "/mnt/gentoo" and "/mnt/gentoo/".
+bool same_root(const std::filesystem::path& a, const std::filesystem::path& b) {
+    const auto normal = [](const std::filesystem::path& path) {
+        auto text = path.lexically_normal().string();
+        while (text.size() > 1 && text.ends_with('/')) {
+            text.pop_back();
+        }
+        return text;
+    };
+    return normal(a) == normal(b);
+}
+
+// The running emerge's merge list, for this root.
+std::vector<emerge::Pending> read_merge_list(const Invocation& invocation) {
+    std::ifstream in{emerge::mtimedb_path(invocation.eprefix.value_or(""))};
+    std::ostringstream text;
+    text << in.rdbuf();
+    auto list = emerge::parse_mergelist(text.str());
+    std::erase_if(list, [&](const emerge::Pending& pending) {
+        return !same_root(pending.root, invocation.root);
+    });
+    return list;
+}
+
+// What each merge list package waits for, through egraph-build --pending; an error is its last
+// line of output.
+std::expected<emerge::Waits, std::string> plan(const Invocation& invocation,
+                                               const std::vector<emerge::Pending>& list) {
+    std::vector<std::string> entries;
+    entries.reserve(list.size());
+    for (const auto& pending : list) {
+        entries.push_back(std::format("{}:{}", pending.kind, pending.cpv));
+    }
+    const auto output = std::filesystem::path{scratch_store()}.replace_extension(".json");
+    const auto ran = output_of(pending_command(invocation, output, entries));
+    std::ifstream in{output};
+    std::ostringstream text;
+    text << in.rdbuf();
+    in.close();
+    std::error_code ignored;
+    std::filesystem::remove(output, ignored);
+    if (!ran) {
+        const auto& error = ran.error();
+        const auto last = error.rfind('\n');
+        return std::unexpected(last == std::string::npos ? error : error.substr(last + 1));
+    }
+    return emerge::parse_waits(text.str());
+}
+
 // The running steve as stevie reads it, or else as its command line started it.
 std::optional<steve::Status> read_steve() {
     const auto command_line = steve::find_command_line();
@@ -514,14 +563,18 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
                               double value) -> std::expected<void, std::string> {
         return output_of(steve::set_arguments(setting, value)).transform([](const auto&) {});
     };
-    return tui::open_and_run(*store, invocation.glyphs,
-                             {.check = check,
-                              .rebuild = rebuild,
-                              .watch = watch,
-                              .sample = sample,
-                              .steve = read_steve,
-                              .set_steve = set_steve},
-                             warnings, err);
+    return tui::open_and_run(
+        *store, invocation.glyphs,
+        {.check = check,
+         .rebuild = rebuild,
+         .watch = watch,
+         .sample = sample,
+         .steve = read_steve,
+         .set_steve = set_steve,
+         .merge_list = [&invocation] { return read_merge_list(invocation); },
+         .plan = [&invocation](
+                     const std::vector<emerge::Pending>& list) { return plan(invocation, list); }},
+        warnings, err);
 }
 
 Exit execute(const Stats&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
@@ -718,17 +771,35 @@ std::string builder_program(const Invocation& invocation) {
     return "egraph-build";
 }
 
-std::vector<std::string> builder_command(const Invocation& invocation, std::string_view mode,
-                                         const std::filesystem::path& path) {
-    std::vector<std::string> argv{
-        builder_program(invocation), std::string{mode}, "--store", path.string(), "--root",
-        invocation.root.string()};
+namespace {
+
+void add_roots(std::vector<std::string>& argv, const Invocation& invocation) {
+    argv.insert(argv.end(), {"--root", invocation.root.string()});
     if (invocation.config_root) {
         argv.insert(argv.end(), {"--config-root", invocation.config_root->string()});
     }
     if (invocation.eprefix) {
         argv.insert(argv.end(), {"--eprefix", invocation.eprefix->string()});
     }
+}
+
+} // namespace
+
+std::vector<std::string> builder_command(const Invocation& invocation, std::string_view mode,
+                                         const std::filesystem::path& path) {
+    std::vector<std::string> argv{builder_program(invocation), std::string{mode}, "--store",
+                                  path.string()};
+    add_roots(argv, invocation);
+    return argv;
+}
+
+std::vector<std::string> pending_command(const Invocation& invocation,
+                                         const std::filesystem::path& output,
+                                         const std::vector<std::string>& entries) {
+    std::vector<std::string> argv{builder_program(invocation), "--pending", "--output",
+                                  output.string()};
+    add_roots(argv, invocation);
+    argv.insert(argv.end(), entries.begin(), entries.end());
     return argv;
 }
 

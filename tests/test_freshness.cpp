@@ -138,6 +138,10 @@ TEST_CASE("the refresh command passes the roots through") {
                                    "/prefix"});
     CHECK(egraph::store_path(invocation) ==
           fs::path{"/mnt/prefix/var/cache/egraph/installed.egraph"});
+    CHECK(egraph::pending_command(invocation, "/o.json", {"ebuild:x/y-1", "binary:x/z-2"}) ==
+          std::vector<std::string>{"/usr/bin/egraph-build", "--pending", "--output", "/o.json",
+                                   "--root", "/mnt", "--config-root", "/cfg", "--eprefix",
+                                   "/prefix", "ebuild:x/y-1", "binary:x/z-2"});
 }
 
 namespace {

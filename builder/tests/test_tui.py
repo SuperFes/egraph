@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
@@ -200,3 +201,75 @@ def test_tui_watches_running_emerges(playgrounds, tmp_path):
         wait_for(socket, "EXIT=0")
     finally:
         tmux(socket, "kill-server")
+
+
+def test_tui_shows_the_merge_list_as_a_tree(gnupg_home, tmp_path):
+    from portage.tests.resolver.ResolverPlayground import ResolverPlayground
+
+    skip_without_tui()
+    playground = ResolverPlayground(
+        ebuilds={
+            "dev-libs/lib-1": {"EAPI": "8"},
+            "app-misc/app-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib"},
+            "app-misc/plugin-1": {"EAPI": "8", "DEPEND": "app-misc/app"},
+        },
+        installed={"app-misc/app-0": {"EAPI": "8", "KEYWORDS": "x86"}},
+    )
+    try:
+        vardb = playground.trees[playground.eroot]["vartree"].dbapi
+        path = tmp_path / "installed.egraph"
+        store.write(
+            path, store.encode(installed.build(vardb), store.Meta("0", "0", "/", 0))
+        )
+        eprefix = Path(playground.eprefix)
+        # emerge's merge list, and it running lib; its pid is a live one.
+        edb = eprefix / "var" / "cache" / "edb"
+        edb.mkdir(parents=True, exist_ok=True)
+        mergelist = [
+            ["ebuild", "/", cpv, "merge"]
+            for cpv in ("dev-libs/lib-1", "app-misc/app-1", "app-misc/plugin-1")
+        ]
+        (edb / "mtimedb").write_text(json.dumps({"resume": {"mergelist": mergelist}}))
+        pid = os.getpid()
+        run_dir = eprefix / "run" / "portage"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / f"emerge-{pid}.json").write_text(
+            json.dumps(
+                {
+                    "type": "snapshot",
+                    "schema": 1,
+                    "emerge_pid": pid,
+                    "jobs": {"running": 1, "max": 2, "completed": 0, "total": 3},
+                    "tasks": [
+                        {"cpv": "dev-libs/lib-1", "kind": "build", "phase": "compile"}
+                    ],
+                }
+            )
+        )
+        socket = f"egraph-test-{os.getpid()}"
+        command = (
+            f"{EGRAPH} --store {path} --config-root {playground.eroot}"
+            f" --eprefix {playground.eprefix} --no-refresh tui; echo EXIT=$?; sleep 30"
+        )
+        tmux(socket, "new-session", "-d", "-s", "t", "-x", "120", "-y", "20", command)
+        try:
+            wait_for(socket, "/ to search")
+            tmux(socket, "send-keys", "-t", "t", "e")
+            screen = wait_for(socket, "waits for 1", seconds=30)
+            assert "dev-libs/lib-1" in screen
+            assert "compile" in screen
+            lines = screen.splitlines()
+            app = next(line for line in lines if "app-misc/app-1" in line)
+            plugin = next(line for line in lines if "app-misc/plugin-1" in line)
+            # app sits under lib, plugin under app.
+            assert app.index("app-misc/app-1") < plugin.index("app-misc/plugin-1")
+            # Down to app, whose installed version's page opens.
+            tmux(socket, "send-keys", "-t", "t", "j")
+            tmux(socket, "send-keys", "-t", "t", "Enter")
+            wait_for(socket, "app-misc/app-0")
+            tmux(socket, "send-keys", "-t", "t", "q")
+            wait_for(socket, "EXIT=0")
+        finally:
+            tmux(socket, "kill-server")
+    finally:
+        playground.cleanup()

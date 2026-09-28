@@ -126,6 +126,8 @@ struct Glyphs {
     std::string_view binary;
     std::string_view merge;
     std::string_view waiting;
+    // On the merge list, not started.
+    std::string_view queued;
     // A spinner's frames, one code point each.
     std::string_view spinner;
     // A progress bar's full and empty cells, and cells filled by eighths (none in ascii).

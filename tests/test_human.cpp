@@ -201,6 +201,7 @@ TEST_CASE("every glyph set fills every glyph") {
                                 glyph.binary,
                                 glyph.merge,
                                 glyph.waiting,
+                                glyph.queued,
                                 glyph.spinner,
                                 glyph.bar_full,
                                 glyph.bar_empty,
