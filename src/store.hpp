@@ -116,25 +116,30 @@ struct Input {
     std::uint64_t size = 0;
 };
 
-// A decoded store. Every id and Range in it was checked against its table by decode().
-struct Store {
-    Meta meta;
-    ImplicitIuse implicit;
-    std::vector<Input> inputs;
+// The shared vectors a store file's records slice with Ranges.
+struct Tables {
     // Every string back to back; strings[id] slices it.
     std::string pool;
     std::vector<Range> strings;
-    std::vector<Package> packages;
     std::vector<Node> nodes;
     std::vector<std::uint32_t> ids;
     std::vector<StringPair> pairs;
-    std::vector<Require> required;
-    std::vector<Root> roots;
 
     [[nodiscard]] std::string_view string(std::uint32_t id) const EGRAPH_LIFETIMEBOUND;
     [[nodiscard]] std::span<const std::uint32_t> ids_in(Range range) const EGRAPH_LIFETIMEBOUND;
     [[nodiscard]] std::span<const Node> nodes_in(Range range) const EGRAPH_LIFETIMEBOUND;
     [[nodiscard]] std::span<const StringPair> pairs_in(Range range) const EGRAPH_LIFETIMEBOUND;
+};
+
+// A decoded store. Every id and Range in it was checked against its table by decode().
+struct Store : Tables {
+    Meta meta;
+    ImplicitIuse implicit;
+    std::vector<Input> inputs;
+    std::vector<Package> packages;
+    std::vector<Require> required;
+    std::vector<Root> roots;
+
     [[nodiscard]] std::span<const Require> required_in(Range range) const EGRAPH_LIFETIMEBOUND;
 };
 

@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from egraph_build import installed, store
+from egraph_build import evaluated, installed, store
 
 EGRAPH = os.environ.get("EGRAPH")
 
@@ -29,6 +29,50 @@ def test_cpp_export_matches_builder_json(scenario, tmp_path):
     path = tmp_path / "installed.egraph"
     store.write(path, store.encode(layer, META))
     assert export(path) == installed.to_json(layer).encode()
+
+
+def write_both(system, path, installed_build_time_ns=0):
+    store.write(path, store.encode(installed.build(system.vardb), META))
+    portdb = system.trees[system.eroot]["porttree"].dbapi
+    layer = evaluated.build(system.vardb, portdb)
+    meta = store.EvaluatedMeta("0.0.0", "3.0.0", "/", 0, installed_build_time_ns)
+    store.write(store.evaluated_path(path), store.encode_evaluated(layer, meta))
+    return layer
+
+
+def export_evaluated(path):
+    return subprocess.run(
+        [EGRAPH, "--store", str(path), "--no-refresh", "export", "--format", "json"]
+        + ["--evaluated"],
+        capture_output=True,
+    )
+
+
+def test_cpp_evaluated_export_matches_builder_json(scenario, tmp_path):
+    path = tmp_path / "installed.egraph"
+    layer = write_both(scenario, path)
+    result = export_evaluated(path)
+    assert result.stderr == b""
+    assert result.stdout == evaluated.to_json(layer).encode()
+
+
+def test_an_evaluated_store_from_another_build_is_stale(playgrounds, tmp_path):
+    path = tmp_path / "installed.egraph"
+    write_both(playgrounds("repository"), path, installed_build_time_ns=1)
+    result = export_evaluated(path)
+    assert result.returncode == 0
+    assert b"stale store (built against another installed store)" in result.stderr
+
+
+def test_a_missing_evaluated_store_fails_cleanly(playgrounds, tmp_path):
+    path = tmp_path / "installed.egraph"
+    write_both(playgrounds("repository"), path)
+    os.unlink(store.evaluated_path(path))
+    result = export_evaluated(path)
+    assert result.returncode == 1
+    assert result.stdout == b""
+    expected = f"egraph: {store.evaluated_path(path)}: "
+    assert result.stderr.decode().startswith(expected)
 
 
 def test_undecodable_bytes_survive_the_round_trip(tmp_path):

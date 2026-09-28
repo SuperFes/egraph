@@ -25,8 +25,15 @@ Each layer has its own inputs and invalidation, and is proven independently.
 | Layer | Contents | Depends on | Status |
 |---|---|---|---|
 | Installed | installed packages, exact dependency edges, sonames, blockers, roots | `/var/db/pkg`, world file, profile (for @system) | first |
-| Evaluated | effective USE, visibility, reduced deps of repo packages | repo metadata, `/etc/portage`, profile, env | later |
+| Evaluated | installed packages' dependencies as emerge reads them by default; the visible versions of installed cps with effective USE, and why installed ones are masked | repo metadata, `/etc/portage`, profile, the installed store | stored (9b) |
 | Candidate | best visible version per cp, pending updates and rebuilds | both of the above | later |
+
+The evaluated layer is its own file beside the installed store (`installed.evaluated.egraph`),
+written by the same builder run and keyed to that installed store: it names packages by the
+installed store's ids and records its build start, so rebuilding either makes it stale.
+Dynamic dependencies follow emerge's FakeVartree rule (`builder/egraph_build/dynamic.py`): the
+ebuild's dependencies with the built `:=` atoms appended when the same version is still in the
+package's repository, else the vdb's with the repositories' package moves applied.
 
 The installed layer needs no resolver decisions: installed packages have fixed USE, so every
 conditional reduces to plain atoms. Only `||` groups remain, and on an installed system each group

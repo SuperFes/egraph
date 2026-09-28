@@ -37,6 +37,11 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       environment rather than make.conf) are not inputs, so a change there goes unnoticed.
 - [ ] `egraph` does not check the store's EROOT against its own roots; only the builder does, on
       incremental builds.
+- [ ] The evaluated store tracks the main repository through its metadata cache directories, so
+      an ebuild or eclass edited in place there without regenerating the cache goes unnoticed
+      (portage itself would notice the stale cache entry). Other repositories track their
+      installed cps' ebuilds, but not their eclasses beyond the directory.
+- [ ] Every builder run rebuilds the evaluated store in full (step 9f makes it incremental).
 
 ## Store
 

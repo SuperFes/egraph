@@ -268,6 +268,10 @@ SCENARIOS = {
             "app-misc/newname-1": {"EAPI": "8", "KEYWORDS": "x86"},
             # new is on by default now; old was on when it was built.
             "app-misc/flags-1": {"EAPI": "8", "KEYWORDS": "x86", "IUSE": "+new old"},
+            # A second repository: one package only there, and one version in both.
+            "app-misc/over-1::overlay": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/over-2::overlay": {"EAPI": "8", "KEYWORDS": "x86"},
+            "dev-libs/new-1::overlay": {"EAPI": "8", "KEYWORDS": "x86"},
         },
         "installed": {
             "app-misc/dyn-1": {"EAPI": "8", "RDEPEND": "dev-libs/old"},
@@ -283,6 +287,7 @@ SCENARIOS = {
             "app-misc/gone-1": {"EAPI": "8", "RDEPEND": "app-misc/oldname"},
             "app-misc/newname-1": {"EAPI": "8"},
             "app-misc/flags-1": {"EAPI": "8", "IUSE": "+new old", "USE": "old"},
+            "app-misc/over-1::overlay": {"EAPI": "8"},
         },
         "user_config": {
             "package.mask": ("=app-misc/masked-2",),

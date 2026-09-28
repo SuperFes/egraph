@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from egraph_build import cli, installed
+from egraph_build import cli, evaluated, installed
 
 
 @pytest.mark.parametrize(
@@ -65,6 +65,15 @@ def test_json_prints_the_installed_layer(monkeypatch, capsys, playgrounds):
     assert cli.main(argv) == cli.EXIT_OK
     assert opened == [("/c", "/r", "/p")]
     assert capsys.readouterr().out == installed.to_json(installed.build(vardb))
+
+
+def test_evaluated_json_prints_the_evaluated_layer(monkeypatch, capsys, playgrounds):
+    system = playgrounds("repository")
+    portdb = system.trees[system.eroot]["porttree"].dbapi
+    monkeypatch.setattr(cli, "open_databases", lambda *args: (system.vardb, portdb))
+    assert cli.main(["--evaluated-json"]) == cli.EXIT_OK
+    expected = evaluated.to_json(evaluated.build(system.vardb, portdb))
+    assert capsys.readouterr().out == expected
 
 
 def test_exit_codes_match_egraph():

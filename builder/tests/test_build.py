@@ -207,7 +207,14 @@ def test_another_eroot_forces_a_full_build(system):
 @pytest.fixture
 def cli_system(system, monkeypatch, tmp_path):
     playground, _, _ = system
-    monkeypatch.setattr(cli, "open_vardb", lambda *args: fresh_vardb(playground))
+    monkeypatch.setattr(
+        cli,
+        "open_databases",
+        lambda *args: (
+            fresh_vardb(playground),
+            playground.trees[playground.eroot]["porttree"].dbapi,
+        ),
+    )
     path = tmp_path / "installed.egraph"
     assert cli.main(["--full", "--store", str(path)]) == cli.EXIT_OK
     return playground, path
@@ -251,3 +258,37 @@ def test_strict_mode_catches_a_wrong_incremental(cli_system, monkeypatch, capsys
     assert cli.main(["--incremental", "--store", str(path)]) == cli.EXIT_FAILURE
     assert "differs from a full build" in capsys.readouterr().err
     assert path.read_bytes() == before
+
+
+def test_evaluated_inputs(playgrounds):
+    system = playgrounds("repository")
+    portdb = system.trees[system.eroot]["porttree"].dbapi
+    cpvs = sorted(str(cpv) for cpv in system.vardb.cpv_all())
+    paths = {
+        item.path: item.kind
+        for item in build.evaluated_inputs(system.vardb.settings, portdb, cpvs)
+    }
+    main = portdb.getRepositoryPath("test_repo")
+    overlay = portdb.getRepositoryPath("overlay")
+    user = os.path.join(system.eroot, "etc", "portage")
+    assert paths[os.path.join(user, "package.mask")] == store.INPUT_FILE
+    assert paths[os.path.join(user, "package.accept_keywords")] == store.INPUT_MISSING
+    assert (
+        paths[os.path.join(main, "profiles", "updates", "1Q-2026")] == store.INPUT_FILE
+    )
+    for repo in (main, overlay):
+        assert paths[repo] == store.INPUT_DIRECTORY
+        assert os.path.join(repo, "eclass") in paths
+    # The main repository through its metadata cache only; others down to their ebuilds.
+    assert os.path.join(main, "app-misc", "over") not in paths
+    assert os.path.join(main, "app-misc", "dyn") not in paths
+    for relative in (
+        "app-misc",
+        "app-misc/over",
+        "app-misc/over/over-1.ebuild",
+        "app-misc/over/over-2.ebuild",
+        "dev-libs/new/new-1.ebuild",
+    ):
+        assert os.path.join(overlay, relative) in paths, relative
+    # Only the installed categories.
+    assert all("/sys-apps" not in path for path in paths)

@@ -298,3 +298,18 @@ process including load and the freshness check of 2,575 inputs.
 - The oracle's dynamic dependencies (`oracle.dynamic_dep_strings`, FakeVartree's rule rebuilt on
   portage's public API plus one wrapped `_pkg_str`) equal FakeVartree's own for every installed
   package in every scenario and for all 2,326 on the live system.
+
+## Evaluated store (2026-09-28, roadmap step 9b)
+
+- Live system: every installed package's dependencies come from its ebuild (2,326 `ebuild`,
+  none `vdb` or `moved`); 4,881 candidates across 2,293 cps, none of them a masked installed
+  version. 2,135 inputs. The evaluated store is 1.06 MB beside the installed store's 1.16 MB.
+- A full `egraph-build` writing both stores costs 62.2G instructions against about 8.3G for the
+  installed store alone. The evaluated pass is dominated by candidates: `config.setcpv` for
+  effective USE is about 60% of it and visibility most of the rest, both through portage's
+  public API. Visibility through a repository-qualified `match-visible` per cp and repository
+  measured 1.05-1.33 s against 1.20-1.71 s for `getmaskingstatus` on every version, so the
+  builder asks `getmaskingstatus` only why an installed version is masked.
+- The builder matches the oracle on dependencies for a sample of 100 packages, and on visible
+  candidates and the best version per slot for every installed cp; `egraph export --evaluated`
+  reproduces the builder's JSON byte for byte on the live system.

@@ -7,6 +7,7 @@
 #include "check.hpp"
 #include "depclean.hpp"
 #include "emerge.hpp"
+#include "evaluated.hpp"
 #include "freshness.hpp"
 #include "graph.hpp"
 #include "human.hpp"
@@ -71,49 +72,63 @@ run_builder(const Invocation& invocation, std::string_view mode, const std::file
     return std::nullopt;
 }
 
-// The store, refreshed through egraph-build first if its inputs changed.
-// A store that loads and is current, or nullopt.
-std::optional<Store> fresh(const std::filesystem::path& path) {
-    auto store = load(path);
-    if (store && !staleness(*store)) {
-        return std::move(*store);
+// What loads from path and is current, or nullopt. Loaded is a Store or Stores.
+template <class Loaded, class Load>
+std::optional<Loaded> fresh(const std::filesystem::path& path, const Load& load_path) {
+    auto loaded = load_path(path);
+    if (loaded && !staleness(*loaded)) {
+        return std::move(*loaded);
     }
     return std::nullopt;
 }
 
-// The store, refreshed through egraph-build first if its inputs changed; used is the file it
-// came from. Without --store, a current system store is read even when only root can refresh it;
-// otherwise the user's own store is kept current instead.
-std::expected<Store, std::string> open_store(const Invocation& invocation, std::ostream& err,
-                                             std::filesystem::path& used) {
+// What load_path reads from the store, refreshed through egraph-build first if its inputs
+// changed; used is the installed store it came from. Without --store, a current system store is
+// read even when only root can refresh it; otherwise the user's own store is kept current
+// instead.
+template <class Loaded, class Load>
+std::expected<Loaded, std::string> open_current(const Invocation& invocation, std::ostream& err,
+                                                std::filesystem::path& used,
+                                                const Load& load_path) {
     const auto path = store_path(invocation);
     used = path;
     if (!invocation.store) {
         const auto system = system_store_path(invocation);
         if (system != path) {
-            if (auto store = fresh(system)) {
+            if (auto loaded = fresh<Loaded>(system, load_path)) {
                 used = system;
-                return std::move(*store);
+                return std::move(*loaded);
             }
         }
     }
-    auto store = load(path);
-    if (store) {
-        const auto reason = staleness(*store);
+    auto loaded = load_path(path);
+    if (loaded) {
+        const auto reason = staleness(*loaded);
         if (!reason) {
-            return std::move(*store);
+            return std::move(*loaded);
         }
         if (invocation.no_refresh) {
             err << "egraph: warning: answering from a stale store (" << *reason << ")\n";
-            return std::move(*store);
+            return std::move(*loaded);
         }
     } else if (invocation.no_refresh) {
-        return std::unexpected(store.error().message);
+        return std::unexpected(loaded.error().message);
     }
     if (auto error = run_builder(invocation, "--incremental", path)) {
         return std::unexpected(std::move(*error));
     }
-    return load(path).transform_error([](const StoreError& error) { return error.message; });
+    return load_path(path).transform_error([](const StoreError& error) { return error.message; });
+}
+
+std::expected<Store, std::string> open_store(const Invocation& invocation, std::ostream& err,
+                                             std::filesystem::path& used) {
+    return open_current<Store>(invocation, err, used, [](const auto& path) { return load(path); });
+}
+
+// The installed store and the evaluated one beside it, current together.
+std::expected<Stores, std::string> open_stores(const Invocation& invocation, std::ostream& err) {
+    std::filesystem::path used;
+    return open_current<Stores>(invocation, err, used, load_stores);
 }
 
 std::expected<Store, std::string> open_store(const Invocation& invocation, std::ostream& err) {
@@ -283,6 +298,7 @@ std::expected<Store, std::string> fresh_build(const Invocation& invocation, bool
     auto built = error ? std::expected<Store, StoreError>{} : load(path);
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
+    std::filesystem::remove(evaluated_store_path(path), ignored);
     if (error) {
         return std::unexpected(*error);
     }
@@ -292,7 +308,8 @@ std::expected<Store, std::string> fresh_build(const Invocation& invocation, bool
 Exit execute(const Check&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
     // Deliberately not refreshed: the point is to compare what queries would read.
     const auto system = system_store_path(invocation);
-    const auto stored = load(!invocation.store && fresh(system) ? system : store_path(invocation));
+    const auto current = fresh<Store>(system, [](const auto& path) { return load(path); });
+    const auto stored = load(!invocation.store && current ? system : store_path(invocation));
     if (!stored) {
         err << "egraph: " << stored.error().message << '\n';
         return Exit::failure;
@@ -628,6 +645,19 @@ Exit execute(const Stats&, const Invocation& invocation, std::ostream& out, std:
 
 Exit execute(const Export& command, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
+    if (command.evaluated) {
+        if (command.format != ExportFormat::json || !command.packages.empty()) {
+            err << "egraph: export --evaluated writes the whole store, as JSON\n";
+            return Exit::usage;
+        }
+        const auto stores = open_stores(invocation, err);
+        if (!stores) {
+            err << "egraph: " << stores.error() << '\n';
+            return Exit::failure;
+        }
+        write_evaluated_json(out, stores->evaluated);
+        return Exit::ok;
+    }
     const auto store = open_store(invocation, err);
     if (!store) {
         err << "egraph: " << store.error() << '\n';
@@ -738,6 +768,10 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->transform(CLI::CheckedTransformer(formats, CLI::ignore_case).description("{dot,json}"));
     add_field(export_cmd, invocation, "packages", &Export::packages,
               "Packages whose neighborhood to export; all when omitted");
+    export_cmd->add_flag_callback(
+        "--evaluated", [&invocation] { std::get<Export>(invocation.command).evaluated = true; },
+        "Export the evaluated store instead, whole and as JSON: the dependencies emerge reads "
+        "by default, and the versions each installed package could move to");
     add_field(export_cmd, invocation, "--depth", &Export::depth,
               "Dependency edges to follow out from the packages (default 1)");
     const std::map<std::string, Direction> directions{{"reverse", Direction::reverse},

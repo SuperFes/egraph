@@ -1,5 +1,6 @@
 #pragma once
 
+#include "evaluated.hpp"
 #include "store.hpp"
 
 #include <cstdint>
@@ -22,5 +23,8 @@ void write_json(std::ostream& out, const Store& store);
 
 // The same document holding only the given packages, in id order, and the roots matching them.
 void write_json(std::ostream& out, const Store& store, std::span<const std::uint32_t> packages);
+
+// The evaluated store as egraph_build.evaluated.to_json writes it.
+void write_evaluated_json(std::ostream& out, const Evaluated& evaluated);
 
 } // namespace egraph

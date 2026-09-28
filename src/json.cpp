@@ -105,11 +105,11 @@ void write_code_point(std::ostream& out, char32_t code) {
     }
 }
 
-void write_string(std::ostream& out, const Store& store, std::uint32_t id) {
+void write_string(std::ostream& out, const Tables& store, std::uint32_t id) {
     write_json_string(out, store.string(id));
 }
 
-void write_string_list(std::ostream& out, const Store& store, Range range) {
+void write_string_list(std::ostream& out, const Tables& store, Range range) {
     out << '[';
     bool first = true;
     for (const auto id : store.ids_in(range)) {
@@ -120,7 +120,7 @@ void write_string_list(std::ostream& out, const Store& store, Range range) {
     out << ']';
 }
 
-void write_pairs(std::ostream& out, const Store& store, Range range) {
+void write_pairs(std::ostream& out, const Tables& store, Range range) {
     out << '[';
     bool first = true;
     for (const auto& pair : store.pairs_in(range)) {
@@ -137,7 +137,8 @@ void write_pairs(std::ostream& out, const Store& store, Range range) {
 constexpr std::array<std::string_view, 5> node_type_names{"atom", "any-of", "all-of",
                                                           "weak-blocker", "strong-blocker"};
 
-void write_nodes(std::ostream& out, const Store& store, Range range) {
+// Matches name the packages of Layer, a Store or an Evaluated, by cpv.
+template <typename Layer> void write_nodes(std::ostream& out, const Layer& store, Range range) {
     out << '[';
     bool first = true;
     for (const auto& node : store.nodes_in(range)) {
@@ -216,6 +217,50 @@ void write_json_string(std::ostream& out, std::string_view bytes) {
         }
     }
     out << '"';
+}
+
+void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
+    constexpr std::array<std::string_view, 3> sources{"ebuild", "vdb", "moved"};
+    out << R"({"candidates":[)";
+    bool first = true;
+    for (const auto& candidate : evaluated.candidates) {
+        out << (first ? "{\"cp\":" : ",{\"cp\":");
+        first = false;
+        write_string(out, evaluated, candidate.cp);
+        out << ",\"cpv\":";
+        write_string(out, evaluated, candidate.cpv);
+        out << ",\"iuse\":";
+        write_string_list(out, evaluated, candidate.iuse);
+        out << ",\"reasons\":";
+        write_string_list(out, evaluated, candidate.reasons);
+        out << ",\"repo\":";
+        write_string(out, evaluated, candidate.repo);
+        out << ",\"slot\":";
+        write_string(out, evaluated, candidate.slot);
+        out << ",\"sub_slot\":";
+        write_string(out, evaluated, candidate.sub_slot);
+        out << ",\"use\":";
+        write_string_list(out, evaluated, candidate.use);
+        out << '}';
+    }
+    out << R"(],"format":1,"packages":[)";
+    first = true;
+    for (const auto& pkg : evaluated.packages) {
+        out << (first ? "{\"cpv\":" : ",{\"cpv\":");
+        first = false;
+        write_string(out, evaluated, pkg.cpv);
+        out << ",\"deps\":{";
+        for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+            out << (kind == 0 ? "\"" : ",\"") << dep_kinds.at(kind) << "\":";
+            write_nodes(out, evaluated, pkg.deps.at(kind));
+        }
+        out << "},\"eapi\":";
+        write_string(out, evaluated, pkg.eapi);
+        out << ",\"errors\":";
+        write_pairs(out, evaluated, pkg.errors);
+        out << R"(,"source":")" << sources.at(static_cast<std::size_t>(pkg.source)) << R"("})";
+    }
+    out << "]}\n";
 }
 
 std::string package_json(const Store& store, const Package& pkg) {

@@ -29,10 +29,9 @@ bool same_kind(InputKind recorded, os::FileKind actual) {
 
 } // namespace
 
-std::optional<std::string> staleness(const Store& store) {
-    const auto build = store.meta.build_time_ns;
-    const auto racy_after = build > racy_window_ns ? build - racy_window_ns : 0;
-    for (const auto& input : store.inputs) {
+std::optional<std::string> staleness(std::span<const Input> inputs, std::uint64_t build_time_ns) {
+    const auto racy_after = build_time_ns > racy_window_ns ? build_time_ns - racy_window_ns : 0;
+    for (const auto& input : inputs) {
         const auto status = os::lstat(input.path);
         if (input.kind == InputKind::missing) {
             if (status) {
@@ -55,6 +54,24 @@ std::optional<std::string> staleness(const Store& store) {
         }
     }
     return std::nullopt;
+}
+
+std::optional<std::string> staleness(const Store& store) {
+    return staleness(store.inputs, store.meta.build_time_ns);
+}
+
+std::optional<std::string> staleness(const Evaluated& evaluated, const Store& installed) {
+    if (evaluated.meta.installed_build_time_ns != installed.meta.build_time_ns) {
+        return std::string{"built against another installed store"};
+    }
+    return staleness(evaluated.inputs, evaluated.meta.build_time_ns);
+}
+
+std::optional<std::string> staleness(const Stores& stores) {
+    if (auto reason = staleness(stores.installed)) {
+        return reason;
+    }
+    return staleness(stores.evaluated, stores.installed);
 }
 
 } // namespace egraph

@@ -40,6 +40,13 @@ def parser():
         help="print the canonical JSON of the installed layer instead of writing the store",
     )
     mode.add_argument(
+        "--evaluated-json",
+        dest="mode",
+        action="store_const",
+        const="evaluated-json",
+        help="print the canonical JSON of the evaluated layer instead of writing the store",
+    )
+    mode.add_argument(
         "--pending",
         dest="mode",
         action="store_const",
@@ -61,7 +68,8 @@ def parser():
         "--store",
         type=Path,
         default=os.environ.get("EGRAPH_STORE"),
-        help="store file to write (default: ${EROOT}/var/cache/egraph/installed.egraph)",
+        help="store file to write (default: ${EROOT}/var/cache/egraph/installed.egraph); "
+        "the evaluated store goes beside it",
     )
     # Unset options fall through to portage's own defaults and environment.
     p.add_argument(
@@ -93,8 +101,7 @@ def open_vardb(config_root, root, eprefix=None):
     return vartree(settings=settings).dbapi
 
 
-def open_trees(config_root, root, eprefix=None):
-    """The configuration, and the ebuild and binary package databases for its root."""
+def _tree(config_root, root, eprefix):
     import portage
 
     trees = portage.create_trees(
@@ -103,7 +110,18 @@ def open_trees(config_root, root, eprefix=None):
     eroot = portage.config(config_root=config_root, target_root=root, eprefix=eprefix)[
         "EROOT"
     ]
-    tree = trees[eroot]
+    return trees[eroot]
+
+
+def open_databases(config_root, root, eprefix=None):
+    """The installed and the ebuild package databases for a root."""
+    tree = _tree(config_root, root, eprefix)
+    return tree["vartree"].dbapi, tree["porttree"].dbapi
+
+
+def open_trees(config_root, root, eprefix=None):
+    """The configuration, and the ebuild and binary package databases for its root."""
+    tree = _tree(config_root, root, eprefix)
     return tree["vartree"].settings, tree["porttree"].dbapi, tree["bintree"].dbapi
 
 
@@ -139,7 +157,7 @@ def write_store(args, incremental):
 
     from egraph_build import __version__, build, installed, profile, store
 
-    vardb = open_vardb(args.config_root, args.root, args.eprefix)
+    vardb, portdb = open_databases(args.config_root, args.root, args.eprefix)
     path = args.store or store.default_path(vardb.settings["EROOT"])
     previous = _previous(path) if incremental else None
     result = build.incremental(vardb, *previous) if previous else build.full(vardb)
@@ -159,6 +177,24 @@ def write_store(args, incremental):
         implicit=profile.implicit_iuse(vardb.settings),
     )
     store.write(path, store.encode(result.layer, meta, result.inputs))
+    ev = build.evaluate(vardb, portdb)
+    if ev.layer.installed() != result.layer.installed():
+        print(
+            "egraph-build: the installed packages changed during the build",
+            file=sys.stderr,
+        )
+        return EXIT_FAILURE
+    evaluated_meta = store.EvaluatedMeta(
+        egraph_version=__version__,
+        portage_version=portage.VERSION,
+        eroot=vardb.settings["EROOT"],
+        build_time_ns=ev.started_ns,
+        installed_build_time_ns=result.started_ns,
+    )
+    store.write(
+        store.evaluated_path(path),
+        store.encode_evaluated(ev.layer, evaluated_meta, ev.inputs),
+    )
     return EXIT_OK
 
 
@@ -177,5 +213,11 @@ def main(argv=None):
 
         vardb = open_vardb(args.config_root, args.root, args.eprefix)
         sys.stdout.write(installed.to_json(build.full(vardb).layer))
+        return EXIT_OK
+    if args.mode == "evaluated-json":
+        from egraph_build import evaluated
+
+        vardb, portdb = open_databases(args.config_root, args.root, args.eprefix)
+        sys.stdout.write(evaluated.to_json(evaluated.build(vardb, portdb)))
         return EXIT_OK
     return write_store(args, incremental=args.mode == "incremental")

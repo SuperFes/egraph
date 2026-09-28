@@ -73,6 +73,8 @@ struct Export {
     std::vector<std::string> packages;
     std::uint32_t depth = 1;
     Direction direction = Direction::reverse;
+    // The evaluated store, whole, instead of the installed one.
+    bool evaluated = false;
 };
 
 struct Stats {

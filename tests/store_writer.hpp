@@ -2,6 +2,7 @@
 
 // Builds store bytes for tests, independently of the Python writer.
 
+#include "evaluated.hpp"
 #include "store.hpp"
 
 #include <cstddef>
@@ -68,13 +69,17 @@ struct Section {
     std::vector<std::byte> bytes;
 };
 
+inline constexpr std::string_view installed_magic{"EGRAPH\0\0", 8};
+inline constexpr std::string_view evaluated_magic{"EGRAPHEV", 8};
+
 inline std::vector<std::byte> assemble(const std::vector<Section>& sections,
-                                       std::uint32_t version = store_format_version) {
+                                       std::uint32_t version = store_format_version,
+                                       std::string_view magic = installed_magic) {
     Bytes out;
-    for (const char c : std::string_view{"EGRAPH"}) {
+    for (const char c : magic) {
         out.fixed(static_cast<std::uint8_t>(c), 1);
     }
-    out.fixed(0, 2).fixed(version, 4).fixed(sections.size(), 4);
+    out.fixed(version, 4).fixed(sections.size(), 4);
     std::uint64_t offset = 16 + (20 * sections.size());
     for (const auto& section : sections) {
         out.fixed(section.id, 4).fixed(offset, 8).fixed(section.bytes.size(), 8);
@@ -215,6 +220,74 @@ inline std::vector<std::byte> newer_wanted(bool build_time) {
 // The sample without inputs, which is therefore always fresh.
 inline std::vector<std::byte> fresh_sample() {
     return with_section(2, Bytes{}.varint(0));
+}
+
+// The evaluated store beside the sample, built against it (installed build time 42):
+//   a-1 from its ebuild, EAPI 8, RDEPEND dev-libs/b:= matching b-1, with an RDEPEND error.
+//   b-1 from the vdb, with no dependencies.
+// Candidates of app-misc/a: a-1, visible, USE and IUSE "flag"; a-2, masked by keyword.
+inline constexpr std::initializer_list<std::string_view> evaluated_strings{"",
+                                                                           "app-misc/a-1",
+                                                                           "dev-libs/b-1",
+                                                                           "8",
+                                                                           "dev-libs/b:=",
+                                                                           "app-misc/a",
+                                                                           "0",
+                                                                           "test_repo",
+                                                                           "flag",
+                                                                           "app-misc/a-2",
+                                                                           "~amd64 keyword",
+                                                                           "RDEPEND",
+                                                                           "bad dep"};
+
+inline std::vector<Section> evaluated_sections() {
+    Bytes meta;
+    meta.text("0.0.0").text("3.0.0").text("/").varint(43).varint(42);
+
+    Bytes inputs;
+    inputs.varint(1).text("/var/db/repos/gentoo").varint(1).varint(5).varint(0);
+
+    Bytes strings;
+    strings.varint(evaluated_strings.size());
+    for (const auto value : evaluated_strings) {
+        strings.text(value);
+    }
+
+    Bytes dependencies;
+    dependencies.varint(2);
+    // a-1: cpv, source, EAPI, errors, then BDEPEND to PDEPEND empty and one RDEPEND node.
+    dependencies.varints({1, 0, 3}).varint(1).varint(11).varint(12);
+    dependencies.varint(0).varint(0).varint(0).varint(0).varint(1);
+    dependencies.varints({0, 0, 4}).list({1});
+    // b-1.
+    dependencies.varints({2, 1, 3}).varint(0);
+    dependencies.varint(0).varint(0).varint(0).varint(0).varint(0);
+
+    Bytes candidates;
+    candidates.varint(2);
+    candidates.varints({5, 1, 7, 6, 6}).list({8}).list({8}).list({});
+    candidates.varints({5, 9, 7, 6, 6}).list({}).list({8}).list({10});
+
+    return {{.id = 1, .bytes = meta.bytes()},
+            {.id = 2, .bytes = inputs.bytes()},
+            {.id = 3, .bytes = strings.bytes()},
+            {.id = 4, .bytes = dependencies.bytes()},
+            {.id = 5, .bytes = candidates.bytes()}};
+}
+
+inline std::vector<std::byte> assemble_evaluated(const std::vector<Section>& sections) {
+    return assemble(sections, evaluated_format_version, evaluated_magic);
+}
+
+// The evaluated sample with one section replaced.
+inline std::vector<std::byte> evaluated_with_section(std::uint64_t id, const Bytes& bytes) {
+    auto sections = evaluated_sections();
+    for (auto& section : sections) {
+        if (section.id == id) {
+            section.bytes = bytes.bytes();
+        }
+    }
+    return assemble_evaluated(sections);
 }
 
 } // namespace egraph::test

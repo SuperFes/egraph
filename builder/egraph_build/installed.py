@@ -91,19 +91,17 @@ def _tree(tokens, parent, nodes, match):
             nodes.append(Node(ATOM, parent, str(token), match(token)))
 
 
-def read_package(vardb, cpv, match):
-    metadata = dict(zip(_AUX_KEYS, vardb.aux_get(cpv, _AUX_KEYS)))
-    use = frozenset(metadata["USE"].split())
-    slot, _, sub_slot = metadata["SLOT"].partition("/")
+def dependency_trees(strings, use, eapi, match):
+    """(node tuples per kind, errors) for {kind: dependency string} reduced under use."""
     errors = []
     deps = []
     for kind in DEP_KINDS:
         nodes = []
         try:
             tokens = use_reduce(
-                metadata[kind],
+                strings[kind],
                 uselist=use,
-                eapi=metadata["EAPI"] or None,
+                eapi=eapi or None,
                 opconvert=False,
                 token_class=Atom,
             )
@@ -112,6 +110,14 @@ def read_package(vardb, cpv, match):
             errors.append((kind, str(e)))
             nodes = []
         deps.append(tuple(nodes))
+    return tuple(deps), errors
+
+
+def read_package(vardb, cpv, match):
+    metadata = dict(zip(_AUX_KEYS, vardb.aux_get(cpv, _AUX_KEYS)))
+    use = frozenset(metadata["USE"].split())
+    slot, _, sub_slot = metadata["SLOT"].partition("/")
+    deps, errors = dependency_trees(metadata, use, metadata["EAPI"], match)
     sonames = {}
     for key in SONAME_KEYS:
         try:
@@ -132,7 +138,7 @@ def read_package(vardb, cpv, match):
         use=tuple(sorted(use)),
         iuse=tuple(sorted(metadata["IUSE"].split())),
         errors=tuple(errors),
-        deps=tuple(deps),
+        deps=deps,
         provides=sonames["PROVIDES"],
         requires=sonames["REQUIRES"],
     )
@@ -172,6 +178,18 @@ def satisfied(nodes):
     return tuple(result)
 
 
+def tree_edges(cpv, deps):
+    """The Edges of a package's node tuples, one per kind; blockers are not dependencies."""
+    edges = set()
+    for kind, nodes in zip(DEP_KINDS, deps):
+        for node, choice in zip(nodes, choices(nodes)):
+            if node.type == ATOM:
+                edges.update(
+                    Edge(cpv, child, kind, node.atom, choice) for child in node.matches
+                )
+    return frozenset(edges)
+
+
 class _Index(NamedTuple):
     edges: dict
     reverse: dict
@@ -192,15 +210,12 @@ class InstalledLayer:
         providers = collections.defaultdict(set)
         consumers = collections.defaultdict(set)
         for pkg in self._packages.values():
-            edges = set()
-            for kind, nodes in zip(DEP_KINDS, pkg.deps):
-                for node, choice in zip(nodes, choices(nodes)):
-                    if node.type != ATOM:
-                        continue
-                    index.matches[node.atom] = node.matches
-                    for child in node.matches:
-                        edges.add(Edge(pkg.cpv, child, kind, node.atom, choice))
-            index.edges[pkg.cpv] = frozenset(edges)
+            for nodes in pkg.deps:
+                for node in nodes:
+                    if node.type == ATOM:
+                        index.matches[node.atom] = node.matches
+            edges = tree_edges(pkg.cpv, pkg.deps)
+            index.edges[pkg.cpv] = edges
             for edge in edges:
                 index.reverse[edge.child].add(edge)
             for category, soname in pkg.provides:
@@ -261,6 +276,22 @@ def build(vardb):
     )
 
 
+def deps_json(deps):
+    """A package's node tuples, one per kind, as to_json writes them."""
+    return {
+        kind: [
+            {
+                "type": NODE_TYPES[node.type],
+                "parent": node.parent,
+                "atom": node.atom,
+                "matches": list(node.matches),
+            }
+            for node in nodes
+        ]
+        for kind, nodes in zip(DEP_KINDS, deps)
+    }
+
+
 def to_json(layer):
     """The layer as canonical JSON: sorted keys and packages, trees in node order."""
     packages = []
@@ -276,18 +307,7 @@ def to_json(layer):
                 "use": list(pkg.use),
                 "iuse": list(pkg.iuse),
                 "errors": [list(error) for error in pkg.errors],
-                "deps": {
-                    kind: [
-                        {
-                            "type": NODE_TYPES[node.type],
-                            "parent": node.parent,
-                            "atom": node.atom,
-                            "matches": list(node.matches),
-                        }
-                        for node in nodes
-                    ]
-                    for kind, nodes in zip(DEP_KINDS, pkg.deps)
-                },
+                "deps": deps_json(pkg.deps),
                 "provides": [list(soname) for soname in pkg.provides],
                 "requires": [list(soname) for soname in pkg.requires],
             }

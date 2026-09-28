@@ -119,13 +119,17 @@ a merge refreshes only what it changed.
   with the repository's package moves applied), its effective USE, whether a cpv is visible and
   why not (keywords, masks, license), and the best visible version per slot. Comparison
   scaffolding with strict xfails, and scenarios with changed ebuilds, masks, keywords and moves.
-- 9b: store format and builder pass. `evaluated.egraph`: per installed cpv, its dynamic
-  dependency trees in the installed layer's node format, matched against the installed
-  packages, and how they were derived (ebuild, vdb, vdb with moves); per installed cp, its
-  visible cpvs with slot and effective USE, and the reason for each masked one that is installed.
-  Inputs: every repository's metadata (per-category md5-cache mtimes), the configuration and
-  profile files the installed layer tracks plus package.accept_keywords, package.mask/unmask
-  and package.license, and the installed store it was built against.
+- 9b (done): store format and builder pass. `installed.evaluated.egraph` beside the installed
+  store, written by the same builder run: per installed cpv, its dynamic dependency trees in
+  the installed layer's node format, matched against the installed packages, and how they were
+  derived (ebuild, vdb, vdb with moves); per installed cp, its visible versions in every
+  repository with slot, effective USE and IUSE, and the reason for each masked one that is
+  installed. It uses the installed store's package ids and records that store's build start,
+  so a rebuild of either makes it stale. Inputs: the configuration and profile files the
+  installed layer tracks, the user's visibility and USE configuration, and per repository its
+  masks, moves, license groups and the metadata cache directories of installed categories;
+  outside the main repository also the installed cps' package directories and ebuilds.
+  `egraph export --evaluated` prints it as the builder's `--evaluated-json` does.
 - 9c: dynamic deps in queries. `--dynamic-deps y|n` on the queries that follow dependencies
   (deps, rdeps, why, orphans, broken, affected), held to depclean with and without dynamic deps.
   Then the fork's `on` mode can use egraph under emerge's default too.

@@ -1,7 +1,8 @@
 # Store format
 
-Status: format version 4, implemented by `builder/egraph_build/store.py` (writer and a Python
-reader) and `src/store.cpp` (C++ reader). Any layout change bumps the version.
+Status: format version 4 (evaluated store: 1), implemented by `builder/egraph_build/store.py`
+(writer and a Python reader) and `src/store.cpp` and `src/evaluated.cpp` (C++ readers). Any
+layout change bumps the version.
 
 ## Requirements
 
@@ -100,3 +101,51 @@ In package order, which is sorted by cpv:
      Empty for groups: satisfaction of `||` follows from the children.
 5. Provides: list of `(multilib category, soname)` string ids.
 6. Requires: list of `(multilib category, soname, providers)`, providers a list of package ids.
+
+## The evaluated store
+
+The installed packages as emerge sees them against the repositories: their dependencies under
+`--dynamic-deps=y`, and the versions their cps could move to. It lives beside the installed
+store it was built against, named after it (`installed.egraph` → `installed.evaluated.egraph`:
+the last extension replaced by `.evaluated.egraph`), and is written by the same builder run.
+
+It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 1.
+Package ids are the installed store's, so an evaluated store is current only while the installed
+store beside it has the build start recorded in its meta, and its own inputs stat the same.
+
+| Id | Section | Contents |
+|---|---|---|
+| 1 | Meta | egraph version, portage version, EROOT (length-prefixed), build start in ns, the installed store's build start in ns |
+| 2 | Inputs | as in the installed store |
+| 3 | Strings | as in the installed store |
+| 4 | Dependencies | count, equal to the installed store's package count, then one record per installed package in its order |
+| 5 | Candidates | count, then the records below, sorted by cp, cpv and repo |
+
+All five sections are required.
+
+A dependency record is how emerge reads the package's dependencies by default:
+
+1. String id of the cpv, which must be the installed package's at the same index.
+2. Source: 0 ebuild (the same version is in the package's repository and portage supports both
+   EAPIs: the ebuild's strings, with the built `:=` atoms appended), 1 vdb (the recorded strings),
+   2 moved (the recorded strings with the repositories' package moves applied).
+3. EAPI: string id of the EAPI the strings are read with, the ebuild's for source 0.
+4. Errors: list of `(kind, message)` string ids, as in the package record.
+5. The five node lists, exactly as in the package record, reduced under the installed USE, with
+   matches naming installed package ids.
+
+A candidate is one version of an installed cp in one repository: every visible one, and each
+masked one that is installed.
+
+1. String ids: cp, cpv, repo, slot, sub-slot.
+2. USE: list of string ids, the flags the ebuild would be built with now, within its IUSE.
+3. IUSE: list of string ids, without `+` and `-` defaults.
+4. Reasons: list of string ids, why the version is masked as portage words them (`package.mask`,
+   `~amd64 keyword`, `EULA license(s)`); empty when it is visible.
+
+Inputs are the installed store's configuration and profile inputs, the user's visibility and USE
+configuration (`package.accept_keywords`, `package.mask`, `package.unmask`, `package.license`,
+`package.use` and their relatives, `env`, `repos.conf`), and per repository its root, layout,
+repository-wide masks, license groups, categories, package moves and eclass directory, the
+metadata cache directory of every installed category, and outside the main repository the
+category and package directories and ebuilds of every installed cp it carries.

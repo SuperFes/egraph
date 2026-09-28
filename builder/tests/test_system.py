@@ -2,12 +2,13 @@
 
 import json
 import os
+import random
 import subprocess
 
 import pytest
 
 from compare import QUERIES, assert_agrees
-from egraph_build import cli, installed, oracle, store
+from egraph_build import cli, evaluated, installed, oracle, store
 
 pytestmark = [
     pytest.mark.system,
@@ -228,7 +229,6 @@ def test_affected_agrees_with_the_fork_on_the_live_vdb(
 ):
     graph = pytest.importorskip("portage.dbapi._InstalledGraph")
     neighborhood = pytest.importorskip("_emerge.resolver.neighborhood")
-    import random
 
     path = tmp_path / "installed.egraph"
     store.write(path, store.encode(live_layer, store.Meta("0", "0", "/", 0)))
@@ -289,3 +289,64 @@ def test_dynamic_deps_oracle_reads_what_emerge_reads_on_the_live_system(live_var
         if strings != dict(zip(DEP_KINDS, fake.dbapi.aux_get(cpv, list(DEP_KINDS)))):
             differing.append(cpv)
     assert differing == []
+
+
+@pytest.fixture(scope="module")
+def live_databases():
+    return cli.open_databases("/", "/")
+
+
+@pytest.fixture(scope="module")
+def live_evaluated(live_databases):
+    return evaluated.build(*live_databases)
+
+
+def test_evaluated_dependencies_agree_with_the_oracle(live_databases, live_evaluated):
+    vardb, portdb = live_databases
+    cpvs = list(oracle.installed(vardb))
+    assert live_evaluated.installed() == tuple(cpvs)
+    for cpv in random.Random(0).sample(cpvs, min(SAMPLE * 5, len(cpvs))):
+        assert live_evaluated.deps(cpv) == oracle.dynamic_deps(vardb, portdb, cpv), cpv
+
+
+def test_evaluated_candidates_agree_with_the_oracle(live_databases, live_evaluated):
+    from portage import best
+    from portage.versions import cpv_getkey
+
+    vardb, portdb = live_databases
+    installed_cpvs = set(oracle.installed(vardb))
+    for cp in sorted({cpv_getkey(cpv) for cpv in installed_cpvs}):
+        candidates = live_evaluated.candidates(cp)
+        visible = [c for c in candidates if not c.reasons]
+        assert {c.cpv for c in visible} == set(portdb.xmatch("match-visible", cp)), cp
+        by_slot = {}
+        for c in visible:
+            by_slot.setdefault(c.slot, []).append(c.cpv)
+        best_found = {slot: best(found) for slot, found in by_slot.items()}
+        assert best_found == oracle.best_visible(portdb, cp), cp
+        assert all(c.cpv in installed_cpvs for c in candidates if c.reasons), cp
+    rng = random.Random(0)
+    for c in rng.sample(live_evaluated.candidates(), SAMPLE):
+        (default_repo,) = portdb.aux_get(c.cpv, ["repository"])
+        if c.repo == default_repo:
+            assert c.use == oracle.effective_use(portdb, c.cpv), c
+        assert c.reasons == oracle.mask_reasons(portdb, c.cpv, c.repo), c
+
+
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+def test_cpp_reads_the_live_evaluated_store(live_layer, live_evaluated, tmp_path):
+    path = tmp_path / "installed.egraph"
+    store.write(path, store.encode(live_layer, store.Meta("0", "0", "/", 0)))
+    meta = store.EvaluatedMeta("0", "0", "/", 0, 0)
+    store.write(
+        store.evaluated_path(path), store.encode_evaluated(live_evaluated, meta)
+    )
+    exported = subprocess.run(
+        [os.environ["EGRAPH"], "--store", str(path), "--no-refresh", "export"]
+        + ["--format", "json", "--evaluated"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert exported == evaluated.to_json(live_evaluated).encode()
