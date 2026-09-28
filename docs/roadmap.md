@@ -14,7 +14,7 @@ Update the status column as steps land.
 | 6 | Queries | done |
 | 7 | Roots and orphans | done |
 | 8 | Consumers | done |
-| 9 | Evaluated and candidate layers | not planned yet |
+| 9 | Evaluated and candidate layers | planned |
 | 10 | Output and UX | in progress |
 | 11 | Build monitor | done |
 
@@ -97,9 +97,45 @@ Update the status column as steps land.
 
 ## 9. Evaluated and candidate layers
 
-- Effective USE, visibility and best visible version, with config fingerprints.
-- The `-uDN @world` fast path.
-- To be planned once 0-8 hold up.
+The repository side, as far as queries about installed packages need it. Measured on the dev box
+(8 repos, 21,861 cps, 38,303 ebuilds, warm cache): every installed package is still in its repo,
+and 1,648 of the 2,326 have dependencies there that differ from their vdb's, mostly RDEPEND.
+Reading those ebuilds' metadata costs 2.2 s, the visible versions of all installed cps 1.9 s
+(4,881 cpvs; `bestmatch-visible` 1.1 s), and effective USE 0.5 ms per package.
+
+The builder evaluates everything through portage, as for the installed layer; C++ never
+reimplements visibility or USE. The layer is its own store file (`evaluated.egraph`, specified
+in `store-format.md`) with its own inputs, so that a sync does not touch the installed store and
+a merge refreshes only what it changed.
+
+- 9a: oracle first. `oracle.py` answers each new question the slow way: an installed package's
+  dynamic dependencies (FakeVartree's rule: the ebuild's dependencies when the same version is
+  in its repository and both EAPIs are supported, the built `:=` atoms kept; otherwise the vdb's
+  with the repository's package moves applied), its effective USE, whether a cpv is visible and
+  why not (keywords, masks, license), and the best visible version per slot. Comparison
+  scaffolding with strict xfails, and scenarios with changed ebuilds, masks, keywords and moves.
+- 9b: store format and builder pass. `evaluated.egraph`: per installed cpv, its dynamic
+  dependency trees in the installed layer's node format, matched against the installed
+  packages, and how they were derived (ebuild, vdb, vdb with moves); per installed cp, its
+  visible cpvs with slot and effective USE, and the reason for each masked one that is installed.
+  Inputs: every repository's metadata (per-category md5-cache mtimes), the configuration and
+  profile files the installed layer tracks plus package.accept_keywords, package.mask/unmask
+  and package.license, and the installed store it was built against.
+- 9c: dynamic deps in queries. `--dynamic-deps y|n` on the queries that follow dependencies
+  (deps, rdeps, why, orphans, broken, affected), held to depclean with and without dynamic deps.
+  Then the fork's `on` mode can use egraph under emerge's default too.
+- 9d: `rdeps --possible`: the ebuilds' unreduced dependency strings, so that a dependency behind
+  a disabled USE flag shows with the flag that would pull it in.
+- 9e: candidates. `egraph updates`: installed packages with a newer visible version in their
+  slot, and those whose effective USE no longer matches what they were built with (as
+  `--newuse` and `--changed-use` see it), held to `emerge -pu`/`-puDN @world` on scenarios where
+  the resolver has no choices to make, with every divergence recorded. The visibility bit lets
+  `orphans` treat masked installed packages as depclean does.
+- 9f: freshness and hooks. Incremental rebuilds from the categories whose metadata changed; a
+  `postsync.d` entry installed beside the `post_emerge` one, and the post_emerge entry refreshing
+  both stores.
+- 9g: the TUI shows pending updates on package pages and in a list filter, and possible
+  dependencies marked with their flags.
 
 ## 10. Output and UX
 

@@ -283,3 +283,15 @@ process including load and the freshness check of 2,575 inputs.
   edges against 51,211, the 77 missing ones all edges the index draws by ignoring USE
   dependencies: `app-alternatives/gpg[freepg(-)]` to a gpg built without freepg, or a blocker
   `!app-crypt/gnupg[-alternatives(-)]` to a gnupg with alternatives on. None is new.
+
+## The repository side (2026-09-28, planning roadmap step 9)
+
+- 8 repositories (gentoo, Local, cosmic-overlay, guru, kde, qt, steam-overlay, tlp): 21,861 cps
+  and 38,303 ebuilds; gentoo's md5-cache is 147 MB.
+- Every one of the 2,326 installed packages is still in its repository. Reduced under the
+  installed USE, 1,648 of them have dependencies in the ebuild that differ from the vdb's:
+  RDEPEND 1,418, BDEPEND 168, IDEPEND 125, DEPEND 103 (for example every acct-group package's
+  new IDEPEND on `>=sys-apps/shadow-4.6`). Dynamic deps are the common case, not the exception.
+- Warm cache: the ebuild metadata of every installed package 2.24 s; `bestmatch-visible` for all
+  2,293 installed cps 1.10 s; `match-visible` for them 1.89 s (4,881 cpvs); effective USE via
+  `config.setcpv` 0.54 ms per package; `cp_list` over every cp 2.45 s.
