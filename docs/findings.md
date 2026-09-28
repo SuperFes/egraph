@@ -278,3 +278,8 @@ process including load and the freshness check of 2,575 inputs.
 - That whole `emerge --pretend --update --dynamic-deps=n @world` costs 23.5G instructions and
   15.1G cycles with `on`, against 26.7G and 17.4G with the index: 12% of the instructions and 13%
   of the cycles of a resolution, interleaved runs agreeing within 1%.
+- The graph viewer (`~/.local/bin/portage-graph-view`) builds its graph from `egraph export
+  --format json` in 0.30 s wall against 1.38 s for the fork's index. Same 2,326 packages; 51,134
+  edges against 51,211, the 77 missing ones all edges the index draws by ignoring USE
+  dependencies: `app-alternatives/gpg[freepg(-)]` to a gpg built without freepg, or a blocker
+  `!app-crypt/gnupg[-alternatives(-)]` to a gnupg with alternatives on. None is new.

@@ -13,7 +13,7 @@ Update the status column as steps land.
 | 5 | `rebuild` and `check` | done |
 | 6 | Queries | done |
 | 7 | Roots and orphans | done |
-| 8 | Consumers | in progress |
+| 8 | Consumers | done |
 | 9 | Evaluated and candidate layers | not planned yet |
 | 10 | Output and UX | in progress |
 | 11 | Build monitor | done |
@@ -90,7 +90,10 @@ Update the status column as steps land.
   `InstalledGraph`, held to the fork's own answers on every scenario and the live system. 8b
   (done): the fork asks it (`PORTAGE_DEPGRAPH_EGRAPH`), in shadow or strict mode against its
   own index, or instead of it with dynamic deps off.
-- The graph viewer reads the store.
+- The graph viewer reads the store (done): one `egraph export --format json` in place of the
+  fork's index, its edges USE-exact where the index's ignored USE dependencies. After a merge the
+  fork refreshes the store itself (`egraph refresh` from `post_emerge`), so no resolution pays
+  for it.
 
 ## 9. Evaluated and candidate layers
 
