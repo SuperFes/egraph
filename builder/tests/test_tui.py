@@ -63,6 +63,10 @@ def test_tui_shows_the_store_and_quits(playgrounds, tmp_path):
         screen = wait_for(socket, "Depends on")
         assert "dev-libs/a-1" in screen
         assert "Needed by  0" in screen
+        # Unfold dev-libs/a-1, the first link, in place.
+        tmux(socket, "send-keys", "-t", "t", "Space")
+        screen = wait_for(socket, "╰─ dev-libs/alt-y-1")
+        assert "├─ dev-libs/alt-x-1" in screen
         tmux(socket, "send-keys", "-t", "t", "Escape")
         wait_for(socket, "1 of")
         tmux(socket, "send-keys", "-t", "t", "q")

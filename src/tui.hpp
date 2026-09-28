@@ -53,11 +53,26 @@ struct Link {
 
 enum class RowType : std::uint8_t { heading, note, link };
 
+// A page row. Links at depth 0 are the page package's own; unfolding a link puts its links,
+// in the same direction, one level deeper right below it.
 struct Row {
     RowType type = RowType::note;
     std::string text;
     Link link;
+    std::size_t depth = 0;
+    bool reverse = false;
+    bool unfolded = false;
+    // The link's package is already on the path from the page package down to it.
+    bool cycle = false;
+    // Tree lines: whether this is its parent's last child, and for each level from 1 to depth - 1
+    // whether that level's line continues past this row.
+    bool last = false;
+    std::vector<bool> rails;
 };
+
+// Sets each row's last and rails, walking up from the bottom: a level's line continues past a
+// row when a sibling at that level follows before anything shallower does.
+void thread(std::vector<Row>& rows);
 
 // A scrolling list's selected entry and first visible one.
 struct Cursor {
@@ -79,7 +94,7 @@ class App {
         std::vector<std::uint32_t> shown;
         Cursor cursor;
     };
-    // One package's page: what it depends on, then what depends on it.
+    // One package's page: what it depends on, then what depends on it, as trees that unfold.
     struct Page {
         std::uint32_t package = 0;
         std::vector<Row> rows;
@@ -97,12 +112,16 @@ class App {
     [[nodiscard]] std::size_t dependents(std::uint32_t package) const {
         return dependents_.at(package);
     }
+    // Whether a link can unfold: it is no cycle and its package has links that way.
+    [[nodiscard]] bool can_unfold(const Row& row) const;
     // Rows the list or page has on screen; drawing sets it, and paging and scrolling use it.
     void set_height(std::size_t rows) { height_ = std::max<std::size_t>(rows, 1); }
 
   private:
     void filter();
     void open(std::uint32_t package);
+    void unfold(Page& page);
+    void fold(Page& page);
     void handle_list(const Key& key);
     void handle_page(const Key& key);
 
@@ -234,6 +253,21 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
     }
 }
 
+// The column before a link's package: whether it unfolds, is unfolded, or closes a cycle.
+inline Span fold_span(const App& app, const Row& row, const Glyphs& glyph) {
+    if (row.cycle) {
+        return {std::string{glyph.cycle}, tone_pen(Tone::bad)};
+    }
+    if (row.unfolded) {
+        return {std::string{glyph.unfolded},
+                {.fg = palette::mauve, .bg = std::nullopt, .bold = true}};
+    }
+    if (app.can_unfold(row)) {
+        return {std::string{glyph.folded}, tone_pen(Tone::note)};
+    }
+    return {" ", {}};
+}
+
 template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size size) {
     const auto& store = app.store();
     const auto& page = app.pages().back();
@@ -281,12 +315,23 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
                                     ? Span{std::string{kind.letter}, tone_pen(kind.tone)}
                                     : Span{std::string{glyph.absent}, tone_pen(Tone::note)});
             }
-            spans.push_back({"  ", {}});
+            spans.push_back({" ", {}});
+            spans.push_back(fold_span(app, row, glyph));
+            spans.push_back({" ", {}});
+            std::string tree;
+            if (row.depth > 0) {
+                for (const bool rail : row.rails) {
+                    tree += rail ? glyph.rail : "  ";
+                }
+                tree += std::format("{} ", row.last ? glyph.branch : glyph.tee);
+            }
+            spans.push_back({tree, tone_pen(Tone::note)});
             const auto cpv = store.string(store.packages.at(row.link.package).cpv);
             for (auto& span : cpv_spans(cpv)) {
                 spans.push_back(std::move(span));
             }
-            spans.push_back({std::string(columns(cpv) < 40 ? 42 - columns(cpv) : 2, ' '), {}});
+            const auto used = columns(tree) + columns(cpv);
+            spans.push_back({std::string(used < 40 ? 42 - used : 2, ' '), {}});
             spans.push_back({std::string{store.string(row.link.atom)}, tone_pen(Tone::note)});
             if (row.link.choice) {
                 spans.push_back({std::format(" {}", glyph.choice), tone_pen(Tone::choice)});
@@ -297,7 +342,11 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
         }
     }
     draw_hints(screen, size.rows - 1, size.cols,
-               {{glyph.move, "move"}, {glyph.enter, "open"}, {"esc", "back"}, {"q", "quit"}});
+               {{glyph.move, "move"},
+                {"space", "unfold"},
+                {glyph.enter, "open"},
+                {"esc", "back"},
+                {"q", "quit"}});
 }
 
 template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {

@@ -121,7 +121,11 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   shows how many packages each depends on and is needed by.
 - A package page lists what it depends on, then what needs it, one row per package and atom
   with the kind matrix, as `deps` and `rdeps` do. Enter follows a row to that package's page, and
-  the title bar keeps the trail; Esc, Backspace or Left go back.
+  the title bar keeps the trail; Esc or Backspace go back.
+- Rows unfold in place (Space, Tab, or Right) into their own links in the same direction, so
+  either tree can be walked without leaving the page. A package already on the path from the
+  page down to a row is marked as a cycle and does not unfold. Left folds a row, climbs to its
+  parent, and from the top level goes back.
 
 ## Orphans: emulating depclean
 

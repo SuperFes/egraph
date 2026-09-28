@@ -157,9 +157,10 @@ TEST_CASE("every glyph set fills every glyph") {
     for (const auto set :
          {egraph::GlyphSet::nerd, egraph::GlyphSet::unicode, egraph::GlyphSet::ascii}) {
         const auto& glyph = egraph::glyphs(set);
-        for (const auto text : {glyph.package, glyph.selected, glyph.system, glyph.profile,
-                                glyph.set, glyph.orphan, glyph.broken, glyph.soname, glyph.search,
-                                glyph.good, glyph.choice, glyph.branch, glyph.absent}) {
+        for (const auto text :
+             {glyph.package, glyph.selected, glyph.system, glyph.profile, glyph.set, glyph.orphan,
+              glyph.broken, glyph.soname, glyph.search, glyph.good, glyph.choice, glyph.branch,
+              glyph.absent, glyph.tee, glyph.rail, glyph.folded, glyph.unfolded, glyph.cycle}) {
             CHECK_FALSE(text.empty());
         }
     }

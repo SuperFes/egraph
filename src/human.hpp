@@ -102,6 +102,13 @@ struct Glyphs {
     std::string_view choice;
     std::string_view branch;
     std::string_view absent;
+    // Tree parts beside branch (the last child): a child with siblings after it, an ancestor's
+    // line passing by, a node that can unfold, one unfolded, and one already on its own path.
+    std::string_view tee;
+    std::string_view rail;
+    std::string_view folded;
+    std::string_view unfolded;
+    std::string_view cycle;
     // Key hints.
     std::string_view move;
     std::string_view enter;

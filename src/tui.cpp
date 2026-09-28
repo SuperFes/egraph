@@ -2,7 +2,10 @@
 
 #include "build_info.hpp"
 
+#include <iterator>
+#include <optional>
 #include <ostream>
+#include <ranges>
 #include <tuple>
 
 namespace egraph::tui {
@@ -132,31 +135,75 @@ void move_on_page(App::Page& page, const Key& key, std::size_t height) {
     }
 }
 
+Row text_row(RowType type, std::string text) {
+    Row row;
+    row.type = type;
+    row.text = std::move(text);
+    return row;
+}
+
+Row link_row(const Link& link, std::size_t depth, bool reverse) {
+    Row row;
+    row.type = RowType::link;
+    row.link = link;
+    row.depth = depth;
+    row.reverse = reverse;
+    return row;
+}
+
 std::vector<Row> page_rows(const Store& store, const Graph& graph, std::uint32_t package) {
     std::vector<Row> rows;
     for (const bool reverse : {false, true}) {
         const auto found = links(store, graph, package, reverse);
         if (reverse) {
-            rows.push_back({.type = RowType::note, .text = "", .link = {}});
+            rows.push_back(text_row(RowType::note, ""));
         }
         rows.push_back(
-            {.type = RowType::heading,
-             .text = std::format("{}  {}", reverse ? "Needed by" : "Depends on", found.size()),
-             .link = {}});
+            text_row(RowType::heading,
+                     std::format("{}  {}", reverse ? "Needed by" : "Depends on", found.size())));
         if (found.empty()) {
-            rows.push_back({.type = RowType::note, .text = "nothing", .link = {}});
+            rows.push_back(text_row(RowType::note, "nothing"));
         }
         for (const auto& link : found) {
-            rows.push_back({.type = RowType::link, .text = "", .link = link});
+            rows.push_back(link_row(link, 0, reverse));
         }
     }
     return rows;
+}
+
+// The row of the link a nested row hangs from.
+std::optional<std::size_t> parent_of(const std::vector<Row>& rows, std::size_t index) {
+    const auto depth = rows.at(index).depth;
+    if (depth == 0) {
+        return std::nullopt;
+    }
+    for (std::size_t i = index; i-- > 0;) {
+        if (rows.at(i).type == RowType::link && rows.at(i).depth == depth - 1) {
+            return i;
+        }
+    }
+    return std::nullopt;
 }
 
 } // namespace
 
 bool available() {
     return EGRAPH_HAVE_TUI != 0;
+}
+
+void thread(std::vector<Row>& rows) {
+    std::vector<bool> later;
+    for (auto& row : std::ranges::reverse_view(rows)) {
+        const auto depth = row.type == RowType::link ? row.depth : 0;
+        later.resize(std::max(later.size(), depth + 1), false);
+        row.last = !later.at(depth);
+        row.rails.assign(depth > 1 ? depth - 1 : 0, false);
+        for (std::size_t level = 1; level < depth; ++level) {
+            row.rails.at(level - 1) = later.at(level);
+        }
+        later.at(depth) = true;
+        std::fill(later.begin() + static_cast<std::ptrdiff_t>(depth) + 1, later.end(), false);
+    }
 }
 
 std::vector<Link> links(const Store& store, const Graph& graph, std::uint32_t package,
@@ -277,17 +324,93 @@ void App::handle_list(const Key& key) {
     }
 }
 
+bool App::can_unfold(const Row& row) const {
+    if (row.type != RowType::link || row.cycle) {
+        return false;
+    }
+    return (row.reverse ? dependents(row.link.package) : dependencies(row.link.package)) > 0;
+}
+
+void App::unfold(Page& page) {
+    const auto at = page.cursor.at;
+    const auto& row = page.rows.at(at);
+    if (row.unfolded || !can_unfold(row)) {
+        return;
+    }
+    std::vector<std::uint32_t> path{page.package, row.link.package};
+    for (auto up = parent_of(page.rows, at); up; up = parent_of(page.rows, *up)) {
+        path.push_back(page.rows.at(*up).link.package);
+    }
+    const auto depth = row.depth + 1;
+    const auto reverse = row.reverse;
+    std::vector<Row> children;
+    for (const auto& link : links(store(), graph_.get(), row.link.package, reverse)) {
+        children.push_back(link_row(link, depth, reverse));
+        children.back().cycle = std::ranges::contains(path, link.package);
+    }
+    page.rows.at(at).unfolded = true;
+    const auto count = children.size();
+    page.rows.insert(page.rows.begin() + static_cast<std::ptrdiff_t>(at) + 1,
+                     std::make_move_iterator(children.begin()),
+                     std::make_move_iterator(children.end()));
+    thread(page.rows);
+    // Bring the unfolded rows into view, as far as the cursor stays on screen.
+    if (at + count >= page.cursor.top + height_) {
+        page.cursor.top = std::min(at, at + count + 1 - height_);
+    }
+}
+
+void App::fold(Page& page) {
+    const auto at = page.cursor.at;
+    const auto depth = page.rows.at(at).depth;
+    auto end = at + 1;
+    while (end < page.rows.size() && page.rows.at(end).type == RowType::link &&
+           page.rows.at(end).depth > depth) {
+        ++end;
+    }
+    page.rows.erase(page.rows.begin() + static_cast<std::ptrdiff_t>(at) + 1,
+                    page.rows.begin() + static_cast<std::ptrdiff_t>(end));
+    page.rows.at(at).unfolded = false;
+    thread(page.rows);
+}
+
 void App::handle_page(const Key& key) {
     auto& page = pages_.back();
+    const bool on_link =
+        page.cursor.at < page.rows.size() && page.rows.at(page.cursor.at).type == RowType::link;
     if (is(key, U'q') || is(key, U'Q')) {
         done_ = true;
-    } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace ||
-               key.kind == KeyKind::left || is(key, U'h')) {
+    } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace) {
         pages_.pop_back();
-    } else if (key.kind == KeyKind::enter || key.kind == KeyKind::right || is(key, U'l')) {
-        if (page.cursor.at < page.rows.size() &&
-            page.rows.at(page.cursor.at).type == RowType::link) {
-            open(page.rows.at(page.cursor.at).link.package);
+    } else if (!on_link) {
+        if (key.kind == KeyKind::left || is(key, U'h')) {
+            pages_.pop_back();
+        }
+    } else if (key.kind == KeyKind::enter) {
+        open(page.rows.at(page.cursor.at).link.package);
+    } else if (is(key, U' ') || key.kind == KeyKind::tab) {
+        if (page.rows.at(page.cursor.at).unfolded) {
+            fold(page);
+        } else {
+            unfold(page);
+        }
+    } else if (key.kind == KeyKind::right || is(key, U'l')) {
+        // Unfolds, or steps onto the first child of an unfolded link.
+        if (page.rows.at(page.cursor.at).unfolded) {
+            ++page.cursor.at;
+            keep_visible(page.cursor, height_);
+        } else {
+            unfold(page);
+        }
+    } else if (key.kind == KeyKind::left || is(key, U'h')) {
+        // Folds, steps up to the parent link, or at the top goes back.
+        if (page.rows.at(page.cursor.at).unfolded) {
+            fold(page);
+        } else if (const auto up = parent_of(page.rows, page.cursor.at)) {
+            page.cursor.at = *up;
+            keep_visible(page.cursor, height_);
+        } else {
+            pages_.pop_back();
         }
     } else if (is_move(key)) {
         move_on_page(page, key, height_);
