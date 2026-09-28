@@ -128,12 +128,13 @@ Exit execute(const Check&, const Invocation& invocation, std::ostream& out, std:
 
 struct Output {
     bool human;
-    Painter paint;
+    Theme theme;
 };
 
 Output output(const Invocation& invocation) {
     const auto chosen = style(invocation);
-    return {.human = chosen.human, .paint = Painter{chosen.color}};
+    return {.human = chosen.human,
+            .theme = {.paint = Painter{chosen.color}, .glyph_set = invocation.glyphs}};
 }
 
 void write_lines(std::ostream& out, std::span<const std::string> lines) {
@@ -192,7 +193,7 @@ Exit edges(const std::vector<std::string>& packages, bool reverse, const Invocat
     }
     const auto lines = edge_lines(*store, found);
     if (const auto style = output(invocation); style.human) {
-        human_edges(out, lines, cpvs(*store, *ids), reverse, style.paint);
+        human_edges(out, lines, cpvs(*store, *ids), reverse, style.theme);
     } else {
         write_lines(out, lines);
     }
@@ -234,7 +235,7 @@ Exit execute(const Match& command, const Invocation& invocation, std::ostream& o
         }
     }
     if (const auto style = output(invocation); style.human) {
-        human_match(out, lines, command.atoms, style.paint);
+        human_match(out, lines, command.atoms, style.theme);
     } else {
         write_lines(out, lines);
     }
@@ -250,7 +251,7 @@ Exit execute(const Soname& command, const Invocation& invocation, std::ostream& 
     }
     const auto lines = soname_users(*store, command.soname, command.providers);
     if (const auto style = output(invocation); style.human) {
-        human_soname(out, lines, command.soname, command.providers, style.paint);
+        human_soname(out, lines, command.soname, command.providers, style.theme);
     } else {
         write_lines(out, lines);
     }
@@ -265,7 +266,7 @@ Exit execute(const Broken&, const Invocation& invocation, std::ostream& out, std
     }
     const auto lines = broken(*store);
     if (const auto style = output(invocation); style.human) {
-        human_broken(out, lines, style.paint);
+        human_broken(out, lines, style.theme);
     } else {
         write_lines(out, lines);
     }
@@ -287,7 +288,7 @@ Exit execute(const Orphans& command, const Invocation& invocation, std::ostream&
     const auto kept = keep(*store, {.build_deps = command.build_deps});
     const auto lines = cpvs(*store, orphans(kept));
     if (const auto style = output(invocation); style.human) {
-        human_orphans(out, lines, style.paint);
+        human_orphans(out, lines, style.theme);
     } else {
         write_lines(out, lines);
     }
@@ -317,6 +318,7 @@ Exit execute(const Why& command, const Invocation& invocation, std::ostream& out
     const auto kept = keep(*store, {.build_deps = command.build_deps});
     auto exit = Exit::ok;
     bool first = true;
+    const auto style = output(invocation);
     for (const auto id : *ids) {
         const auto path = why(kept, id);
         if (!path) {
@@ -328,11 +330,14 @@ Exit execute(const Why& command, const Invocation& invocation, std::ostream& out
         out << (first ? "" : "\n");
         first = false;
         const auto lines = path_lines(*store, *path);
-        if (const auto style = output(invocation); style.human) {
-            human_path(out, lines, style.paint);
+        if (style.human) {
+            human_path(out, lines, style.theme);
         } else {
             write_lines(out, lines);
         }
+    }
+    if (style.human && !first) {
+        human_legend(out, style.theme);
     }
     return exit;
 }
@@ -412,6 +417,13 @@ void configure(CLI::App& app, Invocation& invocation) {
     app.add_option("--color", invocation.color,
                    "Colour the human layout (default auto: on a terminal, unless NO_COLOR is set)")
         ->transform(CLI::CheckedTransformer(colors).description("{auto,always,never}"));
+    const std::map<std::string, GlyphSet> glyph_sets{
+        {"nerd", GlyphSet::nerd}, {"unicode", GlyphSet::unicode}, {"ascii", GlyphSet::ascii}};
+    app.add_option("--glyphs", invocation.glyphs,
+                   "Icons in the human layout: a Nerd Font's, plain Unicode, or ASCII "
+                   "(default nerd)")
+        ->transform(CLI::CheckedTransformer(glyph_sets).description("{nerd,unicode,ascii}"))
+        ->envname("EGRAPH_GLYPHS");
 
     add_field(add_command<Deps>(app, invocation, "What installed packages depend on"), invocation,
               "packages", &Deps::packages, "Installed cpvs, or cps for every installed version")
@@ -472,7 +484,11 @@ Style style(const Invocation& invocation) {
         human &&
         (invocation.color == ColorMode::always ||
          (invocation.color == ColorMode::automatic && invocation.terminal && !invocation.no_color));
-    return {.human = human, .color = color};
+    if (!color) {
+        return {.human = human, .color = ColorDepth::none};
+    }
+    return {.human = human,
+            .color = invocation.truecolor ? ColorDepth::truecolor : ColorDepth::palette};
 }
 
 std::filesystem::path store_path(const Invocation& invocation) {

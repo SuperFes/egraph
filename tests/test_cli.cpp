@@ -100,24 +100,29 @@ TEST_CASE("why takes one atom and emerge's --with-bdeps") {
 }
 
 TEST_CASE("the layout is for people on a terminal and lines otherwise") {
+    using egraph::ColorDepth;
     egraph::Invocation invocation;
     CHECK_FALSE(egraph::style(invocation).human);
     invocation.terminal = true;
     CHECK(egraph::style(invocation).human);
-    CHECK(egraph::style(invocation).color);
+    CHECK(egraph::style(invocation).color == ColorDepth::palette);
+    invocation.truecolor = true;
+    CHECK(egraph::style(invocation).color == ColorDepth::truecolor);
     invocation.no_color = true;
-    CHECK_FALSE(egraph::style(invocation).color);
+    CHECK(egraph::style(invocation).color == ColorDepth::none);
     invocation.color = egraph::ColorMode::always;
-    CHECK(egraph::style(invocation).color);
+    CHECK(egraph::style(invocation).color == ColorDepth::truecolor);
     invocation.layout = egraph::Layout::lines;
     CHECK_FALSE(egraph::style(invocation).human);
-    CHECK_FALSE(egraph::style(invocation).color);
+    CHECK(egraph::style(invocation).color == ColorDepth::none);
 
-    invocation = parse("--layout human --color never stats");
+    invocation = parse("--layout human --color never --glyphs unicode stats");
     CHECK(invocation.layout == egraph::Layout::human);
-    CHECK(invocation.color == egraph::ColorMode::never);
-    CHECK((egraph::style(invocation).human && !egraph::style(invocation).color));
+    CHECK(invocation.glyphs == egraph::GlyphSet::unicode);
+    CHECK(egraph::style(invocation).human);
+    CHECK(egraph::style(invocation).color == ColorDepth::none);
     CHECK_THROWS_AS(parse("--layout fancy stats"), CLI::ValidationError);
+    CHECK_THROWS_AS(parse("--glyphs emoji stats"), CLI::ValidationError);
 }
 
 TEST_CASE("malformed command lines are rejected") {

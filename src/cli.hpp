@@ -1,5 +1,6 @@
 #pragma once
 
+#include "human.hpp"
 #include "query.hpp"
 
 #include <cstdint>
@@ -106,17 +107,19 @@ struct Invocation {
     bool no_refresh = false;
     Layout layout = Layout::automatic;
     ColorMode color = ColorMode::automatic;
-    // Facts about where output goes, which main fills in: stdout is a terminal, and NO_COLOR is
-    // set to something.
+    GlyphSet glyphs = GlyphSet::nerd;
+    // Facts about where output goes, which main fills in: stdout is a terminal, NO_COLOR is set
+    // to something, and COLORTERM says the terminal takes 24-bit colour.
     bool terminal = false;
     bool no_color = false;
+    bool truecolor = false;
     Command command;
 };
 
 // The layout and colouring an invocation resolves to. Lines are never coloured.
 struct Style {
     bool human = false;
-    bool color = false;
+    ColorDepth color = ColorDepth::none;
 };
 [[nodiscard]] Style style(const Invocation& invocation);
 

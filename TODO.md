@@ -82,7 +82,8 @@ and organised, and a TUI (ncurses, or Notcurses) is welcome.
 
 - [ ] `broken` in the human layout is 156 entries on the dev box, nearly all BDEPEND on removed
       build tools; a runtime-only default (see Queries) would make it readable.
-- [ ] Box-drawing characters in `why` assume a UTF-8 terminal; fall back to ASCII otherwise.
+- [ ] `--glyphs` defaults to Nerd Font icons; detecting a UTF-8 locale (and defaulting to
+      `ascii` without one) would suit terminals that cannot show them.
 - [ ] Dependencies behind disabled USE flags, opt in and marked with the flag that would pull
       them in (`rdeps --possible`). The vdb only keeps reduced strings, so this needs the
       unreduced ones from the repository's metadata cache: the evaluated layer (step 9).

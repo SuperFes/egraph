@@ -72,14 +72,22 @@ dependencies with defaults, repository) and means by it exactly what `vardb.matc
 
 ## Query output
 
-Two layouts of the same records. On a terminal, queries are laid out for people: grouped by the
-package asked about, aligned, coloured (`--color`, and `NO_COLOR` is honoured), with a
-dependency listed once with every kind it appears under, `why` drawn as a chain from its root,
-and counts at the end of `orphans` and `broken`. Piped, or with `--layout lines` (also
-`EGRAPH_LAYOUT`), the output is one tab-separated record per line, sorted and without
-duplicates, so it greps, diffs and compares against the oracle line for line. The human layouts
-(`src/human.cpp`) are built from those records and nothing else, so both carry the same
-information and the oracle tests cover both.
+Two layouts of the same records. On a terminal, queries are laid out for people:
+
+- Grouped by the package asked about, aligned, with counts. `deps`/`rdeps` show each dependency
+  once with the kinds it appears under as a letter matrix (`R··D·`: R runtime, I install, P post,
+  D build, B build host), `why` is a chain from its root set, `broken` uses the same letters, and
+  a legend follows any layout that uses them.
+- Coloured part by part (category, name, version; operator, slot, repository, USE flags), in
+  truecolor when `COLORTERM` says so and xterm-256 otherwise. `--color auto|always|never`, and
+  `NO_COLOR` is honoured.
+- Decorated with Nerd Font icons by default; `--glyphs unicode` or `ascii` (or `EGRAPH_GLYPHS`)
+  for fonts without them.
+
+Piped, or with `--layout lines` (also `EGRAPH_LAYOUT`), the output is one tab-separated record
+per line, sorted and without duplicates, so it greps, diffs and compares against the oracle line
+for line. The human layouts (`src/human.cpp`) are built from those records and nothing else, so
+both carry the same information and the oracle tests cover both.
 
 The records are:
 
