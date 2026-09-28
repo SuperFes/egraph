@@ -176,19 +176,6 @@ std::string kind_letter(std::string_view name, const Painter& paint) {
     return paint(kind.letter, kind.tone);
 }
 
-std::string_view set_glyph(std::string_view set, const Glyphs& glyph) {
-    if (set == "@selected") {
-        return glyph.selected;
-    }
-    if (set == "@system") {
-        return glyph.system;
-    }
-    if (set == "@profile") {
-        return glyph.profile;
-    }
-    return glyph.set;
-}
-
 std::string paint_use(std::string_view flags, const Painter& paint) {
     std::string out = paint("[", Tone::note);
     for (std::size_t start = 0; start <= flags.size();) {
@@ -244,6 +231,19 @@ std::string Painter::operator()(std::string_view text, Tone tone) const {
                  ? std::format("38;2;{};{};{}", style.red, style.green, style.blue)
                  : std::format("38;5;{}", style.xterm);
     return std::format("\x1b[{}m{}\x1b[0m", codes, text);
+}
+
+std::string_view set_glyph(std::string_view set, const Glyphs& glyph) {
+    if (set == "@selected") {
+        return glyph.selected;
+    }
+    if (set == "@system") {
+        return glyph.system;
+    }
+    if (set == "@profile") {
+        return glyph.profile;
+    }
+    return glyph.set;
 }
 
 const Glyphs& glyphs(GlyphSet set) {

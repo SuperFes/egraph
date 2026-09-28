@@ -105,6 +105,23 @@ egraph::Store cyclic() {
     return std::move(*decoded);
 }
 
+// The sample, but a-1 only needs b-1 to build: DEPEND dev-libs/b.
+egraph::Store build_only() {
+    egraph::test::Bytes packages;
+    packages.varint(2);
+    packages.varints({1, 2, 3, 3, 4, 5, 1}).list({6}).list({6}).varint(0);
+    packages.varint(0).varint(1);
+    packages.varint(0).varint(0).varint(7).list({1});
+    packages.varint(0).varint(0).varint(0);
+    packages.varint(0).varint(0);
+    packages.varints({8, 7, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
+    packages.varint(0).varint(0).varint(0).varint(0).varint(0);
+    packages.varint(0).varint(0);
+    auto decoded = egraph::decode(egraph::test::with_section(4, packages));
+    REQUIRE(decoded.has_value());
+    return std::move(*decoded);
+}
+
 const auto& ascii = egraph::glyphs(egraph::GlyphSet::ascii);
 
 bool contains(const std::string& text, std::string_view part) {
@@ -131,14 +148,14 @@ TEST_CASE("the list shows every package and quits on q") {
     const auto store = sample();
     const auto graph = egraph::build_graph(store);
     egraph::tui::App app{store, graph};
-    FakeScreen screen{10, 60, {key(KeyKind::down), character(U'q'), character(U'z')}};
+    FakeScreen screen{10, 100, {key(KeyKind::down), character(U'q'), character(U'z')}};
     egraph::tui::run(screen, app, ascii);
     CHECK(contains(screen.line(0), "2 of 2 packages"));
-    CHECK(contains(screen.line(3), "app-misc/a-1"));
-    CHECK(contains(screen.line(4), "dev-libs/b-1"));
+    // a-1 is marked as kept by @selected.
+    CHECK(screen.line(3).starts_with("   @ app-misc/a-1"));
     // The cursor moved down to b-1 before q.
     CHECK(app.list().cursor.at == 1);
-    CHECK(screen.line(4).starts_with(" > dev-libs/b-1"));
+    CHECK(screen.line(4).starts_with(" >   dev-libs/b-1"));
     CHECK(contains(screen.line(9), "q quit"));
     CHECK(screen.keys_left());
 }
@@ -171,7 +188,7 @@ TEST_CASE("enter opens a package's page, and pages open from there") {
     const auto store = sample();
     const auto graph = egraph::build_graph(store);
     egraph::tui::App app{store, graph};
-    FakeScreen screen{12, 80, {key(KeyKind::enter)}};
+    FakeScreen screen{16, 80, {key(KeyKind::enter)}};
     egraph::tui::run(screen, app, ascii);
     REQUIRE(app.pages().size() == 1);
     const auto& page = app.pages().back();
@@ -246,25 +263,26 @@ TEST_CASE("links unfold in place, and stop at a cycle") {
     CHECK(contains(screen.text(), "R.... + dev-libs/b-1"));
     CHECK(contains(screen.text(), "space unfold"));
 
+    const auto at = app.pages().back().cursor.at;
     app.handle(character(U' '));
     egraph::tui::draw(screen, app, ascii);
     const auto& rows = app.pages().back().rows;
-    REQUIRE(rows.at(2).type == RowType::link);
-    CHECK(rows.at(2).depth == 1);
-    CHECK(rows.at(2).cycle);
+    REQUIRE(rows.at(at + 1).type == RowType::link);
+    CHECK(rows.at(at + 1).depth == 1);
+    CHECK(rows.at(at + 1).cycle);
     CHECK(contains(screen.text(), "R.... - dev-libs/b-1"));
     CHECK(contains(screen.text(), "R.... ^ `- app-misc/a-1"));
 
     // The cycle does not unfold; h climbs to its parent, folds it, then goes back.
     app.handle(character(U'j'));
-    CHECK(app.pages().back().cursor.at == 2);
+    CHECK(app.pages().back().cursor.at == at + 1);
     app.handle(character(U' '));
     CHECK(app.pages().back().rows.size() == rows.size());
     app.handle(character(U'h'));
-    CHECK(app.pages().back().cursor.at == 1);
+    CHECK(app.pages().back().cursor.at == at);
     app.handle(character(U'h'));
-    CHECK_FALSE(app.pages().back().rows.at(1).unfolded);
-    CHECK(app.pages().back().rows.at(2).type != RowType::link);
+    CHECK_FALSE(app.pages().back().rows.at(at).unfolded);
+    CHECK(app.pages().back().rows.at(at + 1).type != RowType::link);
     app.handle(character(U'h'));
     CHECK(app.pages().empty());
 }
@@ -275,10 +293,11 @@ TEST_CASE("l unfolds and then steps in; rdeps unfold upwards") {
     egraph::tui::App app{store, graph};
     app.set_height(10);
     app.handle(key(KeyKind::enter));
+    const auto at = app.pages().back().cursor.at;
     app.handle(key(KeyKind::right));
-    CHECK(app.pages().back().rows.at(1).unfolded);
+    CHECK(app.pages().back().rows.at(at).unfolded);
     app.handle(key(KeyKind::right));
-    CHECK(app.pages().back().cursor.at == 2);
+    CHECK(app.pages().back().cursor.at == at + 1);
 
     // Down past the cycle row to b-1 under Needed by, whose dependents are a-1 again.
     app.handle(key(KeyKind::down));
@@ -292,4 +311,77 @@ TEST_CASE("l unfolds and then steps in; rdeps unfold upwards") {
     CHECK(child.cycle);
     app.handle(key(KeyKind::tab));
     CHECK(app.pages().back().rows.back().depth == 0);
+}
+
+TEST_CASE("a page starts with the chain that keeps its package") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{16, 80, {}};
+    egraph::tui::draw(screen, app, ascii);
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    egraph::tui::draw(screen, app, ascii);
+    const auto text = screen.text();
+    CHECK(contains(screen.line(3), "Kept by"));
+    CHECK(contains(screen.line(4), "@ @selected  app-misc/a"));
+    CHECK(contains(screen.line(5), ".....   `- app-misc/a-1"));
+    CHECK(contains(screen.line(6), "R....     `- dev-libs/b-1"));
+    CHECK(contains(screen.line(6), "dev-libs/b |"));
+
+    // The cursor starts on the dependents; up reaches the chain, and enter follows it, except
+    // onto the page's own package.
+    const auto& page = app.pages().back();
+    CHECK(page.rows.at(page.cursor.at).type == RowType::link);
+    app.handle(key(KeyKind::up));
+    CHECK(app.pages().back().rows.at(app.pages().back().cursor.at).type == RowType::path);
+    app.handle(key(KeyKind::enter));
+    CHECK(app.pages().size() == 1);
+    app.handle(key(KeyKind::up));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 2);
+    CHECK(app.pages().back().package == 0);
+}
+
+TEST_CASE("o shows only orphans, and b drops build-time dependencies") {
+    const auto store = build_only();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{12, 120, {}};
+    app.handle(character(U'o'));
+    CHECK(app.list().orphans);
+    CHECK(app.list().shown.empty());
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(0), "0 orphans"));
+    CHECK(contains(screen.text(), "nothing to remove"));
+    CHECK(contains(screen.text(), "o all"));
+
+    app.handle(character(U'b'));
+    CHECK_FALSE(app.build_deps());
+    CHECK(app.list().shown == std::vector<std::uint32_t>{1});
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(0), "1 orphans  run-time deps only"));
+    CHECK(screen.line(3).starts_with(" > - dev-libs/b-1"));
+    app.handle(key(KeyKind::enter));
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "Kept by, at run time"));
+    CHECK(contains(screen.text(), "- nothing: depclean would remove it"));
+}
+
+TEST_CASE("without roots depclean refuses, and the orphans view says so") {
+    const auto store = [] {
+        auto decoded =
+            egraph::decode(egraph::test::with_section(5, egraph::test::Bytes{}.varint(0)));
+        REQUIRE(decoded.has_value());
+        return std::move(*decoded);
+    }();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{12, 120, {}};
+    app.handle(character(U'o'));
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(0), "2 orphans  ! depclean would refuse to run"));
+    app.handle(key(KeyKind::enter));
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "nothing: @world is empty"));
 }

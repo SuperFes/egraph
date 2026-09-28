@@ -113,22 +113,26 @@ bool is_move(const Key& key) {
     }
 }
 
-// Moves over a page, landing only on links; headings above the first link stay in view.
+bool selectable(const Row& row) {
+    return row.type == RowType::link || row.type == RowType::path;
+}
+
+// Moves over a page, landing only on packages; headings above the first stay in view.
 void move_on_page(App::Page& page, const Key& key, std::size_t height) {
-    std::vector<std::size_t> selectable;
+    std::vector<std::size_t> stops;
     for (std::size_t i = 0; i < page.rows.size(); ++i) {
-        if (page.rows.at(i).type == RowType::link) {
-            selectable.push_back(i);
+        if (selectable(page.rows.at(i))) {
+            stops.push_back(i);
         }
     }
-    if (selectable.empty()) {
+    if (stops.empty()) {
         return;
     }
-    const auto current = std::ranges::lower_bound(selectable, page.cursor.at);
-    Cursor among{.at = static_cast<std::size_t>(current - selectable.begin()), .top = 0};
-    among.at = std::min(among.at, selectable.size() - 1);
-    move(among, selectable.size(), key, height);
-    page.cursor.at = selectable.at(among.at);
+    const auto current = std::ranges::lower_bound(stops, page.cursor.at);
+    Cursor among{.at = static_cast<std::size_t>(current - stops.begin()), .top = 0};
+    among.at = std::min(among.at, stops.size() - 1);
+    move(among, stops.size(), key, height);
+    page.cursor.at = stops.at(among.at);
     keep_visible(page.cursor, height);
     if (among.at == 0) {
         page.cursor.top = 0;
@@ -149,6 +153,39 @@ Row link_row(const Link& link, std::size_t depth, bool reverse) {
     row.depth = depth;
     row.reverse = reverse;
     return row;
+}
+
+// Why depclean keeps package: the root, then each package down the chain to it.
+std::vector<Row> kept_rows(const Store& store, const Kept& kept, std::uint32_t package,
+                           bool build_deps) {
+    std::vector<Row> rows{
+        text_row(RowType::heading, build_deps ? "Kept by" : "Kept by, at run time")};
+    const auto path = why(kept, package);
+    if (!path) {
+        rows.push_back(text_row(RowType::alert, store.roots.empty()
+                                                    ? "nothing: @world is empty, which depclean "
+                                                      "refuses to work with"
+                                                    : "nothing: depclean would remove it"));
+    } else {
+        const auto& root = store.roots.at(path->root.root);
+        auto root_row = text_row(RowType::root, std::format("@{}", store.string(root.set)));
+        root_row.link.atom = root.atom;
+        rows.push_back(std::move(root_row));
+        auto first = link_row({.package = path->root.child, .atom = root.atom}, 1, false);
+        first.type = RowType::path;
+        rows.push_back(std::move(first));
+        for (const auto& edge : path->edges) {
+            Link link{.package = edge.child, .atom = edge.atom, .choice = edge.choice};
+            if (const auto index = shorthand_of(edge.kind); index < kind_shorthands.size()) {
+                link.kinds.at(index) = true;
+            }
+            auto row = link_row(link, rows.back().depth + 1, false);
+            row.type = RowType::path;
+            rows.push_back(std::move(row));
+        }
+    }
+    rows.push_back(text_row(RowType::note, ""));
+    return rows;
 }
 
 std::vector<Row> page_rows(const Store& store, const Graph& graph, std::uint32_t package) {
@@ -174,7 +211,7 @@ std::vector<Row> page_rows(const Store& store, const Graph& graph, std::uint32_t
 // The row of the link a nested row hangs from.
 std::optional<std::size_t> parent_of(const std::vector<Row>& rows, std::size_t index) {
     const auto depth = rows.at(index).depth;
-    if (depth == 0) {
+    if (rows.at(index).type != RowType::link || depth == 0) {
         return std::nullopt;
     }
     for (std::size_t i = index; i-- > 0;) {
@@ -194,7 +231,7 @@ bool available() {
 void thread(std::vector<Row>& rows) {
     std::vector<bool> later;
     for (auto& row : std::ranges::reverse_view(rows)) {
-        const auto depth = row.type == RowType::link ? row.depth : 0;
+        const auto depth = selectable(row) ? row.depth : 0;
         later.resize(std::max(later.size(), depth + 1), false);
         row.last = !later.at(depth);
         row.rails.assign(depth > 1 ? depth - 1 : 0, false);
@@ -250,13 +287,28 @@ App::App(const Store& store, const Graph& graph) : store_(store), graph_(graph) 
             ++dependents_.at(child);
         }
     }
+    recompute();
     filter();
+}
+
+void App::recompute() {
+    kept_ = keep(store(), {.build_deps = build_deps_});
+    root_of_.assign(store().packages.size(), std::nullopt);
+    for (const auto& pull : kept_.roots) {
+        auto& root = root_of_.at(pull.child);
+        if (!root || pull.root < *root) {
+            root = pull.root;
+        }
+    }
 }
 
 void App::filter() {
     const auto query = folded(list_.query);
     list_.shown.clear();
     for (std::uint32_t id = 0; id < folded_.size(); ++id) {
+        if (list_.orphans && kept_.packages.at(id)) {
+            continue;
+        }
         if (folded_.at(id).find(query) != std::string::npos) {
             list_.shown.push_back(id);
         }
@@ -265,13 +317,17 @@ void App::filter() {
 }
 
 void App::open(std::uint32_t package) {
-    Page page{.package = package, .rows = page_rows(store(), graph_.get(), package), .cursor = {}};
-    for (std::size_t i = 0; i < page.rows.size(); ++i) {
-        if (page.rows.at(i).type == RowType::link) {
-            page.cursor.at = i;
-            break;
-        }
-    }
+    Page page{
+        .package = package, .rows = kept_rows(store(), kept_, package, build_deps_), .cursor = {}};
+    std::ranges::move(page_rows(store(), graph_.get(), package), std::back_inserter(page.rows));
+    thread(page.rows);
+    // On the first dependency, else on whatever can be selected.
+    const auto first = std::ranges::find(page.rows, RowType::link, &Row::type);
+    const auto any = std::ranges::find_if(page.rows, selectable);
+    page.cursor.at = static_cast<std::size_t>((first != page.rows.end() ? first
+                                               : any != page.rows.end() ? any
+                                                                        : page.rows.begin()) -
+                                              page.rows.begin());
     keep_visible(page.cursor, height_);
     if (page.cursor.at < height_) {
         page.cursor.top = 0;
@@ -312,6 +368,13 @@ void App::handle_list(const Key& key) {
         done_ = true;
     } else if (is(key, U'/')) {
         list_.searching = true;
+    } else if (is(key, U'o')) {
+        list_.orphans = !list_.orphans;
+        filter();
+    } else if (is(key, U'b')) {
+        build_deps_ = !build_deps_;
+        recompute();
+        filter();
     } else if (key.kind == KeyKind::escape && !list_.query.empty()) {
         list_.query.clear();
         filter();
@@ -377,7 +440,7 @@ void App::fold(Page& page) {
 void App::handle_page(const Key& key) {
     auto& page = pages_.back();
     const bool on_link =
-        page.cursor.at < page.rows.size() && page.rows.at(page.cursor.at).type == RowType::link;
+        page.cursor.at < page.rows.size() && selectable(page.rows.at(page.cursor.at));
     if (is(key, U'q') || is(key, U'Q')) {
         done_ = true;
     } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace) {
@@ -387,7 +450,9 @@ void App::handle_page(const Key& key) {
             pages_.pop_back();
         }
     } else if (key.kind == KeyKind::enter) {
-        open(page.rows.at(page.cursor.at).link.package);
+        if (const auto target = page.rows.at(page.cursor.at).link.package; target != page.package) {
+            open(target);
+        }
     } else if (is(key, U' ') || key.kind == KeyKind::tab) {
         if (page.rows.at(page.cursor.at).unfolded) {
             fold(page);

@@ -119,6 +119,9 @@ struct Glyphs {
 
 [[nodiscard]] const Glyphs& glyphs(GlyphSet set);
 
+// The icon for a root set, named as "@selected".
+[[nodiscard]] std::string_view set_glyph(std::string_view set, const Glyphs& glyph);
+
 struct Theme {
     Painter paint;
     GlyphSet glyph_set = GlyphSet::nerd;

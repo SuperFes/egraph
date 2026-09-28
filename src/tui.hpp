@@ -5,6 +5,7 @@
 // tui.cpp pairs them with the Notcurses Screen.
 
 #include "cli.hpp"
+#include "depclean.hpp"
 #include "graph.hpp"
 #include "human.hpp"
 #include "screen.hpp"
@@ -51,7 +52,10 @@ struct Link {
 [[nodiscard]] std::vector<Link> links(const Store& store, const Graph& graph, std::uint32_t package,
                                       bool reverse);
 
-enum class RowType : std::uint8_t { heading, note, link };
+// A root row names a root set and atom; path rows are the chain that root keeps the page
+// package through, the link holding the dependency that pulls each one in.
+// An alert is a note that needs attention.
+enum class RowType : std::uint8_t { heading, note, alert, link, root, path };
 
 // A page row. Links at depth 0 are the page package's own; unfolding a link puts its links,
 // in the same direction, one level deeper right below it.
@@ -91,10 +95,13 @@ class App {
     struct List {
         std::string query;
         bool searching = false;
+        // Only what depclean would remove.
+        bool orphans = false;
         std::vector<std::uint32_t> shown;
         Cursor cursor;
     };
-    // One package's page: what it depends on, then what depends on it, as trees that unfold.
+    // One package's page: why depclean keeps it, what it depends on, then what depends on it,
+    // the last two as trees that unfold.
     struct Page {
         std::uint32_t package = 0;
         std::vector<Row> rows;
@@ -112,6 +119,13 @@ class App {
     [[nodiscard]] std::size_t dependents(std::uint32_t package) const {
         return dependents_.at(package);
     }
+    // What depclean keeps, and whether it follows build-time dependencies.
+    [[nodiscard]] const Kept& kept() const { return kept_; }
+    [[nodiscard]] bool build_deps() const { return build_deps_; }
+    // The first root that keeps a package directly, as an index into Store::roots.
+    [[nodiscard]] std::optional<std::uint32_t> root_of(std::uint32_t package) const {
+        return root_of_.at(package);
+    }
     // Whether a link can unfold: it is no cycle and its package has links that way.
     [[nodiscard]] bool can_unfold(const Row& row) const;
     // Rows the list or page has on screen; drawing sets it, and paging and scrolling use it.
@@ -119,6 +133,7 @@ class App {
 
   private:
     void filter();
+    void recompute();
     void open(std::uint32_t package);
     void unfold(Page& page);
     void fold(Page& page);
@@ -130,6 +145,9 @@ class App {
     std::vector<std::string> folded_;
     std::vector<std::size_t> dependencies_;
     std::vector<std::size_t> dependents_;
+    bool build_deps_ = true;
+    Kept kept_;
+    std::vector<std::optional<std::uint32_t>> root_of_;
     List list_;
     std::vector<Page> pages_;
     std::size_t height_ = 1;
@@ -195,15 +213,38 @@ inline Span marker(bool selected, const Glyphs& glyph) {
             {.fg = palette::mauve, .bg = std::nullopt, .bold = true}};
 }
 
+// A package's mark in the list: the root set that keeps it, or that depclean would remove it.
+inline Span mark(const App& app, std::uint32_t package, const Glyphs& glyph) {
+    if (const auto root = app.root_of(package)) {
+        const auto set = std::format("@{}", app.store().string(app.store().roots.at(*root).set));
+        return {std::string{set_glyph(set, glyph)}, tone_pen(Tone::root)};
+    }
+    if (!app.kept().packages.at(package)) {
+        return {std::string{glyph.orphan}, tone_pen(Tone::bad)};
+    }
+    return {" ", {}};
+}
+
 template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size size) {
     const auto& list = app.list();
     const auto& store = app.store();
-    draw_title(screen, size.cols,
-               {{std::format(" {} egraph ", glyph.package),
-                 {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
-                {std::format(" {}  ", store.meta.eroot), tone_pen(Tone::note)},
-                {std::format("{} of {} packages", list.shown.size(), store.packages.size()),
-                 tone_pen(Tone::count)}});
+    std::vector<Span> title{{std::format(" {} egraph ", glyph.package),
+                             {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
+                            {std::format(" {}  ", store.meta.eroot), tone_pen(Tone::note)}};
+    if (list.orphans) {
+        title.push_back({std::format("{} orphans", list.shown.size()), tone_pen(Tone::count)});
+    } else {
+        title.push_back({std::format("{} of {} packages", list.shown.size(), store.packages.size()),
+                         tone_pen(Tone::count)});
+    }
+    if (!app.build_deps()) {
+        title.push_back({"  run-time deps only", tone_pen(Tone::note)});
+    }
+    if (list.orphans && (store.roots.empty() || !app.kept().unresolved.empty())) {
+        title.push_back(
+            {std::format("  {} depclean would refuse to run", glyph.broken), tone_pen(Tone::bad)});
+    }
+    draw_title(screen, size.cols, title);
 
     std::vector<Span> search{{std::format(" {} ", glyph.search), tone_pen(Tone::heading)}};
     if (list.searching || !list.query.empty()) {
@@ -220,7 +261,7 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
     const unsigned height = size.rows - first - 1;
     app.set_height(height);
     const unsigned right = size.cols > 20 ? size.cols - 20 : 0;
-    put_spans(screen, 2, 0, {{"   package", tone_pen(Tone::note)}}, size.cols);
+    put_spans(screen, 2, 0, {{"     package", tone_pen(Tone::note)}}, size.cols);
     put_spans(screen, 2, right, {{"   deps  needed by", tone_pen(Tone::note)}}, size.cols);
     for (unsigned line = 0; line < height; ++line) {
         const auto index = list.cursor.top + line;
@@ -233,8 +274,9 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
         if (selected) {
             screen.fill_row(first + line, {.fg = std::nullopt, .bg = palette::surface});
         }
-        auto spans = cpv_spans(store.string(store.packages.at(id).cpv));
-        spans.insert(spans.begin(), marker(selected, glyph));
+        std::vector<Span> spans{marker(selected, glyph), mark(app, id, glyph), {" ", {}}};
+        std::ranges::move(cpv_spans(store.string(store.packages.at(id).cpv)),
+                          std::back_inserter(spans));
         put_spans(screen, first + line, 0, spans, right, bg);
         put_spans(screen, first + line, right,
                   {{std::format("{:>7}", app.dependencies(id)), tone_pen(Tone::version)},
@@ -242,14 +284,22 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
                   size.cols, bg);
     }
     if (list.shown.empty()) {
-        put_spans(screen, first, 3, {{"no package matches", tone_pen(Tone::note)}}, size.cols);
+        put_spans(screen, first, 5,
+                  {{list.orphans && list.query.empty() ? "nothing to remove" : "no package matches",
+                    tone_pen(Tone::note)}},
+                  size.cols);
     }
     if (list.searching) {
         draw_hints(screen, size.rows - 1, size.cols,
                    {{glyph.enter, "keep"}, {"esc", "clear"}, {"type", "to filter"}});
     } else {
         draw_hints(screen, size.rows - 1, size.cols,
-                   {{glyph.move, "move"}, {glyph.enter, "open"}, {"/", "search"}, {"q", "quit"}});
+                   {{glyph.move, "move"},
+                    {glyph.enter, "open"},
+                    {"/", "search"},
+                    {"o", list.orphans ? "all" : "orphans"},
+                    {"b", app.build_deps() ? "run time only" : "build deps"},
+                    {"q", "quit"}});
     }
 }
 
@@ -302,6 +352,20 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
         case RowType::note:
             put_spans(screen, at, 3, {{row.text, tone_pen(Tone::note)}}, size.cols);
             break;
+        case RowType::alert:
+            put_spans(screen, at, 3,
+                      {{std::format("{} {}", glyph.orphan, row.text), tone_pen(Tone::bad)}},
+                      size.cols);
+            break;
+        case RowType::root:
+            put_spans(
+                screen, at, 3,
+                {{std::format("{} {}", set_glyph(row.text, glyph), row.text), tone_pen(Tone::root)},
+                 {"  ", {}},
+                 {std::string{store.string(row.link.atom)}, tone_pen(Tone::note)}},
+                size.cols);
+            break;
+        case RowType::path:
         case RowType::link: {
             const bool selected = index == page.cursor.at;
             const auto bg = selected ? std::optional<Color>{palette::surface} : std::nullopt;

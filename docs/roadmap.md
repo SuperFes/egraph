@@ -103,6 +103,7 @@ Taken ahead of 8 and 9 at the user's direction: output need not look like portag
   (done): `egraph tui` on Notcurses, an optional meson feature, showing the store and quitting.
   Step 2 (done): the package list with incremental search (`/`), and package pages listing what
   a package depends on and what needs it, with the kind matrix; Enter follows a link, Esc goes
-  back. Step 3 (done): both lists unfold in place as trees, stopping at cycles. Next: `why` and
-  `orphans` views, then `broken` and `check`.
+  back. Step 3 (done): both lists unfold in place as trees, stopping at cycles. Step 4 (done):
+  pages open with `why`'s chain, and the list marks roots and orphans and can show only
+  orphans, with or without build-time deps. Next: `broken` and `check`.
 - `rdeps --possible` (dependencies behind disabled USE flags) waits for the evaluated layer.
