@@ -583,18 +583,120 @@ void App::handle(const Key& key) {
         }
     } else if (dialog_) {
         dialog_.reset();
+    } else if (prompt_) {
+        handle_prompt(key);
+    } else if (is(key, U':') &&
+               !(list_.searching && pages_.empty() && !output_ && !checked_ && !watched_)) {
+        prompt_.emplace();
     } else if (!pages_.empty()) {
         handle_page(key);
         // Back at the emerge view, whatever it shows is stale.
-        if (pages_.empty() && watched_) {
+        if (pages_.empty() && !output_ && watched_) {
             watched_->due = true;
         }
+    } else if (output_) {
+        handle_output(key);
     } else if (checked_) {
         handle_check(key);
     } else if (watched_) {
         handle_watch(key);
     } else {
         handle_list(key);
+    }
+}
+
+namespace {
+
+std::vector<std::string> nonempty_lines(std::string_view text) {
+    std::vector<std::string> lines;
+    for (const auto line : std::views::split(text, '\n')) {
+        if (!std::string_view{line}.empty()) {
+            lines.emplace_back(std::string_view{line});
+        }
+    }
+    return lines;
+}
+
+} // namespace
+
+void App::finish_command(Answer answer) {
+    if (!command_) {
+        return;
+    }
+    auto command = std::move(*command_);
+    command_.reset();
+    if (answer.quit) {
+        done_ = true;
+        return;
+    }
+    const auto problems = nonempty_lines(answer.err);
+    const bool failed = answer.exit != Exit::ok;
+    if (failed && answer.out.empty()) {
+        dialog_ = Dialog{.error = true,
+                         .title = std::format(":{} failed", command),
+                         .lines = problems.empty() ? std::vector<std::string>{"It printed nothing."}
+                                                   : problems};
+        return;
+    }
+    Output output{.command = std::move(command), .rows = {}, .links = {}, .cursor = {}};
+    for (const auto& line : nonempty_lines(answer.out)) {
+        std::vector<std::string> fields;
+        std::optional<std::uint32_t> link;
+        for (const auto field : std::views::split(std::string_view{line}, '\t')) {
+            fields.emplace_back(std::string_view{field});
+            if (!link) {
+                link = find(fields.back());
+            }
+        }
+        output.rows.push_back(std::move(fields));
+        output.links.push_back(link);
+    }
+    pages_.clear();
+    output_ = std::move(output);
+    if (!problems.empty()) {
+        dialog_ =
+            Dialog{.error = failed, .title = failed ? "Errors" : "Warnings", .lines = problems};
+    }
+}
+
+void App::handle_prompt(const Key& key) {
+    auto& text = *prompt_;
+    if (key.kind == KeyKind::character && key.code >= U' ') {
+        append_utf8(text, key.code);
+    } else if (key.kind == KeyKind::backspace) {
+        if (text.empty()) {
+            prompt_.reset();
+        } else {
+            pop_code_point(text);
+        }
+    } else if (key.kind == KeyKind::escape) {
+        prompt_.reset();
+    } else if (key.kind == KeyKind::enter) {
+        constexpr std::string_view space = " \t";
+        const auto first = text.find_first_not_of(space);
+        if (first != std::string::npos) {
+            command_ = text.substr(first, text.find_last_not_of(space) - first + 1);
+        }
+        prompt_.reset();
+    }
+}
+
+void App::handle_output(const Key& key) {
+    auto& output = *output_;
+    if (is(key, U'q') || key.kind == KeyKind::escape || key.kind == KeyKind::left ||
+        is(key, U'h')) {
+        output_.reset();
+        if (watched_) {
+            watched_->due = true;
+        }
+    } else if (key.kind == KeyKind::enter || key.kind == KeyKind::right || is(key, U'l')) {
+        if (output.cursor.at < output.links.size()) {
+            if (const auto link = output.links.at(output.cursor.at)) {
+                open(*link);
+            }
+        }
+    } else if (is_move(key)) {
+        move(output.cursor, output.rows.size(), key, height_);
     }
 }
 
@@ -817,12 +919,14 @@ void App::handle_watch(const Key& key) {
 }
 
 std::optional<std::uint32_t> App::find(std::string_view cpv) const {
-    for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
-        if (store().string(store().packages.at(id).cpv) == cpv) {
-            return id;
-        }
+    // Packages are in cpv order.
+    const auto& packages = store().packages;
+    const auto cpv_of = [this](const Package& pkg) { return store().string(pkg.cpv); };
+    const auto found = std::ranges::lower_bound(packages, cpv, {}, cpv_of);
+    if (found == packages.end() || cpv_of(*found) != cpv) {
+        return std::nullopt;
     }
-    return std::nullopt;
+    return static_cast<std::uint32_t>(std::distance(packages.begin(), found));
 }
 
 void App::handle_check(const Key& key) {

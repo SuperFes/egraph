@@ -219,14 +219,10 @@ TEST_CASE("the interface needs a terminal, and a build with Notcurses") {
 }
 
 TEST_CASE("malformed command lines are rejected") {
-    CHECK_THROWS_AS(parse(""), CLI::RequiredError);
+    // No command is no error: egraph is interactive then.
+    CHECK(std::holds_alternative<std::monostate>(parse("").command));
+    CHECK(std::holds_alternative<std::monostate>(parse("--layout lines").command));
     CHECK_THROWS_AS(parse("rdeps"), CLI::RequiredError);
     CHECK_THROWS_AS(parse("export --format svg"), CLI::ValidationError);
     CHECK_THROWS_AS(parse("frobnicate"), CLI::ParseError);
-}
-
-TEST_CASE("running without a command is a usage error") {
-    std::ostringstream out;
-    std::ostringstream err;
-    CHECK(egraph::run(egraph::Invocation{}, out, err) == egraph::Exit::usage);
 }

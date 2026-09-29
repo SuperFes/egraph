@@ -163,6 +163,18 @@ using MergeListReader = std::function<std::vector<emerge::Pending>()>;
 using Planner =
     std::function<std::expected<emerge::Waits, std::string>(const std::vector<emerge::Pending>&)>;
 
+// What a command typed at the : prompt printed: its output in the lines layout, its errors and
+// warnings, and how it ended.
+struct Answer {
+    Exit exit = Exit::ok;
+    std::string out;
+    std::string err;
+    // The command was quit, which ends the interface.
+    bool quit = false;
+};
+// Runs a command line, as `egraph shell` runs one.
+using Commander = std::function<Answer(const std::string&)>;
+
 // What the interface asks of the world outside it: run() calls these, the app never does.
 struct Services {
     Checker check{};
@@ -174,6 +186,7 @@ struct Services {
     SteveSetter set_steve{};
     MergeListReader merge_list{};
     Planner plan{};
+    Commander command{};
 };
 
 struct Watched;
@@ -332,6 +345,21 @@ class App {
     void finish_steve_change(const std::expected<void, std::string>& result);
     // How long run() waits for a key before the view needs drawing again; unset waits for one.
     [[nodiscard]] std::optional<std::chrono::milliseconds> refresh() const;
+    // The : prompt's text while the user types a command.
+    [[nodiscard]] const std::optional<std::string>& prompt() const { return prompt_; }
+    // A command typed at the prompt, waiting for run() to answer it.
+    [[nodiscard]] const std::optional<std::string>& command_requested() const { return command_; }
+    void finish_command(Answer answer);
+    // What the last command printed: rows of its tab-separated fields, each linked to the first
+    // installed package a field names.
+    struct Output {
+        std::string command;
+        std::vector<std::vector<std::string>> rows;
+        std::vector<std::optional<std::uint32_t>> links;
+        Cursor cursor;
+    };
+    // Over the list, the check view and the emerge view, under pages opened from it.
+    [[nodiscard]] const std::optional<Output>& output() const { return output_; }
     [[nodiscard]] const std::optional<Dialog>& dialog() const { return dialog_; }
     void show(Dialog dialog) { dialog_ = std::move(dialog); }
     [[nodiscard]] Update update() const { return update_; }
@@ -385,6 +413,8 @@ class App {
     void handle_check(const Key& key);
     void handle_watch(const Key& key);
     void handle_steve(const Key& key);
+    void handle_prompt(const Key& key);
+    void handle_output(const Key& key);
     // The package with this cpv, if the store has it.
     [[nodiscard]] std::optional<std::uint32_t> find(std::string_view cpv) const;
 
@@ -412,6 +442,9 @@ class App {
     std::optional<Watched> watched_;
     std::vector<Page> pages_;
     std::optional<Dialog> dialog_;
+    std::optional<std::string> prompt_;
+    std::optional<std::string> command_;
+    std::optional<Output> output_;
     std::size_t height_ = 1;
     bool done_ = false;
 };
@@ -644,7 +677,8 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
         hints.insert(hints.end(), {{"b", app.build_deps() ? "run time only" : "build deps"},
                                    {"c", "check"},
                                    {"e", "emerges"},
-                                   {"q", "quit"}});
+                                   {"q", "quit"},
+                                   {":", "command"}});
         draw_hints(screen, size.rows - 1, size.cols, hints);
     }
 }
@@ -1189,18 +1223,99 @@ template <class S> void draw_watch(S& screen, App& app, const Glyphs& glyph, Siz
     draw_watch_hints(screen, watched, glyph, size);
 }
 
+// A command's output: its tab-separated fields in columns, lined up across each run of rows with
+// the same number of fields.
+template <class S> void draw_output(S& screen, App& app, const Glyphs& glyph, Size size) {
+    const auto& output = *app.output();
+    draw_title(screen, app, size.cols,
+               {{std::format(" {} egraph ", glyph.package),
+                 {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
+                {std::format(" :{}  ", output.command),
+                 {.fg = palette::text, .bg = std::nullopt, .bold = true}},
+                {std::format("{} lines", output.rows.size()), tone_pen(Tone::count)}});
+    const unsigned first = 2;
+    const unsigned height = size.rows - first - 1;
+    app.set_height(height);
+    // Column widths for the run of rows each row belongs to.
+    std::vector<std::vector<std::size_t>> widths(output.rows.size());
+    for (std::size_t start = 0; start < output.rows.size();) {
+        auto end = start;
+        std::vector<std::size_t> run(output.rows.at(start).size(), 0);
+        while (end < output.rows.size() && output.rows.at(end).size() == run.size()) {
+            for (std::size_t column = 0; column < run.size(); ++column) {
+                run.at(column) = std::max(run.at(column), columns(output.rows.at(end).at(column)));
+            }
+            ++end;
+        }
+        std::fill(widths.begin() + static_cast<std::ptrdiff_t>(start),
+                  widths.begin() + static_cast<std::ptrdiff_t>(end), run);
+        start = end;
+    }
+    for (unsigned line = 0; line < height; ++line) {
+        const auto index = output.cursor.top + line;
+        if (index >= output.rows.size()) {
+            break;
+        }
+        const bool selected = index == output.cursor.at;
+        const auto bg = selected ? std::optional<Color>{palette::surface} : std::nullopt;
+        if (selected) {
+            screen.fill_row(first + line, {.fg = std::nullopt, .bg = palette::surface});
+        }
+        const auto& fields = output.rows.at(index);
+        std::string text;
+        for (std::size_t column = 0; column < fields.size(); ++column) {
+            text += fields.at(column);
+            if (column + 1 < fields.size()) {
+                text +=
+                    std::string(widths.at(index).at(column) - columns(fields.at(column)) + 2, ' ');
+            }
+        }
+        const auto pen = output.links.at(index) ? Pen{} : tone_pen(Tone::note);
+        put_spans(screen, first + line, 0, {marker(selected, glyph), {text, pen}}, size.cols, bg);
+    }
+    if (output.rows.empty()) {
+        put_spans(screen, first, 5, {{"the command printed nothing", tone_pen(Tone::note)}},
+                  size.cols);
+    }
+    draw_hints(screen, size.rows - 1, size.cols,
+               {{glyph.move, "move"}, {glyph.enter, "open"}, {":", "command"}, {"esc", "back"}});
+}
+
+// The : prompt over the hint bar, or the command it runs.
+template <class S> void draw_prompt(S& screen, const App& app, Size size) {
+    const Pen bar{.fg = palette::text, .bg = palette::mantle};
+    const auto row = size.rows - 1;
+    screen.fill_row(row, bar);
+    if (app.prompt()) {
+        put_spans(screen, row, 0,
+                  {{std::format(":{}", *app.prompt()), bar},
+                   {" ", {.fg = std::nullopt, .bg = palette::mauve}}},
+                  size.cols);
+    } else if (app.command_requested()) {
+        put_spans(screen, row, 0,
+                  {{std::format(":{}", *app.command_requested()), bar},
+                   {"  running", {.fg = palette::overlay, .bg = palette::mantle}}},
+                  size.cols);
+    }
+}
+
 template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
     const auto size = screen.size();
     screen.clear();
     if (size.rows >= 5 && size.cols >= 10) {
         if (!app.pages().empty()) {
             draw_page(screen, app, glyph, size);
+        } else if (app.output()) {
+            draw_output(screen, app, glyph, size);
         } else if (app.checked()) {
             draw_check(screen, app, glyph, size);
         } else if (app.watched()) {
             draw_watch(screen, app, glyph, size);
         } else {
             draw_list(screen, app, glyph, size);
+        }
+        if (app.prompt() || app.command_requested()) {
+            draw_prompt(screen, app, size);
         }
         if (app.dialog()) {
             draw_dialog(screen, *app.dialog(), glyph, size);
@@ -1231,6 +1346,11 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
                              services.steve ? services.steve() : std::nullopt,
                              services.merge_list ? services.merge_list()
                                                  : std::vector<emerge::Pending>{});
+        } else if (const auto& line = app.command_requested()) {
+            app.finish_command(
+                services.command
+                    ? services.command(*line)
+                    : Answer{.exit = Exit::failure, .out = {}, .err = "no way to run commands"});
         } else if (const auto list = app.plan_requested()) {
             app.finish_plan(services.plan ? services.plan(*list)
                                           : std::unexpected(std::string{"no way to plan"}));

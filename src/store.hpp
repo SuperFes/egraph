@@ -12,8 +12,11 @@
 
 #if defined(__clang__)
 #define EGRAPH_LIFETIMEBOUND [[clang::lifetimebound]]
+// A parameter a member function keeps a reference to.
+#define EGRAPH_KEPT_BY_THIS [[clang::lifetime_capture_by_this]]
 #else
 #define EGRAPH_LIFETIMEBOUND
+#define EGRAPH_KEPT_BY_THIS
 #endif
 
 namespace egraph {

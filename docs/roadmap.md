@@ -251,9 +251,11 @@ and run-and-done otherwise (`docs/vision.md`).
   command computes from a session and renders. Every one-shot command's output unchanged.
 - 13b (done): a line-mode shell (`egraph shell`) reading commands from standard input, for builds without Notcurses and
   for tests.
-- 13c: bare `egraph` on a terminal opens the TUI (`egraph tui` stays), with a `:` command line
+- 13c (done): bare `egraph` on a terminal opens the TUI (`egraph tui` stays), with a `:` command line
   taking the CLI's commands and options through the same parser, and their results as views
-  linked to package pages. A failed command is a message, not an exit.
+  linked to package pages. A failed command is a message, not an exit. Off a terminal, bare
+  `egraph` is the shell. The interface still keeps its own copy of the stores beside the
+  session's until 13d.
 - 13d: the app stays current: inputs checked on each tick, the incremental builder run as a
   child process watched without blocking, the new stores swapped in keeping the user's place.
   Check and rebuild stop freezing the screen the same way.

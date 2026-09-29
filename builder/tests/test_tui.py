@@ -123,6 +123,39 @@ def test_tui_lists_and_shows_pending_updates(playgrounds, tmp_path):
         tmux(socket, "kill-server")
 
 
+def test_bare_egraph_opens_the_interface_and_runs_commands(playgrounds, tmp_path):
+    path = tmp_path / "installed.egraph"
+    write_stores(playgrounds("repository"), path)
+    skip_without_tui()
+
+    socket = f"egraph-test-{os.getpid()}"
+    command = f"{EGRAPH} --store {path} --no-refresh; echo EXIT=$?; sleep 30"
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "110", "-y", "30", command)
+    try:
+        wait_for(socket, "/ to search")
+        tmux(socket, "send-keys", "-t", "t", ":", "updates -N", "Enter")
+        # The output view's own hints: the prompt shows the command while it runs.
+        screen = wait_for(socket, "command  esc back")
+        (row,) = [line for line in screen.splitlines() if "dev-libs/lib-2 " in line]
+        assert row.split()[-4:] == [
+            "dev-libs/lib-2",
+            "upgrade",
+            "dev-libs/lib-2.1",
+            "test_repo",
+        ]
+        # The first row links to its package.
+        tmux(socket, "send-keys", "-t", "t", "Enter")
+        wait_for(socket, "Depends on")
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        wait_for(socket, "command  esc back")
+        tmux(socket, "send-keys", "-t", "t", ":", "nonsense", "Enter")
+        wait_for(socket, "nonsense: no such command")
+        tmux(socket, "send-keys", "-t", "t", "x", ":", "quit", "Enter")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")
+
+
 def test_tui_previews_a_fresh_build_without_saving_it(system, tmp_path):
     if os.geteuid() == 0:
         pytest.skip("root rebuilds the store instead")

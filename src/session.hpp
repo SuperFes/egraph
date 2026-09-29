@@ -47,6 +47,9 @@ class Session {
     };
     [[nodiscard]] Loaded<Depclean> depclean(bool build_deps, bool dynamic) EGRAPH_LIFETIMEBOUND;
 
+    // Sends later warnings to warnings instead.
+    void warn_to(std::ostream& warnings EGRAPH_KEPT_BY_THIS) { warnings_ = warnings; }
+
     // The installed store's path, once one is loaded: the system store or the user's.
     [[nodiscard]] const std::filesystem::path& used() const EGRAPH_LIFETIMEBOUND { return used_; }
 

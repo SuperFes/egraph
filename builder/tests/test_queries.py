@@ -360,13 +360,15 @@ def test_the_shell_answers_as_one_shot_commands(scenario, system):
         "orphans --with-bdeps n",
         "orphans --dynamic-deps n",
     ]
-    shell = subprocess.run(
-        [EGRAPH, "--store", str(path), "--no-refresh", "shell"],
-        input="".join(f"{line}\n" for line in commands),
-        capture_output=True,
-        text=True,
-    )
     expected = "".join(
         egraph(path, *line.split(), check=False).stdout for line in commands
     )
-    assert shell.stdout == expected
+    # Without a command and off a terminal, egraph is the shell.
+    for command in (["shell"], []):
+        shell = subprocess.run(
+            [EGRAPH, "--store", str(path), "--no-refresh", *command],
+            input="".join(f"{line}\n" for line in commands),
+            capture_output=True,
+            text=True,
+        )
+        assert shell.stdout == expected, command

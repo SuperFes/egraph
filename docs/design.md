@@ -92,6 +92,13 @@ keeps one for as long as it runs. Freshness is checked, and a stale store refres
 about, when a piece is first loaded. Depclean without dynamic deps reads the installed store
 loaded with the evaluated one, so its packages line up with the evaluated store's masks.
 
+Without a command, egraph is interactive: the TUI when standard input and output are both a
+terminal, the shell otherwise (`printf 'updates\n' | egraph`). In the TUI, `:` opens a prompt
+that takes the same command lines as the shell and answers them from the session the interface
+was opened with; the output is shown in the lines layout as columns, lined up across each run of
+rows with the same number of fields, and a row whose field names an installed package opens its
+page. Errors and warnings go to a dialog, and `:quit` (or `:q`) ends the interface.
+
 `egraph shell` reads commands one per line from standard input and answers them all from one
 session, prompting when standard input is a terminal. A line takes the command-line syntax,
 global options included, except those that choose the stores (`--root`, `--store` and the

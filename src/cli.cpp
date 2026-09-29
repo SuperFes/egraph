@@ -95,9 +95,30 @@ CLI::Validator one_of(std::vector<std::pair<std::string, T>> choices, bool ignor
             std::format("{{{}}}", names)};
 }
 
-Exit execute(const std::monostate&, Session&, const Invocation&, std::ostream&, std::ostream& err) {
-    err << "egraph: no command given\n";
-    return Exit::usage;
+// Where a command line was typed: the shell, or the interface's prompt.
+enum class Context : std::uint8_t { shell, interface };
+
+// What a command line did: ran a command, with its status, or asked to quit.
+struct LineResult {
+    bool quit = false;
+    Exit exit = Exit::ok;
+};
+
+Exit dispatch(Session& session, const Invocation& invocation, std::ostream& out, std::ostream& err);
+LineResult run_line(Session& session, const Invocation& invocation, std::string_view line,
+                    std::ostream& out, std::ostream& err, Context context);
+Exit run_shell(Session& session, const Invocation& invocation, std::istream& in, std::ostream& out,
+               std::ostream& err, bool prompt);
+Exit execute(const Tui& command, Session& session, const Invocation& invocation, std::ostream& out,
+             std::ostream& err);
+
+// No command: interactive, in the interface when both ends are a terminal, else the shell.
+Exit execute(const std::monostate&, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    if (tui::available() && invocation.terminal && invocation.input_terminal) {
+        return execute(Tui{}, session, invocation, out, err);
+    }
+    return run_shell(session, invocation, std::cin, out, err, invocation.input_terminal);
 }
 
 Exit execute(const Rebuild&, Session&, const Invocation& invocation, std::ostream&,
@@ -636,7 +657,8 @@ Exit execute(const Why& command, Session& session, const Invocation& invocation,
     return exit;
 }
 
-Exit execute(const Tui&, Session&, const Invocation& invocation, std::ostream&, std::ostream& err) {
+Exit execute(const Tui&, Session& session, const Invocation& invocation, std::ostream&,
+             std::ostream& err) {
     if (!tui::available()) {
         err << "egraph: tui: this egraph was built without Notcurses (meson -Dtui=enabled)\n";
         return Exit::not_implemented;
@@ -647,7 +669,9 @@ Exit execute(const Tui&, Session&, const Invocation& invocation, std::ostream&, 
     }
     // Warnings would vanish under the interface, so it repeats them.
     std::stringstream warned;
-    auto stores = open_stores(invocation, warned);
+    session.warn_to(warned);
+    const auto stores = session.stores();
+    session.warn_to(err);
     err << warned.str();
     if (!stores) {
         err << "egraph: " << stores.error() << '\n';
@@ -693,8 +717,17 @@ Exit execute(const Tui&, Session&, const Invocation& invocation, std::ostream&, 
                               double value) -> std::expected<void, std::string> {
         return output_of(steve::set_arguments(setting, value)).transform([](const auto&) {});
     };
+    // What a command at the prompt prints, and its warnings, go to its answer.
+    const auto command = [&session, &invocation](const std::string& line) {
+        std::ostringstream out;
+        std::ostringstream problems;
+        session.warn_to(problems);
+        const auto result = run_line(session, invocation, line, out, problems, Context::interface);
+        return tui::Answer{
+            .exit = result.exit, .out = out.str(), .err = problems.str(), .quit = result.quit};
+    };
     return tui::open_and_run(
-        std::move(*stores), invocation.dynamic_deps, style(invocation).glyphs,
+        Stores{stores->get()}, invocation.dynamic_deps, style(invocation).glyphs,
         {.check = check,
          .rebuild = rebuild,
          .watch = watch,
@@ -703,13 +736,14 @@ Exit execute(const Tui&, Session&, const Invocation& invocation, std::ostream&, 
          .set_steve = set_steve,
          .merge_list = [&invocation] { return read_merge_list(invocation); },
          .plan = [&invocation](
-                     const std::vector<emerge::Pending>& list) { return plan(invocation, list); }},
+                     const std::vector<emerge::Pending>& list) { return plan(invocation, list); },
+         .command = command},
         warnings, err);
 }
 
-Exit execute(const Shell&, Session&, const Invocation& invocation, std::ostream& out,
+Exit execute(const Shell&, Session& session, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
-    return shell(invocation, std::cin, out, err, invocation.input_terminal);
+    return run_shell(session, invocation, std::cin, out, err, invocation.input_terminal);
 }
 
 Exit execute(const Affected& command, Session& session, const Invocation& invocation,
@@ -795,7 +829,8 @@ Exit execute(const Export& command, Session& session, const Invocation&, std::os
 void configure(CLI::App& app, Invocation& invocation) {
     app.description("Query the dependency graph of the installed packages");
     app.set_version_flag("--version", std::string{version});
-    app.require_subcommand(1);
+    // Without one, egraph is interactive.
+    app.require_subcommand(0, 1);
 
     app.add_option("--root", invocation.root, "Root whose installed packages to query")
         ->envname("ROOT")
@@ -1079,64 +1114,88 @@ std::string_view trimmed(std::string_view text) {
 
 } // namespace
 
-Exit shell(const Invocation& invocation, std::istream& in, std::ostream& out, std::ostream& err,
-           bool prompt) {
-    Session session{invocation, err};
+namespace {
+
+LineResult run_line(Session& session, const Invocation& invocation, std::string_view text,
+                    std::ostream& out, std::ostream& err, Context context) {
+    const std::string_view where = context == Context::shell ? "shell" : "interface";
+    const auto line = trimmed(text);
+    if (line.empty() || line.starts_with('#')) {
+        return {};
+    }
+    if (line == "quit" || line == "exit" || (context == Context::interface && line == "q")) {
+        return {.quit = true};
+    }
+    // Each line starts from the session's own options and facts.
+    auto command = invocation;
+    command.command = std::monostate{};
+    CLI::App app{"", "egraph"};
+    configure(app, command);
+    if (line == "help") {
+        out << app.help();
+        return {};
+    }
+    const auto usage = [&](const auto&... message) {
+        ((err << "egraph: " << where << ": ") << ... << message) << '\n';
+        return LineResult{.quit = false, .exit = Exit::usage};
+    };
+    // CLI11 only says a subcommand is required.
+    if (const auto word = line.substr(0, line.find_first_of(" \t"));
+        !word.starts_with('-') && app.get_subcommand_no_throw(std::string{word}) == nullptr) {
+        return usage(word, ": no such command (help lists them)");
+    }
+    try {
+        app.parse(std::string{line}, false);
+    } catch (const CLI::ParseError& e) {
+        // --help arrives here too, with exit code 0.
+        return {.quit = false, .exit = app.exit(e, out, err) == 0 ? Exit::ok : Exit::usage};
+    }
+    if (const auto option = changed_stores(invocation, command)) {
+        return usage(*option, " chooses the stores, which the ", where,
+                     " keeps; start another egraph for others");
+    }
+    if (std::holds_alternative<std::monostate>(command.command) ||
+        std::holds_alternative<Shell>(command.command) ||
+        std::holds_alternative<Tui>(command.command)) {
+        return usage("already in the ", where);
+    }
+    if (context == Context::interface) {
+        // The interface lays the fields out itself.
+        command.layout = Layout::lines;
+    }
+    return {.quit = false, .exit = dispatch(session, command, out, err)};
+}
+
+Exit run_shell(Session& session, const Invocation& invocation, std::istream& in, std::ostream& out,
+               std::ostream& err, bool prompt) {
     auto status = Exit::ok;
-    for (std::string read;;) {
+    for (std::string line;;) {
         if (prompt) {
             out << "egraph> " << std::flush;
         }
-        if (!std::getline(in, read)) {
+        if (!std::getline(in, line)) {
             if (prompt) {
                 out << '\n';
             }
             break;
         }
-        const auto line = trimmed(read);
-        if (line.empty() || line.starts_with('#')) {
-            continue;
-        }
-        if (line == "quit" || line == "exit") {
+        const auto result = run_line(session, invocation, line, out, err, Context::shell);
+        if (result.quit) {
             break;
         }
-        // Each line starts from the shell's own options and facts.
-        auto command = invocation;
-        command.command = std::monostate{};
-        CLI::App app{"", "egraph"};
-        configure(app, command);
-        if (line == "help") {
-            out << app.help();
-            continue;
+        if (!trimmed(line).empty() && !trimmed(line).starts_with('#')) {
+            status = result.exit;
         }
-        // CLI11 only says a subcommand is required.
-        if (const auto word = line.substr(0, line.find_first_of(" \t"));
-            !word.starts_with('-') && app.get_subcommand_no_throw(std::string{word}) == nullptr) {
-            err << "egraph: shell: " << word << ": no such command (help lists them)\n";
-            status = Exit::usage;
-            continue;
-        }
-        try {
-            app.parse(std::string{line}, false);
-        } catch (const CLI::ParseError& e) {
-            // --help arrives here too, with exit code 0.
-            status = app.exit(e, out, err) == 0 ? Exit::ok : Exit::usage;
-            continue;
-        }
-        if (const auto option = changed_stores(invocation, command)) {
-            err << "egraph: shell: " << *option
-                << " chooses the stores, which the shell keeps; start another egraph for others\n";
-            status = Exit::usage;
-            continue;
-        }
-        if (std::holds_alternative<Shell>(command.command)) {
-            err << "egraph: shell: already in the shell\n";
-            status = Exit::usage;
-            continue;
-        }
-        status = dispatch(session, command, out, err);
     }
     return status;
+}
+
+} // namespace
+
+Exit shell(const Invocation& invocation, std::istream& in, std::ostream& out, std::ostream& err,
+           bool prompt) {
+    Session session{invocation, err};
+    return run_shell(session, invocation, in, out, err, prompt);
 }
 
 Exit run(const Invocation& invocation, std::ostream& out, std::ostream& err) {

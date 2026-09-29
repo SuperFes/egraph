@@ -1377,3 +1377,138 @@ TEST_CASE("the check compares installed stores, and a preview keeps the evaluate
     CHECK(app.store().nodes_in(app.store().packages.at(0).deps.at(4)).size() == 1);
     CHECK(app.update_of(1).has_value());
 }
+
+namespace {
+
+// Each character of text as a key.
+std::deque<Key> typed(std::string_view text) {
+    std::deque<Key> keys;
+    for (const char c : text) {
+        keys.push_back(character(static_cast<char32_t>(c)));
+    }
+    return keys;
+}
+
+} // namespace
+
+TEST_CASE("a command typed at the prompt runs, and its output links to pages") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    auto keys = typed(":deps app-misc/a-1");
+    keys.push_back(key(KeyKind::enter));
+    std::vector<std::string> ran;
+    const egraph::tui::Commander command = [&](const std::string& line) {
+        ran.push_back(line);
+        return egraph::tui::Answer{.exit = egraph::Exit::ok,
+                                   .out =
+                                       "app-misc/a-1\tRDEPEND\tdev-libs/b\tdev-libs/b-1\tany-of\n"
+                                       "@selected\tapp-misc/a\n",
+                                   .err = {}};
+    };
+    FakeScreen screen{12, 100, keys};
+    egraph::tui::run(screen, app, ascii, {.command = command});
+    CHECK(ran == std::vector<std::string>{"deps app-misc/a-1"});
+    REQUIRE(app.output().has_value());
+    CHECK(app.output()->rows.size() == 2);
+    CHECK(app.output()->links == std::vector<std::optional<std::uint32_t>>{0, std::nullopt});
+    const auto text = screen.text();
+    CHECK(contains(screen.line(0), ":deps app-misc/a-1"));
+    CHECK(contains(screen.line(0), "2 lines"));
+    // Fields line up in columns.
+    CHECK(contains(text, "app-misc/a-1  RDEPEND  dev-libs/b  dev-libs/b-1  any-of"));
+    // Rows of another shape line up among themselves.
+    CHECK(contains(text, "@selected  app-misc/a"));
+
+    // Enter opens the linked package; Esc comes back to the output, then to the list.
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    CHECK(app.pages().back().package == 0);
+    app.handle(key(KeyKind::escape));
+    CHECK(app.pages().empty());
+    CHECK(app.output().has_value());
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    CHECK(app.pages().empty());
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.output().has_value());
+}
+
+TEST_CASE("the prompt edits, draws and cancels") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    for (const auto& k : typed(":xy")) {
+        app.handle(k);
+    }
+    app.handle(key(KeyKind::backspace));
+    REQUIRE(app.prompt().has_value());
+    CHECK(*app.prompt() == "x");
+    FakeScreen screen{12, 60, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(screen.line(11).starts_with(":x"));
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.prompt().has_value());
+    CHECK_FALSE(app.command_requested().has_value());
+    // An empty command runs nothing.
+    app.handle(character(U':'));
+    app.handle(key(KeyKind::enter));
+    CHECK_FALSE(app.prompt().has_value());
+    CHECK_FALSE(app.command_requested().has_value());
+    // While searching, : is part of the query.
+    app.handle(character(U'/'));
+    app.handle(character(U':'));
+    CHECK_FALSE(app.prompt().has_value());
+    CHECK(app.list().query == ":");
+}
+
+TEST_CASE("a command's errors and warnings show in a dialog") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    for (const auto& k : typed(":nope")) {
+        app.handle(k);
+    }
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.command_requested() == std::optional<std::string>{"nope"});
+    app.finish_command({.exit = egraph::Exit::usage,
+                        .out = {},
+                        .err = "egraph: shell: nope: no such command (help lists them)\n"});
+    CHECK_FALSE(app.command_requested().has_value());
+    CHECK_FALSE(app.output().has_value());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->error);
+    CHECK(app.dialog()->lines ==
+          std::vector<std::string>{"egraph: shell: nope: no such command (help lists them)"});
+
+    app.handle(character(U'x'));
+    app.handle(character(U':'));
+    app.handle(character(U'o'));
+    app.handle(key(KeyKind::enter));
+    app.finish_command({.exit = egraph::Exit::ok,
+                        .out = "dev-libs/b-1\n",
+                        .err = "egraph: warning: answering from a stale store (why)\n"});
+    REQUIRE(app.output().has_value());
+    REQUIRE(app.dialog().has_value());
+    CHECK_FALSE(app.dialog()->error);
+
+    // quit at the prompt ends the interface.
+    app.handle(character(U'x'));
+    app.handle(character(U':'));
+    app.handle(character(U'q'));
+    app.handle(key(KeyKind::enter));
+    app.finish_command({.exit = egraph::Exit::ok, .out = {}, .err = {}, .quit = true});
+    CHECK(app.done());
+
+    // A command that prints nothing says so.
+    app.handle(character(U'x'));
+    app.handle(character(U':'));
+    app.handle(character(U'o'));
+    app.handle(key(KeyKind::enter));
+    app.finish_command({.exit = egraph::Exit::ok, .out = {}, .err = {}});
+    REQUIRE(app.output().has_value());
+    CHECK(app.output()->rows.empty());
+    FakeScreen screen{12, 60, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "the command printed nothing"));
+}
