@@ -93,15 +93,28 @@ std::vector<std::string> possible_lines(const Evaluated& evaluated,
 
 namespace {
 
-// "upgrade", "downgrade" or "rebuild", by the versions of two cpvs of cp.
-std::string_view update_kind(std::string_view cp, std::string_view from, std::string_view to) {
+UpdateKind update_kind(std::string_view cp, std::string_view from, std::string_view to) {
     const auto version = [&cp](std::string_view cpv) {
         return parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
     };
     const auto old = version(from);
     const auto target = version(to);
     const int order = old && target ? vercmp(*target, *old) : 0;
-    return order > 0 ? "upgrade" : order < 0 ? "downgrade" : "rebuild";
+    return order > 0   ? UpdateKind::upgrade
+           : order < 0 ? UpdateKind::downgrade
+                       : UpdateKind::rebuild;
+}
+
+constexpr std::string_view kind_name(UpdateKind kind) {
+    switch (kind) {
+    case UpdateKind::upgrade:
+        return "upgrade";
+    case UpdateKind::downgrade:
+        return "downgrade";
+    case UpdateKind::rebuild:
+        return "rebuild";
+    }
+    return "rebuild";
 }
 
 // A --changed-use flag: its state changed, which emerge marks with a *.
@@ -111,34 +124,50 @@ bool state_changed(std::string_view flag) {
 
 } // namespace
 
+std::optional<PendingUpdate> pending_update(const Evaluated& evaluated, std::uint32_t package,
+                                            UseRebuilds rebuilds) {
+    const auto& pkg = evaluated.packages.at(package);
+    if (!pkg.target) {
+        return std::nullopt;
+    }
+    const auto& target = evaluated.candidates.at(*pkg.target);
+    if (pkg.rebuild.count == 0) {
+        return PendingUpdate{.kind =
+                                 update_kind(evaluated.string(target.cp), evaluated.string(pkg.cpv),
+                                             evaluated.string(target.cpv)),
+                             .target = *pkg.target,
+                             .flags = {}};
+    }
+    std::string flags;
+    for (const auto id : evaluated.ids_in(pkg.rebuild)) {
+        const auto flag = evaluated.string(id);
+        if (rebuilds == UseRebuilds::all ||
+            (rebuilds == UseRebuilds::changed && state_changed(flag))) {
+            flags += flags.empty() ? "" : " ";
+            flags += flag;
+        }
+    }
+    if (flags.empty()) {
+        return std::nullopt;
+    }
+    return PendingUpdate{.kind = UpdateKind::rebuild, .target = *pkg.target, .flags = flags};
+}
+
 std::vector<std::string> update_lines(const Evaluated& evaluated, UseRebuilds rebuilds) {
     std::vector<std::string> lines;
-    for (const auto& pkg : evaluated.packages) {
-        if (!pkg.target) {
+    for (std::uint32_t id = 0; id < evaluated.packages.size(); ++id) {
+        const auto update = pending_update(evaluated, id, rebuilds);
+        if (!update) {
             continue;
         }
-        const auto& target = evaluated.candidates.at(*pkg.target);
-        const auto cpv = evaluated.string(pkg.cpv);
-        const auto to = evaluated.string(target.cpv);
-        const auto repo = evaluated.string(target.repo);
-        if (pkg.rebuild.count == 0) {
-            lines.push_back(std::format("{}\t{}\t{}\t{}", cpv,
-                                        update_kind(evaluated.string(target.cp), cpv, to), to,
-                                        repo));
-            continue;
+        const auto& target = evaluated.candidates.at(update->target);
+        auto line = std::format("{}\t{}\t{}\t{}", evaluated.string(evaluated.packages.at(id).cpv),
+                                kind_name(update->kind), evaluated.string(target.cpv),
+                                evaluated.string(target.repo));
+        if (!update->flags.empty()) {
+            line += std::format("\t{}", update->flags);
         }
-        std::string flags;
-        for (const auto id : evaluated.ids_in(pkg.rebuild)) {
-            const auto flag = evaluated.string(id);
-            if (rebuilds == UseRebuilds::all ||
-                (rebuilds == UseRebuilds::changed && state_changed(flag))) {
-                flags += flags.empty() ? "" : " ";
-                flags += flag;
-            }
-        }
-        if (!flags.empty()) {
-            lines.push_back(std::format("{}\trebuild\t{}\t{}\t{}", cpv, to, repo, flags));
-        }
+        lines.push_back(std::move(line));
     }
     return lines;
 }

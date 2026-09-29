@@ -129,9 +129,17 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   `egraph orphans` does, and `!` only broken packages, as `egraph broken` does. `b` leaves out
   build-time dependencies (DEPEND, BDEPEND) for both, as `--with-bdeps n` does for orphans.
   depclean runs once at start and again on `b`.
+- It opens both stores and reads dependencies as the queries do (`--dynamic-deps`, y by
+  default), with depclean passing over masked packages as `orphans` does. Rows with a pending
+  update show the version it moves to, or that it is rebuilt, and `u` shows only those, as
+  `egraph updates -N` lists them. A page says what the update is (the target and repository, or
+  the flags a USE rebuild is for), and after what the package depends on and is needed by, what
+  its ebuild would depend on with flags toggled, and whose ebuilds would depend on it, each
+  marked with the toggles (`deps` and `rdeps --possible`); what nothing installed satisfies is
+  listed but cannot be opened.
 - `c` runs `egraph check` from the list: a waiting view is drawn, then `run()` makes the fresh
-  build (the app itself never spawns anything) and lists the drift, each package's page a key
-  away. The builder's output goes to a log beside the scratch store rather than the terminal the
+  build (the app itself never spawns anything) and lists the drift between the installed
+  stores, each package's page a key away. The builder's output goes to a log beside the scratch store rather than the terminal the
   interface owns; if the build fails, a dialog shows its last lines.
 - `u` in the check view acts on drift. As root it runs `egraph rebuild` (a second full build,
   written through the builder's atomic rename) and shows the result. Anyone else gets a preview:
@@ -301,7 +309,9 @@ inputs of their own, and the main repository's cache records each ebuild's eclas
 those only a change of kind counts. Every other input (configuration, profiles, the user's
 visibility and USE files, a repository's masks, moves, layout, license groups and categories,
 another repository's eclasses), a full installed build, or an evaluated store built against
-another installed store means a full evaluated build.
+another installed store means a full evaluated build. Decided with the user: a sync
+evaluates whole categories again; with several repositories, tracking single cps would not buy
+much.
 
 No merge-time hook is needed, and edits to the vdb made outside portage are caught too.
 

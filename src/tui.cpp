@@ -245,6 +245,96 @@ std::vector<Row> unsatisfied_rows(const Store& store, std::uint32_t package, boo
     return rows;
 }
 
+// What emerge -u would do to package.
+std::vector<Row> update_rows(const std::optional<PendingUpdate>& update) {
+    if (!update) {
+        return {};
+    }
+    auto row = text_row(RowType::update, "");
+    row.update = update;
+    return {text_row(RowType::heading, "Update"), std::move(row), text_row(RowType::note, "")};
+}
+
+// A possible dependency's toggles as the user would set them: "+flag" or "-flag".
+std::string toggles(const Evaluated& evaluated, const Possible& entry) {
+    std::string out;
+    for (const auto id : evaluated.ids_in(entry.flags)) {
+        const auto flag = evaluated.string(id);
+        out +=
+            std::format("{}{}{}", out.empty() ? "" : " ", flag.starts_with('-') ? "" : "+", flag);
+    }
+    return out;
+}
+
+// What package's ebuild would depend on with flags toggled (or, reverse, whose ebuilds would
+// depend on package): one link per package, atom, choice and toggles with the kinds combined,
+// sorted as links are, then forward what nothing installed satisfies.
+std::vector<Row> possible_rows(const Store& store, const Evaluated& evaluated,
+                               std::uint32_t package, bool reverse) {
+    std::vector<Row> found;
+    // other is the linked package; none for what nothing installed satisfies.
+    const auto add = [&](const Possible& entry, std::optional<std::uint32_t> other) {
+        auto flags = toggles(evaluated, entry);
+        std::string atom{evaluated.string(entry.atom)};
+        const auto type = other ? RowType::link : RowType::unmatched;
+        const auto id = other.value_or(0);
+        auto row = std::ranges::find_if(found, [&](const Row& candidate) {
+            return candidate.type == type && candidate.link.package == id &&
+                   candidate.text == atom && candidate.link.choice == entry.choice &&
+                   candidate.flags == flags;
+        });
+        if (row == found.end()) {
+            auto made = link_row({.package = id, .atom = 0, .choice = entry.choice}, 0, reverse);
+            made.type = type;
+            made.text = std::move(atom);
+            made.flags = std::move(flags);
+            found.push_back(std::move(made));
+            row = found.end() - 1;
+        }
+        if (const auto index = shorthand_of(entry.kind); index < kind_shorthands.size()) {
+            row->link.kinds.at(index) = true;
+        }
+    };
+    if (reverse) {
+        for (std::uint32_t parent = 0; parent < evaluated.packages.size(); ++parent) {
+            for (const auto& entry :
+                 evaluated.possible_in(evaluated.packages.at(parent).possible)) {
+                if (std::ranges::contains(evaluated.ids_in(entry.matches), package)) {
+                    add(entry, parent);
+                }
+            }
+        }
+    } else {
+        for (const auto& entry : evaluated.possible_in(evaluated.packages.at(package).possible)) {
+            const auto matches = evaluated.ids_in(entry.matches);
+            if (matches.empty()) {
+                add(entry, std::nullopt);
+            }
+            for (const auto child : matches) {
+                add(entry, child);
+            }
+        }
+    }
+    const auto key = [&store](const Row& row) {
+        return std::tuple{row.type == RowType::unmatched,
+                          row.type == RowType::link
+                              ? store.string(store.packages.at(row.link.package).cpv)
+                              : std::string_view{},
+                          std::string_view{row.text}, row.link.choice, std::string_view{row.flags}};
+    };
+    std::ranges::sort(found, [&](const Row& a, const Row& b) { return key(a) < key(b); });
+    if (found.empty()) {
+        return {};
+    }
+    std::vector<Row> rows{
+        text_row(RowType::note, ""),
+        text_row(RowType::heading,
+                 std::format("{}, with flags toggled  {}",
+                             reverse ? "Would be needed by" : "Would depend on", found.size()))};
+    std::ranges::move(found, std::back_inserter(rows));
+    return rows;
+}
+
 std::vector<Row> page_rows(const Store& store, const Graph& graph, std::uint32_t package) {
     std::vector<Row> rows;
     for (const bool reverse : {false, true}) {
@@ -314,11 +404,59 @@ std::vector<Link> links(const Store& store, const Graph& graph, std::uint32_t pa
     return found;
 }
 
+namespace {
+
+// What an app shows before it owns stores of its own.
+const Store& no_store() {
+    static const Store none{};
+    return none;
+}
+
+const Graph& no_graph() {
+    static const Graph none = build_graph(no_store());
+    return none;
+}
+
+const Evaluated& no_evaluated() {
+    static const Evaluated none{};
+    return none;
+}
+
+bool paired(const Store& installed, const Evaluated& evaluated) {
+    return !evaluated.packages.empty() && evaluated.packages.size() == installed.packages.size();
+}
+
+} // namespace
+
+App::Loaded::Loaded(Store installed_store, Evaluated evaluated_store, bool dynamic_deps)
+    : installed(std::move(installed_store)), evaluated(std::move(evaluated_store)),
+      dynamic(dynamic_deps && paired(installed, evaluated)
+                  ? std::optional<Store>{with_dynamic_deps(installed, evaluated)}
+                  : std::nullopt),
+      graph(build_graph(dynamic ? *dynamic : installed)) {}
+
 App::App(const Store& store, const Graph& graph, Update update)
-    : store_(store), graph_(graph), update_(update) {
+    : store_(store), installed_(store), evaluated_(no_evaluated()), graph_(graph), update_(update) {
     index();
     recompute();
     filter();
+}
+
+App::App(Stores stores, bool dynamic_deps, Update update) : App(no_store(), no_graph(), update) {
+    dynamic_deps_ = dynamic_deps;
+    own(std::make_unique<const Loaded>(std::move(stores.installed), std::move(stores.evaluated),
+                                       dynamic_deps));
+    index();
+    recompute();
+    filter();
+}
+
+void App::own(std::unique_ptr<const Loaded> loaded) {
+    store_ = loaded->dynamic ? *loaded->dynamic : loaded->installed;
+    installed_ = loaded->installed;
+    evaluated_ = loaded->evaluated;
+    graph_ = loaded->graph;
+    owned_ = std::move(loaded);
 }
 
 void App::index() {
@@ -359,13 +497,21 @@ void App::index() {
             ++dependents_.at(child);
         }
     }
+    masking_.clear();
+    updates_.assign(count, std::nullopt);
+    if (has_evaluated()) {
+        masking_.reserve(count);
+        for (std::uint32_t id = 0; id < count; ++id) {
+            const auto& pkg = evaluated().packages.at(id);
+            masking_.push_back(
+                {.masked = dynamic_deps_ ? pkg.masked : pkg.vdb_masked, .visible = pkg.visible});
+            updates_.at(id) = pending_update(evaluated(), id, shown_rebuilds);
+        }
+    }
 }
 
-void App::adopt(Store store, Source source) {
-    auto loaded = std::make_unique<const Loaded>(std::move(store));
-    store_ = loaded->store;
-    graph_ = loaded->graph;
-    owned_ = std::move(loaded);
+void App::adopt(Store installed, Evaluated evaluated, Source source) {
+    own(std::make_unique<const Loaded>(std::move(installed), std::move(evaluated), dynamic_deps_));
     source_ = source;
     pages_.clear();
     index();
@@ -374,7 +520,7 @@ void App::adopt(Store store, Source source) {
 }
 
 void App::recompute() {
-    kept_ = keep(store(), {.build_deps = build_deps_, .masking = {}});
+    kept_ = keep(store(), {.build_deps = build_deps_, .masking = masking_});
     root_of_.assign(store().packages.size(), std::nullopt);
     for (const auto& pull : kept_.roots) {
         auto& root = root_of_.at(pull.child);
@@ -389,7 +535,8 @@ void App::filter() {
     list_.shown.clear();
     for (std::uint32_t id = 0; id < folded_.size(); ++id) {
         if ((list_.only == Only::orphans && kept_.packages.at(id)) ||
-            (list_.only == Only::broken && broken(id) == 0)) {
+            (list_.only == Only::broken && broken(id) == 0) ||
+            (list_.only == Only::updates && !updates_.at(id))) {
             continue;
         }
         if (folded_.at(id).find(query) != std::string::npos) {
@@ -402,9 +549,16 @@ void App::filter() {
 void App::open(std::uint32_t package) {
     Page page{
         .package = package, .rows = kept_rows(store(), kept_, package, build_deps_), .cursor = {}};
+    std::ranges::move(update_rows(updates_.at(package)), std::back_inserter(page.rows));
     std::ranges::move(unsatisfied_rows(store(), package, build_deps_),
                       std::back_inserter(page.rows));
     std::ranges::move(page_rows(store(), graph_.get(), package), std::back_inserter(page.rows));
+    if (has_evaluated()) {
+        for (const bool reverse : {false, true}) {
+            std::ranges::move(possible_rows(store(), evaluated(), package, reverse),
+                              std::back_inserter(page.rows));
+        }
+    }
     thread(page.rows);
     // On the first dependency, else on whatever can be selected.
     const auto first = std::ranges::find(page.rows, RowType::link, &Row::type);
@@ -453,7 +607,8 @@ void App::finish_check(CheckResult result) {
     if (result) {
         checked_->drift = std::move(result->drift);
         if (update_ == Update::preview && !checked_->drift.empty()) {
-            checked_->fresh = std::move(result->store);
+            checked_->fresh = Stores{.installed = std::move(result->store),
+                                     .evaluated = std::move(result->evaluated)};
         }
     } else {
         checked_.reset();
@@ -461,7 +616,7 @@ void App::finish_check(CheckResult result) {
     }
 }
 
-void App::finish_rebuild(std::expected<Store, std::string> result) {
+void App::finish_rebuild(std::expected<Stores, std::string> result) {
     if (!checked_) {
         return;
     }
@@ -476,7 +631,7 @@ void App::finish_rebuild(std::expected<Store, std::string> result) {
     checked_->stage = Checked::Stage::rebuilt;
     checked_->cursor = {};
     checked_->drift.clear();
-    adopt(std::move(*result), Source::saved);
+    adopt(std::move(result->installed), std::move(result->evaluated), Source::saved);
 }
 
 bool App::watch_requested() const {
@@ -695,7 +850,7 @@ void App::handle_check(const Key& key) {
             checked.drift.clear();
             checked.stage = Checked::Stage::rebuilt;
             checked.cursor = {};
-            adopt(std::move(fresh), Source::preview);
+            adopt(std::move(fresh.installed), std::move(fresh.evaluated), Source::preview);
         }
     } else if (key.kind == KeyKind::enter || key.kind == KeyKind::right || is(key, U'l')) {
         if (checked.cursor.at < checked.drift.size()) {
@@ -744,6 +899,9 @@ void App::handle_list(const Key& key) {
         filter();
     } else if (is(key, U'!')) {
         list_.only = list_.only == Only::broken ? Only::all : Only::broken;
+        filter();
+    } else if (is(key, U'u') && has_evaluated()) {
+        list_.only = list_.only == Only::updates ? Only::all : Only::updates;
         filter();
     } else if (is(key, U'c')) {
         checked_.emplace();
@@ -1227,7 +1385,7 @@ DriftSign drift_sign(char sign) {
     }
 }
 
-Exit open_and_run(const Store& store, GlyphSet glyphs, const Services& services,
+Exit open_and_run(Stores stores, bool dynamic_deps, GlyphSet glyphs, const Services& services,
                   std::span<const std::string> warnings, std::ostream& err) {
 #if EGRAPH_HAVE_TUI
     auto screen = Screen::open();
@@ -1235,15 +1393,15 @@ Exit open_and_run(const Store& store, GlyphSet glyphs, const Services& services,
         err << "egraph: tui: " << screen.error() << '\n';
         return Exit::failure;
     }
-    const auto graph = build_graph(store);
-    App app{store, graph, services.rebuild ? Update::save : Update::preview};
+    App app{std::move(stores), dynamic_deps, services.rebuild ? Update::save : Update::preview};
     if (!warnings.empty()) {
         app.show({.error = false, .title = "Warning", .lines = {warnings.begin(), warnings.end()}});
     }
     run(*screen, app, egraph::glyphs(glyphs), services);
     return Exit::ok;
 #else
-    (void)store;
+    (void)stores;
+    (void)dynamic_deps;
     (void)glyphs;
     (void)services;
     (void)warnings;

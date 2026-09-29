@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iosfwd>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -30,6 +31,25 @@ possible_lines(const Evaluated& evaluated, std::span<const std::uint32_t> packag
 // The rebuilds for USE that updates lists beside replacements: none (as emerge -u), the ones
 // --changed-use makes, or all --newuse makes.
 enum class UseRebuilds : std::uint8_t { none, changed, all };
+
+enum class UpdateKind : std::uint8_t { upgrade, downgrade, rebuild };
+
+// What emerge -u @installed would do to an installed package.
+struct PendingUpdate {
+    // By the versions: the same version is a rebuild, for USE or because the installed one is
+    // masked.
+    UpdateKind kind = UpdateKind::upgrade;
+    // Index into Evaluated::candidates.
+    std::uint32_t target = 0;
+    // A USE rebuild's flags in emerge's notation, space-separated, as far as rebuilds selects
+    // them; empty for a replacement.
+    std::string flags;
+};
+
+// The package's pending update, if emerge -u would replace it or, with rebuilds, rebuild it for
+// USE.
+[[nodiscard]] std::optional<PendingUpdate>
+pending_update(const Evaluated& evaluated, std::uint32_t package, UseRebuilds rebuilds);
 
 // What emerge -u @installed would replace, as "cpv<TAB>kind<TAB>target cpv<TAB>repo": kind
 // upgrade, downgrade, or rebuild when the installed package is masked and the target has its

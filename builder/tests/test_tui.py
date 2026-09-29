@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from egraph_build import installed, store
+from conftest import System, write_stores
+from egraph_build import installed
 from test_build import add_package, fresh_vardb
 from test_refresh import builds, query, system  # noqa: F401 (a fixture)
 
@@ -61,9 +62,7 @@ def skip_without_tui():
 def test_tui_shows_the_store_and_quits(playgrounds, tmp_path):
     vardb = playgrounds("roots").vardb
     path = tmp_path / "installed.egraph"
-    store.write(
-        path, store.encode(installed.build(vardb), store.Meta("0", "0", "/", 0))
-    )
+    write_stores(playgrounds("roots"), path)
     skip_without_tui()
 
     socket = f"egraph-test-{os.getpid()}"
@@ -93,6 +92,31 @@ def test_tui_shows_the_store_and_quits(playgrounds, tmp_path):
         screen = wait_for(socket, " orphans")
         assert "app-misc/orphan-1" in screen
         assert "app-misc/world-1" not in screen
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")
+
+
+def test_tui_lists_and_shows_pending_updates(playgrounds, tmp_path):
+    path = tmp_path / "installed.egraph"
+    write_stores(playgrounds("repository"), path)
+    skip_without_tui()
+
+    socket = f"egraph-test-{os.getpid()}"
+    command = f"{EGRAPH} --store {path} --no-refresh tui; echo EXIT=$?; sleep 30"
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "110", "-y", "30", command)
+    try:
+        wait_for(socket, "/ to search")
+        tmux(socket, "send-keys", "-t", "t", "u")
+        screen = wait_for(socket, " updates")
+        assert "dev-libs/lib-2" in screen
+        assert "app-misc/eula-1" not in screen
+        tmux(socket, "send-keys", "-t", "t", "/", "lib-2", "Enter")
+        wait_for(socket, "1 updates")
+        tmux(socket, "send-keys", "-t", "t", "Enter")
+        screen = wait_for(socket, "upgrade to dev-libs/lib-2.1  ::test_repo")
+        assert "Update" in screen
         tmux(socket, "send-keys", "-t", "t", "q")
         wait_for(socket, "EXIT=0")
     finally:
@@ -144,12 +168,7 @@ def test_tui_previews_a_fresh_build_without_saving_it(system, tmp_path):
 def test_tui_watches_running_emerges(playgrounds, tmp_path):
     skip_without_tui()
     path = tmp_path / "installed.egraph"
-    store.write(
-        path,
-        store.encode(
-            installed.build(playgrounds("roots").vardb), store.Meta("0", "0", "/", 0)
-        ),
-    )
+    write_stores(playgrounds("roots"), path)
     # A live pid, as emerge's own would be.
     pid = os.getpid()
     run_dir = tmp_path / "run" / "portage"
@@ -218,9 +237,7 @@ def test_tui_shows_the_merge_list_as_a_tree(gnupg_home, tmp_path):
     try:
         vardb = playground.trees[playground.eroot]["vartree"].dbapi
         path = tmp_path / "installed.egraph"
-        store.write(
-            path, store.encode(installed.build(vardb), store.Meta("0", "0", "/", 0))
-        )
+        write_stores(System(playground.eroot, vardb, playground.trees), path)
         eprefix = Path(playground.eprefix)
         # emerge's merge list, and it running lib; its pid is a live one.
         edb = eprefix / "var" / "cache" / "edb"

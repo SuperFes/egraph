@@ -125,6 +125,45 @@ egraph::Store build_only() {
     return std::move(*decoded);
 }
 
+// The evaluated store beside the sample (store_writer.hpp): a-1 depends on dev-libs/b:= under
+// dynamic deps, would depend on dev-libs/b with +flag and on dev-libs/gone with +flag -minimal,
+// and is rebuilt for flag* -new%; b-1 is masked, not visible, and upgrades to b-2.
+egraph::Evaluated decoded_evaluated(const std::vector<std::byte>& bytes) {
+    auto evaluated = egraph::decode_evaluated(bytes);
+    REQUIRE(evaluated.has_value());
+    return std::move(*evaluated);
+}
+
+egraph::Evaluated evaluated_sample() {
+    return decoded_evaluated(egraph::test::assemble_evaluated(egraph::test::evaluated_sections()));
+}
+
+// The evaluated sample with its dependencies section replaced.
+egraph::Evaluated evaluated_sample(const egraph::test::Bytes& dependencies) {
+    return decoded_evaluated(egraph::test::evaluated_with_section(4, dependencies));
+}
+
+egraph::Stores both() {
+    return {.installed = sample(), .evaluated = evaluated_sample()};
+}
+
+// Both, but nothing pending for a-1.
+egraph::Stores only_b_updates() {
+    egraph::test::Bytes dependencies;
+    dependencies.varint(2);
+    dependencies.varints({1, 0, 3}).varint(1).varint(11).varint(12);
+    dependencies.varint(0).varint(0).varint(0).varint(0).varint(1);
+    dependencies.varints({0, 0, 4}).list({1});
+    dependencies.varint(2);
+    dependencies.varints({4, 13, 0}).list({1}).list({8});
+    dependencies.varints({0, 14, 1}).list({}).list({8, 15});
+    dependencies.varints({1, 0, 1, 0}).list({});
+    dependencies.varints({2, 1, 3}).varint(0);
+    dependencies.varint(0).varint(0).varint(0).varint(0).varint(0).varint(0);
+    dependencies.varints({0, 1, 1, 3}).list({});
+    return {.installed = sample(), .evaluated = evaluated_sample(dependencies)};
+}
+
 const auto& ascii = egraph::glyphs(egraph::GlyphSet::ascii);
 
 // A check whose fresh build is the cyclic store, one package differing.
@@ -587,9 +626,9 @@ TEST_CASE("u shows a check's fresh build without saving it") {
     CHECK(app.dependents(0) == 0);
     FakeScreen screen{12, 120, {character(U'c')}};
     int rebuilds = 0;
-    const egraph::tui::Rebuilder rebuild = [&]() -> std::expected<egraph::Store, std::string> {
+    const egraph::tui::Rebuilder rebuild = [&]() -> std::expected<egraph::Stores, std::string> {
         ++rebuilds;
-        return cyclic();
+        return egraph::Stores{.installed = cyclic(), .evaluated = {}};
     };
     egraph::tui::run(screen, app, ascii, {.check = cyclic_check, .rebuild = rebuild});
     CHECK(contains(screen.text(), "u shows the fresh build, without saving it"));
@@ -644,7 +683,7 @@ TEST_CASE("u rebuilds the store where it can be written") {
     egraph::tui::draw(screen, app, ascii);
     CHECK(contains(screen.text(), "Rebuilding the store"));
     app.handle(character(U'u'));
-    app.finish_rebuild(cyclic());
+    app.finish_rebuild(egraph::Stores{.installed = cyclic(), .evaluated = {}});
     CHECK(app.source() == egraph::tui::Source::saved);
     CHECK(app.dependents(0) == 1);
     egraph::tui::draw(screen, app, ascii);
@@ -659,7 +698,7 @@ TEST_CASE("a failed rebuild leaves the store as it was") {
     const auto graph = egraph::build_graph(store);
     egraph::tui::App app{store, graph, egraph::tui::Update::save};
     FakeScreen screen{12, 120, {character(U'c'), character(U'u')}};
-    const egraph::tui::Rebuilder rebuild = []() -> std::expected<egraph::Store, std::string> {
+    const egraph::tui::Rebuilder rebuild = []() -> std::expected<egraph::Stores, std::string> {
         return std::unexpected("egraph-build exited with status 1:\nPermissionError");
     };
     egraph::tui::run(screen, app, ascii, {.check = cyclic_check, .rebuild = rebuild});
@@ -689,9 +728,9 @@ TEST_CASE("u does nothing without drift to fix") {
             }
             return egraph::tui::Fresh{.store = sample(), .drift = {}};
         };
-        const egraph::tui::Rebuilder rebuild = [&]() -> std::expected<egraph::Store, std::string> {
+        const egraph::tui::Rebuilder rebuild = [&]() -> std::expected<egraph::Stores, std::string> {
             ++rebuilds;
-            return sample();
+            return egraph::Stores{.installed = sample(), .evaluated = {}};
         };
         egraph::tui::run(screen, app, ascii, {.check = check, .rebuild = rebuild});
         CHECK(rebuilds == 0);
@@ -1228,4 +1267,113 @@ TEST_CASE("run reads the merge list each second and plans it once") {
     app.handle(key(KeyKind::enter));
     REQUIRE(app.dialog().has_value());
     CHECK(app.dialog()->title == "No version of app-doc/doc is installed yet");
+}
+
+TEST_CASE("with the evaluated store, pages read dependencies as emerge does") {
+    for (const bool dynamic_deps : {true, false}) {
+        egraph::tui::App app{both(), dynamic_deps};
+        CHECK(app.has_evaluated());
+        FakeScreen screen{24, 100, {key(KeyKind::enter)}};
+        egraph::tui::run(screen, app, ascii, {.check = no_check});
+        REQUIRE(app.pages().size() == 1);
+        const auto text = screen.text();
+        CHECK(contains(text, "dev-libs/b:=") == dynamic_deps);
+        CHECK(contains(text, "dev-libs/b |") != dynamic_deps);
+        // The installed store stays as built, for the check.
+        CHECK(app.installed().nodes_in(app.installed().packages.at(0).deps.at(4)).size() == 4);
+    }
+}
+
+TEST_CASE("the list marks pending updates, and u shows only those") {
+    egraph::tui::App app{only_b_updates(), true};
+    FakeScreen screen{10, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK_FALSE(contains(screen.line(3), "  U "));
+    CHECK(contains(screen.line(4), "dev-libs/b-1  U 2"));
+    CHECK(contains(screen.line(9), "u updates"));
+    app.handle(character(U'u'));
+    CHECK(app.list().only == egraph::tui::Only::updates);
+    CHECK(app.list().shown == std::vector<std::uint32_t>{1});
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(0), "1 updates"));
+    CHECK(contains(screen.line(9), "u all"));
+    app.handle(character(U'/'));
+    app.handle(character(U'a'));
+    app.handle(character(U'-'));
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "no package matches"));
+    app.handle(key(KeyKind::escape));
+    app.handle(character(U'u'));
+    CHECK(app.list().shown.size() == 2);
+}
+
+TEST_CASE("the list says when nothing is pending") {
+    egraph::test::Bytes dependencies;
+    dependencies.varint(2);
+    dependencies.varints({1, 0, 3}).varint(0);
+    dependencies.varint(0).varint(0).varint(0).varint(0).varint(0).varint(0);
+    dependencies.varints({1, 0, 0, 0}).list({});
+    dependencies.varints({2, 1, 3}).varint(0);
+    dependencies.varint(0).varint(0).varint(0).varint(0).varint(0).varint(0);
+    dependencies.varints({1, 0, 0, 0}).list({});
+    egraph::tui::App app{
+        egraph::Stores{.installed = sample(), .evaluated = evaluated_sample(dependencies)}, true};
+    FakeScreen screen{10, 120, {character(U'u')}};
+    egraph::tui::run(screen, app, ascii, {.check = no_check});
+    CHECK(app.list().shown.empty());
+    CHECK(contains(screen.text(), "nothing to update"));
+}
+
+TEST_CASE("without an evaluated store there is nothing to update") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    CHECK_FALSE(app.has_evaluated());
+    FakeScreen screen{10, 120, {character(U'u')}};
+    egraph::tui::run(screen, app, ascii, {.check = no_check});
+    CHECK(app.list().only == egraph::tui::Only::all);
+    CHECK_FALSE(contains(screen.line(9), "updates"));
+}
+
+TEST_CASE("a page shows its pending update and what toggled flags would add") {
+    egraph::tui::App app{both(), true};
+    FakeScreen screen{30, 120, {key(KeyKind::enter)}};
+    egraph::tui::run(screen, app, ascii, {.check = no_check});
+    auto text = screen.text();
+    CHECK(contains(text, "Update"));
+    CHECK(contains(text, "   R rebuild for flag* -new%  ::test_repo"));
+    CHECK(contains(text, "Would depend on, with flags toggled  2"));
+    CHECK(contains(text, "dev-libs/b  +flag"));
+    CHECK(contains(text, "   ....B   dev-libs/gone |  +flag -minimal  not installed"));
+    CHECK_FALSE(contains(text, "Would be needed by"));
+
+    // Only what is installed can be opened: b-1, from the dependencies.
+    app.handle(key(KeyKind::end));
+    CHECK(app.pages().back().rows.at(app.pages().back().cursor.at).flags == "+flag");
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 2);
+    CHECK(app.pages().back().package == 1);
+    egraph::tui::draw(screen, app, ascii);
+    text = screen.text();
+    CHECK(contains(text, "   U upgrade to dev-libs/b-2  ::test_repo"));
+    CHECK(contains(text, "Would be needed by, with flags toggled  1"));
+    CHECK(contains(text, "app-misc/a-1"));
+}
+
+TEST_CASE("the check compares installed stores, and a preview keeps the evaluated one") {
+    egraph::tui::App app{both(), true};
+    std::size_t checked_nodes = 0;
+    const egraph::tui::Checker check =
+        [&](const egraph::Store& stored) -> egraph::tui::CheckResult {
+        checked_nodes = stored.nodes_in(stored.packages.at(0).deps.at(4)).size();
+        return egraph::tui::Fresh{
+            .store = sample(), .evaluated = evaluated_sample(), .drift = {"~dev-libs/b-1"}};
+    };
+    FakeScreen screen{12, 120, {character(U'c'), character(U'u')}};
+    egraph::tui::run(screen, app, ascii, {.check = check});
+    CHECK(checked_nodes == 4);
+    CHECK(app.source() == egraph::tui::Source::preview);
+    CHECK(app.has_evaluated());
+    CHECK(app.store().nodes_in(app.store().packages.at(0).deps.at(4)).size() == 1);
+    CHECK(app.update_of(1).has_value());
 }

@@ -14,7 +14,7 @@ Update the status column as steps land.
 | 6 | Queries | done |
 | 7 | Roots and orphans | done |
 | 8 | Consumers | done |
-| 9 | Evaluated and candidate layers | planned |
+| 9 | Evaluated and candidate layers | done |
 | 10 | Output and UX | in progress |
 | 11 | Build monitor | done |
 
@@ -155,8 +155,9 @@ a merge refreshes only what it changed.
   did; the rest only have atoms naming a changed cp matched again, and anything global means a
   full build. `EGRAPH_STRICT` holds it to a full build. The `egraph refresh` hook is installed
   in `postsync.d` beside `post_emerge.d`; the post_emerge entry already refreshed both stores.
-- 9g: the TUI shows pending updates on package pages and in a list filter, and possible
-  dependencies marked with their flags.
+- 9g (done): the TUI reads both stores, with dynamic deps and masks as the queries do; it
+  marks pending updates in the list, filters on them with `u`, and shows each on its package
+  page, with the possible dependencies both ways marked with their toggles.
 
 ## 10. Output and UX
 

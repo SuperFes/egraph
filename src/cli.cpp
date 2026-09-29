@@ -327,12 +327,15 @@ std::optional<std::string> quiet_build(const Invocation& invocation,
     return error;
 }
 
-// A full build into a scratch file, loaded; quiet keeps the builder off the terminal.
-std::expected<Store, std::string> fresh_build(const Invocation& invocation, bool quiet) {
+// A full build into scratch files, loaded by load_path (Loaded is a Store or Stores); quiet keeps
+// the builder off the terminal.
+template <class Loaded, class Load>
+std::expected<Loaded, std::string> fresh_build(const Invocation& invocation, bool quiet,
+                                               const Load& load_path) {
     const auto path = scratch_store();
     const auto error =
         quiet ? quiet_build(invocation, path) : run_builder(invocation, "--full", path);
-    auto built = error ? std::expected<Store, StoreError>{} : load(path);
+    auto built = error ? std::expected<Loaded, StoreError>{} : load_path(path);
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
     std::filesystem::remove(evaluated_store_path(path), ignored);
@@ -351,7 +354,8 @@ Exit execute(const Check&, const Invocation& invocation, std::ostream& out, std:
         err << "egraph: " << stored.error().message << '\n';
         return Exit::failure;
     }
-    const auto built = fresh_build(invocation, false);
+    const auto built =
+        fresh_build<Store>(invocation, false, [](const auto& path) { return load(path); });
     if (!built) {
         err << "egraph: " << built.error() << '\n';
         return Exit::failure;
@@ -626,10 +630,10 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
     }
     // Warnings would vanish under the interface, so it repeats them.
     std::stringstream warned;
-    const auto store = open_store(invocation, warned);
+    auto stores = open_stores(invocation, warned);
     err << warned.str();
-    if (!store) {
-        err << "egraph: " << store.error() << '\n';
+    if (!stores) {
+        err << "egraph: " << stores.error() << '\n';
         return Exit::failure;
     }
     std::vector<std::string> warnings;
@@ -638,23 +642,26 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
         warnings.push_back(line.starts_with(prefix) ? line.substr(prefix.size()) : line);
     }
     // The builder cannot share the terminal the interface owns; its output is kept for errors.
+    // The drift compares installed stores, whichever dependencies the interface reads.
     const auto check = [&invocation](const Store& stored) -> tui::CheckResult {
-        auto built = fresh_build(invocation, true);
+        auto built = fresh_build<Stores>(invocation, true, load_stores);
         if (!built) {
             return std::unexpected(std::move(built.error()));
         }
-        auto lines = drift(stored, *built);
-        return tui::Fresh{.store = std::move(*built), .drift = std::move(lines)};
+        auto lines = drift(stored, built->installed);
+        return tui::Fresh{.store = std::move(built->installed),
+                          .evaluated = std::move(built->evaluated),
+                          .drift = std::move(lines)};
     };
     // Only root writes the store here; anyone else previews the check's build instead.
     tui::Rebuilder rebuild;
     if (os::is_root()) {
-        rebuild = [&invocation]() -> std::expected<Store, std::string> {
+        rebuild = [&invocation]() -> std::expected<Stores, std::string> {
             const auto path = store_path(invocation);
             if (auto error = quiet_build(invocation, path)) {
                 return std::unexpected(std::move(*error));
             }
-            return load(path).transform_error([](const StoreError& e) { return e.message; });
+            return load_stores(path).transform_error([](const StoreError& e) { return e.message; });
         };
     }
     const auto run_dir = emerge::status_dir(invocation.eprefix.value_or(""));
@@ -665,7 +672,7 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
         return output_of(steve::set_arguments(setting, value)).transform([](const auto&) {});
     };
     return tui::open_and_run(
-        *store, invocation.glyphs,
+        std::move(*stores), invocation.dynamic_deps, invocation.glyphs,
         {.check = check,
          .rebuild = rebuild,
          .watch = watch,

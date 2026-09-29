@@ -7,6 +7,7 @@
 #include "cli.hpp"
 #include "depclean.hpp"
 #include "emerge.hpp"
+#include "evaluated.hpp"
 #include "graph.hpp"
 #include "human.hpp"
 #include "pressure.hpp"
@@ -65,13 +66,28 @@ struct Link {
 // package through, the link holding the dependency that pulls each one in.
 // An alert is a note that needs attention. A missing row is an unsatisfied dependency, its text
 // rendered as portage does and its kinds in link.kinds; a replaced row is a build-time one whose
-// package is now installed at another version or slot.
-enum class RowType : std::uint8_t { heading, note, alert, missing, replaced, link, root, path };
+// package is now installed at another version or slot. An update row is what emerge -u would do
+// to the page package; an unmatched row a dependency the ebuild would add with flags toggled that
+// nothing installed satisfies, its atom in link.atom.
+enum class RowType : std::uint8_t {
+    heading,
+    note,
+    alert,
+    missing,
+    replaced,
+    link,
+    root,
+    path,
+    update,
+    unmatched
+};
 
 // A page row. Links at depth 0 are the page package's own; unfolding a link puts its links,
 // in the same direction, one level deeper right below it.
 struct Row {
     RowType type = RowType::note;
+    // What a text row says; for a link or unmatched row the ebuild would add, its atom, which is
+    // the evaluated store's string and so not link.atom.
     std::string text;
     Link link;
     std::size_t depth = 0;
@@ -85,6 +101,10 @@ struct Row {
     std::vector<bool> rails;
     // For missing and replaced rows: installed packages with the dependency's name.
     std::vector<std::uint32_t> instead;
+    // For links and unmatched rows the ebuild would add: the flags to toggle, "+flag" or "-flag".
+    std::string flags;
+    // For an update row.
+    std::optional<PendingUpdate> update;
 };
 
 // Sets each row's last and rails, walking up from the bottom: a level's line continues past a
@@ -113,17 +133,19 @@ struct Cursor {
     std::size_t top = 0;
 };
 
-// A fresh build, and how the store differs from it: drift lines ("+cpv", "-cpv", "~cpv").
+// A fresh build, and how the installed store differs from it: drift lines ("+cpv", "-cpv",
+// "~cpv"). The evaluated store is empty where there is none.
 struct Fresh {
     Store store;
+    Evaluated evaluated{};
     std::vector<std::string> drift;
 };
 // What `egraph check` finds, or why it could not run.
 using CheckResult = std::expected<Fresh, std::string>;
-// Builds a fresh store and compares the given one with it.
+// Builds a fresh store and compares the given installed store with it.
 using Checker = std::function<CheckResult(const Store&)>;
-// Writes a fresh store over the one on disk and loads it, or says why it could not.
-using Rebuilder = std::function<std::expected<Store, std::string>()>;
+// Writes fresh stores over the ones on disk and loads them, or says why it could not.
+using Rebuilder = std::function<std::expected<Stores, std::string>()>;
 
 // Reads the running emerges' snapshots.
 using Watcher = std::function<std::vector<emerge::Snapshot>()>;
@@ -225,7 +247,7 @@ struct Checked {
     Stage stage = Stage::checking;
     std::vector<std::string> drift;
     // The check's build, kept for a preview.
-    std::optional<Store> fresh;
+    std::optional<Stores> fresh;
     Cursor cursor;
 };
 
@@ -237,11 +259,17 @@ struct Dialog {
 };
 
 // Which packages the list shows, before the search.
-enum class Only : std::uint8_t { all, orphans, broken };
+enum class Only : std::uint8_t { all, orphans, broken, updates };
+
+// The rebuilds for USE the interface shows beside replacements: all of --newuse's.
+inline constexpr UseRebuilds shown_rebuilds = UseRebuilds::all;
 
 class App {
   public:
+    // The installed store alone: its own dependencies, every package unmasked, no updates.
     App(const Store& store, const Graph& graph, Update update = Update::preview);
+    // Both stores, the dependencies read as emerge reads them with dynamic_deps or without.
+    App(Stores stores, bool dynamic_deps, Update update = Update::preview);
 
     void handle(const Key& key);
     [[nodiscard]] bool done() const { return done_; }
@@ -262,7 +290,18 @@ class App {
         Cursor cursor;
     };
 
+    // The store the queries read: the installed one, with dynamic deps its trees the evaluated's.
     [[nodiscard]] const Store& store() const { return store_.get(); }
+    [[nodiscard]] const Store& installed() const { return installed_.get(); }
+    // Empty without an evaluated store.
+    [[nodiscard]] const Evaluated& evaluated() const { return evaluated_.get(); }
+    [[nodiscard]] bool has_evaluated() const {
+        return !evaluated().packages.empty() &&
+               evaluated().packages.size() == installed().packages.size();
+    }
+    [[nodiscard]] const std::optional<PendingUpdate>& update_of(std::uint32_t package) const {
+        return updates_.at(package);
+    }
     [[nodiscard]] const List& list() const { return list_; }
     // Pages opened from the list or the check view, the one showing last.
     [[nodiscard]] const std::vector<Page>& pages() const { return pages_; }
@@ -277,7 +316,7 @@ class App {
     [[nodiscard]] bool rebuild_requested() const {
         return checked_ && checked_->stage == Checked::Stage::rebuilding;
     }
-    void finish_rebuild(std::expected<Store, std::string> result);
+    void finish_rebuild(std::expected<Stores, std::string> result);
     // Open from the list, under any pages opened from it.
     [[nodiscard]] const std::optional<Watched>& watched() const { return watched_; }
     // Whether the emerge view is showing and due to read the snapshots, which run() then does.
@@ -322,16 +361,20 @@ class App {
     void set_height(std::size_t rows) { height_ = std::max<std::size_t>(rows, 1); }
 
   private:
-    // A store the app replaced the opened one with, and its graph.
+    // Stores the app owns, the one its queries read, and that one's graph.
     struct Loaded {
-        explicit Loaded(Store fresh) : store(std::move(fresh)), graph(build_graph(store)) {}
-        Store store;
+        Loaded(Store installed, Evaluated evaluated, bool dynamic_deps);
+        Store installed;
+        Evaluated evaluated;
+        // With dynamic deps; the installed store is read otherwise.
+        std::optional<Store> dynamic;
         Graph graph;
     };
 
     void index();
-    // Shows store in place of the current one, back at the list (or the check view).
-    void adopt(Store store, Source source);
+    // Shows the stores in place of the current ones, back at the list (or the check view).
+    void adopt(Store installed, Evaluated evaluated, Source source);
+    void own(std::unique_ptr<const Loaded> loaded);
     void filter();
     void recompute();
     void open(std::uint32_t package);
@@ -346,9 +389,12 @@ class App {
     [[nodiscard]] std::optional<std::uint32_t> find(std::string_view cpv) const;
 
     std::reference_wrapper<const Store> store_;
+    std::reference_wrapper<const Store> installed_;
+    std::reference_wrapper<const Evaluated> evaluated_;
     std::reference_wrapper<const Graph> graph_;
-    // Behind a pointer so store_ and graph_ stay valid when the app moves.
+    // Behind a pointer so the references stay valid when the app moves.
     std::unique_ptr<const Loaded> owned_;
+    bool dynamic_deps_ = false;
     Update update_;
     Source source_ = Source::opened;
     std::vector<std::string> folded_;
@@ -356,6 +402,8 @@ class App {
     std::vector<std::size_t> dependents_;
     std::vector<std::size_t> broken_;
     std::vector<std::size_t> broken_at_run_time_;
+    std::vector<Masking> masking_;
+    std::vector<std::optional<PendingUpdate>> updates_;
     bool build_deps_ = true;
     Kept kept_;
     std::vector<std::optional<std::uint32_t>> root_of_;
@@ -457,10 +505,57 @@ inline Span broken_mark(const App& app, std::uint32_t package, const Glyphs& gly
 }
 
 inline std::string_view empty_list(const App::List& list) {
-    if (!list.query.empty() || list.only == Only::all) {
+    switch (list.query.empty() ? list.only : Only::all) {
+    case Only::all:
         return "no package matches";
+    case Only::orphans:
+        return "nothing to remove";
+    case Only::broken:
+        return "nothing broken";
+    case Only::updates:
+        return "nothing to update";
     }
-    return list.only == Only::orphans ? "nothing to remove" : "nothing broken";
+    return "no package matches";
+}
+
+// An update's glyph, in its tone.
+inline Span update_glyph(const PendingUpdate& update, const Glyphs& glyph) {
+    switch (update.kind) {
+    case UpdateKind::upgrade:
+        return {std::string{glyph.upgrade}, tone_pen(Tone::good)};
+    case UpdateKind::downgrade:
+        return {std::string{glyph.downgrade}, tone_pen(Tone::bad)};
+    case UpdateKind::rebuild:
+        return {std::string{glyph.rebuild}, tone_pen(Tone::use)};
+    }
+    return {std::string{glyph.rebuild}, tone_pen(Tone::use)};
+}
+
+// A pending update after a package in the list: the version it moves to, or that it is rebuilt.
+inline std::vector<Span> update_mark(const App& app, std::uint32_t package, const Glyphs& glyph) {
+    const auto& update = app.update_of(package);
+    if (!update) {
+        return {};
+    }
+    const auto& evaluated = app.evaluated();
+    const auto version = split_cpv(evaluated.string(evaluated.candidates.at(update->target).cpv));
+    return {{"  ", {}},
+            update_glyph(*update, glyph),
+            update->kind == UpdateKind::rebuild
+                ? Span{" rebuild", tone_pen(Tone::use)}
+                : Span{std::format(" {}", version.version),
+                       tone_pen(update->kind == UpdateKind::upgrade ? Tone::good : Tone::bad)}};
+}
+
+// A USE rebuild's flags as emerge shows them, those whose state changed in the use tone.
+inline std::vector<Span> rebuild_flags(std::string_view flags) {
+    std::vector<Span> spans;
+    for (const auto flag : std::views::split(flags, ' ')) {
+        const std::string_view text{flag};
+        spans.push_back(
+            {std::format(" {}", text), tone_pen(text.contains('*') ? Tone::use : Tone::note)});
+    }
+    return spans;
 }
 
 template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size size) {
@@ -471,6 +566,8 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
                             {std::format(" {}  ", store.meta.eroot), tone_pen(Tone::note)}};
     if (list.only == Only::orphans) {
         title.push_back({std::format("{} orphans", list.shown.size()), tone_pen(Tone::count)});
+    } else if (list.only == Only::updates) {
+        title.push_back({std::format("{} updates", list.shown.size()), tone_pen(Tone::count)});
     } else if (list.only == Only::broken) {
         title.push_back({std::format("{} broken", list.shown.size()), tone_pen(Tone::count)});
     } else {
@@ -520,6 +617,7 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
                                 {" ", {}}};
         std::ranges::move(cpv_spans(store.string(store.packages.at(id).cpv)),
                           std::back_inserter(spans));
+        std::ranges::move(update_mark(app, id, glyph), std::back_inserter(spans));
         put_spans(screen, first + line, 0, spans, right, bg);
         put_spans(screen, first + line, right,
                   {{std::format("{:>7}", app.dependencies(id)), tone_pen(Tone::version)},
@@ -534,16 +632,20 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
         draw_hints(screen, size.rows - 1, size.cols,
                    {{glyph.enter, "keep"}, {"esc", "clear"}, {"type", "to filter"}});
     } else {
-        draw_hints(screen, size.rows - 1, size.cols,
-                   {{glyph.move, "move"},
-                    {glyph.enter, "open"},
-                    {"/", "search"},
-                    {"o", list.only == Only::orphans ? "all" : "orphans"},
-                    {"!", list.only == Only::broken ? "all" : "broken"},
-                    {"b", app.build_deps() ? "run time only" : "build deps"},
-                    {"c", "check"},
-                    {"e", "emerges"},
-                    {"q", "quit"}});
+        std::vector<std::pair<std::string_view, std::string_view>> hints{
+            {glyph.move, "move"},
+            {glyph.enter, "open"},
+            {"/", "search"},
+            {"o", list.only == Only::orphans ? "all" : "orphans"},
+            {"!", list.only == Only::broken ? "all" : "broken"}};
+        if (app.has_evaluated()) {
+            hints.emplace_back("u", list.only == Only::updates ? "all" : "updates");
+        }
+        hints.insert(hints.end(), {{"b", app.build_deps() ? "run time only" : "build deps"},
+                                   {"c", "check"},
+                                   {"e", "emerges"},
+                                   {"q", "quit"}});
+        draw_hints(screen, size.rows - 1, size.cols, hints);
     }
 }
 
@@ -627,6 +729,48 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
             put_spans(screen, at, 0, spans, size.cols);
             break;
         }
+        case RowType::update: {
+            if (!row.update) {
+                break;
+            }
+            const auto& update = *row.update;
+            const auto& target = app.evaluated().candidates.at(update.target);
+            std::vector<Span> spans{{"   ", {}}, update_glyph(update, glyph)};
+            if (update.kind == UpdateKind::rebuild) {
+                spans.push_back({update.flags.empty() ? " rebuild, its own ebuild being masked"
+                                                      : " rebuild for",
+                                 tone_pen(Tone::use)});
+                std::ranges::move(rebuild_flags(update.flags), std::back_inserter(spans));
+            } else {
+                spans.push_back(
+                    {update.kind == UpdateKind::upgrade ? " upgrade to " : " downgrade to ",
+                     tone_pen(Tone::note)});
+                std::ranges::move(cpv_spans(app.evaluated().string(target.cpv)),
+                                  std::back_inserter(spans));
+            }
+            spans.push_back(
+                {std::format("  ::{}", app.evaluated().string(target.repo)), tone_pen(Tone::repo)});
+            put_spans(screen, at, 0, spans, size.cols);
+            break;
+        }
+        case RowType::unmatched: {
+            std::vector<Span> spans{{"   ", {}}};
+            for (std::size_t k = 0; k < kind_shorthands.size(); ++k) {
+                const auto& kind = kind_shorthands.at(k);
+                spans.push_back(row.link.kinds.at(k)
+                                    ? Span{std::string{kind.letter}, tone_pen(kind.tone)}
+                                    : Span{std::string{glyph.absent}, tone_pen(Tone::note)});
+            }
+            spans.push_back({"   ", {}});
+            spans.push_back({row.text, tone_pen(Tone::note)});
+            if (row.link.choice) {
+                spans.push_back({std::format(" {}", glyph.choice), tone_pen(Tone::choice)});
+            }
+            spans.push_back({std::format("  {}", row.flags), tone_pen(Tone::use)});
+            spans.push_back({"  not installed", tone_pen(Tone::note)});
+            put_spans(screen, at, 0, spans, size.cols);
+            break;
+        }
         case RowType::root:
             put_spans(
                 screen, at, 3,
@@ -666,9 +810,14 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
             }
             const auto used = columns(tree) + columns(cpv);
             spans.push_back({std::string(used < 40 ? 42 - used : 2, ' '), {}});
-            spans.push_back({std::string{store.string(row.link.atom)}, tone_pen(Tone::note)});
+            // A link the ebuild would add carries its atom as text.
+            spans.push_back({row.text.empty() ? std::string{store.string(row.link.atom)} : row.text,
+                             tone_pen(Tone::note)});
             if (row.link.choice) {
                 spans.push_back({std::format(" {}", glyph.choice), tone_pen(Tone::choice)});
+            }
+            if (!row.flags.empty()) {
+                spans.push_back({std::format("  {}", row.flags), tone_pen(Tone::use)});
             }
             put_spans(screen, at, 0, spans, size.cols, bg);
             break;
@@ -1066,7 +1215,7 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
     draw(screen, app, glyph);
     while (!app.done()) {
         if (app.check_requested()) {
-            app.finish_check(services.check ? services.check(app.store())
+            app.finish_check(services.check ? services.check(app.installed())
                                             : std::unexpected(std::string{"no way to check"}));
         } else if (app.rebuild_requested()) {
             app.finish_rebuild(services.rebuild
@@ -1094,9 +1243,10 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
     }
 }
 
-// Opens the terminal and runs the interface over store, first showing any warnings from opening
-// it; errors go to err.
-[[nodiscard]] Exit open_and_run(const Store& store, GlyphSet glyphs, const Services& services,
-                                std::span<const std::string> warnings, std::ostream& err);
+// Opens the terminal and runs the interface over the stores, first showing any warnings from
+// opening them; errors go to err.
+[[nodiscard]] Exit open_and_run(Stores stores, bool dynamic_deps, GlyphSet glyphs,
+                                const Services& services, std::span<const std::string> warnings,
+                                std::ostream& err);
 
 } // namespace egraph::tui

@@ -41,11 +41,6 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       an ebuild or eclass edited in place there without regenerating the cache goes unnoticed
       (portage itself would notice the stale cache entry). Other repositories track their
       installed cps' ebuilds, but not their eclasses beyond the directory.
-- [ ] A sync changes the metadata cache directory of nearly every category, so the evaluated
-      store's incremental build after one evaluates whole categories again (dev-python costs
-      15.1G instructions against 70.5G for a full build). Per-cp granularity in the main
-      repository would need its cache entries as inputs, several thousand more `lstat` calls on
-      every query, or a record of them that only the builder reads.
 
 ## Store
 
@@ -80,9 +75,6 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       (depclean decides a virtual's `||` in its parent's context; egraph when the virtual is read).
 - [ ] `orphans --ignore-soname-deps=n` (keep soname providers), as emerge offers.
 - [ ] `why --all`: every chain, or every root, rather than one shortest chain.
-- [ ] The TUI reads the vdb's dependencies (`--dynamic-deps=n`), shows no possible ones and
-      takes every installed package as unmasked; step 9g switches it, with the check view's
-      drift still comparing installed stores.
 
 ## Updates
 
