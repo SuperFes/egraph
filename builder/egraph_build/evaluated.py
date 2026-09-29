@@ -464,23 +464,45 @@ def read_candidates(portdb, settings, cp, installed_cpvs, ebuild_use=None):
 
 def build(vardb, portdb, match=None):
     """Evaluate every installed package in vardb against portdb's repositories."""
+    return rebuild(vardb, portdb, None, None, match=match)
+
+
+def rebuild(vardb, portdb, previous, cps, carry=None, match=None):
+    """As build, but only the installed cps in cps go through portage, every one when cps is
+    None; the other installed packages come from previous, an EvaluatedLayer, through carry
+    (unchanged when None), and their cps' candidates with them.
+    """
     from portage.package.ebuild.config import config
 
     match = match or installed.Matcher(vardb)
     cpvs = sorted(str(cpv) for cpv in vardb.cpv_all())
+    installed_cps = sorted({cpv_getkey(cpv) for cpv in cpvs})
+    if cps is None:
+        cps = frozenset(installed_cps)
+    packages = []
+    candidates = []
+    if previous is not None:
+        carry = carry or (lambda pkg: pkg)
+        kept = frozenset(installed_cps) - cps
+        packages.extend(
+            carry(previous.package(cpv)) for cpv in cpvs if cpv_getkey(cpv) in kept
+        )
+        candidates.extend(c for c in previous.candidates() if c.cp in kept)
+    evaluate = [cpv for cpv in cpvs if cpv_getkey(cpv) in cps]
+    if not evaluate:
+        return EvaluatedLayer(packages, candidates)
     updates = dynamic.global_updates(portdb)
     settings = config(clone=portdb.settings)
     installed_cpvs = frozenset(cpvs)
     # Candidates first: they set a config to every installed ebuild the toggles need.
     ebuild_use = EbuildUse(portdb)
     by_cp = {}
-    for cp in sorted({cpv_getkey(cpv) for cpv in cpvs}):
+    for cp in sorted({cpv_getkey(cpv) for cpv in evaluate}):
         by_cp[cp] = read_candidates(portdb, settings, cp, installed_cpvs, ebuild_use)
     repositories = portdb.getRepositories()
     installed_settings = config(clone=vardb.settings)
     versions = collections.Counter(cpv_getkey(cpv) for cpv in cpvs)
-    packages = []
-    for cpv in cpvs:
+    for cpv in evaluate:
         cp = cpv_getkey(cpv)
         pkg = read_dependencies(
             vardb, portdb, cpv, match, updates, ebuild_use
@@ -492,7 +514,8 @@ def build(vardb, portdb, match=None):
                 **read_masked(vardb, portdb, installed_settings, cpv, updates)
             )
         packages.append(pkg)
-    return EvaluatedLayer(packages, [c for found in by_cp.values() for c in found])
+    candidates.extend(c for found in by_cp.values() for c in found)
+    return EvaluatedLayer(packages, candidates)
 
 
 def to_json(layer):

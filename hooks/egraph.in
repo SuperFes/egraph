@@ -1,0 +1,10 @@
+#!/bin/sh
+# Brings egraph's stores up to date after portage changed what they describe: an emerge that
+# merged or unmerged something (post_emerge.d), or a sync (postsync.d), so that the next query
+# does not pay for the refresh. portage passes its roots in the environment.
+
+set -- --root "${ROOT:-/}" --config-root "${PORTAGE_CONFIGROOT:-/}"
+if [ -n "$EPREFIX" ]; then
+    set -- "$@" --eprefix "$EPREFIX"
+fi
+exec "${EGRAPH:-@BINDIR@/egraph}" "$@" refresh

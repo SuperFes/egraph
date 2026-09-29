@@ -41,7 +41,11 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       an ebuild or eclass edited in place there without regenerating the cache goes unnoticed
       (portage itself would notice the stale cache entry). Other repositories track their
       installed cps' ebuilds, but not their eclasses beyond the directory.
-- [ ] Every builder run rebuilds the evaluated store in full (step 9f makes it incremental).
+- [ ] A sync changes the metadata cache directory of nearly every category, so the evaluated
+      store's incremental build after one evaluates whole categories again (dev-python costs
+      15.1G instructions against 70.5G for a full build). Per-cp granularity in the main
+      repository would need its cache entries as inputs, several thousand more `lstat` calls on
+      every query, or a record of them that only the builder reads.
 
 ## Store
 

@@ -142,33 +142,59 @@ def write_pending(args):
     return EXIT_OK
 
 
-def _previous(path):
+def _previous(path, decode):
     from egraph_build import store
 
     try:
         with open(path, "rb") as f:
-            return store.decode(f.read())
+            return decode(f.read())
     except (OSError, store.StoreError):
         return None
+
+
+def _strict_failure(what):
+    print(
+        f"egraph-build: EGRAPH_STRICT: incremental build of the {what} differs from a full "
+        "build",
+        file=sys.stderr,
+    )
+    return EXIT_FAILURE
 
 
 def write_store(args, incremental):
     import portage
 
-    from egraph_build import __version__, build, installed, profile, store
+    from egraph_build import __version__, build, evaluated, installed, profile, store
 
     vardb, portdb = open_databases(args.config_root, args.root, args.eprefix)
+    strict = os.environ.get("EGRAPH_STRICT") == "1"
     path = args.store or store.default_path(vardb.settings["EROOT"])
-    previous = _previous(path) if incremental else None
+    evaluated_path = store.evaluated_path(path)
+    previous = _previous(path, store.decode) if incremental else None
+    previous_evaluated = (
+        _previous(evaluated_path, store.decode_evaluated) if previous else None
+    )
     result = build.incremental(vardb, *previous) if previous else build.full(vardb)
-    if not result.full and os.environ.get("EGRAPH_STRICT") == "1":
+    if not result.full and strict:
         expected = installed.to_json(build.full(vardb).layer)
         if installed.to_json(result.layer) != expected:
-            print(
-                "egraph-build: EGRAPH_STRICT: incremental build differs from a full build",
-                file=sys.stderr,
-            )
-            return EXIT_FAILURE
+            return _strict_failure("installed store")
+    if previous_evaluated:
+        ev = build.evaluate_incremental(
+            vardb, portdb, previous_evaluated, result, previous[0].build_time_ns
+        )
+    else:
+        ev = build.evaluate(vardb, portdb)
+    if ev.layer.installed() != result.layer.installed():
+        print(
+            "egraph-build: the installed packages changed during the build",
+            file=sys.stderr,
+        )
+        return EXIT_FAILURE
+    if not ev.full and strict:
+        expected = evaluated.to_json(build.evaluate(vardb, portdb).layer)
+        if evaluated.to_json(ev.layer) != expected:
+            return _strict_failure("evaluated store")
     meta = store.Meta(
         egraph_version=__version__,
         portage_version=portage.VERSION,
@@ -176,14 +202,6 @@ def write_store(args, incremental):
         build_time_ns=result.started_ns,
         implicit=profile.implicit_iuse(vardb.settings),
     )
-    store.write(path, store.encode(result.layer, meta, result.inputs))
-    ev = build.evaluate(vardb, portdb)
-    if ev.layer.installed() != result.layer.installed():
-        print(
-            "egraph-build: the installed packages changed during the build",
-            file=sys.stderr,
-        )
-        return EXIT_FAILURE
     evaluated_meta = store.EvaluatedMeta(
         egraph_version=__version__,
         portage_version=portage.VERSION,
@@ -191,9 +209,9 @@ def write_store(args, incremental):
         build_time_ns=ev.started_ns,
         installed_build_time_ns=result.started_ns,
     )
+    store.write(path, store.encode(result.layer, meta, result.inputs))
     store.write(
-        store.evaluated_path(path),
-        store.encode_evaluated(ev.layer, evaluated_meta, ev.inputs),
+        evaluated_path, store.encode_evaluated(ev.layer, evaluated_meta, ev.inputs)
     )
     return EXIT_OK
 

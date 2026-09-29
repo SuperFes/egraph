@@ -149,9 +149,12 @@ a merge refreshes only what it changed.
   everything emerge does, plus what dependents' bounds hold back (recorded in findings). The
   evaluated store's visibility and mask bits let `orphans` and `why` pass over masked installed
   packages as depclean does, in both `--dynamic-deps` modes.
-- 9f: freshness and hooks. Incremental rebuilds from the categories whose metadata changed; a
-  `postsync.d` entry installed beside the `post_emerge` one, and the post_emerge entry refreshing
-  both stores.
+- 9f (done): freshness and hooks. The evaluated store is rebuilt incrementally: a cp is
+  evaluated again when its installed packages changed, when its category's metadata cache
+  changed in any repository, or outside the main repository when its own directory or ebuilds
+  did; the rest only have atoms naming a changed cp matched again, and anything global means a
+  full build. `EGRAPH_STRICT` holds it to a full build. The `egraph refresh` hook is installed
+  in `postsync.d` beside `post_emerge.d`; the post_emerge entry already refreshed both stores.
 - 9g: the TUI shows pending updates on package pages and in a list filter, and possible
   dependencies marked with their flags.
 

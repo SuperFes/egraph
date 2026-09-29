@@ -201,13 +201,107 @@ class EvaluatedBuild(NamedTuple):
     layer: evaluated.EvaluatedLayer
     inputs: tuple
     started_ns: int
+    # Installed cps evaluated through portage; the others were carried over.
+    evaluated: frozenset
+    full: bool
 
 
 def evaluate(vardb, portdb):
     """A full build of the evaluated layer."""
     started = time.time_ns()
-    inputs = evaluated_inputs(vardb.settings, portdb, _cpvs(vardb))
-    return EvaluatedBuild(evaluated.build(vardb, portdb), inputs, started)
+    cpvs = _cpvs(vardb)
+    inputs = evaluated_inputs(vardb.settings, portdb, cpvs)
+    cps = frozenset(cpv_getkey(cpv) for cpv in cpvs)
+    return EvaluatedBuild(evaluated.build(vardb, portdb), inputs, started, cps, True)
+
+
+def _kind_only(portdb):
+    """Evaluated inputs whose kind alone counts: a repository's root and its metadata cache
+    only list what is an input of its own, and the main repository's metadata cache records
+    each ebuild's eclasses."""
+    main = portdb.repositories.mainRepo()
+    found = set()
+    for name in portdb.getRepositories():
+        location = portdb.getRepositoryPath(name)
+        cache = os.path.join(location, "metadata", "md5-cache")
+        found.update((location, cache))
+        if main is not None and name == main.name and os.path.isdir(cache):
+            found.add(os.path.join(location, "eclass"))
+    return found
+
+
+def _scope(path, locations, categories):
+    """The installed category or cp an evaluated input bears on alone, or None when it can
+    bear on any package. locations are the repositories', longest first."""
+    for location in locations:
+        if not path.startswith(location + os.sep):
+            continue
+        parts = path[len(location) + 1 :].split(os.sep)
+        if parts[:2] == ["metadata", "md5-cache"]:
+            parts = parts[2:]
+            if len(parts) != 1:
+                return None
+        if parts[0] not in categories or len(parts) > 3:
+            return None
+        return "/".join(parts[:2])
+    return None
+
+
+def evaluate_incremental(vardb, portdb, previous, installed_build, installed_build_ns):
+    """Rebuild the evaluated layer from a previous evaluated store, evaluating only the cps
+    whose installed packages or repository metadata changed.
+
+    previous is that store's (EvaluatedMeta, Inputs, EvaluatedLayer), installed_build the Build
+    of the installed store written beside the new one, and installed_build_ns the build start
+    of the installed store it replaces. The vdb changes come from installed_build, so a full
+    installed build, or a previous store built against another one, means a full build here.
+    """
+    settings = vardb.settings
+    meta, inputs, layer = previous
+    if (
+        installed_build.full
+        or meta.eroot != settings["EROOT"]
+        or meta.installed_build_time_ns != installed_build_ns
+    ):
+        return evaluate(vardb, portdb)
+    started = time.time_ns()
+    cpvs = _cpvs(vardb)
+    current = evaluated_inputs(settings, portdb, cpvs)
+    racy_after = meta.build_time_ns - RACY_WINDOW_NS
+    recorded = {item.path: item for item in inputs}
+    by_path = {item.path: item for item in current}
+    kind_only = _kind_only(portdb)
+    previous_cpvs = set(layer.installed())
+    categories = {cpv.partition("/")[0] for cpv in previous_cpvs.union(cpvs)}
+    locations = sorted(
+        (portdb.getRepositoryPath(name) for name in portdb.getRepositories()),
+        key=len,
+        reverse=True,
+    )
+    scopes = set()
+    for path in recorded.keys() | by_path.keys():
+        old, new = recorded.get(path), by_path.get(path)
+        if old is not None and new is not None:
+            if old == new and old.mtime_ns < racy_after:
+                continue
+            if path in kind_only and old.kind == new.kind:
+                continue
+        scope = _scope(path, locations, categories)
+        if scope is None:
+            return evaluate(vardb, portdb)
+        scopes.add(scope)
+    removed = previous_cpvs - set(cpvs)
+    touched = {cpv_getkey(cpv) for cpv in installed_build.evaluated | removed}
+    dirty = frozenset(
+        cp
+        for cp in {cpv_getkey(cpv) for cpv in cpvs}
+        if cp in touched or cp in scopes or cp.partition("/")[0] in scopes
+    )
+    match = installed.Matcher(vardb)
+    ev = evaluated.rebuild(
+        vardb, portdb, layer, dirty, _Rematcher(touched, match), match
+    )
+    return EvaluatedBuild(ev, current, started, dirty, False)
 
 
 class _Rematcher:
@@ -224,20 +318,41 @@ class _Rematcher:
             atom = self._atoms[text] = Atom(text.lstrip("!"))
         return atom
 
-    def __call__(self, pkg):
-        deps = []
+    def _rematched(self, item):
+        """item, an atom node or a Possible, with its matches found again if it names a
+        touched cp; None when it does not."""
+        atom = self._atom(item.atom)
+        if atom.cp not in self._touched:
+            return None
+        return item._replace(matches=self._match(atom))
+
+    def _trees(self, trees):
+        """(trees, whether any node was rematched)"""
+        found = []
         changed = False
-        for nodes in pkg.deps:
+        for nodes in trees:
             out = []
             for node in nodes:
                 if node.type in (ATOM, WEAK_BLOCKER, STRONG_BLOCKER):
-                    atom = self._atom(node.atom)
-                    if atom.cp in self._touched:
-                        node = node._replace(matches=self._match(atom))
+                    rematched = self._rematched(node)
+                    if rematched is not None:
+                        node = rematched
                         changed = True
                 out.append(node)
-            deps.append(tuple(out))
-        return pkg._replace(deps=tuple(deps)) if changed else pkg
+            found.append(tuple(out))
+        return tuple(found), changed
+
+    def __call__(self, pkg):
+        """An installed.Package, or an evaluated.Dependencies with its possible entries."""
+        if not self._touched:
+            return pkg
+        deps, changed = self._trees(pkg.deps)
+        if changed:
+            pkg = pkg._replace(deps=deps)
+        if isinstance(pkg, evaluated.Dependencies) and pkg.possible:
+            possible = tuple(self._rematched(p) or p for p in pkg.possible)
+            pkg = pkg._replace(possible=possible)
+        return pkg
 
 
 def incremental(vardb, meta, inputs, layer):

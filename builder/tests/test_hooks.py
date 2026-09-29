@@ -1,4 +1,5 @@
-"""The portage hooks egraph installs: the post_emerge dispatcher and egraph's entry in it."""
+"""The portage hooks egraph installs: the post_emerge dispatcher, and egraph's entry in it and
+in postsync.d."""
 
 import os
 import re
@@ -8,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from test_build import age
+from egraph_build import store as egraph_store
+from test_build import age, edit_ebuild, sync
 
 SOURCE = Path(__file__).resolve().parents[2]
 DISPATCHER = SOURCE / "hooks" / "post_emerge"
@@ -63,7 +65,7 @@ def test_no_hooks_is_nothing_to_do(tmp_path):
 @pytest.mark.skipif(not EGRAPH, reason="set EGRAPH to the egraph binary")
 def test_egraph_hook_refreshes_the_store_after_an_emerge(mutable_playground):
     # meson configures the hook next to the binary it runs.
-    hook = Path(EGRAPH).parent / "post_emerge-egraph"
+    hook = Path(EGRAPH).parent / "egraph-hook"
     playground = mutable_playground("reference")
     age(playground.eroot)
     hooks = Path(playground.eroot) / "etc" / "portage" / "post_emerge.d"
@@ -80,6 +82,35 @@ def test_egraph_hook_refreshes_the_store_after_an_emerge(mutable_playground):
     # Current: left alone.
     assert run_dispatcher(playground.eroot, **env).returncode == 0
     assert store.stat().st_mtime_ns == built
+
+
+@pytest.mark.skipif(not EGRAPH, reason="set EGRAPH to the egraph binary")
+def test_egraph_hook_refreshes_the_stores_after_a_sync(mutable_playground):
+    playground = mutable_playground("repository")
+    age(playground.eroot)
+    hooks = Path(playground.eroot) / "etc" / "portage" / "postsync.d"
+    hooks.mkdir(parents=True)
+    hook = executable(
+        hooks / "egraph", (Path(EGRAPH).parent / "egraph-hook").read_text()
+    )
+    store = Path(playground.eprefix) / "var" / "cache" / "egraph" / "installed.egraph"
+    # As portage's sync runs postsync.d: no arguments, its configuration's environment.
+    env = dict(playground.settings.environ(), EGRAPH=EGRAPH, EGRAPH_STRICT="1")
+
+    def lib_2_target():
+        result = subprocess.run([str(hook)], env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        path = egraph_store.evaluated_path(store)
+        with open(path, "rb") as f:
+            layer = egraph_store.decode_evaluated(f.read())[2]
+        return layer.package("dev-libs/lib-2").target
+
+    assert lib_2_target() == ("dev-libs/lib-2.1", "test_repo")
+    edit_ebuild(
+        playground, "test_repo", "dev-libs/lib-2.1", 'KEYWORDS="x86"', 'KEYWORDS="~x86"'
+    )
+    sync(playground, "test_repo")
+    assert lib_2_target() is None
 
 
 def test_every_builder_module_is_installed():

@@ -2,11 +2,13 @@
 
 import os
 import shutil
+import subprocess
 import time
 
+import portage
 import pytest
 
-from egraph_build import build, cli, installed, store
+from egraph_build import build, cli, evaluated, installed, store
 from egraph_build.installed import ATOM
 
 HOUR_NS = 3600 * 10**9
@@ -292,3 +294,247 @@ def test_evaluated_inputs(playgrounds):
         assert os.path.join(overlay, relative) in paths, relative
     # Only the installed categories.
     assert all("/sys-apps" not in path for path in paths)
+
+
+def fresh_databases(playground):
+    """A new vardb and portdb each time: portdb keeps the metadata it read. The playground's
+    repositories come from the environment, as they do for its own trees."""
+    config = os.path.join(playground.eprefix, "etc/portage/repos.conf")
+    with open(config) as f:
+        env = dict(os.environ, PORTAGE_REPOSITORIES=f.read())
+    trees = portage.create_trees(
+        config_root=playground.eroot,
+        target_root="/",
+        eprefix=playground.eprefix,
+        env=env,
+    )
+    tree = trees[trees._target_eroot]
+    return tree["vartree"].dbapi, tree["porttree"].dbapi
+
+
+def repository(playground, name):
+    return os.path.join(playground.eprefix, "var/repositories", name)
+
+
+def egencache(playground, name, *update):
+    subprocess.run(
+        [
+            "egencache",
+            f"--repo={name}",
+            *update,
+            "--sign-manifests=n",
+            "--strict-manifests=n",
+            f"--repositories-configuration={playground.settings['PORTAGE_REPOSITORIES']}",
+        ],
+        env=playground.settings.environ(),
+        check=True,
+    )
+
+
+def sync(playground, name):
+    """What a sync brings: the repository's manifests and metadata cache matching its ebuilds."""
+    egencache(playground, name, "--update", "--update-manifests")
+
+
+def edit_ebuild(playground, name, cpv, old, new):
+    cp, _, _ = cpv.rpartition("-")
+    path = os.path.join(
+        repository(playground, name), cp, f"{cpv.partition('/')[2]}.ebuild"
+    )
+    with open(path) as f:
+        text = f.read()
+    assert old in text
+    write_atomically(path, text.replace(old, new))
+
+
+@pytest.fixture
+def evaluated_system(mutable_playground):
+    """The repository scenario with both stores built, as (playground, installed store,
+    evaluated store), each store its (meta, inputs, layer)."""
+    playground = mutable_playground("repository")
+    age(playground.eroot)
+    vardb, portdb = fresh_databases(playground)
+    first = build.full(vardb)
+    ev = build.evaluate(vardb, portdb)
+    eroot = vardb.settings["EROOT"]
+    meta = store.Meta("0", "0", eroot, first.started_ns)
+    ev_meta = store.EvaluatedMeta("0", "0", eroot, ev.started_ns, first.started_ns)
+    return (
+        playground,
+        (meta, first.inputs, first.layer),
+        (ev_meta, ev.inputs, ev.layer),
+    )
+
+
+def reevaluate(playground, previous, previous_evaluated, installed_build_ns=None):
+    vardb, portdb = fresh_databases(playground)
+    result = build.incremental(vardb, *previous)
+    if installed_build_ns is None:
+        installed_build_ns = previous[0].build_time_ns
+    ev = build.evaluate_incremental(
+        vardb, portdb, previous_evaluated, result, installed_build_ns
+    )
+    expected = build.evaluate(*fresh_databases(playground))
+    assert evaluated.to_json(ev.layer) == evaluated.to_json(expected.layer)
+    assert ev.inputs == expected.inputs
+    return ev
+
+
+def test_evaluated_nothing_changed(evaluated_system):
+    ev = reevaluate(*evaluated_system)
+    assert not ev.full
+    assert ev.evaluated == frozenset()
+
+
+def test_evaluated_package_added(evaluated_system):
+    playground = evaluated_system[0]
+    add_package(playground, "app-misc/masked-1")
+    ev = reevaluate(*evaluated_system)
+    assert not ev.full
+    assert ev.evaluated == {"app-misc/masked"}
+
+
+def test_evaluated_package_removed_rematches_its_dependents(evaluated_system):
+    playground = evaluated_system[0]
+    shutil.rmtree(vdb(playground, "dev-libs/new-1"))
+    ev = reevaluate(*evaluated_system)
+    assert not ev.full
+    # No installed cp left to evaluate.
+    assert ev.evaluated == frozenset()
+    (node,) = ev.layer.package("app-misc/dyn-1").deps[
+        installed.DEP_KINDS.index("RDEPEND")
+    ]
+    assert (node.atom, node.matches) == ("dev-libs/new", ())
+
+
+def test_evaluated_package_rebuilt_in_place(evaluated_system):
+    playground = evaluated_system[0]
+    write_atomically(vdb(playground, "app-misc/flags-1", "USE"), "new old\n")
+    ev = reevaluate(*evaluated_system)
+    assert not ev.full
+    assert ev.evaluated == {"app-misc/flags"}
+    assert ev.layer.package("app-misc/flags-1").rebuild == ("-old*",)
+
+
+def test_evaluated_new_category(evaluated_system):
+    playground = evaluated_system[0]
+    add_package(playground, "sys-apps/fresh-1", RDEPEND="dev-libs/new")
+    ev = reevaluate(*evaluated_system)
+    assert not ev.full
+    assert ev.evaluated == {"sys-apps/fresh"}
+
+
+def test_evaluated_synced_ebuild_reevaluates_its_category(evaluated_system):
+    playground = evaluated_system[0]
+    edit_ebuild(
+        playground, "test_repo", "dev-libs/lib-2.1", 'KEYWORDS="x86"', 'KEYWORDS="~x86"'
+    )
+    sync(playground, "test_repo")
+    ev = reevaluate(*evaluated_system)
+    assert not ev.full
+    assert ev.evaluated == {"dev-libs/lib", "dev-libs/new", "dev-libs/old"}
+    assert ev.layer.package("dev-libs/lib-2").target is None
+
+
+def test_evaluated_overlay_ebuild_reevaluates_its_cp(evaluated_system):
+    playground = evaluated_system[0]
+    ebuild = os.path.join(
+        repository(playground, "overlay"), "app-misc/over/over-3.ebuild"
+    )
+    write_atomically(ebuild, 'EAPI="8"\nKEYWORDS="x86"\nSLOT="0"\n')
+    # Edited in place: the digest, but no metadata cache entry.
+    egencache(playground, "overlay", "--update-manifests")
+    ev = reevaluate(*evaluated_system)
+    assert not ev.full
+    assert ev.evaluated == {"app-misc/over"}
+    assert ev.layer.package("app-misc/over-1").target == ("app-misc/over-3", "overlay")
+
+
+def test_evaluated_eclass_added_to_the_main_repository(evaluated_system):
+    playground = evaluated_system[0]
+    eclass = os.path.join(repository(playground, "test_repo"), "eclass", "new.eclass")
+    write_atomically(eclass, "# nothing inherits it\n")
+    ev = reevaluate(*evaluated_system)
+    assert not ev.full
+    assert ev.evaluated == frozenset()
+
+
+def test_evaluated_eclass_added_to_an_overlay_is_a_full_build(evaluated_system):
+    playground = evaluated_system[0]
+    eclass = os.path.join(repository(playground, "overlay"), "eclass", "new.eclass")
+    write_atomically(eclass, "# nothing inherits it\n")
+    assert reevaluate(*evaluated_system).full
+
+
+@pytest.mark.parametrize(
+    "path, text",
+    [
+        ("etc/portage/package.mask", "=app-misc/testing-1\n"),
+        ("var/repositories/test_repo/profiles/updates/2Q-2026", "move a-b/c a-b/d\n"),
+        ("var/repositories/test_repo/profiles/package.mask", "app-misc/over\n"),
+    ],
+    ids=["user-mask", "move", "repository-mask"],
+)
+def test_evaluated_global_inputs_force_a_full_build(evaluated_system, path, text):
+    playground = evaluated_system[0]
+    path = os.path.join(playground.eprefix, path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a") as f:
+        f.write(text)
+    assert reevaluate(*evaluated_system).full
+
+
+def test_evaluated_full_installed_build_is_a_full_build(evaluated_system):
+    playground = evaluated_system[0]
+    os.makedirs(os.path.join(playground.eroot, "etc/portage/profile"))
+    assert reevaluate(*evaluated_system).full
+
+
+def test_evaluated_against_another_installed_store_is_a_full_build(evaluated_system):
+    playground, previous, previous_evaluated = evaluated_system
+    assert reevaluate(playground, previous, previous_evaluated, 1).full
+
+
+def test_evaluated_racy_inputs_are_not_trusted(evaluated_system):
+    playground, previous, (meta, inputs, layer) = evaluated_system
+    # Built right after its inputs were last modified.
+    newest = max(item.mtime_ns for item in inputs)
+    meta = meta._replace(build_time_ns=newest + 1)
+    assert reevaluate(playground, previous, (meta, inputs, layer)).full
+
+
+def test_incremental_updates_the_evaluated_store(cli_system):
+    playground, path = cli_system
+    add_package(playground, "dev-libs/alt-b-1")
+    assert cli.main(["--incremental", "--store", str(path)]) == cli.EXIT_OK
+    meta = store.decode(path.read_bytes())[0]
+    ev_meta, _, layer = store.decode_evaluated(
+        (path.parent / "installed.evaluated.egraph").read_bytes()
+    )
+    assert "dev-libs/alt-b-1" in layer.installed()
+    assert ev_meta.installed_build_time_ns == meta.build_time_ns
+
+
+def test_strict_mode_catches_a_wrong_evaluated_incremental(
+    cli_system, monkeypatch, capsys
+):
+    playground, path = cli_system
+    monkeypatch.setenv("EGRAPH_STRICT", "1")
+    real = build.evaluate_incremental
+
+    def forgetful(vardb, portdb, previous, installed_build, installed_build_ns):
+        # Keeps the previous dependencies of unchanged packages.
+        result = real(vardb, portdb, previous, installed_build, installed_build_ns)
+        kept = [previous[2].package(cpv) for cpv in result.layer.installed()]
+        return result._replace(
+            layer=evaluated.EvaluatedLayer(kept, result.layer.candidates()),
+            full=False,
+        )
+
+    monkeypatch.setattr(build, "evaluate_incremental", forgetful)
+    evaluated_path = path.parent / "installed.evaluated.egraph"
+    before = path.read_bytes(), evaluated_path.read_bytes()
+    shutil.rmtree(vdb(playground, "dev-libs/cond-1"))
+    assert cli.main(["--incremental", "--store", str(path)]) == cli.EXIT_FAILURE
+    assert "evaluated store differs from a full build" in capsys.readouterr().err
+    assert (path.read_bytes(), evaluated_path.read_bytes()) == before

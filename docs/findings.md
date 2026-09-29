@@ -375,3 +375,20 @@ process including load and the freshness check of 2,575 inputs.
   highest priority first); an installed version whose ebuild is gone is replaced even by an
   older visible one; under dynamic deps FakeVartree reads KEYWORDS from the ebuild, so an
   installed package built from `~x86` is unmasked once its ebuild is stable.
+
+## Incremental evaluated store (2026-09-29, roadmap step 9f)
+
+- Before, every `egraph-build --incremental` rebuilt the evaluated store in full, so the
+  post_emerge refresh cost 70.5G instructions even with nothing changed (a full build of both
+  stores takes 10.7 s).
+- Live system, both stores incremental, with `EGRAPH_STRICT=1` passing in every case:
+  nothing changed 10.3G; one package changed in the vdb (dev-libs/openssl, which many packages
+  depend on) 11.9G; dev-python's metadata cache changed (172 installed cps) 15.1G; sys-libs's
+  11.8G. The floor is decoding and re-encoding the two stores in Python, about 4 s of the 6 s
+  profiled; rematching atoms when nothing was touched cost another 1.2G until skipped.
+- A sync regenerates the cache entries of whatever changed, which renames files into their
+  category's cache directory, so category granularity is what the directory mtimes give.
+  Testing it needs manifests updated with the cache (`egencache --update --update-manifests`):
+  egencache skips an ebuild whose digest does not match, and portage then regenerates the
+  metadata itself, which is the in-place edit TODO.md records as unnoticed.
+

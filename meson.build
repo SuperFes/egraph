@@ -137,10 +137,11 @@ python.install_sources(
 )
 
 # portage's post_emerge hook, as a dispatcher over /etc/portage/post_emerge.d, and egraph's entry
-# there, which refreshes the store after every emerge that changed the installed packages.
+# there and in postsync.d, which refreshes the stores after every emerge that changed the
+# installed packages and after every sync.
 egraph_hook = configure_file(
-  input: 'hooks/post_emerge.d/egraph.in',
-  output: 'post_emerge-egraph',
+  input: 'hooks/egraph.in',
+  output: 'egraph-hook',
   configuration: {'BINDIR': get_option('prefix') / get_option('bindir')},
 )
 if get_option('portage_hooks')
@@ -149,12 +150,14 @@ if get_option('portage_hooks')
     install_dir: get_option('portage_config') / 'bin',
     install_mode: 'rwxr-xr-x',
   )
-  install_data(
-    egraph_hook,
-    install_dir: get_option('portage_config') / 'post_emerge.d',
-    rename: 'egraph',
-    install_mode: 'rwxr-xr-x',
-  )
+  foreach hooks : ['post_emerge.d', 'postsync.d']
+    install_data(
+      egraph_hook,
+      install_dir: get_option('portage_config') / hooks,
+      rename: 'egraph',
+      install_mode: 'rwxr-xr-x',
+    )
+  endforeach
 endif
 
 unit_tests = executable(

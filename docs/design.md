@@ -288,10 +288,22 @@ On load `egraph` stats every input (2,575 `lstat` calls on the dev box, about 2.
 the others re-matches only the atoms naming a cp that gained, lost or changed a package. Root sets
 are read again on every build, so a world or set file edit costs no more than that. A changed
 configuration input or another EROOT means a full build. `EGRAPH_STRICT=1` compares
-every incremental build against a full one and fails, leaving the old store, on any difference.
+every incremental build against a full one and fails, leaving both old stores, on any
+difference.
+
+The evaluated store is rebuilt the same way, from the vdb changes the installed build found and
+its own inputs. A cp is evaluated again (candidates, dependencies, possible dependencies, update
+and masks) when it gained, lost or changed an installed package, when the metadata cache
+directory of its category changed in any repository, or outside the main repository when its
+category or package directory or an ebuild changed; the other packages only have the atoms that
+name a changed cp matched again. A repository's root and metadata cache directory only list
+inputs of their own, and the main repository's cache records each ebuild's eclasses, so for
+those only a change of kind counts. Every other input (configuration, profiles, the user's
+visibility and USE files, a repository's masks, moves, layout, license groups and categories,
+another repository's eclasses), a full installed build, or an evaluated store built against
+another installed store means a full evaluated build.
 
 No merge-time hook is needed, and edits to the vdb made outside portage are caught too.
-`/etc/portage/postsync.d` can prebuild the later layers after a sync.
 
 ## Rebuild and check
 
@@ -303,8 +315,9 @@ No merge-time hook is needed, and edits to the vdb made outside portage are caug
   environment. egraph installs a dispatcher there that runs every executable in
   `/etc/portage/post_emerge.d`, as `postsync.d` does for syncs, and its own entry in that
   directory runs `egraph refresh`, so the next query does not pay for the refresh
-  (`hooks/`; meson options `portage_hooks` and `portage_config`). A sync does not touch the
-  installed store; the repository layer will hook `postsync.d`.
+  (`hooks/`; meson options `portage_hooks` and `portage_config`). The same entry goes in
+  `/etc/portage/postsync.d`, which portage runs after syncing every repository, so a sync
+  refreshes the evaluated store before the next query.
 - `egraph check`: build a fresh store into a scratch file and diff its packages against the
   stored ones, without refreshing the store first. Prints `+cpv` (missing from the store),
   `-cpv` (no longer installed) or `~cpv` (different) per package and exits 4 on drift. This is
