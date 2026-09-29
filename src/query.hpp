@@ -81,9 +81,10 @@ struct WeighedUpdate {
 // What emerge -uD would replace, as "cpv<TAB>kind<TAB>target cpv<TAB>repo": kind upgrade,
 // downgrade, or rebuild when the installed package is masked and the target has its version.
 // With rebuilds, each USE rebuild too, kind rebuild with "<TAB>flags" appended, the flags in
-// emerge's notation, space-separated. With held, also each update dependents hold back, once per
-// atom holding it: "cpv<TAB>held<TAB>target cpv<TAB>repo<TAB>dependent cpv<TAB>atom". In the
-// installed packages' order.
+// emerge's notation, space-separated. With held, also each update dependents hold back, once:
+// "cpv<TAB>held<TAB>target cpv<TAB>repo<TAB>flags", the flags a held USE rebuild is for (else
+// empty), then a field per dependent holding it: its cpv, then each of its atoms that do, space-
+// separated. In the installed packages' order.
 [[nodiscard]] std::vector<std::string> update_lines(const Store& store, const Graph& graph,
                                                     const Evaluated& evaluated,
                                                     UseRebuilds rebuilds, bool held = false,

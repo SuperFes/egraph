@@ -151,6 +151,38 @@ TEST_CASE("updates line up versions and repositories, and count each kind") {
     CHECK(none.str() == "+ Nothing to update.\n");
 }
 
+TEST_CASE("held updates come once each, their holders under them") {
+    std::ostringstream out;
+    egraph::human_updates(
+        out,
+        std::vector<std::string>{
+            "app-misc/up-1\tupgrade\tapp-misc/up-10\ttest_repo",
+            "app-misc/gcr-3\theld\tapp-misc/gcr-3\tgentoo\t-gtk*\tgnome/keyring-50 "
+            ">=app-misc/gcr-3:0=[gtk] >=app-misc/gcr-3:0/1=[gtk]",
+            "app-misc/rgb-1\theld\tapp-misc/rgb-2\tgentoo\t\tapp-misc/skin-1 "
+            "<app-misc/rgb-2\tapp-misc/effects-1 <app-misc/rgb-2",
+        },
+        plain);
+    CHECK(out.str() ==
+          "U app-misc/up   1 > 10  ::test_repo\n"
+          "\nHeld back\n"
+          "H app-misc/gcr  3       ::gentoo  -gtk*\n"
+          "    gnome/keyring-50  >=app-misc/gcr-3:0=[gtk]  >=app-misc/gcr-3:0/1=[gtk]\n"
+          "H app-misc/rgb  1 > 2   ::gentoo\n"
+          "    app-misc/skin-1     <app-misc/rgb-2\n"
+          "    app-misc/effects-1  <app-misc/rgb-2\n"
+          "\n1 upgrade, 2 held\n"
+          "\nflag* changed  flag% new in IUSE  (-flag%) gone from it\n");
+    std::ostringstream only;
+    egraph::human_updates(only, std::vector<std::string>{"a/b-1\theld\ta/b-2\tr\t\ta/c-1 <a/b-2"},
+                          plain);
+    CHECK(only.str() == "+ Nothing to update.\n"
+                        "\nHeld back\n"
+                        "H a/b  1 > 2  ::r\n"
+                        "    a/c-1  <a/b-2\n"
+                        "\n1 held\n");
+}
+
 TEST_CASE("broken groups by package and counts") {
     const std::vector<std::string> records{
         "a/b-1\tPDEPEND\tx/gone",

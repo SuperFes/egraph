@@ -284,7 +284,9 @@ slot operator's sub-slot aside (emerge rebuilds the dependent instead), unless a
 alternative of a `||` stays satisfied. The dependencies are read as the other queries read them
 (`--dynamic-deps`). A held upgrade falls back to the best visible version in the slot every
 dependent accepts (`<dev-python/astroid-4.1` picks 4.0.x), or stays put; a held rebuild for USE
-stays put. `--held` adds each held update with the dependent and atom holding it. egraph never
+stays put. `--held` adds each held update once, with the dependents holding it and their atoms
+that do; the human layout lists them under a "Held back" heading, each dependent on a line of
+its own. egraph never
 lists new slots, slot-operator rebuilds, or what emerge pulls in to satisfy a dependent another
 way (a new package for a `||`), which are the resolver's.
 

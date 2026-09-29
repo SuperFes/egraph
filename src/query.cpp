@@ -300,11 +300,17 @@ std::vector<std::string> update_lines(const Store& store, const Graph& graph,
             lines.push_back(std::move(line));
         }
         if (held && weighed.held) {
-            for (const auto& holder : weighed.holders) {
-                lines.push_back(std::format(
-                    "{}\theld\t{}\t{}\t{}", cpv, target_fields(weighed.held->target),
-                    store.string(store.packages.at(holder.parent).cpv), store.string(holder.atom)));
+            auto line = std::format("{}\theld\t{}\t{}", cpv, target_fields(weighed.held->target),
+                                    weighed.held->flags);
+            // Holders are sorted by dependent, then atom.
+            for (std::size_t i = 0; i < weighed.holders.size(); ++i) {
+                const auto& holder = weighed.holders.at(i);
+                if (i == 0 || weighed.holders.at(i - 1).parent != holder.parent) {
+                    line += std::format("\t{}", store.string(store.packages.at(holder.parent).cpv));
+                }
+                line += std::format(" {}", store.string(holder.atom));
             }
+            lines.push_back(std::move(line));
         }
     }
     return lines;

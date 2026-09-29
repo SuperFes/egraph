@@ -363,7 +363,7 @@ TEST_CASE("an atom of an installed dependent the target does not match holds the
     CHECK(egraph::update_lines(store, egraph::build_graph(store), *evaluated,
                                egraph::UseRebuilds::none, true) ==
           std::vector<std::string>{
-              "dev-libs/b-1\theld\tdev-libs/b-2\ttest_repo\tapp-misc/a-1\t<dev-libs/b-2"});
+              "dev-libs/b-1\theld\tdev-libs/b-2\ttest_repo\t\tapp-misc/a-1 <dev-libs/b-2"});
 }
 
 TEST_CASE("an update's kind follows the versions") {

@@ -78,6 +78,7 @@ constexpr Glyphs nerd_glyphs{
     .upgrade = "\uF0AA",
     .downgrade = "\uF0AB",
     .rebuild = "\uF021",
+    .held = "\uF023",
     .frame = {.top_left = "╭",
               .top_right = "╮",
               .bottom_left = "╰",
@@ -123,6 +124,7 @@ constexpr Glyphs unicode_glyphs{
     .upgrade = "↑",
     .downgrade = "↓",
     .rebuild = "↺",
+    .held = "⊘",
     .frame = {.top_left = "╭",
               .top_right = "╮",
               .bottom_left = "╰",
@@ -168,6 +170,7 @@ constexpr Glyphs ascii_glyphs{
     .upgrade = "U",
     .downgrade = "D",
     .rebuild = "R",
+    .held = "H",
     .frame = {.top_left = "+",
               .top_right = "+",
               .bottom_left = "+",
@@ -556,11 +559,8 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     const auto& paint = theme.paint;
     const auto& glyph = theme.glyph();
     const auto rows = split_all(records);
-    if (rows.empty()) {
-        out << paint(glyph.good, Tone::good) << ' ' << paint("Nothing to update.", Tone::good)
-            << '\n';
-        return;
-    }
+    const auto is_held = [](const auto& row) { return row.at(1) == "held"; };
+    // Every row shares the columns, so held ones line up under the updates.
     std::size_t cp_width = 0;
     std::size_t version_width = 0;
     // " > version" when any row moves to another version, so every repo lines up.
@@ -569,33 +569,29 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         const auto parts = split_cpv(row.at(0));
         cp_width = std::max(cp_width, parts.category.size() + 1 + parts.name.size());
         version_width = std::max(version_width, parts.version.size());
-        if (row.at(1) != "rebuild") {
+        if (row.at(0) != row.at(2)) {
             move_width = std::max(move_width, 3 + split_cpv(row.at(2)).version.size());
         }
     }
-    std::array<std::size_t, 3> counts{};
     bool flags = false;
-    for (const auto& row : rows) {
+    // The package, its version and where it goes, its repository, and any flags.
+    const auto put_row = [&](const auto& row, std::string_view mark, Tone tone) {
         const auto old = split_cpv(row.at(0));
         const auto target = split_cpv(row.at(2));
         const auto cp = row.at(0).substr(0, old.category.size() + 1 + old.name.size());
-        const bool up = row.at(1) == "upgrade";
-        const bool down = row.at(1) == "downgrade";
-        ++counts.at(up ? 0 : down ? 1 : 2);
-        out << (up     ? paint(glyph.upgrade, Tone::good)
-                : down ? paint(glyph.downgrade, Tone::bad)
-                       : paint(glyph.rebuild, Tone::use))
-            << ' ' << paint_cpv(cp, paint) << spaces(cp.size(), cp_width) << "  "
-            << paint(old.version, Tone::version) << spaces(old.version.size(), version_width);
-        if (up || down) {
+        out << paint(mark, tone) << ' ' << paint_cpv(cp, paint) << spaces(cp.size(), cp_width)
+            << "  " << paint(old.version, Tone::version)
+            << spaces(old.version.size(), version_width);
+        if (row.at(0) != row.at(2)) {
+            const bool down = row.at(1) == "downgrade";
             out << ' ' << paint(glyph.instead, Tone::note) << ' '
-                << paint(target.version, up ? Tone::good : Tone::bad)
+                << paint(target.version, down ? Tone::bad : Tone::good)
                 << spaces(3 + target.version.size(), move_width);
         } else {
             out << spaces(0, move_width);
         }
         out << "  " << paint("::" + std::string{row.at(3)}, Tone::repo);
-        if (row.size() > 4) {
+        if (row.size() > 4 && !row.at(4).empty()) {
             flags = true;
             out << ' ';
             for (const auto flag : std::views::split(row.at(4), ' ')) {
@@ -604,9 +600,64 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             }
         }
         out << '\n';
+    };
+    // up, down, rebuild, held
+    std::array<std::size_t, 4> counts{};
+    for (const auto& row : rows) {
+        if (is_held(row)) {
+            ++counts.at(3);
+            continue;
+        }
+        const bool up = row.at(1) == "upgrade";
+        const bool down = row.at(1) == "downgrade";
+        ++counts.at(up ? 0 : down ? 1 : 2);
+        put_row(row,
+                up     ? glyph.upgrade
+                : down ? glyph.downgrade
+                       : glyph.rebuild,
+                up     ? Tone::good
+                : down ? Tone::bad
+                       : Tone::use);
     }
-    constexpr std::array<std::array<std::string_view, 2>, 3> nouns{
-        {{" upgrade", " upgrades"}, {" downgrade", " downgrades"}, {" rebuild", " rebuilds"}}};
+    if (counts.at(0) + counts.at(1) + counts.at(2) == 0) {
+        out << paint(glyph.good, Tone::good) << ' ' << paint("Nothing to update.", Tone::good)
+            << '\n';
+        if (counts.at(3) == 0) {
+            return;
+        }
+    }
+    if (counts.at(3) != 0) {
+        out << '\n' << paint("Held back", Tone::heading) << '\n';
+        for (const auto& row : rows) {
+            if (!is_held(row)) {
+                continue;
+            }
+            put_row(row, glyph.held, Tone::bad);
+            // One line per dependent holding it: its cpv, then its atoms that do.
+            std::size_t holder_width = 0;
+            for (std::size_t i = 5; i < row.size(); ++i) {
+                holder_width =
+                    std::max(holder_width, row.at(i).substr(0, row.at(i).find(' ')).size());
+            }
+            for (std::size_t i = 5; i < row.size(); ++i) {
+                const auto field = row.at(i);
+                const auto holder = field.substr(0, field.find(' '));
+                out << "    " << paint(holder, Tone::version)
+                    << spaces(holder.size(), holder_width);
+                if (holder.size() < field.size()) {
+                    for (const auto atom :
+                         std::views::split(field.substr(holder.size() + 1), ' ')) {
+                        out << "  " << paint(std::string_view{atom}, Tone::note);
+                    }
+                }
+                out << '\n';
+            }
+        }
+    }
+    constexpr std::array<std::array<std::string_view, 2>, 4> nouns{{{" upgrade", " upgrades"},
+                                                                    {" downgrade", " downgrades"},
+                                                                    {" rebuild", " rebuilds"},
+                                                                    {" held", " held"}}};
     out << '\n';
     bool first = true;
     for (std::size_t i = 0; i < counts.size(); ++i) {
