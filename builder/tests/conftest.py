@@ -27,6 +27,7 @@ def playground_arguments(name):
     arguments = dict(SCENARIOS[name])
     arguments.pop("updates", None)
     arguments.pop("bounded", None)
+    arguments.pop("pulls", None)
     arguments["installed"] = {
         cpv: {"KEYWORDS": "x86", **metadata}
         for cpv, metadata in arguments.get("installed", {}).items()

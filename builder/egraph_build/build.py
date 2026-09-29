@@ -161,12 +161,13 @@ def repository_paths(portdb, cps):
     return paths
 
 
-def evaluated_inputs(settings, portdb, cpvs):
+def evaluated_inputs(settings, portdb, cps):
+    """The inputs of an evaluated layer answering for cps (EvaluatedLayer.cps)."""
     user = os.path.join(settings["PORTAGE_CONFIGROOT"], portage.const.USER_CONFIG_PATH)
     paths = config_paths(settings)
     for name in USER_VISIBILITY_CONFIG:
         paths.extend(_tree(os.path.join(user, name)))
-    paths.extend(repository_paths(portdb, sorted({cpv_getkey(cpv) for cpv in cpvs})))
+    paths.extend(repository_paths(portdb, cps))
     return tuple(sorted({stat_input(path) for path in paths}))
 
 
@@ -201,7 +202,7 @@ class EvaluatedBuild(NamedTuple):
     layer: evaluated.EvaluatedLayer
     inputs: tuple
     started_ns: int
-    # Installed cps evaluated through portage; the others were carried over.
+    # The cps read through portage; the others were carried over.
     evaluated: frozenset
     full: bool
 
@@ -209,10 +210,11 @@ class EvaluatedBuild(NamedTuple):
 def evaluate(vardb, portdb):
     """A full build of the evaluated layer."""
     started = time.time_ns()
-    cpvs = _cpvs(vardb)
-    inputs = evaluated_inputs(vardb.settings, portdb, cpvs)
-    cps = frozenset(cpv_getkey(cpv) for cpv in cpvs)
-    return EvaluatedBuild(evaluated.build(vardb, portdb), inputs, started, cps, True)
+    layer, read = evaluated.rebuild(vardb, portdb, None, None)
+    # Stat'ed after the build, which the racy window allows: anything changed since started
+    # is newer than it.
+    inputs = evaluated_inputs(vardb.settings, portdb, layer.cps())
+    return EvaluatedBuild(layer, inputs, started, read, True)
 
 
 def _kind_only(portdb):
@@ -266,13 +268,14 @@ def evaluate_incremental(vardb, portdb, previous, installed_build, installed_bui
         return evaluate(vardb, portdb)
     started = time.time_ns()
     cpvs = _cpvs(vardb)
-    current = evaluated_inputs(settings, portdb, cpvs)
+    cps = sorted(set(layer.cps()) | {cpv_getkey(cpv) for cpv in cpvs})
+    current = evaluated_inputs(settings, portdb, cps)
     racy_after = meta.build_time_ns - RACY_WINDOW_NS
     recorded = {item.path: item for item in inputs}
     by_path = {item.path: item for item in current}
     kind_only = _kind_only(portdb)
     previous_cpvs = set(layer.installed())
-    categories = {cpv.partition("/")[0] for cpv in previous_cpvs.union(cpvs)}
+    categories = {cp.partition("/")[0] for cp in cps}
     locations = sorted(
         (portdb.getRepositoryPath(name) for name in portdb.getRepositories()),
         key=len,
@@ -294,14 +297,16 @@ def evaluate_incremental(vardb, portdb, previous, installed_build, installed_bui
     touched = {cpv_getkey(cpv) for cpv in installed_build.evaluated | removed}
     dirty = frozenset(
         cp
-        for cp in {cpv_getkey(cpv) for cpv in cpvs}
+        for cp in touched.union(cps)
         if cp in touched or cp in scopes or cp.partition("/")[0] in scopes
     )
     match = installed.Matcher(vardb)
-    ev = evaluated.rebuild(
+    ev, read = evaluated.rebuild(
         vardb, portdb, layer, dirty, _Rematcher(touched, match), match
     )
-    return EvaluatedBuild(ev, current, started, dirty, False)
+    if ev.cps() != cps:
+        current = evaluated_inputs(settings, portdb, ev.cps())
+    return EvaluatedBuild(ev, current, started, read, False)
 
 
 class _Rematcher:

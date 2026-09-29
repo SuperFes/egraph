@@ -231,7 +231,8 @@ inline std::vector<std::byte> fresh_sample() {
 //   b-1 from the vdb, with no dependencies, masked and not visible, and replaced by b-2 under
 //   emerge -u.
 // Candidates of app-misc/a: a-1, visible, USE and IUSE "flag"; a-2, masked by keyword; of
-// dev-libs/b: b-2, visible.
+// dev-libs/b: b-2, visible, with DEPEND app-misc/a matching a-1 and RDEPEND dev-libs/gone
+// matching nothing.
 inline constexpr std::initializer_list<std::string_view> evaluated_strings{"",
                                                                            "app-misc/a-1",
                                                                            "dev-libs/b-1",
@@ -284,9 +285,14 @@ inline std::vector<Section> evaluated_sections() {
 
     Bytes candidates;
     candidates.varint(3);
-    candidates.varints({5, 1, 7, 6, 6}).list({8}).list({8}).list({});
-    candidates.varints({5, 9, 7, 6, 6}).list({}).list({8}).list({10});
-    candidates.varints({13, 18, 7, 6, 6}).list({}).list({}).list({});
+    // cp, cpv, repo, slot, sub-slot, USE, IUSE, reasons, errors, then the five node lists.
+    candidates.varints({5, 1, 7, 6, 6}).list({8}).list({8}).list({}).varint(0);
+    candidates.varints({0, 0, 0, 0, 0});
+    candidates.varints({5, 9, 7, 6, 6}).list({}).list({8}).list({10}).varint(0);
+    candidates.varints({0, 0, 0, 0, 0});
+    candidates.varints({13, 18, 7, 6, 6}).list({}).list({}).list({}).varint(0);
+    candidates.varint(0).varint(1).varints({0, 0, 5}).list({0}).varint(0).varint(0);
+    candidates.varint(1).varints({0, 0, 14}).list({});
 
     return {{.id = 1, .bytes = meta.bytes()},
             {.id = 2, .bytes = inputs.bytes()},

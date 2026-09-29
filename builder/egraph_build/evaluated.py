@@ -7,6 +7,7 @@ the evaluation, as for the installed layer.
 """
 
 import collections
+import itertools
 import json
 from typing import NamedTuple
 
@@ -87,8 +88,13 @@ class Dependencies(NamedTuple):
     rebuild: tuple = ()
 
 
+# Candidate.deps of a masked candidate: one empty node tuple per kind.
+NO_DEPS = ((),) * len(DEP_KINDS)
+
+
 class Candidate(NamedTuple):
-    """One version of an installed cp in one repository."""
+    """One version of a cp in one repository: an installed cp, or one the dependencies reach
+    that nothing installed satisfies."""
 
     cp: str
     cpv: str
@@ -101,6 +107,11 @@ class Candidate(NamedTuple):
     iuse: tuple
     # Why it is masked, as portage words it; empty when it is visible.
     reasons: tuple
+    # (kind, message) for every dependency string portage could not parse.
+    errors: tuple = ()
+    # One node tuple per kind, as in installed.Package, reduced under use; matches name
+    # installed cpvs. Empty lists for a masked candidate.
+    deps: tuple = NO_DEPS
 
 
 def _cpv(pkg):
@@ -124,6 +135,13 @@ class EvaluatedLayer:
 
     def installed(self):
         return tuple(self._packages)
+
+    def cps(self):
+        """The cps it answers for, sorted: the installed ones and those with candidates."""
+        return sorted(
+            {cpv_getkey(cpv) for cpv in self._packages}
+            | {c.cp for c in self._candidates}
+        )
 
     def candidates(self, cp=None):
         """Candidates sorted by cp, cpv and repo; only cp's when given."""
@@ -403,8 +421,9 @@ def read_update(vardb, cpv, candidates, repositories, ebuild_use):
     return {"visible": visible, "target": (best.cpv, best.repo), "rebuild": rebuild}
 
 
-def read_candidates(portdb, settings, cp, installed_cpvs, ebuild_use=None):
-    """Every visible version of cp in every repository, and each masked one installed.
+def read_candidates(portdb, settings, cp, installed_cpvs, match, ebuild_use=None):
+    """Every visible version of cp in every repository, with its dependencies matched through
+    match, and each masked one installed.
 
     settings is a config clone of portdb's, which this changes package by package; ebuild_use,
     an EbuildUse, records each installed version it sets.
@@ -447,6 +466,12 @@ def read_candidates(portdb, settings, cp, installed_cpvs, ebuild_use=None):
             if ebuild_use is not None and cpv in installed_cpvs:
                 ebuild_use.record(cpv, repo, iuse, settings)
             slot, _, sub_slot = metadata["SLOT"].partition("/")
+            use = tuple(sorted(settings["PORTAGE_USE"].split()))
+            deps, errors = NO_DEPS, ()
+            if not reasons:
+                deps, errors = installed.dependency_trees(
+                    metadata, frozenset(use), metadata["EAPI"], match
+                )
             found.append(
                 Candidate(
                     cp=cp,
@@ -454,68 +479,124 @@ def read_candidates(portdb, settings, cp, installed_cpvs, ebuild_use=None):
                     repo=repo,
                     slot=slot,
                     sub_slot=sub_slot or slot,
-                    use=tuple(sorted(settings["PORTAGE_USE"].split())),
+                    use=use,
                     iuse=tuple(sorted(iuse)),
                     reasons=reasons,
+                    errors=tuple(errors),
+                    deps=deps,
                 )
             )
     return found
 
 
+def unsatisfied_cps(deps):
+    """The cps of the atoms in node tuples, one per kind, that nothing installed satisfies,
+    outside any group installed packages satisfy; blockers are not dependencies."""
+    found = set()
+    for nodes in deps:
+        ok = installed.satisfied(nodes)
+        for index, node in enumerate(nodes):
+            if node.type != installed.ATOM or ok[index]:
+                continue
+            parent = node.parent
+            while parent >= 0 and not ok[parent]:
+                parent = nodes[parent].parent
+            if parent < 0:
+                found.add(Atom(node.atom, allow_repo=True).cp)
+    return found
+
+
 def build(vardb, portdb, match=None):
     """Evaluate every installed package in vardb against portdb's repositories."""
-    return rebuild(vardb, portdb, None, None, match=match)
+    return rebuild(vardb, portdb, None, None, match=match)[0]
 
 
 def rebuild(vardb, portdb, previous, cps, carry=None, match=None):
-    """As build, but only the installed cps in cps go through portage, every one when cps is
-    None; the other installed packages come from previous, an EvaluatedLayer, through carry
-    (unchanged when None), and their cps' candidates with them.
+    """(layer, the cps read through portage): as build, but only the cps in cps go through
+    portage, every one when cps is None; the other installed packages come from previous, an
+    EvaluatedLayer, through carry (unchanged when None), and their cps' candidates with them,
+    as do the candidates of the other cps the dependencies still reach.
     """
     from portage.package.ebuild.config import config
 
     match = match or installed.Matcher(vardb)
+    carry = carry or (lambda pkg: pkg)
     cpvs = sorted(str(cpv) for cpv in vardb.cpv_all())
     installed_cps = sorted({cpv_getkey(cpv) for cpv in cpvs})
-    if cps is None:
-        cps = frozenset(installed_cps)
-    packages = []
-    candidates = []
+    previous_candidates = collections.defaultdict(list)
+    # The cps previous answered for: its installed ones and those with candidates.
+    known = set()
     if previous is not None:
-        carry = carry or (lambda pkg: pkg)
-        kept = frozenset(installed_cps) - cps
+        for c in previous.candidates():
+            previous_candidates[c.cp].append(c)
+        known.update(previous_candidates)
+        known.update(cpv_getkey(cpv) for cpv in previous.installed())
+
+    def fresh(cp):
+        return cps is None or cp in cps or cp not in known
+
+    packages = []
+    if previous is not None:
         packages.extend(
-            carry(previous.package(cpv)) for cpv in cpvs if cpv_getkey(cpv) in kept
+            carry(previous.package(cpv)) for cpv in cpvs if not fresh(cpv_getkey(cpv))
         )
-        candidates.extend(c for c in previous.candidates() if c.cp in kept)
-    evaluate = [cpv for cpv in cpvs if cpv_getkey(cpv) in cps]
-    if not evaluate:
-        return EvaluatedLayer(packages, candidates)
-    updates = dynamic.global_updates(portdb)
+    evaluate = [cpv for cpv in cpvs if fresh(cpv_getkey(cpv))]
+    read = set()
+    by_cp = {}
     settings = config(clone=portdb.settings)
     installed_cpvs = frozenset(cpvs)
     # Candidates first: they set a config to every installed ebuild the toggles need.
     ebuild_use = EbuildUse(portdb)
-    by_cp = {}
-    for cp in sorted({cpv_getkey(cpv) for cpv in evaluate}):
-        by_cp[cp] = read_candidates(portdb, settings, cp, installed_cpvs, ebuild_use)
-    repositories = portdb.getRepositories()
-    installed_settings = config(clone=vardb.settings)
-    versions = collections.Counter(cpv_getkey(cpv) for cpv in cpvs)
-    for cpv in evaluate:
-        cp = cpv_getkey(cpv)
-        pkg = read_dependencies(
-            vardb, portdb, cpv, match, updates, ebuild_use
-        )._replace(**read_update(vardb, cpv, by_cp[cp], repositories, ebuild_use))
-        # Masks are costly (the license check above all), and depclean only weighs them for a
-        # package that is not visible or shares its cp with another installed version.
-        if not pkg.visible or versions[cp] > 1:
-            pkg = pkg._replace(
-                **read_masked(vardb, portdb, installed_settings, cpv, updates)
+
+    def candidates_of(cp):
+        if fresh(cp):
+            read.add(cp)
+            return read_candidates(
+                portdb, settings, cp, installed_cpvs, match, ebuild_use
             )
-        packages.append(pkg)
-    candidates.extend(c for found in by_cp.values() for c in found)
-    return EvaluatedLayer(packages, candidates)
+        return [carry(c) for c in previous_candidates[cp]]
+
+    for cp in installed_cps:
+        by_cp[cp] = candidates_of(cp)
+    if evaluate:
+        updates = dynamic.global_updates(portdb)
+        repositories = portdb.getRepositories()
+        installed_settings = config(clone=vardb.settings)
+        versions = collections.Counter(cpv_getkey(cpv) for cpv in cpvs)
+        for cpv in evaluate:
+            cp = cpv_getkey(cpv)
+            pkg = read_dependencies(
+                vardb, portdb, cpv, match, updates, ebuild_use
+            )._replace(**read_update(vardb, cpv, by_cp[cp], repositories, ebuild_use))
+            # Masks are costly (the license check above all), and depclean only weighs them
+            # for a package that is not visible or shares its cp with another installed
+            # version.
+            if not pkg.visible or versions[cp] > 1:
+                pkg = pkg._replace(
+                    **read_masked(vardb, portdb, installed_settings, cpv, updates)
+                )
+            packages.append(pkg)
+    # What emerge would have to pull in: the cps that dependencies nothing installed
+    # satisfies name, and theirs in turn.
+    reached = set(installed_cps)
+    queue = []
+    for deps in itertools.chain(
+        (pkg.deps for pkg in packages),
+        (c.deps for found in by_cp.values() for c in found),
+    ):
+        queue.extend(unsatisfied_cps(deps) - reached)
+    while queue:
+        cp = queue.pop()
+        if cp in reached:
+            continue
+        reached.add(cp)
+        by_cp[cp] = candidates_of(cp)
+        for c in by_cp[cp]:
+            queue.extend(unsatisfied_cps(c.deps) - reached)
+    return (
+        EvaluatedLayer(packages, [c for found in by_cp.values() for c in found]),
+        frozenset(read),
+    )
 
 
 def to_json(layer):
@@ -559,8 +640,10 @@ def to_json(layer):
             "use": list(c.use),
             "iuse": list(c.iuse),
             "reasons": list(c.reasons),
+            "errors": [list(error) for error in c.errors],
+            "deps": installed.deps_json(c.deps),
         }
         for c in layer.candidates()
     ]
-    document = {"format": 3, "packages": packages, "candidates": candidates}
+    document = {"format": 4, "packages": packages, "candidates": candidates}
     return json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"

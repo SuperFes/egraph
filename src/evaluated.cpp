@@ -79,8 +79,8 @@ std::optional<StoreError> read_dependencies(std::span<const std::byte> section,
     return r.error();
 }
 
-std::optional<StoreError> read_candidates(std::span<const std::byte> section,
-                                          Evaluated& evaluated) {
+std::optional<StoreError> read_candidates(std::span<const std::byte> section, Evaluated& evaluated,
+                                          std::uint32_t packages) {
     Reader r(section, "candidates");
     const auto count = r.count();
     const auto strings = size32(evaluated.strings.size());
@@ -93,6 +93,10 @@ std::optional<StoreError> read_candidates(std::span<const std::byte> section,
         }
         for (auto* flags : {&candidate.use, &candidate.iuse, &candidate.reasons}) {
             *flags = read_ids(r, evaluated.ids, strings, "string");
+        }
+        candidate.errors = read_pairs(r, evaluated.pairs, strings);
+        for (auto& deps : candidate.deps) {
+            deps = read_nodes(r, evaluated, strings, packages);
         }
         evaluated.candidates.push_back(candidate);
     }
@@ -121,8 +125,13 @@ std::expected<Evaluated, StoreError> decode_evaluated(std::span<const std::byte>
             return std::unexpected(*error);
         }
     }
-    // Dependency records name candidates.
-    if (auto error = read_candidates(section(section_candidates), evaluated)) {
+    // Dependency records name candidates, whose nodes name the packages of the records.
+    Reader packages(section(section_dependencies), "dependencies");
+    const auto count = packages.count();
+    if (auto error = packages.error()) {
+        return std::unexpected(*error);
+    }
+    if (auto error = read_candidates(section(section_candidates), evaluated, count)) {
         return std::unexpected(*error);
     }
     if (auto error = read_dependencies(section(section_dependencies), evaluated)) {

@@ -392,3 +392,14 @@ process including load and the freshness check of 2,575 inputs.
   egencache skips an ebuild whose digest does not match, and portage then regenerates the
   metadata itself, which is the in-place edit TODO.md records as unnoticed.
 
+
+## Candidates' own dependencies (2026-09-29, roadmap step 14a)
+
+- Dev box: 5,023 candidates (every visible version of the installed cps, and of the cps the
+  dependencies would pull in), 36 cps beyond the installed ones, `dev-cpp/mm-common` among
+  them. The closure itself costs 0.27 s.
+- The evaluated store grows from 1.29 MB to 1.99 MB. A full build of both stores: 69.6G to
+  78.2G instructions (+12%).
+- An incremental build with nothing changed: 10.3G to 15.4G, then 14.5G once candidate trees
+  are named while decoding rather than through `_replace`. The rest is decoding and encoding
+  the extra nodes in Python, the floor recorded under step 9f.

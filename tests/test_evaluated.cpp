@@ -9,6 +9,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -119,6 +121,19 @@ TEST_CASE("the sample evaluated store decodes") {
     const auto& masked = evaluated->candidates.at(1);
     CHECK_FALSE(masked.visible());
     CHECK(evaluated->string(evaluated->ids_in(masked.reasons).front()) == "~amd64 keyword");
+    for (const auto deps : masked.deps) {
+        CHECK(deps.count == 0);
+    }
+    const auto& b2 = evaluated->candidates.back();
+    CHECK(evaluated->pairs_in(b2.errors).empty());
+    const auto depend = evaluated->nodes_in(b2.deps.at(1));
+    REQUIRE(depend.size() == 1);
+    CHECK(evaluated->string(depend.front().atom) == "app-misc/a");
+    CHECK(std::ranges::equal(evaluated->ids_in(depend.front().matches), std::array{0U}));
+    const auto b2_rdepend = evaluated->nodes_in(b2.deps.at(4));
+    REQUIRE(b2_rdepend.size() == 1);
+    CHECK(evaluated->string(b2_rdepend.front().atom) == "dev-libs/gone");
+    CHECK(evaluated->ids_in(b2_rdepend.front().matches).empty());
 }
 
 TEST_CASE("every evaluated truncation is rejected") {
@@ -199,6 +214,13 @@ TEST_CASE("evaluated records are checked") {
     bad_masked.varints({1, 0, 2, 0}).list({});
     CHECK_THAT(rejection(evaluated_with_section(4, bad_masked)),
                Catch::Matchers::StartsWith("dependencies: masked 2 out of range 2"));
+
+    // Two dependency records, so package 2 does not exist.
+    Bytes bad_candidate_match;
+    bad_candidate_match.varint(1).varints({5, 1, 7, 6, 6}).list({}).list({}).list({}).varint(0);
+    bad_candidate_match.varints({0, 0, 0, 0, 1}).varints({0, 0, 4}).list({2});
+    CHECK_THAT(rejection(evaluated_with_section(5, bad_candidate_match)),
+               Catch::Matchers::StartsWith("candidates: package 2 out of range 2"));
 
     Bytes trailing;
     trailing.varint(0).varint(0);

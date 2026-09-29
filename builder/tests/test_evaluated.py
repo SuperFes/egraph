@@ -108,6 +108,55 @@ def test_candidates_are_sorted_and_unique(scenario):
     assert keys == sorted(set(keys))
 
 
+def test_candidate_deps_are_depgraphs(scenario):
+    for c in build(scenario).candidates():
+        if c.reasons:
+            assert c.deps == evaluated.NO_DEPS, c
+            continue
+        found = {
+            kind: frozenset(node.atom for node in nodes if node.atom)
+            for kind, nodes in zip(DEP_KINDS, c.deps)
+        }
+        assert found == update.candidate_deps(scenario.trees, scenario.eroot, c), c
+
+
+def test_candidates_reach_what_nothing_installed_satisfies(scenario):
+    """Every cp an unsatisfied dependency names has its candidates, when it has any ebuild, and
+    every candidate cp is installed or so named."""
+    layer = build(scenario)
+    db = portdb(scenario)
+    trees = [pkg.deps for pkg in layer]
+    trees.extend(c.deps for c in layer.candidates() if not c.reasons)
+    named = set().union(*map(evaluated.unsatisfied_cps, trees))
+    present = {c.cp for c in layer.candidates()}
+    for cp in named:
+        if db.cp_list(cp):
+            assert cp in present, cp
+    assert present <= set(installed_cps(scenario)) | named
+
+
+def test_candidates_follow_new_packages(playgrounds):
+    layer = build(playgrounds("pulls"))
+    present = {c.cp for c in layer.candidates()}
+    assert present - set(installed_cps(playgrounds("pulls"))) == {
+        "dev-cpp/mm-common",
+        "dev-libs/chain",
+        "dev-libs/extra",
+        "dev-libs/first",
+        "dev-libs/fresh",
+        "dev-libs/second",
+    }
+    (glibmm,) = [c for c in layer.candidates("app-misc/glibmm") if c.cpv.endswith("-2")]
+    (node,) = glibmm.deps[DEP_KINDS.index("BDEPEND")]
+    assert (node.atom, node.matches) == ("dev-cpp/mm-common", ())
+    (flagged,) = [
+        c for c in layer.candidates("app-misc/flagged") if c.cpv.endswith("-2")
+    ]
+    assert [n.atom for n in flagged.deps[DEP_KINDS.index("RDEPEND")]] == [
+        "dev-libs/extra"
+    ]
+
+
 # By hand, on the repository scenario.
 
 
@@ -239,6 +288,8 @@ def test_updates_follow_emerge(request, scenario, newuse, changed_use):
     versions, and holds are the queries' (test_queries.test_updates_are_emerges)."""
     if SCENARIOS[request.node.callspec.params["scenario"]].get("bounded"):
         pytest.skip("installed dependents hold updates back here")
+    if SCENARIOS[request.node.callspec.params["scenario"]].get("pulls"):
+        pytest.skip("targets pull in new packages here")
     found = update.updates(scenario.trees, scenario.eroot, newuse, changed_use)
     if not found.success:
         pytest.skip("emerge cannot resolve @installed here")

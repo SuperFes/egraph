@@ -33,7 +33,7 @@ INPUT_FILE, INPUT_DIRECTORY, INPUT_SYMLINK, INPUT_MISSING = range(4)
 DEFAULT_PATH = "var/cache/egraph/installed.egraph"
 
 EVALUATED_MAGIC = b"EGRAPHEV"
-EVALUATED_FORMAT_VERSION = 3
+EVALUATED_FORMAT_VERSION = 4
 SECTION_DEPENDENCIES, SECTION_CANDIDATES = range(4, 6)
 EVALUATED_SECTIONS = (
     SECTION_META,
@@ -282,6 +282,11 @@ def encode_evaluated(layer, meta, inputs=()):
             w.varint(strings(value))
         for values in (c.use, c.iuse, c.reasons):
             w.ids([strings(value) for value in values])
+        w.varint(len(c.errors))
+        for key, message in c.errors:
+            w.varint(strings(key))
+            w.varint(strings(message))
+        _write_trees(w, c.deps, strings, index)
     sections[SECTION_CANDIDATES] = w.out
 
     sections[SECTION_STRINGS] = _write_strings(strings)
@@ -386,8 +391,8 @@ def _read_strings(section):
     return strings
 
 
-def _read_trees(r, s, packages):
-    """Node lists per kind, matches still as package ids."""
+def _read_trees(r, s, packages, names=None):
+    """Node lists per kind, matches named by names when given, else still package ids."""
     deps = []
     for _ in DEP_KINDS:
         nodes = []
@@ -396,14 +401,22 @@ def _read_trees(r, s, packages):
             parent = r.varint(index + 1) - 1
             if parent >= 0 and nodes[parent].type not in (1, 2):
                 r.fail("parent is not a group")
-            nodes.append(Node(node_type, parent, s(), r.ids(packages)))
-        deps.append(nodes)
-    return deps
+            atom = s()
+            matches = r.ids(packages)
+            if names is not None:
+                matches = tuple(names[i] for i in matches)
+            nodes.append(Node(node_type, parent, atom, matches))
+        deps.append(tuple(nodes))
+    return tuple(deps)
 
 
 def _named(deps, cpvs):
+    # Node(...) rather than _replace: this runs for every node of a store.
     return tuple(
-        tuple(n._replace(matches=tuple(cpvs[i] for i in n.matches)) for n in nodes)
+        tuple(
+            Node(n.type, n.parent, n.atom, tuple(cpvs[i] for i in n.matches))
+            for n in nodes
+        )
         for nodes in deps
     )
 
@@ -523,14 +536,16 @@ def decode_evaluated(data):
     r.done()
 
     r = _Reader(sections[SECTION_CANDIDATES], "candidates")
+    cpvs = [cpv for cpv, *_ in raw]
     candidates = []
     for _ in range(r.count()):
         fields = [s() for _ in range(5)]
         lists = [tuple(strings[i] for i in r.ids(nstrings)) for _ in range(3)]
-        candidates.append(Candidate(*fields, *lists))
+        errors = tuple((s(), s()) for _ in range(r.count()))
+        deps = _read_trees(r, s, count, cpvs)
+        candidates.append(Candidate(*fields, *lists, errors, deps))
     r.done()
 
-    cpvs = [cpv for cpv, *_ in raw]
     packages = []
     for cpv, source, eapi, errors, deps, possible, weighed in raw:
         visible, masked, vdb_masked, target, rebuild = weighed

@@ -13,7 +13,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t evaluated_format_version = 3;
+inline constexpr std::uint32_t evaluated_format_version = 4;
 
 // Where an installed package's dependency strings came from under --dynamic-deps=y.
 enum class DepSource : std::uint8_t { ebuild, vdb, moved };
@@ -61,7 +61,8 @@ struct Possible {
     Range flags;
 };
 
-// One version of an installed cp in one repository.
+// One version of a cp in one repository: an installed cp, or one that dependencies reach where
+// nothing installed satisfies them.
 struct Candidate {
     // String ids.
     std::uint32_t cp = 0;
@@ -74,6 +75,11 @@ struct Candidate {
     Range use;
     Range iuse;
     Range reasons;
+    // In Evaluated::pairs: dependency strings portage could not parse.
+    Range errors;
+    // In Evaluated::nodes, one per entry of dep_kinds, reduced under use; matches are installed
+    // package ids. Empty for a masked candidate.
+    std::array<Range, dep_kinds.size()> deps;
 
     [[nodiscard]] bool visible() const { return reasons.count == 0; }
 };

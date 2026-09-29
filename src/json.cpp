@@ -163,17 +163,26 @@ template <typename Layer> void write_nodes(std::ostream& out, const Layer& store
     out << ']';
 }
 
+// The node lists of a package or candidate, one per dependency kind, as a JSON object.
+template <typename Layer>
+void write_deps(std::ostream& out, const Layer& store,
+                const std::array<Range, dep_kinds.size()>& deps) {
+    out << '{';
+    for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+        out << (kind == 0 ? "\"" : ",\"") << dep_kinds.at(kind) << "\":";
+        write_nodes(out, store, deps.at(kind));
+    }
+    out << '}';
+}
+
 void write_package(std::ostream& out, const Store& store, const Package& pkg) {
     out << "{\"cp\":";
     write_string(out, store, pkg.cp);
     out << ",\"cpv\":";
     write_string(out, store, pkg.cpv);
-    out << ",\"deps\":{";
-    for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
-        out << (kind == 0 ? "\"" : ",\"") << dep_kinds.at(kind) << "\":";
-        write_nodes(out, store, pkg.deps.at(kind));
-    }
-    out << "},\"eapi\":";
+    out << ",\"deps\":";
+    write_deps(out, store, pkg.deps);
+    out << ",\"eapi\":";
     write_string(out, store, pkg.eapi);
     out << ",\"errors\":";
     write_pairs(out, store, pkg.errors);
@@ -229,6 +238,10 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string(out, evaluated, candidate.cp);
         out << ",\"cpv\":";
         write_string(out, evaluated, candidate.cpv);
+        out << ",\"deps\":";
+        write_deps(out, evaluated, candidate.deps);
+        out << ",\"errors\":";
+        write_pairs(out, evaluated, candidate.errors);
         out << ",\"iuse\":";
         write_string_list(out, evaluated, candidate.iuse);
         out << ",\"reasons\":";
@@ -243,18 +256,15 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string_list(out, evaluated, candidate.use);
         out << '}';
     }
-    out << R"(],"format":3,"packages":[)";
+    out << R"(],"format":4,"packages":[)";
     first = true;
     for (const auto& pkg : evaluated.packages) {
         out << (first ? "{\"cpv\":" : ",{\"cpv\":");
         first = false;
         write_string(out, evaluated, pkg.cpv);
-        out << ",\"deps\":{";
-        for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
-            out << (kind == 0 ? "\"" : ",\"") << dep_kinds.at(kind) << "\":";
-            write_nodes(out, evaluated, pkg.deps.at(kind));
-        }
-        out << "},\"eapi\":";
+        out << ",\"deps\":";
+        write_deps(out, evaluated, pkg.deps);
+        out << ",\"eapi\":";
         write_string(out, evaluated, pkg.eapi);
         out << ",\"errors\":";
         write_pairs(out, evaluated, pkg.errors);

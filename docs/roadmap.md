@@ -238,8 +238,8 @@ an update back, rather than skipping it), it stays, recorded in `upstream-notes.
   through `--nodeps`, which later `-uD` runs undo, so it is shown with that warning. egraph prints
   the commands (`--deselect`, `-C`, the update); it does not run emerge. `updates --held` and a
   held-updates view in the TUI.
-- Left to a resolver: what the targets' own dependencies pull in (new packages, and updates
-  that need a held one), new slots, and slot-operator rebuilds.
+- What the targets' own dependencies pull in (new packages and slots, and updates that need a
+  held one) and slot-operator rebuilds moved to step 14.
 
 ## 13. A living app
 
@@ -262,8 +262,26 @@ and run-and-done otherwise (`docs/vision.md`).
 
 ## 14. Plans
 
-- The update set in merge order: as a tree down to each package's world root, and as a table
-  (`-t`) with from, to, why and what each waits for. Pretend only, first as a view of the living
-  app. Needs the targets' own dependencies (what emerge pulls in), which the evaluated store
-  does not hold yet; checked against emerge's merge list by validity (every build dependency
-  first), not identity.
+What `emerge -uD` would merge, and in what order, rather than only what it would replace. Taken
+ahead of 12c, 12d and 13d at the user's direction. The resolution is greedy, as far as emerge's
+is on the systems we compare: a dependency nothing planned satisfies takes the best visible
+version that matches it, and a `||` group takes its first alternative that can be satisfied.
+Blockers stay out of scope until a comparison needs them.
+
+- 14a (done): the targets' own dependencies in the evaluated store (format 4): per visible
+  candidate, its dependency node lists reduced under the USE it would be built with, matches
+  naming installed packages, held to depgraph's own reduction on every scenario; and
+  candidates for every cp outside the installed set that those lists (or the installed
+  packages' dynamic ones) reach where nothing installed satisfies them, followed to closure and
+  kept incrementally. On the dev box: 5,023 candidates, 36 more cps (`dev-cpp/mm-common` among
+  them), a full build 12% more instructions.
+- 14b: `updates` as a plan: new packages each target (or a kept package's dynamic dependencies)
+  pulls in, with what pulls them; a target whose dependency only a held update would satisfy is
+  held by it in turn, to a fixed point. Compared with `emerge -puD @installed` as a set on every
+  scenario, and with `-uDN @world` on the dev box.
+- 14c: slot-operator rebuilds: a dependent whose `:=` atom a target's new slot or sub-slot
+  breaks is rebuilt, as emerge does.
+- 14d: the plan in merge order: as a tree down to each package's world root, and as a table
+  (`-t`) with from, to, why and what each waits for. Pretend only, first in the one-shot
+  output, then as a view of the living app. Checked against emerge's merge list by validity
+  (every build dependency first), not identity.

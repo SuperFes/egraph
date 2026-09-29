@@ -7,6 +7,7 @@ import time
 
 import portage
 import pytest
+from portage.versions import cpv_getkey
 
 from egraph_build import build, cli, evaluated, installed, store
 from egraph_build.installed import ATOM
@@ -265,10 +266,10 @@ def test_strict_mode_catches_a_wrong_incremental(cli_system, monkeypatch, capsys
 def test_evaluated_inputs(playgrounds):
     system = playgrounds("repository")
     portdb = system.trees[system.eroot]["porttree"].dbapi
-    cpvs = sorted(str(cpv) for cpv in system.vardb.cpv_all())
+    cps = sorted({cpv_getkey(str(cpv)) for cpv in system.vardb.cpv_all()})
     paths = {
         item.path: item.kind
-        for item in build.evaluated_inputs(system.vardb.settings, portdb, cpvs)
+        for item in build.evaluated_inputs(system.vardb.settings, portdb, cps)
     }
     main = portdb.getRepositoryPath("test_repo")
     overlay = portdb.getRepositoryPath("overlay")
@@ -399,8 +400,9 @@ def test_evaluated_package_removed_rematches_its_dependents(evaluated_system):
     shutil.rmtree(vdb(playground, "dev-libs/new-1"))
     ev = reevaluate(*evaluated_system)
     assert not ev.full
-    # No installed cp left to evaluate.
-    assert ev.evaluated == frozenset()
+    # Its dependent still needs it, so it is read again as a cp to pull in.
+    assert ev.evaluated == {"dev-libs/new"}
+    assert "dev-libs/new" in {c.cp for c in ev.layer.candidates()}
     (node,) = ev.layer.package("app-misc/dyn-1").deps[
         installed.DEP_KINDS.index("RDEPEND")
     ]
@@ -434,6 +436,30 @@ def test_evaluated_synced_ebuild_reevaluates_its_category(evaluated_system):
     assert not ev.full
     assert ev.evaluated == {"dev-libs/lib", "dev-libs/new", "dev-libs/old"}
     assert ev.layer.package("dev-libs/lib-2").target is None
+
+
+def test_evaluated_synced_dependency_reads_the_cp_it_pulls_in(evaluated_system):
+    playground = evaluated_system[0]
+    main = repository(playground, "test_repo")
+    os.makedirs(os.path.join(main, "app-misc/pulled"))
+    write_atomically(
+        os.path.join(main, "app-misc/pulled/pulled-1.ebuild"),
+        'EAPI="8"\nKEYWORDS="x86"\nSLOT="0"\n',
+    )
+    edit_ebuild(
+        playground,
+        "test_repo",
+        "dev-libs/lib-2.1",
+        'KEYWORDS="x86"',
+        'KEYWORDS="x86"\nRDEPEND="app-misc/pulled"',
+    )
+    sync(playground, "test_repo")
+    ev = reevaluate(*evaluated_system)
+    assert not ev.full
+    assert "app-misc/pulled" in ev.evaluated
+    assert [c.cpv for c in ev.layer.candidates("app-misc/pulled")] == [
+        "app-misc/pulled-1"
+    ]
 
 
 def test_evaluated_overlay_ebuild_reevaluates_its_cp(evaluated_system):

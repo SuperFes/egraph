@@ -109,7 +109,7 @@ The installed packages as emerge sees them against the repositories: their depen
 store it was built against, named after it (`installed.egraph` → `installed.evaluated.egraph`:
 the last extension replaced by `.evaluated.egraph`), and is written by the same builder run.
 
-It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 3.
+It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 4.
 Package ids are the installed store's, so an evaluated store is current only while the installed
 store beside it has the build start recorded in its meta, and its own inputs stat the same.
 
@@ -169,18 +169,26 @@ weighs the package against its repositories under `--update`:
     `*` when the flag's state changed. Those with a `*` are `--changed-use`'s. Flags new in or
     gone from IUSE count only when the profile neither masks nor forces them on the target.
 
-A candidate is one version of an installed cp in one repository: every visible one, and each
-masked one that is installed.
+A candidate is one version of a cp in one repository: every visible one, and each masked one
+that is installed. The cps are the installed ones, and every cp that emerge could have to pull
+in: named by an atom in a dependency record or a visible candidate's node lists that no
+installed package matches, outside any `||` or all-of group installed packages satisfy, and
+followed through the candidates of the cps so reached until nothing new is named. Blockers name
+nothing.
 
 1. String ids: cp, cpv, repo, slot, sub-slot.
 2. USE: list of string ids, the flags the ebuild would be built with now, within its IUSE.
 3. IUSE: list of string ids, without `+` and `-` defaults.
 4. Reasons: list of string ids, why the version is masked as portage words them (`package.mask`,
    `~amd64 keyword`, `EULA license(s)`); empty when it is visible.
+5. Errors: list of `(kind, message)` string ids, as in the package record.
+6. The five node lists, as in the package record: the ebuild's dependency strings reduced under
+   its USE, with matches naming installed package ids. Empty for a masked candidate.
 
 Inputs are the installed store's configuration and profile inputs, the user's visibility and USE
 configuration (`package.accept_keywords`, `package.mask`, `package.unmask`, `package.license`,
 `package.use` and their relatives, `env`, `repos.conf`), and per repository its root, layout,
 repository-wide masks, license groups, categories, package moves and eclass directory, the
-metadata cache directory of every installed category, and outside the main repository the
-category and package directories and ebuilds of every installed cp it carries.
+metadata cache directory of every category of the store's cps (installed and candidate), and
+outside the main repository the category and package directories and ebuilds of every such cp
+it carries.

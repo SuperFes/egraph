@@ -25,7 +25,7 @@ Each layer has its own inputs and invalidation, and is proven independently.
 | Layer | Contents | Depends on | Status |
 |---|---|---|---|
 | Installed | installed packages, exact dependency edges, sonames, blockers, roots | `/var/db/pkg`, world file, profile (for @system) | first |
-| Evaluated | installed packages' dependencies as emerge reads them by default, and what their ebuilds would add with flags toggled; how `emerge -u` and depclean weigh each (visibility, masks, the version it would move to, the flags `--newuse` rebuilds it for); the visible versions of installed cps with effective USE, and why installed ones are masked | repo metadata, `/etc/portage`, profile, the installed store | stored (9b-9e) |
+| Evaluated | installed packages' dependencies as emerge reads them by default, and what their ebuilds would add with flags toggled; how `emerge -u` and depclean weigh each (visibility, masks, the version it would move to, the flags `--newuse` rebuilds it for); the visible versions of installed cps, and of the cps their dependencies would pull in, with effective USE and their own dependencies, and why installed ones are masked | repo metadata, `/etc/portage`, profile, the installed store | stored (9b-9e, 14a) |
 
 The evaluated layer is its own file beside the installed store (`installed.evaluated.egraph`),
 written by the same builder run and keyed to that installed store: it names packages by the
@@ -75,10 +75,10 @@ dependencies with defaults, repository) and means by it exactly what `vardb.matc
 - The matcher runs in shadow against `vardb.match` over a generated corpus of 339 atoms, every
   atom in every scenario, and all 5,667 distinct atoms on the dev box, with no differences.
   Portage is right until a test says otherwise.
-- `match --candidates` matches the installed cps' ebuilds instead, as depgraph matches an ebuild
-  against a dependency: its `Package` with the USE it would be built with now, and the profile's
-  `IUSE_EFFECTIVE` for implicit flags (candidates do not record their EAPI, so an ebuild of EAPI
-  0 to 4 is matched as if it had it). It runs in shadow against `match_from_list` on such
+- `match --candidates` matches the candidates' ebuilds instead (the installed cps' and those they
+  would pull in), as depgraph matches an ebuild against a dependency: its `Package` with the USE
+  it would be built with now, and the profile's `IUSE_EFFECTIVE` for implicit flags (candidates
+  do not record their EAPI, so an ebuild of EAPI 0 to 4 is matched as if it had it). It runs in shadow against `match_from_list` on such
   `Package`s over the same corpus, every scenario's atoms and every live atom. Atoms record slot
   operators (`:=`, `:slot/sub=`), which update holds treat as rebuilds rather than bounds.
 

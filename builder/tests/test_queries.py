@@ -10,6 +10,7 @@ from compare import _sonames, possible_mismatches
 from conftest import dynamic_option, portdb, write_stores
 from egraph_build import oracle, roots
 from egraph_build.model import Edge
+from scenarios import SCENARIOS
 
 EGRAPH = os.environ.get("EGRAPH")
 
@@ -133,13 +134,16 @@ def parse_updates(text):
     ids=["update", "newuse", "changed-use"],
 )
 def test_updates_are_emerges(
-    scenario, system, dynamic_deps, option, newuse, changed_use
+    request, scenario, system, dynamic_deps, option, newuse, changed_use
 ):
     """What emerge -puD @installed replaces: dependents' atoms hold updates back, and the deep
     resolution falls back to the best version they accept, as plain -u does not."""
     from portage.versions import cpv_getversion, vercmp
 
     import update
+
+    if SCENARIOS[request.node.callspec.params["scenario"]].get("pulls"):
+        pytest.skip("targets pull in new packages here")
 
     expected = update.updates(
         scenario.trees,

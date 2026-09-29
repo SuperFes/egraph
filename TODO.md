@@ -32,7 +32,10 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       a full build, and nearly all of it is decoding and re-encoding the store in Python
       (`findings.md`). If refresh latency after a merge matters, that floor is the thing to cut.
       It does now: the first emerge after a merge that asks `egraph affected` pays the refresh,
-      more than the 3G instructions egraph saves it.
+      more than the 3G instructions egraph saves it. The candidates' trees (14a) raised the
+      nothing-changed incremental of both stores from 10.3G to 14.5G on the dev box.
+- [ ] Closure cps with no ebuild anywhere (an atom nothing can satisfy) are looked up through
+      portage again on every incremental build, since the store keeps no record of them.
 - [ ] Environment variables that change implicit IUSE (`USE_EXPAND` and friends set in the
       environment rather than make.conf) are not inputs, so a change there goes unnoticed.
 - [ ] `egraph` does not check the store's EROOT against its own roots; only the builder does, on

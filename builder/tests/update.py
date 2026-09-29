@@ -169,3 +169,34 @@ def candidate_matches(trees, eroot, atom, candidates):
         if match_from_list(wanted, [pkg]):
             found.add(f"{candidate.cpv}::{candidate.repo}")
     return found
+
+
+def candidate_deps(trees, eroot, candidate):
+    """{kind: atoms} of a candidate ebuild as depgraph reduces them: its Package's dependency
+    strings under the USE it would be built with now."""
+    from _emerge.Package import Package
+    from portage.dep import Atom, use_reduce
+
+    root_config = trees[eroot]["root_config"]
+    portdb = trees[eroot]["porttree"].dbapi
+    keys = list(portdb._aux_cache_keys)
+    metadata = zip(keys, portdb.aux_get(candidate.cpv, keys, myrepo=candidate.repo))
+    pkg = Package(
+        built=False,
+        cpv=candidate.cpv,
+        installed=False,
+        metadata=metadata,
+        root_config=root_config,
+        type_name="ebuild",
+    )
+    found = {}
+    for kind in Package._dep_keys:
+        tokens = use_reduce(
+            pkg._metadata[kind],
+            uselist=pkg.use.enabled,
+            eapi=pkg.eapi,
+            flat=True,
+            token_class=Atom,
+        )
+        found[kind] = frozenset(str(t) for t in tokens if t != "||")
+    return found
