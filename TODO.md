@@ -94,8 +94,6 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 Direction from the user (2026-09-27): output does not have to look like portage's; make it clean
 and organised, and a TUI (ncurses, or Notcurses) is welcome.
 
-- [ ] `--glyphs` defaults to Nerd Font icons; detecting a UTF-8 locale (and defaulting to
-      `ascii` without one) would suit terminals that cannot show them.
 - [ ] `--possible` finds each chain of USE conditionals through portage's `paren_reduce`, which
       is deprecated "without replacement". If it goes, the chains need another source; the
       semantics stay `use_reduce(subset=)`'s.

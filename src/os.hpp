@@ -48,6 +48,10 @@ std::filesystem::path executable();
 // Whether standard output is a terminal.
 bool stdout_is_terminal();
 
+// Whether the locale the environment selects (LC_ALL, LC_CTYPE, LANG) has UTF-8 characters; not
+// when it names a locale that is not installed.
+bool utf8_locale();
+
 // The environment variable's value, if it is set.
 std::optional<std::string> environment(std::string_view name);
 

@@ -375,7 +375,7 @@ struct Output {
 Output output(const Invocation& invocation) {
     const auto chosen = style(invocation);
     return {.human = chosen.human,
-            .theme = {.paint = Painter{chosen.color}, .glyph_set = invocation.glyphs}};
+            .theme = {.paint = Painter{chosen.color}, .glyph_set = chosen.glyphs}};
 }
 
 void write_lines(std::ostream& out, std::span<const std::string> lines) {
@@ -672,7 +672,7 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
         return output_of(steve::set_arguments(setting, value)).transform([](const auto&) {});
     };
     return tui::open_and_run(
-        std::move(*stores), invocation.dynamic_deps, invocation.glyphs,
+        std::move(*stores), invocation.dynamic_deps, style(invocation).glyphs,
         {.check = check,
          .rebuild = rebuild,
          .watch = watch,
@@ -806,7 +806,7 @@ void configure(CLI::App& app, Invocation& invocation) {
         {"nerd", GlyphSet::nerd}, {"unicode", GlyphSet::unicode}, {"ascii", GlyphSet::ascii}};
     app.add_option("--glyphs", invocation.glyphs,
                    "Icons in the human layout: a Nerd Font's, plain Unicode, or ASCII "
-                   "(default nerd)")
+                   "(default nerd in a UTF-8 locale, ascii otherwise)")
         ->transform(CLI::CheckedTransformer(glyph_sets).description("{nerd,unicode,ascii}"))
         ->envname("EGRAPH_GLYPHS");
 
@@ -919,11 +919,14 @@ Style style(const Invocation& invocation) {
         human &&
         (invocation.color == ColorMode::always ||
          (invocation.color == ColorMode::automatic && invocation.terminal && !invocation.no_color));
+    const auto glyphs =
+        invocation.glyphs.value_or(invocation.utf8 ? GlyphSet::nerd : GlyphSet::ascii);
     if (!color) {
-        return {.human = human, .color = ColorDepth::none};
+        return {.human = human, .color = ColorDepth::none, .glyphs = glyphs};
     }
     return {.human = human,
-            .color = invocation.truecolor ? ColorDepth::truecolor : ColorDepth::palette};
+            .color = invocation.truecolor ? ColorDepth::truecolor : ColorDepth::palette,
+            .glyphs = glyphs};
 }
 
 std::filesystem::path system_store_path(const Invocation& invocation) {

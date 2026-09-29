@@ -1,9 +1,11 @@
 #include "os.hpp"
 
 #include <cerrno>
+#include <clocale>
 #include <cstdlib>
 #include <fcntl.h>
 #include <format>
+#include <langinfo.h>
 #include <spawn.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -154,6 +156,18 @@ std::filesystem::path executable() {
 
 bool stdout_is_terminal() {
     return isatty(STDOUT_FILENO) == 1;
+}
+
+bool utf8_locale() {
+    // A locale of our own, so the process's stays "C" for everything else.
+    locale_t locale = newlocale(LC_CTYPE_MASK, "", locale_t{});
+    if (locale == locale_t{}) {
+        return false;
+    }
+    const std::string_view codeset{nl_langinfo_l(CODESET, locale)};
+    const bool utf8 = codeset == "UTF-8";
+    freelocale(locale);
+    return utf8;
 }
 
 std::optional<std::string> environment(std::string_view name) {

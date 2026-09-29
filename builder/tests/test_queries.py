@@ -18,11 +18,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def egraph(path, *args, check=True):
+def egraph(path, *args, check=True, env=None):
     result = subprocess.run(
         [EGRAPH, "--store", str(path), "--no-refresh", *args],
         capture_output=True,
         text=True,
+        env=None if env is None else {**os.environ, **env},
     )
     if check:
         assert result.returncode == 0, result.stderr
@@ -194,6 +195,21 @@ def test_updates_by_hand(playgrounds, tmp_path):
         "U dev-libs/slotted  1 > 1.1   ::test_repo\n"
         "\n5 upgrades, 2 downgrades\n"
     )
+
+    def glyphs(locale):
+        return egraph(
+            path,
+            "--layout",
+            "human",
+            "--color",
+            "never",
+            "updates",
+            env={"LC_ALL": locale},
+        ).stdout
+
+    assert glyphs("C") == human
+    assert glyphs("xx_XX.UTF-8") == human
+    assert glyphs("C.UTF-8").startswith("\uf0aa app-misc/both")
 
 
 def test_a_cp_names_every_installed_version(playgrounds, tmp_path):

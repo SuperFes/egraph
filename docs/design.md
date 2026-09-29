@@ -87,8 +87,9 @@ Two layouts of the same records. On a terminal, queries are laid out for people:
 - Coloured part by part (category, name, version; operator, slot, repository, USE flags), in
   truecolor when `COLORTERM` says so and xterm-256 otherwise. `--color auto|always|never`, and
   `NO_COLOR` is honoured.
-- Decorated with Nerd Font icons by default; `--glyphs unicode` or `ascii` (or `EGRAPH_GLYPHS`)
-  for fonts without them.
+- Decorated with Nerd Font icons by default, ASCII when the locale is not UTF-8 (or names one
+  that is not installed); `--glyphs unicode` or `ascii` (or `EGRAPH_GLYPHS`) for fonts without
+  them.
 
 Piped, or with `--layout lines` (also `EGRAPH_LAYOUT`), the output is one tab-separated record
 per line, sorted and without duplicates, so it greps, diffs and compares against the oracle line

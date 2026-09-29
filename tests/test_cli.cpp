@@ -169,6 +169,18 @@ TEST_CASE("the layout is for people on a terminal and lines otherwise") {
     CHECK_THROWS_AS(parse("--glyphs emoji stats"), CLI::ValidationError);
 }
 
+TEST_CASE("glyphs default to a Nerd Font's in a UTF-8 locale and ASCII otherwise") {
+    using egraph::GlyphSet;
+    egraph::Invocation invocation;
+    CHECK(egraph::style(invocation).glyphs == GlyphSet::ascii);
+    invocation.utf8 = true;
+    CHECK(egraph::style(invocation).glyphs == GlyphSet::nerd);
+    invocation.glyphs = GlyphSet::unicode;
+    CHECK(egraph::style(invocation).glyphs == GlyphSet::unicode);
+    invocation.utf8 = false;
+    CHECK(egraph::style(invocation).glyphs == GlyphSet::unicode);
+}
+
 TEST_CASE("the interface needs a terminal, and a build with Notcurses") {
     const auto invocation = parse("tui");
     REQUIRE(std::holds_alternative<egraph::Tui>(invocation.command));

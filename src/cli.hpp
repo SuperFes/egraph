@@ -137,12 +137,15 @@ struct Invocation {
     bool dynamic_deps = true;
     Layout layout = Layout::automatic;
     ColorMode color = ColorMode::automatic;
-    GlyphSet glyphs = GlyphSet::nerd;
+    // Unset, a Nerd Font's in a UTF-8 locale and ASCII otherwise.
+    std::optional<GlyphSet> glyphs;
     // Facts about where output goes, which main fills in: stdout is a terminal, NO_COLOR is set
-    // to something, and COLORTERM says the terminal takes 24-bit colour.
+    // to something, COLORTERM says the terminal takes 24-bit colour, and the locale's character
+    // set is UTF-8.
     bool terminal = false;
     bool no_color = false;
     bool truecolor = false;
+    bool utf8 = false;
     // Where the running egraph is, and the user's cache directory ($XDG_CACHE_HOME, or
     // ~/.cache), which main fills in.
     std::filesystem::path program_dir;
@@ -150,10 +153,11 @@ struct Invocation {
     Command command;
 };
 
-// The layout and colouring an invocation resolves to. Lines are never coloured.
+// The layout, colouring and glyphs an invocation resolves to. Lines are never coloured.
 struct Style {
     bool human = false;
     ColorDepth color = ColorDepth::none;
+    GlyphSet glyphs = GlyphSet::nerd;
 };
 [[nodiscard]] Style style(const Invocation& invocation);
 

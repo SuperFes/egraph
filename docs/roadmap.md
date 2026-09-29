@@ -177,6 +177,7 @@ Taken ahead of 8 and 9 at the user's direction: output need not look like portag
   view rebuilds the store as root, or previews the fresh build for anyone else. Step 8 (done):
   errors and notices in dialogs.
 - `rdeps --possible` (dependencies behind disabled USE flags): done in 9d.
+- 10c (done): glyphs default to ASCII outside a UTF-8 locale.
 
 ## 11. Build monitor
 
