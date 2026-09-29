@@ -12,6 +12,7 @@ int main(int argc, char** argv) {
         CLI::App app{"", "egraph"};
         egraph::Invocation invocation;
         invocation.terminal = egraph::os::stdout_is_terminal();
+        invocation.input_terminal = egraph::os::stdin_is_terminal();
         invocation.no_color = !egraph::os::environment("NO_COLOR").value_or("").empty();
         const auto colorterm = egraph::os::environment("COLORTERM").value_or("");
         invocation.truecolor = colorterm == "truecolor" || colorterm == "24bit";

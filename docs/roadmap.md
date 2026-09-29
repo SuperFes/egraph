@@ -249,7 +249,7 @@ and run-and-done otherwise (`docs/vision.md`).
 - 13a (done): a `Session` owns what every command now loads per run (both stores, the dynamic-deps
   store, the graph, depclean's results, the pending updates), computed on first use; each
   command computes from a session and renders. Every one-shot command's output unchanged.
-- 13b: a line-mode shell reading commands from standard input, for builds without Notcurses and
+- 13b (done): a line-mode shell (`egraph shell`) reading commands from standard input, for builds without Notcurses and
   for tests.
 - 13c: bare `egraph` on a terminal opens the TUI (`egraph tui` stays), with a `:` command line
   taking the CLI's commands and options through the same parser, and their results as views

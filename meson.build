@@ -176,6 +176,7 @@ unit_tests = executable(
   'tests/test_json.cpp',
   'tests/test_pressure.cpp',
   'tests/test_session.cpp',
+  'tests/test_shell.cpp',
   'tests/test_steve.cpp',
   'tests/test_store.cpp',
   'tests/test_tui.cpp',

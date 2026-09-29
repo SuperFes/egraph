@@ -113,6 +113,11 @@ struct Tui {
     static constexpr std::string_view name = "tui";
 };
 
+// Commands read one per line, answered from one session.
+struct Shell {
+    static constexpr std::string_view name = "shell";
+};
+
 // For portage's neighborhood completion: see affected.hpp.
 struct Affected {
     static constexpr std::string_view name = "affected";
@@ -121,7 +126,7 @@ struct Affected {
 };
 
 using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Orphans,
-                             Updates, Export, Stats, Rebuild, Refresh, Check, Tui, Affected>;
+                             Updates, Export, Stats, Rebuild, Refresh, Check, Tui, Shell, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.
@@ -152,6 +157,8 @@ struct Invocation {
     bool no_color = false;
     bool truecolor = false;
     bool utf8 = false;
+    // Standard input is a terminal, so the shell prompts.
+    bool input_terminal = false;
     // Where the running egraph is, and the user's cache directory ($XDG_CACHE_HOME, or
     // ~/.cache), which main fills in.
     std::filesystem::path program_dir;
@@ -220,5 +227,14 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
 void configure(CLI::App& app, Invocation& invocation);
 
 Exit run(const Invocation& invocation, std::ostream& out, std::ostream& err);
+
+// The shell: runs the commands read from in, one per line, against one session, until the end of
+// input or "quit" (or "exit"). Each line takes the command-line syntax, global options included,
+// except the ones that choose the stores (--root, --store and the like), which the session keeps.
+// A line that fails is reported on err and the next one read; blank lines and "#" comments are
+// skipped, and "help" prints the usage. With prompt, a prompt goes to out before each line. The
+// status is the last command's.
+Exit shell(const Invocation& invocation, std::istream& in, std::ostream& out, std::ostream& err,
+           bool prompt);
 
 } // namespace egraph

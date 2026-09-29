@@ -170,6 +170,10 @@ bool stdout_is_terminal() {
     return isatty(STDOUT_FILENO) == 1;
 }
 
+bool stdin_is_terminal() {
+    return isatty(STDIN_FILENO) == 1;
+}
+
 std::expected<void, std::error_code> replace_with_copy(const std::filesystem::path& source,
                                                        const std::filesystem::path& target) {
     namespace fs = std::filesystem;

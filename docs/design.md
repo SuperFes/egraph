@@ -92,6 +92,13 @@ keeps one for as long as it runs. Freshness is checked, and a stale store refres
 about, when a piece is first loaded. Depclean without dynamic deps reads the installed store
 loaded with the evaluated one, so its packages line up with the evaluated store's masks.
 
+`egraph shell` reads commands one per line from standard input and answers them all from one
+session, prompting when standard input is a terminal. A line takes the command-line syntax,
+global options included, except those that choose the stores (`--root`, `--store` and the
+like), which belong to the session. A failing line is reported and the next one read; the
+status is the last command's. `test_queries` holds every scenario's shell answers to the
+one-shot commands'.
+
 ## Query output
 
 Two layouts of the same records. On a terminal, queries are laid out for people:

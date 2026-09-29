@@ -707,6 +707,11 @@ Exit execute(const Tui&, Session&, const Invocation& invocation, std::ostream&, 
         warnings, err);
 }
 
+Exit execute(const Shell&, Session&, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    return shell(invocation, std::cin, out, err, invocation.input_terminal);
+}
+
 Exit execute(const Affected& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     std::ostringstream text;
@@ -925,6 +930,9 @@ void configure(CLI::App& app, Invocation& invocation) {
 
     add_command<Stats>(app, invocation, "Store and graph statistics");
     add_command<Tui>(app, invocation, "Browse the graph in a terminal interface");
+    add_command<Shell>(app, invocation,
+                       "Answer commands read one per line from standard input, loading the stores "
+                       "once");
     add_command<Rebuild>(app, invocation, "Rebuild the store from scratch");
     add_command<Refresh>(app, invocation,
                          "Bring the store up to date if its inputs changed, printing nothing");
@@ -1028,11 +1036,112 @@ std::vector<std::string> pending_command(const Invocation& invocation,
     return argv;
 }
 
-Exit run(const Invocation& invocation, std::ostream& out, std::ostream& err) {
-    Session session{invocation, err};
+namespace {
+
+Exit dispatch(Session& session, const Invocation& invocation, std::ostream& out,
+              std::ostream& err) {
     return std::visit(
         [&](const auto& command) { return execute(command, session, invocation, out, err); },
         invocation.command);
+}
+
+// The option choosing the stores that a shell line set otherwise than the session, if any.
+std::optional<std::string_view> changed_stores(const Invocation& session, const Invocation& line) {
+    if (line.root != session.root) {
+        return "--root";
+    }
+    if (line.config_root != session.config_root) {
+        return "--config-root";
+    }
+    if (line.eprefix != session.eprefix) {
+        return "--eprefix";
+    }
+    if (line.store != session.store) {
+        return "--store";
+    }
+    if (line.builder != session.builder) {
+        return "--builder";
+    }
+    if (line.no_refresh != session.no_refresh) {
+        return "--no-refresh";
+    }
+    return std::nullopt;
+}
+
+std::string_view trimmed(std::string_view text) {
+    constexpr std::string_view space = " \t\r";
+    const auto first = text.find_first_not_of(space);
+    if (first == std::string_view::npos) {
+        return {};
+    }
+    return text.substr(first, text.find_last_not_of(space) - first + 1);
+}
+
+} // namespace
+
+Exit shell(const Invocation& invocation, std::istream& in, std::ostream& out, std::ostream& err,
+           bool prompt) {
+    Session session{invocation, err};
+    auto status = Exit::ok;
+    for (std::string read;;) {
+        if (prompt) {
+            out << "egraph> " << std::flush;
+        }
+        if (!std::getline(in, read)) {
+            if (prompt) {
+                out << '\n';
+            }
+            break;
+        }
+        const auto line = trimmed(read);
+        if (line.empty() || line.starts_with('#')) {
+            continue;
+        }
+        if (line == "quit" || line == "exit") {
+            break;
+        }
+        // Each line starts from the shell's own options and facts.
+        auto command = invocation;
+        command.command = std::monostate{};
+        CLI::App app{"", "egraph"};
+        configure(app, command);
+        if (line == "help") {
+            out << app.help();
+            continue;
+        }
+        // CLI11 only says a subcommand is required.
+        if (const auto word = line.substr(0, line.find_first_of(" \t"));
+            !word.starts_with('-') && app.get_subcommand_no_throw(std::string{word}) == nullptr) {
+            err << "egraph: shell: " << word << ": no such command (help lists them)\n";
+            status = Exit::usage;
+            continue;
+        }
+        try {
+            app.parse(std::string{line}, false);
+        } catch (const CLI::ParseError& e) {
+            // --help arrives here too, with exit code 0.
+            status = app.exit(e, out, err) == 0 ? Exit::ok : Exit::usage;
+            continue;
+        }
+        if (const auto option = changed_stores(invocation, command)) {
+            err << "egraph: shell: " << *option
+                << " chooses the stores, which the shell keeps; start another egraph for others\n";
+            status = Exit::usage;
+            continue;
+        }
+        if (std::holds_alternative<Shell>(command.command)) {
+            err << "egraph: shell: already in the shell\n";
+            status = Exit::usage;
+            continue;
+        }
+        status = dispatch(session, command, out, err);
+    }
+    return status;
+}
+
+Exit run(const Invocation& invocation, std::ostream& out, std::ostream& err) {
+    Session session{invocation, err};
+    return dispatch(session, invocation, out, err);
 }
 
 } // namespace egraph

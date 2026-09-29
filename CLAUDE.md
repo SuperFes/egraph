@@ -40,6 +40,7 @@ Keep this section in sync with reality.
 meson setup build && meson compile -C build          # egraph, and build/egraph-build beside it
 meson install -C build --destdir /tmp/root           # also /etc/portage hooks (-Dportage_hooks)
 build/egraph orphans                                  # works in place; store in ~/.cache/egraph
+printf 'updates -N\norphans\n' | build/egraph shell      # many commands, one session
 meson test -C build --print-errorlogs                 # Catch2 + pytest
 meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false && meson test -C build-san
 meson setup build-notui -Dtui=disabled && meson test -C build-notui   # without Notcurses

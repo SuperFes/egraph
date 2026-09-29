@@ -339,3 +339,34 @@ def test_export_neighborhoods(system, direction, forward, reverse, depth):
             if edge.child in members
         }
         assert arrows == induced
+
+
+def test_the_shell_answers_as_one_shot_commands(scenario, system):
+    """One session across commands and option sets, against a fresh process for each."""
+    from portage.versions import cpv_getkey
+
+    vardb, path = system
+    cpvs = sorted(str(cpv) for cpv in vardb.cpv_all())
+    commands = [
+        "stats",
+        "broken",
+        "broken --dynamic-deps n",
+        "updates -N --held",
+        "updates --dynamic-deps n",
+        *(f"{query} {cpv}" for cpv in cpvs[:3] for query in ("deps", "rdeps")),
+        f"rdeps --dynamic-deps n {cpvs[0]}",
+        f"match --candidates {cpv_getkey(cpvs[0])}",
+        "orphans",
+        "orphans --with-bdeps n",
+        "orphans --dynamic-deps n",
+    ]
+    shell = subprocess.run(
+        [EGRAPH, "--store", str(path), "--no-refresh", "shell"],
+        input="".join(f"{line}\n" for line in commands),
+        capture_output=True,
+        text=True,
+    )
+    expected = "".join(
+        egraph(path, *line.split(), check=False).stdout for line in commands
+    )
+    assert shell.stdout == expected
