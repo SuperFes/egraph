@@ -82,6 +82,16 @@ dependencies with defaults, repository) and means by it exactly what `vardb.matc
   `Package`s over the same corpus, every scenario's atoms and every live atom. Atoms record slot
   operators (`:=`, `:slot/sub=`), which update holds treat as rebuilds rather than bounds.
 
+## Sessions
+
+Every command answers from a `Session` (`src/session.hpp`), which loads each piece on first use
+and keeps it: the installed store alone (which needs no evaluated store), both stores, the
+dependency store and graph per `--dynamic-deps`, and depclean's result per `--with-bdeps` and
+`--dynamic-deps`. A one-shot command builds one and exits; the interactive app (roadmap 13)
+keeps one for as long as it runs. Freshness is checked, and a stale store refreshed or warned
+about, when a piece is first loaded. Depclean without dynamic deps reads the installed store
+loaded with the evaluated one, so its packages line up with the evaluated store's masks.
+
 ## Query output
 
 Two layouts of the same records. On a terminal, queries are laid out for people:

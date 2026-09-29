@@ -14,6 +14,7 @@
 #include "json.hpp"
 #include "os.hpp"
 #include "pressure.hpp"
+#include "session.hpp"
 #include "steve.hpp"
 #include "store.hpp"
 #include "tui.hpp"
@@ -94,128 +95,13 @@ CLI::Validator one_of(std::vector<std::pair<std::string, T>> choices, bool ignor
             std::format("{{{}}}", names)};
 }
 
-// Runs egraph-build, its output to log when given; the error when it could not run or did not
-// succeed.
-std::optional<std::string>
-run_builder(const Invocation& invocation, std::string_view mode, const std::filesystem::path& path,
-            const std::optional<std::filesystem::path>& log = std::nullopt) {
-    const auto status = os::run(builder_command(invocation, mode, path), log);
-    if (!status) {
-        return std::format("cannot build the store: {} (install egraph-build, or name it with "
-                           "--builder or EGRAPH_BUILD)",
-                           status.error().message);
-    }
-    if (*status != 0) {
-        return std::format("{} exited with status {}", builder_program(invocation), *status);
-    }
-    return std::nullopt;
-}
-
-// What loads from path and is current, or nullopt. Loaded is a Store or Stores.
-template <class Loaded, class Load>
-std::optional<Loaded> fresh(const std::filesystem::path& path, const Load& load_path) {
-    auto loaded = load_path(path);
-    if (loaded && !staleness(*loaded)) {
-        return std::move(*loaded);
-    }
-    return std::nullopt;
-}
-
-// What load_path reads from the store, refreshed through egraph-build first if its inputs
-// changed; used is the installed store it came from. Without --store, a current system store is
-// read even when only root can refresh it; otherwise the user's own store is kept current
-// instead.
-template <class Loaded, class Load>
-std::expected<Loaded, std::string> open_current(const Invocation& invocation, std::ostream& err,
-                                                std::filesystem::path& used,
-                                                const Load& load_path) {
-    const auto path = store_path(invocation);
-    used = path;
-    if (!invocation.store) {
-        const auto system = system_store_path(invocation);
-        if (system != path) {
-            if (auto loaded = fresh<Loaded>(system, load_path)) {
-                used = system;
-                return std::move(*loaded);
-            }
-        }
-    }
-    auto loaded = load_path(path);
-    if (loaded) {
-        const auto reason = staleness(*loaded);
-        if (!reason) {
-            return std::move(*loaded);
-        }
-        if (invocation.no_refresh) {
-            err << "egraph: warning: answering from a stale store (" << *reason << ")\n";
-            return std::move(*loaded);
-        }
-    } else if (invocation.no_refresh) {
-        return std::unexpected(loaded.error().message);
-    }
-    if (auto error = run_builder(invocation, "--incremental", path)) {
-        return std::unexpected(std::move(*error));
-    }
-    return load_path(path).transform_error([](const StoreError& error) { return error.message; });
-}
-
-std::expected<Store, std::string> open_store(const Invocation& invocation, std::ostream& err,
-                                             std::filesystem::path& used) {
-    return open_current<Store>(invocation, err, used, [](const auto& path) { return load(path); });
-}
-
-// The installed store and the evaluated one beside it, current together.
-std::expected<Stores, std::string> open_stores(const Invocation& invocation, std::ostream& err) {
-    std::filesystem::path used;
-    return open_current<Stores>(invocation, err, used, load_stores);
-}
-
-std::expected<Store, std::string> open_store(const Invocation& invocation, std::ostream& err) {
-    std::filesystem::path used;
-    return open_store(invocation, err, used);
-}
-
-// The store the dependency queries read: with --dynamic-deps y, its dependency trees are the
-// evaluated store's.
-std::expected<Store, std::string> open_dependencies(const Invocation& invocation,
-                                                    std::ostream& err) {
-    if (!invocation.dynamic_deps) {
-        return open_store(invocation, err);
-    }
-    return open_stores(invocation, err).transform([](Stores stores) {
-        return with_dynamic_deps(std::move(stores.installed), stores.evaluated);
-    });
-}
-
-// What depclean reads: the dependency queries' store, and what its visibility checks see of each
-// installed package, which the evaluated store holds under either --dynamic-deps.
-struct DepcleanView {
-    Store store;
-    std::vector<Masking> masking;
-};
-
-std::expected<DepcleanView, std::string> open_depclean(const Invocation& invocation,
-                                                       std::ostream& err) {
-    return open_stores(invocation, err).transform([&invocation](Stores stores) {
-        std::vector<Masking> masking;
-        masking.reserve(stores.evaluated.packages.size());
-        for (const auto& pkg : stores.evaluated.packages) {
-            masking.push_back({.masked = invocation.dynamic_deps ? pkg.masked : pkg.vdb_masked,
-                               .visible = pkg.visible});
-        }
-        auto store = invocation.dynamic_deps
-                         ? with_dynamic_deps(std::move(stores.installed), stores.evaluated)
-                         : std::move(stores.installed);
-        return DepcleanView{.store = std::move(store), .masking = std::move(masking)};
-    });
-}
-
-Exit execute(const std::monostate&, const Invocation&, std::ostream&, std::ostream& err) {
+Exit execute(const std::monostate&, Session&, const Invocation&, std::ostream&, std::ostream& err) {
     err << "egraph: no command given\n";
     return Exit::usage;
 }
 
-Exit execute(const Rebuild&, const Invocation& invocation, std::ostream&, std::ostream& err) {
+Exit execute(const Rebuild&, Session&, const Invocation& invocation, std::ostream&,
+             std::ostream& err) {
     if (const auto error = run_builder(invocation, "--full", store_path(invocation))) {
         err << "egraph: " << *error << '\n';
         return Exit::failure;
@@ -223,8 +109,9 @@ Exit execute(const Rebuild&, const Invocation& invocation, std::ostream&, std::o
     return Exit::ok;
 }
 
-Exit execute(const Refresh&, const Invocation& invocation, std::ostream&, std::ostream& err) {
-    if (const auto stores = open_stores(invocation, err); !stores) {
+Exit execute(const Refresh&, Session& session, const Invocation&, std::ostream&,
+             std::ostream& err) {
+    if (const auto stores = session.stores(); !stores) {
         err << "egraph: " << stores.error() << '\n';
         return Exit::failure;
     }
@@ -446,10 +333,12 @@ std::expected<Stores, std::string> save_stores(const Invocation& invocation,
 
 namespace {
 
-Exit execute(const Check&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
+Exit execute(const Check&, Session&, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
     // Deliberately not refreshed: the point is to compare what queries would read.
     const auto system = system_store_path(invocation);
-    const auto current = fresh<Store>(system, [](const auto& path) { return load(path); });
+    const auto system_store = load(system);
+    const bool current = system_store && !staleness(*system_store);
     const auto stored = load(!invocation.store && current ? system : store_path(invocation));
     if (!stored) {
         err << "egraph: " << stored.error().message << '\n';
@@ -516,60 +405,68 @@ resolve_all(const Store& store, const std::vector<std::string>& arguments, std::
     return ids;
 }
 
-Exit edges(const std::vector<std::string>& packages, bool reverse, bool possible,
+// Reports a session's error.
+Exit fail(std::ostream& err, std::string_view message) {
+    err << "egraph: " << message << '\n';
+    return Exit::failure;
+}
+
+Exit edges(const std::vector<std::string>& packages, bool reverse, bool possible, Session& session,
            const Invocation& invocation, std::ostream& out, std::ostream& err) {
     if (possible && !invocation.dynamic_deps) {
         err << "egraph: --possible reads the ebuilds' dependencies, which --dynamic-deps n "
                "leaves out\n";
         return Exit::usage;
     }
-    // Only --possible needs the evaluated store past the merge.
-    std::optional<Evaluated> evaluated;
-    const auto store = !possible
-                           ? open_dependencies(invocation, err)
-                           : open_stores(invocation, err).transform([&](Stores stores) {
-                                 evaluated = std::move(stores.evaluated);
-                                 return with_dynamic_deps(std::move(stores.installed), *evaluated);
-                             });
-    if (!store) {
-        err << "egraph: " << store.error() << '\n';
-        return Exit::failure;
+    const auto loaded = session.dependencies(invocation.dynamic_deps);
+    if (!loaded) {
+        return fail(err, loaded.error());
     }
-    const auto ids = resolve_all(*store, packages, err);
+    const auto graph = session.graph(invocation.dynamic_deps);
+    if (!graph) {
+        return fail(err, graph.error());
+    }
+    const Store& store = *loaded;
+    const auto ids = resolve_all(store, packages, err);
     if (!ids) {
         return Exit::failure;
     }
-    const auto graph = build_graph(*store);
     std::vector<Edge> found;
     for (const auto id : *ids) {
-        const auto some = reverse ? graph.rdeps(id) : graph.deps(id);
+        const auto some = reverse ? graph->get().rdeps(id) : graph->get().deps(id);
         found.insert(found.end(), some.begin(), some.end());
     }
-    auto lines = edge_lines(*store, found);
-    if (evaluated) {
-        std::ranges::move(possible_lines(*evaluated, *ids, reverse), std::back_inserter(lines));
+    auto lines = edge_lines(store, found);
+    // Only --possible needs the evaluated store past the merge.
+    if (possible) {
+        const auto stores = session.stores();
+        if (!stores) {
+            return fail(err, stores.error());
+        }
+        std::ranges::move(possible_lines(stores->get().evaluated, *ids, reverse),
+                          std::back_inserter(lines));
         std::ranges::sort(lines);
     }
     if (const auto style = output(invocation); style.human) {
-        human_edges(out, lines, cpvs(*store, *ids), reverse, style.theme);
+        human_edges(out, lines, cpvs(store, *ids), reverse, style.theme);
     } else {
         write_lines(out, lines);
     }
     return Exit::ok;
 }
 
-Exit execute(const Deps& command, const Invocation& invocation, std::ostream& out,
+Exit execute(const Deps& command, Session& session, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
-    return edges(command.packages, false, command.possible, invocation, out, err);
+    return edges(command.packages, false, command.possible, session, invocation, out, err);
 }
 
-Exit execute(const Rdeps& command, const Invocation& invocation, std::ostream& out,
-             std::ostream& err) {
-    return edges(command.packages, true, command.possible, invocation, out, err);
+Exit execute(const Rdeps& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    return edges(command.packages, true, command.possible, session, invocation, out, err);
 }
 
-Exit execute(const Match& command, const Invocation& invocation, std::ostream& out,
-             std::ostream& err) {
+Exit execute(const Match& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
     std::vector<Atom> atoms;
     for (const auto& text : command.atoms) {
         auto atom = parse_atom(text);
@@ -581,15 +478,14 @@ Exit execute(const Match& command, const Invocation& invocation, std::ostream& o
     }
     std::vector<std::string> lines;
     if (command.candidates) {
-        const auto stores = open_stores(invocation, err);
+        const auto stores = session.stores();
         if (!stores) {
-            err << "egraph: " << stores.error() << '\n';
-            return Exit::failure;
+            return fail(err, stores.error());
         }
-        const auto& evaluated = stores->evaluated;
+        const auto& [installed, evaluated] = stores->get();
         for (std::size_t i = 0; i < atoms.size(); ++i) {
             for (const auto& candidate : evaluated.candidates) {
-                if (matches(stores->installed, evaluated, candidate, atoms.at(i))) {
+                if (matches(installed, evaluated, candidate, atoms.at(i))) {
                     lines.push_back(std::format("{}\t{}::{}", command.atoms.at(i),
                                                 evaluated.string(candidate.cpv),
                                                 evaluated.string(candidate.repo)));
@@ -597,16 +493,16 @@ Exit execute(const Match& command, const Invocation& invocation, std::ostream& o
             }
         }
     } else {
-        const auto store = open_store(invocation, err);
-        if (!store) {
-            err << "egraph: " << store.error() << '\n';
-            return Exit::failure;
+        const auto loaded = session.installed();
+        if (!loaded) {
+            return fail(err, loaded.error());
         }
+        const Store& store = *loaded;
         for (std::size_t i = 0; i < atoms.size(); ++i) {
-            for (const auto& pkg : store->packages) {
-                if (matches(*store, pkg, atoms.at(i))) {
+            for (const auto& pkg : store.packages) {
+                if (matches(store, pkg, atoms.at(i))) {
                     lines.push_back(
-                        std::format("{}\t{}", command.atoms.at(i), store->string(pkg.cpv)));
+                        std::format("{}\t{}", command.atoms.at(i), store.string(pkg.cpv)));
                 }
             }
         }
@@ -619,12 +515,11 @@ Exit execute(const Match& command, const Invocation& invocation, std::ostream& o
     return Exit::ok;
 }
 
-Exit execute(const Soname& command, const Invocation& invocation, std::ostream& out,
-             std::ostream& err) {
-    const auto store = open_store(invocation, err);
+Exit execute(const Soname& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    const auto store = session.installed();
     if (!store) {
-        err << "egraph: " << store.error() << '\n';
-        return Exit::failure;
+        return fail(err, store.error());
     }
     const auto lines = soname_users(*store, command.soname, command.providers);
     if (const auto style = output(invocation); style.human) {
@@ -635,11 +530,11 @@ Exit execute(const Soname& command, const Invocation& invocation, std::ostream& 
     return Exit::ok;
 }
 
-Exit execute(const Broken&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
-    const auto store = open_dependencies(invocation, err);
+Exit execute(const Broken&, Session& session, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    const auto store = session.dependencies(invocation.dynamic_deps);
     if (!store) {
-        err << "egraph: " << store.error() << '\n';
-        return Exit::failure;
+        return fail(err, store.error());
     }
     if (const auto style = output(invocation); style.human) {
         const auto records = broken_records(*store);
@@ -650,21 +545,19 @@ Exit execute(const Broken&, const Invocation& invocation, std::ostream& out, std
     return Exit::ok;
 }
 
-Exit execute(const Orphans& command, const Invocation& invocation, std::ostream& out,
-             std::ostream& err) {
-    auto view = open_depclean(invocation, err);
-    if (!view) {
-        err << "egraph: " << view.error() << '\n';
-        return Exit::failure;
+Exit execute(const Orphans& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    const auto depclean = session.depclean(command.build_deps, invocation.dynamic_deps);
+    if (!depclean) {
+        return fail(err, depclean.error());
     }
-    const auto& store = view->store;
+    const Store& store = depclean->get().store;
     // Everything would be an orphan; depclean refuses, and so do we.
     if (store.roots.empty()) {
         err << "egraph: orphans: the @world set is empty\n";
         return Exit::failure;
     }
-    const auto kept =
-        keep(store, {.build_deps = command.build_deps, .masking = std::move(view->masking)});
+    const auto& kept = depclean->get().kept;
     const auto lines = cpvs(store, orphans(kept));
     if (const auto style = output(invocation); style.human) {
         human_orphans(out, lines, style.theme);
@@ -683,18 +576,20 @@ Exit execute(const Orphans& command, const Invocation& invocation, std::ostream&
     return Exit::failure;
 }
 
-Exit execute(const Updates& command, const Invocation& invocation, std::ostream& out,
-             std::ostream& err) {
-    const auto stores = open_stores(invocation, err);
+Exit execute(const Updates& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    // Both stores first, so that the dependencies are read from the same build.
+    const auto stores = session.stores();
     if (!stores) {
-        err << "egraph: " << stores.error() << '\n';
-        return Exit::failure;
+        return fail(err, stores.error());
     }
-    const auto& evaluated = stores->evaluated;
-    const auto store = invocation.dynamic_deps ? with_dynamic_deps(stores->installed, evaluated)
-                                               : stores->installed;
+    const auto store = session.dependencies(invocation.dynamic_deps);
+    const auto graph = session.graph(invocation.dynamic_deps);
+    if (!store || !graph) {
+        return fail(err, store ? graph.error() : store.error());
+    }
     const auto lines =
-        update_lines(store, build_graph(store), evaluated, command.rebuilds, command.held);
+        update_lines(*store, *graph, stores->get().evaluated, command.rebuilds, command.held);
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme);
     } else {
@@ -703,20 +598,18 @@ Exit execute(const Updates& command, const Invocation& invocation, std::ostream&
     return Exit::ok;
 }
 
-Exit execute(const Why& command, const Invocation& invocation, std::ostream& out,
+Exit execute(const Why& command, Session& session, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
-    auto view = open_depclean(invocation, err);
-    if (!view) {
-        err << "egraph: " << view.error() << '\n';
-        return Exit::failure;
+    const auto depclean = session.depclean(command.build_deps, invocation.dynamic_deps);
+    if (!depclean) {
+        return fail(err, depclean.error());
     }
-    const auto& store = view->store;
+    const Store& store = depclean->get().store;
     const auto ids = resolve_all(store, {command.package}, err);
     if (!ids) {
         return Exit::failure;
     }
-    const auto kept =
-        keep(store, {.build_deps = command.build_deps, .masking = std::move(view->masking)});
+    const auto& kept = depclean->get().kept;
     auto exit = Exit::ok;
     bool first = true;
     const auto style = output(invocation);
@@ -743,7 +636,7 @@ Exit execute(const Why& command, const Invocation& invocation, std::ostream& out
     return exit;
 }
 
-Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostream& err) {
+Exit execute(const Tui&, Session&, const Invocation& invocation, std::ostream&, std::ostream& err) {
     if (!tui::available()) {
         err << "egraph: tui: this egraph was built without Notcurses (meson -Dtui=enabled)\n";
         return Exit::not_implemented;
@@ -814,8 +707,8 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
         warnings, err);
 }
 
-Exit execute(const Affected& command, const Invocation& invocation, std::ostream& out,
-             std::ostream& err) {
+Exit execute(const Affected& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
     std::ostringstream text;
     if (command.request == "-") {
         text << std::cin.rdbuf();
@@ -832,64 +725,62 @@ Exit execute(const Affected& command, const Invocation& invocation, std::ostream
         err << "egraph: affected: " << request.error() << '\n';
         return Exit::usage;
     }
-    const auto store = open_dependencies(invocation, err);
+    const auto store = session.dependencies(invocation.dynamic_deps);
     if (!store) {
-        err << "egraph: " << store.error() << '\n';
-        return Exit::failure;
+        return fail(err, store.error());
     }
     out << to_json(affected(*store, *request));
     return Exit::ok;
 }
 
-Exit execute(const Stats&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
-    std::filesystem::path used;
-    const auto store = open_store(invocation, err, used);
-    if (!store) {
-        err << "egraph: " << store.error() << '\n';
-        return Exit::failure;
+Exit execute(const Stats&, Session& session, const Invocation&, std::ostream& out,
+             std::ostream& err) {
+    const auto store = session.installed();
+    const auto graph = session.graph(false);
+    if (!store || !graph) {
+        return fail(err, store ? graph.error() : store.error());
     }
-    write_stats(out, *store, build_graph(*store), used);
+    write_stats(out, *store, *graph, session.used());
     return Exit::ok;
 }
 
-Exit execute(const Export& command, const Invocation& invocation, std::ostream& out,
+Exit execute(const Export& command, Session& session, const Invocation&, std::ostream& out,
              std::ostream& err) {
     if (command.evaluated) {
         if (command.format != ExportFormat::json || !command.packages.empty()) {
             err << "egraph: export --evaluated writes the whole store, as JSON\n";
             return Exit::usage;
         }
-        const auto stores = open_stores(invocation, err);
+        const auto stores = session.stores();
         if (!stores) {
-            err << "egraph: " << stores.error() << '\n';
-            return Exit::failure;
+            return fail(err, stores.error());
         }
-        write_evaluated_json(out, stores->evaluated);
+        write_evaluated_json(out, stores->get().evaluated);
         return Exit::ok;
     }
-    const auto store = open_store(invocation, err);
-    if (!store) {
-        err << "egraph: " << store.error() << '\n';
-        return Exit::failure;
+    const auto loaded = session.installed();
+    const auto graph = session.graph(false);
+    if (!loaded || !graph) {
+        return fail(err, loaded ? graph.error() : loaded.error());
     }
-    const auto graph = build_graph(*store);
+    const Store& store = *loaded;
     std::vector<std::uint32_t> roots;
     std::vector<std::uint32_t> packages;
     if (command.packages.empty()) {
-        packages.resize(store->packages.size());
+        packages.resize(store.packages.size());
         std::ranges::iota(packages, 0U);
     } else {
-        auto ids = resolve_all(*store, command.packages, err);
+        auto ids = resolve_all(store, command.packages, err);
         if (!ids) {
             return Exit::failure;
         }
         roots = std::move(*ids);
-        packages = neighborhood(graph, roots, command.depth, command.direction);
+        packages = neighborhood(*graph, roots, command.depth, command.direction);
     }
     if (command.format == ExportFormat::json) {
-        write_json(out, *store, packages);
+        write_json(out, store, packages);
     } else {
-        write_dot(out, *store, graph, packages, roots);
+        write_dot(out, store, *graph, packages, roots);
     }
     return Exit::ok;
 }
@@ -1138,8 +1029,10 @@ std::vector<std::string> pending_command(const Invocation& invocation,
 }
 
 Exit run(const Invocation& invocation, std::ostream& out, std::ostream& err) {
-    return std::visit([&](const auto& command) { return execute(command, invocation, out, err); },
-                      invocation.command);
+    Session session{invocation, err};
+    return std::visit(
+        [&](const auto& command) { return execute(command, session, invocation, out, err); },
+        invocation.command);
 }
 
 } // namespace egraph

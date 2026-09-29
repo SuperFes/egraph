@@ -246,7 +246,7 @@ an update back, rather than skipping it), it stays, recorded in `upstream-notes.
 Taken ahead of 12c and 12d at the user's direction: egraph interactive whenever the user is,
 and run-and-done otherwise (`docs/vision.md`).
 
-- 13a: a `Session` owns what every command now loads per run (both stores, the dynamic-deps
+- 13a (done): a `Session` owns what every command now loads per run (both stores, the dynamic-deps
   store, the graph, depclean's results, the pending updates), computed on first use; each
   command computes from a session and renders. Every one-shot command's output unchanged.
 - 13b: a line-mode shell reading commands from standard input, for builds without Notcurses and
