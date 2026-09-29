@@ -111,14 +111,15 @@ def test_possible_dependencies_name_their_flags(playgrounds, tmp_path):
 
 
 def parse_updates(text):
-    """{installed cpv: (kind, update.Replacement)} from updates output."""
+    """{installed cpv: (kind, update.Replacement)} from updates output, slot-operator rebuilds
+    aside."""
     from compare import rebuild_flag
     from update import Replacement
 
     found = {}
     for line in text.splitlines():
         cpv, kind, target, repo, *flags = line.split("\t")
-        if kind == "new":
+        if kind == "new" or len(flags) > 1:
             continue
         names = (
             frozenset(rebuild_flag(flag) for flag in flags[0].split())
@@ -138,8 +139,9 @@ def test_updates_are_emerges(
     scenario, system, dynamic_deps, option, newuse, changed_use
 ):
     """What emerge -puD @installed merges: dependents' atoms hold updates back, the deep
-    resolution falls back to the best version they accept, as plain -u does not, and what the
-    merges and the kept packages need that nothing installed provides comes in new."""
+    resolution falls back to the best version they accept, as plain -u does not, what the
+    merges and the kept packages need that nothing installed provides comes in new, and
+    dependents bound to a replaced sub-slot are rebuilt."""
     from portage.versions import cpv_getversion, vercmp
 
     import update
@@ -162,9 +164,18 @@ def test_updates_are_emerges(
         for fields in (line.split("\t") for line in output.splitlines())
         if fields[1] == "new"
     }
+    rebuilt = {
+        fields[0]
+        for fields in (line.split("\t") for line in output.splitlines())
+        if fields[1] == "rebuild" and len(fields) > 5
+    }
     found = parse_updates(output)
     replaced = {cpv: replacement for cpv, (_, replacement) in found.items()}
-    assert (replaced, new) == (expected.replaced, expected.new)
+    assert (replaced, rebuilt, new) == (
+        expected.replaced,
+        expected.rebuilt,
+        expected.new,
+    )
     for cpv, (kind, replacement) in found.items():
         order = vercmp(cpv_getversion(replacement.cpv), cpv_getversion(cpv))
         assert kind == (

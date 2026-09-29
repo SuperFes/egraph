@@ -638,4 +638,53 @@ SCENARIOS = {
             "app-misc/flagged-1": {"EAPI": "8", "IUSE": "+extra", "USE": "extra"},
         },
     },
+    # Slot-operator rebuilds: dependents bound to a sub-slot an update replaces, through RDEPEND,
+    # DEPEND and PDEPEND, one updated itself, one with no visible ebuild to rebuild from, one
+    # whose ebuild gained a dependency, and one with :* that never rebuilds.
+    "slotops": {
+        "bounded": True,
+        "world": [
+            "app-misc/rdep",
+            "app-misc/ddep",
+            "app-misc/pdep",
+            "app-misc/moving",
+            "app-misc/gone",
+            "app-misc/grown",
+            "app-misc/star",
+        ],
+        "ebuilds": {
+            "dev-libs/lib-1": {"EAPI": "8", "SLOT": "0/1"},
+            "dev-libs/lib-2": {"EAPI": "8", "SLOT": "0/2"},
+            "dev-libs/lone-1": {"EAPI": "8", "SLOT": "0/1"},
+            "dev-libs/lone-1.5": {"EAPI": "8", "SLOT": "0/1"},
+            "dev-libs/lone-2": {"EAPI": "8", "SLOT": "0/2"},
+            "dev-libs/fresh-1": {"EAPI": "8"},
+            "app-misc/rdep-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib:="},
+            "app-misc/ddep-1": {"EAPI": "8", "DEPEND": "dev-libs/lib:="},
+            "app-misc/pdep-1": {"EAPI": "8", "PDEPEND": "dev-libs/lib:="},
+            "app-misc/moving-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib:="},
+            "app-misc/moving-2": {"EAPI": "8", "RDEPEND": "dev-libs/lib:="},
+            "app-misc/gone-1": {
+                "EAPI": "8",
+                "KEYWORDS": "~x86",
+                "RDEPEND": "dev-libs/lone:=",
+            },
+            "app-misc/grown-1": {
+                "EAPI": "8",
+                "RDEPEND": "dev-libs/lib:= dev-libs/fresh",
+            },
+            "app-misc/star-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib:*"},
+        },
+        "installed": {
+            "dev-libs/lib-1": {"EAPI": "8", "SLOT": "0/1"},
+            "dev-libs/lone-1": {"EAPI": "8", "SLOT": "0/1"},
+            "app-misc/rdep-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib:0/1="},
+            "app-misc/ddep-1": {"EAPI": "8", "DEPEND": "dev-libs/lib:0/1="},
+            "app-misc/pdep-1": {"EAPI": "8", "PDEPEND": "dev-libs/lib:0/1="},
+            "app-misc/moving-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib:0/1="},
+            "app-misc/gone-1": {"EAPI": "8", "RDEPEND": "dev-libs/lone:0/1="},
+            "app-misc/grown-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib:0/1="},
+            "app-misc/star-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib:*"},
+        },
+    },
 }

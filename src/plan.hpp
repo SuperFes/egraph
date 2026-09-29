@@ -38,6 +38,9 @@ struct Merge {
     std::string flags;
     // For a new package, the dependency that first pulled it in.
     std::optional<Reason> pulled_by;
+    // For a slot-operator rebuild of the installed version: the merge whose slot or sub-slot
+    // breaks its binding, with the bound atom as the rebuilt package's dependencies print it.
+    std::optional<Reason> rebuilt_for;
 };
 
 // An installed package whose pending update the plan leaves out, or replaces with an earlier
@@ -64,8 +67,11 @@ struct Plan {
 //   dependency rejects; held back when none is left;
 // - whatever a member's dependencies need that nothing in the plan satisfies: the best visible
 //   version that matches, new in its slot, the first alternative of a || that can be satisfied
-//   so. A merge whose own dependencies cannot be satisfied falls back in turn.
-// Slot operators do not hold an update back; blockers are not weighed.
+//   so. A merge whose own dependencies cannot be satisfied falls back in turn;
+// - a kept dependent bound by a slot operator to a sub-slot a merge replaces: rebuilt from a
+//   visible ebuild of its version, whose dependencies the plan then satisfies; with none, the
+//   binding holds the merge back like any bound.
+// Blockers are not weighed.
 [[nodiscard]] Plan plan_updates(const Store& store, const Evaluated& evaluated,
                                 UseRebuilds rebuilds, const std::vector<bool>& scope = {});
 

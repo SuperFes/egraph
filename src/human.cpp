@@ -595,14 +595,18 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             out << spaces(0, move_width);
         }
         out << "  " << paint("::" + std::string{row.at(3)}, Tone::repo);
+        // A package, then its atom: what pulls a new one in, or what a rebuild is for.
+        const auto put_why = [&](std::string_view by) {
+            const auto cut = std::min(by.find(' '), by.size());
+            out << "  " << paint(by.substr(0, cut), Tone::version) << ' '
+                << paint(by.substr(std::min(cut + 1, by.size())), Tone::note);
+        };
         if (row.at(1) == "new") {
-            // What pulls it in: a package, then its atom.
             if (row.size() > 4) {
-                const auto by = row.at(4);
-                const auto cut = std::min(by.find(' '), by.size());
-                out << "  " << paint(by.substr(0, cut), Tone::version) << ' '
-                    << paint(by.substr(std::min(cut + 1, by.size())), Tone::note);
+                put_why(row.at(4));
             }
+        } else if (row.at(1) == "rebuild" && row.size() > 5) {
+            put_why(row.at(5));
         } else if (row.size() > 4 && !row.at(4).empty()) {
             flags = true;
             out << ' ';

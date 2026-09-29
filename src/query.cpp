@@ -224,8 +224,11 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
             auto line =
                 std::format("{}\t{}\t{}", store.string(store.packages.at(*merge.replaces).cpv),
                             kind_name(merge.kind), target_fields(merge.candidate));
-            if (!merge.flags.empty()) {
+            if (!merge.flags.empty() || merge.rebuilt_for) {
                 line += std::format("\t{}", merge.flags);
+            }
+            if (const auto& why = merge.rebuilt_for) {
+                line += std::format("\t{} {}", member(why->member), why->atom);
             }
             replaced.at(*merge.replaces) = std::move(line);
         } else {

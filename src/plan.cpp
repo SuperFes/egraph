@@ -72,6 +72,19 @@ class Planner {
         std::optional<std::uint32_t> root;
     };
 
+    struct Rebuilt {
+        std::uint32_t candidate = 0;
+        Reason why;
+    };
+
+    // A slot-operator atom's binding that a merge breaks.
+    struct Broken {
+        // The installed package the merge replaces.
+        std::uint32_t replaced = 0;
+        std::uint32_t merged = 0;
+        std::string atom;
+    };
+
     // A member whose dependencies the plan must satisfy.
     struct Work {
         Member member;
@@ -84,12 +97,16 @@ class Planner {
     std::vector<Choice> choices_;
     std::map<std::string, std::vector<std::uint32_t>, std::less<>> by_cp_;
     std::map<std::string, std::optional<Atom>, std::less<>> atoms_;
+    // Slot and sub-slot a slot-operator atom is bound to, by the atom's text.
+    std::map<std::string, std::optional<SlotKey>, std::less<>> bindings_;
 
     // The state of one pass, rebuilt from the choices.
     std::vector<Pulled> pulled_;
     // Merged and pulled candidates by cp.
     std::map<std::string, std::vector<std::uint32_t>, std::less<>> present_;
     std::map<SlotKey, bool> taken_;
+    // Slot-operator rebuilds by installed package.
+    std::map<std::uint32_t, Rebuilt> rebuilt_;
 
     [[nodiscard]] const Store& store() const { return store_ref_.get(); }
     [[nodiscard]] const Evaluated& evaluated() const { return evaluated_ref_.get(); }
@@ -114,6 +131,75 @@ class Planner {
             found = atoms_.emplace(std::string(text), std::move(value)).first;
         }
         return found->second;
+    }
+
+    const std::optional<SlotKey>& binding(std::string_view text) {
+        auto found = bindings_.find(text);
+        if (found == bindings_.end()) {
+            std::optional<SlotKey> value;
+            if (auto parsed = parse_atom(text);
+                parsed && parsed->slot_operator && parsed->slot && parsed->sub_slot) {
+                value = SlotKey{*parsed->slot, *parsed->sub_slot};
+            }
+            found = bindings_.emplace(std::string(text), std::move(value)).first;
+        }
+        return found->second;
+    }
+
+    // The bindings of the installed package's slot-operator atoms that merges break: every
+    // package the atom matches is replaced, by a version in another slot or sub-slot.
+    std::vector<Broken> broken_bindings(std::uint32_t id) {
+        std::vector<Broken> found;
+        for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+            for (const auto& node : nodes({.candidate = false, .index = id}, kind)) {
+                if (node.type != NodeType::atom) {
+                    continue;
+                }
+                const auto text = store().string(node.atom);
+                const auto& bound = binding(text);
+                const auto ids = store().ids_in(node.matches);
+                if (!bound || ids.empty() ||
+                    std::ranges::any_of(ids, [this](std::uint32_t match) { return kept(match); })) {
+                    continue;
+                }
+                for (const auto match : ids) {
+                    const auto merged = choices_.at(match).merged();
+                    if (!merged) {
+                        continue;
+                    }
+                    const auto& candidate = evaluated().candidates.at(*merged);
+                    if (evaluated().string(candidate.slot) != bound->first ||
+                        evaluated().string(candidate.sub_slot) != bound->second) {
+                        found.push_back(
+                            {.replaced = match, .merged = *merged, .atom = std::string(text)});
+                        break;
+                    }
+                }
+            }
+        }
+        return found;
+    }
+
+    // A visible ebuild of the installed package's version, from its repository if it can.
+    [[nodiscard]] std::optional<std::uint32_t> rebuild_of(std::uint32_t id) const {
+        const auto& pkg = store().packages.at(id);
+        const auto found = by_cp_.find(store().string(pkg.cp));
+        if (found == by_cp_.end()) {
+            return std::nullopt;
+        }
+        std::optional<std::uint32_t> best;
+        for (const auto index : found->second) {
+            const auto& candidate = evaluated().candidates.at(index);
+            if (!candidate.visible() ||
+                evaluated().string(candidate.cpv) != store().string(pkg.cpv)) {
+                continue;
+            }
+            if (evaluated().string(candidate.repo) == store().string(pkg.repo)) {
+                return index;
+            }
+            best = best.value_or(index);
+        }
+        return best;
     }
 
     [[nodiscard]] const Tables& tables(const Member& member) const {
@@ -305,6 +391,7 @@ class Planner {
         pulled_.clear();
         present_.clear();
         taken_.clear();
+        rebuilt_.clear();
         std::vector<Work> work;
         for (std::uint32_t id = 0; id < choices_.size(); ++id) {
             if (const auto merged = choices_.at(id).merged()) {
@@ -322,6 +409,27 @@ class Planner {
             const auto item = work.at(w);
             if (item.root && rejected.contains(*item.root)) {
                 continue;
+            }
+            if (!item.member.candidate) {
+                // A rebuild's own dependencies stand in for the installed ones.
+                if (const auto broken = broken_bindings(item.member.index); !broken.empty()) {
+                    if (const auto own = rebuild_of(item.member.index)) {
+                        const auto& first = broken.front();
+                        rebuilt_.emplace(
+                            item.member.index,
+                            Rebuilt{.candidate = *own,
+                                    .why = {.member = {.candidate = true, .index = first.merged},
+                                            .atom = first.atom}});
+                        work.push_back(
+                            {.member = {.candidate = true, .index = *own}, .root = first.replaced});
+                    } else {
+                        for (const auto& each : broken) {
+                            rejected[each.replaced].push_back(
+                                {.member = item.member, .atom = each.atom});
+                        }
+                    }
+                    continue;
+                }
             }
             const auto& tables = this->tables(item.member);
             for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
@@ -380,6 +488,14 @@ class Planner {
     [[nodiscard]] Plan result() const {
         Plan plan;
         for (std::uint32_t id = 0; id < choices_.size(); ++id) {
+            if (const auto found = rebuilt_.find(id); found != rebuilt_.end()) {
+                plan.merges.push_back({.candidate = found->second.candidate,
+                                       .replaces = id,
+                                       .kind = UpdateKind::rebuild,
+                                       .flags = {},
+                                       .pulled_by = {},
+                                       .rebuilt_for = found->second.why});
+            }
             const auto& choice = choices_.at(id);
             if (!choice.wanted) {
                 continue;
@@ -389,7 +505,8 @@ class Planner {
                             .replaces = id,
                             .kind = UpdateKind::upgrade,
                             .flags = {},
-                            .pulled_by = {}};
+                            .pulled_by = {},
+                            .rebuilt_for = {}};
                 if (choice.at == 0) {
                     merge.kind = choice.wanted->kind;
                     merge.flags = choice.wanted->flags;
@@ -416,7 +533,8 @@ class Planner {
                                    .replaces = {},
                                    .kind = UpdateKind::upgrade,
                                    .flags = {},
-                                   .pulled_by = found.by});
+                                   .pulled_by = found.by,
+                                   .rebuilt_for = {}});
         }
         return plan;
     }

@@ -199,6 +199,19 @@ TEST_CASE("new packages come under their own heading, with what pulls them in") 
                        "\n1 upgrade, 1 new\n");
 }
 
+TEST_CASE("a slot-operator rebuild says which merge it is for") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{
+                              "a/kwin-1\trebuild\ta/kwin-1\tgentoo\t\tx/lib-2 x/lib:0/1=",
+                              "x/lib-1\tupgrade\tx/lib-2\tgentoo",
+                          },
+                          plain);
+    CHECK(out.str() == "R a/kwin  1      ::gentoo  x/lib-2 x/lib:0/1=\n"
+                       "U x/lib   1 > 2  ::gentoo\n"
+                       "\n1 upgrade, 1 rebuild\n");
+}
+
 TEST_CASE("broken groups by package and counts") {
     const std::vector<std::string> records{
         "a/b-1\tPDEPEND\tx/gone",

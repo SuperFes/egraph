@@ -21,8 +21,8 @@ class Updates(NamedTuple):
     success: bool
     # Installed cpv -> Replacement.
     replaced: dict
-    # Rebuilds of an installed version from its own repository that no flag triggered (slot
-    # operators, for one): a resolver matter egraph leaves out.
+    # Rebuilds of an installed version from its own repository that no flag triggered: slot
+    # operators'.
     rebuilt: frozenset
     # Packages merged in a slot where nothing is installed.
     new: frozenset

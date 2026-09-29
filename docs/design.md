@@ -281,15 +281,18 @@ roadmap 14b). Each installed package in scope takes its target, or falls back to
 visible version in its slot that no member of the plan rejects, or stays put. A member's
 dependency (a kept package's own, read with or without `--dynamic-deps`, or a merged
 candidate's, reduced under the USE it would be built with) must be satisfied by the plan: by a
-package it keeps or merges, a slot operator's sub-slot aside (emerge rebuilds the dependent
-instead), or else by pulling in the best visible version that matches into a slot nothing
+package it keeps or merges, a slot operator's sub-slot aside (see below), or else by pulling in the best visible version that matches into a slot nothing
 occupies (a new package, with the dependency that pulled it). A `||` takes its first
 alternative that can be satisfied so. When nothing can satisfy a dependency, the installed
 package it would take away is rejected, or else the target that (through what it pulls in)
 needs it, and the choice moves down a version; the plan repeats until nothing moves. A held
 rebuild for USE stays put. `--held` adds each held update once, with the members and atoms that
 hold it; the human layout lists them under a "Held back" heading and new packages under "New".
-Blockers are not weighed, and slot-operator rebuilds are not yet listed.
+A kept dependent whose slot-operator binding (`:0/3=`) a merge in another slot or sub-slot
+breaks is rebuilt from a visible ebuild of its version (roadmap 14c), and that ebuild's
+dependencies join the plan like a merge's; with no such ebuild the binding holds the merge back
+like a bound, so it falls back to a version in the bound sub-slot. The line names the merge the
+rebuild is for. Blockers are not weighed.
 
 In removal mode `dep_zapdeps` asks which packages are *available*: an installed package whose
 own metadata is masked (keywords, `package.mask`, license, invalid strings; under dynamic deps

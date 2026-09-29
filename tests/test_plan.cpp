@@ -1,4 +1,5 @@
 #include "plan.hpp"
+#include "query.hpp"
 #include "system_builder.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -26,7 +27,8 @@ std::string reason(const egraph::test::System& system, const egraph::Reason& rea
                        reason.atom);
 }
 
-// "installed -> target", "new cpv <- member atom", "installed held <- member atom; ...".
+// "installed -> target", "installed -> installed for merge atom", "new cpv <- member atom",
+// "installed held <- member atom; ...".
 std::vector<std::string> plan(const egraph::test::System& system,
                               egraph::UseRebuilds rebuilds = egraph::UseRebuilds::none,
                               const std::vector<bool>& scope = {}) {
@@ -36,8 +38,12 @@ std::vector<std::string> plan(const egraph::test::System& system,
     for (const auto& merge : found.merges) {
         const auto target = evaluated.string(evaluated.candidates.at(merge.candidate).cpv);
         if (merge.replaces) {
-            lines.push_back(std::format(
-                "{} -> {}", store.string(store.packages.at(*merge.replaces).cpv), target));
+            auto line = std::format("{} -> {}",
+                                    store.string(store.packages.at(*merge.replaces).cpv), target);
+            if (merge.rebuilt_for) {
+                line += std::format(" for {}", reason(system, *merge.rebuilt_for));
+            }
+            lines.push_back(std::move(line));
         } else {
             lines.push_back(std::format("new {} <- {}", target,
                                         merge.pulled_by ? reason(system, *merge.pulled_by) : ""));
@@ -181,14 +187,87 @@ TEST_CASE("dependents hold an update back to the best version they all accept") 
           std::vector<std::string>{"dev-libs/astroid-4.0.4 -> dev-libs/astroid-4.3.2"});
 }
 
-TEST_CASE("a slot operator does not hold an update back") {
+TEST_CASE("a new sub-slot rebuilds the dependents bound to the old one") {
     const auto system =
-        make_system({{.cpv = "app-misc/kwin-1", .deps = {{"RDEPEND", "dev-libs/bound:0/3="}}},
-                     {.cpv = "dev-libs/bound-0.3", .sub_slot = "3"}},
-                    {{.cpv = "app-misc/kwin-1", .deps = {{"RDEPEND", "dev-libs/bound:="}}},
-                     {.cpv = "dev-libs/bound-0.3", .sub_slot = "3"},
-                     {.cpv = "dev-libs/bound-0.4", .sub_slot = "4"}});
-    CHECK(plan(system) == std::vector<std::string>{"dev-libs/bound-0.3 -> dev-libs/bound-0.4"});
+        make_system({{.cpv = "app-misc/rdep-1", .deps = {{"RDEPEND", "dev-libs/lib:0/1="}}},
+                     {.cpv = "app-misc/ddep-1", .deps = {{"DEPEND", "dev-libs/lib:0/1="}}},
+                     {.cpv = "app-misc/pdep-1", .deps = {{"PDEPEND", "dev-libs/lib:0/1="}}},
+                     {.cpv = "app-misc/star-1", .deps = {{"RDEPEND", "dev-libs/lib:*"}}},
+                     {.cpv = "dev-libs/lib-1", .sub_slot = "1"}},
+                    {{.cpv = "app-misc/rdep-1", .deps = {{"RDEPEND", "dev-libs/lib:="}}},
+                     {.cpv = "app-misc/ddep-1", .deps = {{"DEPEND", "dev-libs/lib:="}}},
+                     {.cpv = "app-misc/pdep-1", .deps = {{"PDEPEND", "dev-libs/lib:="}}},
+                     {.cpv = "app-misc/star-1", .deps = {{"RDEPEND", "dev-libs/lib:*"}}},
+                     {.cpv = "dev-libs/lib-1", .sub_slot = "1"},
+                     {.cpv = "dev-libs/lib-2", .sub_slot = "2"}});
+    CHECK(plan(system) ==
+          std::vector<std::string>{
+              "app-misc/rdep-1 -> app-misc/rdep-1 for dev-libs/lib-2 dev-libs/lib:0/1=",
+              "app-misc/ddep-1 -> app-misc/ddep-1 for dev-libs/lib-2 dev-libs/lib:0/1=",
+              "app-misc/pdep-1 -> app-misc/pdep-1 for dev-libs/lib-2 dev-libs/lib:0/1=",
+              "dev-libs/lib-1 -> dev-libs/lib-2"});
+    // Out of scope, a dependent is not rebuilt.
+    CHECK(plan(system, egraph::UseRebuilds::none, {false, true, true, true, true}) ==
+          std::vector<std::string>{
+              "app-misc/ddep-1 -> app-misc/ddep-1 for dev-libs/lib-2 dev-libs/lib:0/1=",
+              "app-misc/pdep-1 -> app-misc/pdep-1 for dev-libs/lib-2 dev-libs/lib:0/1=",
+              "dev-libs/lib-1 -> dev-libs/lib-2"});
+}
+
+TEST_CASE("a dependent that is updated is not rebuilt as well") {
+    const auto system =
+        make_system({{.cpv = "app-misc/moving-1", .deps = {{"RDEPEND", "dev-libs/lib:0/1="}}},
+                     {.cpv = "dev-libs/lib-1", .sub_slot = "1"}},
+                    {{.cpv = "app-misc/moving-1", .deps = {{"RDEPEND", "dev-libs/lib:="}}},
+                     {.cpv = "app-misc/moving-2", .deps = {{"RDEPEND", "dev-libs/lib:="}}},
+                     {.cpv = "dev-libs/lib-1", .sub_slot = "1"},
+                     {.cpv = "dev-libs/lib-2", .sub_slot = "2"}});
+    CHECK(plan(system) == std::vector<std::string>{"app-misc/moving-1 -> app-misc/moving-2",
+                                                   "dev-libs/lib-1 -> dev-libs/lib-2"});
+}
+
+TEST_CASE("a merge in the bound sub-slot needs no rebuild") {
+    const auto system =
+        make_system({{.cpv = "app-misc/rdep-1", .deps = {{"RDEPEND", "dev-libs/lib:0/1="}}},
+                     {.cpv = "dev-libs/lib-1", .sub_slot = "1"}},
+                    {{.cpv = "app-misc/rdep-1", .deps = {{"RDEPEND", "dev-libs/lib:="}}},
+                     {.cpv = "dev-libs/lib-1", .sub_slot = "1"},
+                     {.cpv = "dev-libs/lib-1.1", .sub_slot = "1"}});
+    CHECK(plan(system) == std::vector<std::string>{"dev-libs/lib-1 -> dev-libs/lib-1.1"});
+}
+
+TEST_CASE("a dependent with no ebuild to rebuild from holds the update to its sub-slot") {
+    const auto system = make_system(
+        {{.cpv = "app-misc/gone-1", .deps = {{"RDEPEND", "dev-libs/lone:0/1="}}},
+         {.cpv = "dev-libs/lone-1", .sub_slot = "1"}},
+        {{.cpv = "app-misc/gone-1", .deps = {{"RDEPEND", "dev-libs/lone:="}}, .visible = false},
+         {.cpv = "dev-libs/lone-1", .sub_slot = "1"},
+         {.cpv = "dev-libs/lone-1.5", .sub_slot = "1"},
+         {.cpv = "dev-libs/lone-2", .sub_slot = "2"}});
+    CHECK(plan(system) ==
+          std::vector<std::string>{"dev-libs/lone-1 -> dev-libs/lone-1.5",
+                                   "dev-libs/lone-1 held <- app-misc/gone-1 dev-libs/lone:0/1="});
+}
+
+TEST_CASE("a rebuild pulls in what its ebuild needs, or holds the update when nothing can") {
+    const auto system = make_system(
+        {{.cpv = "app-misc/grown-1", .deps = {{"RDEPEND", "dev-libs/lib:0/1="}}},
+         {.cpv = "dev-libs/lib-1", .sub_slot = "1"},
+         {.cpv = "app-misc/stuck-1", .deps = {{"RDEPEND", "dev-libs/solo:0/1="}}},
+         {.cpv = "dev-libs/solo-1", .sub_slot = "1"}},
+        {{.cpv = "app-misc/grown-1", .deps = {{"RDEPEND", "dev-libs/lib:= dev-libs/fresh"}}},
+         {.cpv = "dev-libs/lib-1", .sub_slot = "1"},
+         {.cpv = "dev-libs/lib-2", .sub_slot = "2"},
+         {.cpv = "dev-libs/fresh-1"},
+         {.cpv = "app-misc/stuck-1", .deps = {{"RDEPEND", "dev-libs/solo:= dev-libs/nowhere"}}},
+         {.cpv = "dev-libs/solo-1", .sub_slot = "1"},
+         {.cpv = "dev-libs/solo-2", .sub_slot = "2"}});
+    CHECK(plan(system) ==
+          std::vector<std::string>{
+              "app-misc/grown-1 -> app-misc/grown-1 for dev-libs/lib-2 dev-libs/lib:0/1=",
+              "dev-libs/lib-1 -> dev-libs/lib-2",
+              "new dev-libs/fresh-1 <- app-misc/grown-1 dev-libs/fresh",
+              "dev-libs/solo-1 held <- app-misc/stuck-1 dev-libs/nowhere"});
 }
 
 TEST_CASE("a target whose dependency nothing satisfies is held by it") {
@@ -209,4 +288,18 @@ TEST_CASE("an update that loses its dependency on a pulled package no longer pul
          {.cpv = "dev-libs/extra-1"}});
     CHECK(plan(system) ==
           std::vector<std::string>{"app-misc/lost-1 held <- app-misc/lost-2 dev-libs/nowhere"});
+}
+
+TEST_CASE("update lines name the merge a slot-operator rebuild is for") {
+    const auto system =
+        make_system({{.cpv = "app-misc/rdep-1", .deps = {{"RDEPEND", "dev-libs/lib:0/1="}}},
+                     {.cpv = "dev-libs/lib-1", .sub_slot = "1"}},
+                    {{.cpv = "app-misc/rdep-1", .deps = {{"RDEPEND", "dev-libs/lib:="}}},
+                     {.cpv = "dev-libs/lib-1", .sub_slot = "1"},
+                     {.cpv = "dev-libs/lib-2", .sub_slot = "2"}});
+    CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none) ==
+          std::vector<std::string>{
+              "app-misc/rdep-1\trebuild\tapp-misc/rdep-1\ttest_repo\t\tdev-libs/lib-2 "
+              "dev-libs/lib:0/1=",
+              "dev-libs/lib-1\tupgrade\tdev-libs/lib-2\ttest_repo"});
 }

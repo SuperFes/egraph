@@ -283,8 +283,11 @@ Blockers stay out of scope until a comparison needs them.
   25 merges are `emerge -puDN @world`'s 23 plus two USE rebuilds outside @world (12c), with
   `dev-cpp/mm-common` pulled in by `glibmm`. 5,079 candidates, 54 more cps, a full build 81.3G
   instructions.
-- 14c: slot-operator rebuilds: a dependent whose `:=` atom a target's new slot or sub-slot
-  breaks is rebuilt, as emerge does.
+- 14c (done): slot-operator rebuilds: a kept dependent bound (`:S/SS=`, through DEPEND,
+  RDEPEND or PDEPEND) to a sub-slot a merge replaces is rebuilt from a visible ebuild of its
+  version, whose own dependencies join the plan (and pull in what they lack); with none, the
+  binding holds the merge back to a version in its sub-slot. The line names the merge it is for.
+  Equal to emerge's rebuilds on every scenario (`slotops`, `bounds`).
 - 14d: the plan in merge order: as a tree down to each package's world root, and as a table
   (`-t`) with from, to, why and what each waits for. Pretend only, first in the one-shot
   output, then as a view of the living app. Checked against emerge's merge list by validity
