@@ -18,6 +18,8 @@ Update the status column as steps land.
 | 10 | Output and UX | done |
 | 11 | Build monitor | done |
 | 12 | Updates of `@world` | in progress |
+| 13 | A living app | in progress |
+| 14 | Plans | not started |
 
 ## 0. Scaffold
 
@@ -238,3 +240,28 @@ an update back, rather than skipping it), it stays, recorded in `upstream-notes.
   held-updates view in the TUI.
 - Left to a resolver: what the targets' own dependencies pull in (new packages, and updates
   that need a held one), new slots, and slot-operator rebuilds.
+
+## 13. A living app
+
+Taken ahead of 12c and 12d at the user's direction: egraph interactive whenever the user is,
+and run-and-done otherwise (`docs/vision.md`).
+
+- 13a: a `Session` owns what every command now loads per run (both stores, the dynamic-deps
+  store, the graph, depclean's results, the pending updates), computed on first use; each
+  command computes from a session and renders. Every one-shot command's output unchanged.
+- 13b: a line-mode shell reading commands from standard input, for builds without Notcurses and
+  for tests.
+- 13c: bare `egraph` on a terminal opens the TUI (`egraph tui` stays), with a `:` command line
+  taking the CLI's commands and options through the same parser, and their results as views
+  linked to package pages. A failed command is a message, not an exit.
+- 13d: the app stays current: inputs checked on each tick, the incremental builder run as a
+  child process watched without blocking, the new stores swapped in keeping the user's place.
+  Check and rebuild stop freezing the screen the same way.
+
+## 14. Plans
+
+- The update set in merge order: as a tree down to each package's world root, and as a table
+  (`-t`) with from, to, why and what each waits for. Pretend only, first as a view of the living
+  app. Needs the targets' own dependencies (what emerge pulls in), which the evaluated store
+  does not hold yet; checked against emerge's merge list by validity (every build dependency
+  first), not identity.
