@@ -489,21 +489,79 @@ def read_candidates(portdb, settings, cp, installed_cpvs, match, ebuild_use=None
     return found
 
 
-def unsatisfied_cps(deps):
-    """The cps of the atoms in node tuples, one per kind, that nothing installed satisfies,
-    outside any group installed packages satisfy; blockers are not dependencies."""
+def reached_cps(deps, may_break=lambda node: False):
+    """The cps emerge may have to pull in for node tuples, one per kind: those of the atoms
+    nothing installed satisfies, outside any group installed packages satisfy, and every
+    alternative of a || group whose satisfied atoms may_break says an update could leave
+    unsatisfied. Blockers are not dependencies."""
     found = set()
     for nodes in deps:
         ok = installed.satisfied(nodes)
+        children = [[] for _ in nodes]
         for index, node in enumerate(nodes):
-            if node.type != installed.ATOM or ok[index]:
-                continue
-            parent = node.parent
-            while parent >= 0 and not ok[parent]:
-                parent = nodes[parent].parent
-            if parent < 0:
-                found.add(Atom(node.atom, allow_repo=True).cp)
+            if node.parent >= 0:
+                children[node.parent].append(index)
+
+        def atoms(index):
+            node = nodes[index]
+            if node.type == installed.ATOM:
+                yield index
+            elif node.type in (installed.ANY_OF, installed.ALL_OF):
+                for child in children[index]:
+                    yield from atoms(child)
+
+        def open_(index):
+            """Whether what installed packages give node index may be taken away."""
+            node = nodes[index]
+            if not ok[index]:
+                return True
+            if node.type == installed.ATOM:
+                return may_break(node)
+            if node.type == installed.ANY_OF:
+                return all(open_(child) for child in children[index] if ok[child])
+            if node.type == installed.ALL_OF:
+                return any(open_(child) for child in children[index])
+            return False
+
+        for index, node in enumerate(nodes):
+            if node.type == installed.ANY_OF and (
+                node.parent < 0 or nodes[node.parent].type != installed.ANY_OF
+            ):
+                if open_(index):
+                    found.update(_cp(nodes[i].atom) for i in atoms(index))
+            elif node.type == installed.ATOM and not ok[index]:
+                parent = node.parent
+                while parent >= 0 and not ok[parent]:
+                    parent = nodes[parent].parent
+                if parent < 0:
+                    found.add(_cp(node.atom))
     return found
+
+
+def _cp(atom):
+    return Atom(atom, allow_repo=True).cp
+
+
+def may_break(by_cp):
+    """may_break for reached_cps: whether an atom node's installed matches all have a visible
+    version in their slot, among by_cp's candidates, that the atom rejects (USE aside).
+    """
+    from portage.dep import match_from_list
+    from portage.versions import _pkg_str
+
+    def breaks(node):
+        atom = Atom(node.atom, allow_repo=True).without_use
+        for cpv in node.matches:
+            others = [
+                _pkg_str(c.cpv, slot=f"{c.slot}/{c.sub_slot}", repo=c.repo)
+                for c in by_cp.get(cpv_getkey(cpv), ())
+                if not c.reasons
+            ]
+            if all(match_from_list(atom, [other]) for other in others):
+                return False
+        return bool(node.matches)
+
+    return breaks
 
 
 def build(vardb, portdb, match=None):
@@ -576,15 +634,15 @@ def rebuild(vardb, portdb, previous, cps, carry=None, match=None):
                     **read_masked(vardb, portdb, installed_settings, cpv, updates)
                 )
             packages.append(pkg)
-    # What emerge would have to pull in: the cps that dependencies nothing installed
-    # satisfies name, and theirs in turn.
+    # What emerge may have to pull in (reached_cps), and theirs in turn.
     reached = set(installed_cps)
+    breaks = may_break(by_cp)
     queue = []
     for deps in itertools.chain(
         (pkg.deps for pkg in packages),
         (c.deps for found in by_cp.values() for c in found),
     ):
-        queue.extend(unsatisfied_cps(deps) - reached)
+        queue.extend(reached_cps(deps, breaks) - reached)
     while queue:
         cp = queue.pop()
         if cp in reached:
@@ -592,7 +650,7 @@ def rebuild(vardb, portdb, previous, cps, carry=None, match=None):
         reached.add(cp)
         by_cp[cp] = candidates_of(cp)
         for c in by_cp[cp]:
-            queue.extend(unsatisfied_cps(c.deps) - reached)
+            queue.extend(reached_cps(c.deps, breaks) - reached)
     return (
         EvaluatedLayer(packages, [c for found in by_cp.values() for c in found]),
         frozenset(read),

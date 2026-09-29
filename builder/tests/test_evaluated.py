@@ -120,19 +120,22 @@ def test_candidate_deps_are_depgraphs(scenario):
         assert found == update.candidate_deps(scenario.trees, scenario.eroot, c), c
 
 
-def test_candidates_reach_what_nothing_installed_satisfies(scenario):
-    """Every cp an unsatisfied dependency names has its candidates, when it has any ebuild, and
-    every candidate cp is installed or so named."""
+def test_candidates_reach_what_emerge_may_pull_in(scenario):
+    """Every cp emerge may pull in (reached_cps) has its candidates, when it has any ebuild,
+    and every candidate cp is installed or so reached."""
     layer = build(scenario)
     db = portdb(scenario)
+    by_cp = collections.defaultdict(list)
+    for c in layer.candidates():
+        by_cp[c.cp].append(c)
+    breaks = evaluated.may_break(by_cp)
     trees = [pkg.deps for pkg in layer]
     trees.extend(c.deps for c in layer.candidates() if not c.reasons)
-    named = set().union(*map(evaluated.unsatisfied_cps, trees))
-    present = {c.cp for c in layer.candidates()}
+    named = set().union(*(evaluated.reached_cps(t, breaks) for t in trees))
     for cp in named:
         if db.cp_list(cp):
-            assert cp in present, cp
-    assert present <= set(installed_cps(scenario)) | named
+            assert cp in by_cp, cp
+    assert set(by_cp) <= set(installed_cps(scenario)) | named
 
 
 def test_candidates_follow_new_packages(playgrounds):
@@ -155,6 +158,12 @@ def test_candidates_follow_new_packages(playgrounds):
     assert [n.atom for n in flagged.deps[DEP_KINDS.index("RDEPEND")]] == [
         "dev-libs/extra"
     ]
+
+
+def test_candidates_follow_alternatives_an_update_could_need(playgrounds):
+    # alt-2 breaks either's <alt-2, so its || may switch to other.
+    present = {c.cp for c in build(playgrounds("bounds")).candidates()}
+    assert "dev-libs/other" in present
 
 
 # By hand, on the repository scenario.

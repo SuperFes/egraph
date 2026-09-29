@@ -111,11 +111,12 @@ struct Glyphs {
     std::string_view cycle;
     // Before what is installed in place of a dependency.
     std::string_view instead;
-    // A pending update: a newer version, an older one, and the same one rebuilt; and one that
-    // installed dependents hold back.
+    // A pending update: a newer version, an older one, the same one rebuilt, and a package new in
+    // its slot; and one that dependents hold back.
     std::string_view upgrade;
     std::string_view downgrade;
     std::string_view rebuild;
+    std::string_view added;
     std::string_view held;
     // A box's corners and sides.
     struct Frame {

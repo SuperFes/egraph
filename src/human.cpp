@@ -78,6 +78,7 @@ constexpr Glyphs nerd_glyphs{
     .upgrade = "\uF0AA",
     .downgrade = "\uF0AB",
     .rebuild = "\uF021",
+    .added = "\uF0FE",
     .held = "\uF023",
     .frame = {.top_left = "╭",
               .top_right = "╮",
@@ -124,6 +125,7 @@ constexpr Glyphs unicode_glyphs{
     .upgrade = "↑",
     .downgrade = "↓",
     .rebuild = "↺",
+    .added = "⊕",
     .held = "⊘",
     .frame = {.top_left = "╭",
               .top_right = "╮",
@@ -170,6 +172,7 @@ constexpr Glyphs ascii_glyphs{
     .upgrade = "U",
     .downgrade = "D",
     .rebuild = "R",
+    .added = "N",
     .held = "H",
     .frame = {.top_left = "+",
               .top_right = "+",
@@ -560,6 +563,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     const auto& glyph = theme.glyph();
     const auto rows = split_all(records);
     const auto is_held = [](const auto& row) { return row.at(1) == "held"; };
+    const auto is_new = [](const auto& row) { return row.at(1) == "new"; };
     // Every row shares the columns, so held ones line up under the updates.
     std::size_t cp_width = 0;
     std::size_t version_width = 0;
@@ -591,7 +595,15 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             out << spaces(0, move_width);
         }
         out << "  " << paint("::" + std::string{row.at(3)}, Tone::repo);
-        if (row.size() > 4 && !row.at(4).empty()) {
+        if (row.at(1) == "new") {
+            // What pulls it in: a package, then its atom.
+            if (row.size() > 4) {
+                const auto by = row.at(4);
+                const auto cut = std::min(by.find(' '), by.size());
+                out << "  " << paint(by.substr(0, cut), Tone::version) << ' '
+                    << paint(by.substr(std::min(cut + 1, by.size())), Tone::note);
+            }
+        } else if (row.size() > 4 && !row.at(4).empty()) {
             flags = true;
             out << ' ';
             for (const auto flag : std::views::split(row.at(4), ' ')) {
@@ -601,10 +613,14 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         }
         out << '\n';
     };
-    // up, down, rebuild, held
-    std::array<std::size_t, 4> counts{};
+    // up, down, rebuild, new, held
+    std::array<std::size_t, 5> counts{};
     for (const auto& row : rows) {
         if (is_held(row)) {
+            ++counts.at(4);
+            continue;
+        }
+        if (is_new(row)) {
             ++counts.at(3);
             continue;
         }
@@ -619,14 +635,22 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                 : down ? Tone::bad
                        : Tone::use);
     }
-    if (counts.at(0) + counts.at(1) + counts.at(2) == 0) {
+    if (counts.at(0) + counts.at(1) + counts.at(2) + counts.at(3) == 0) {
         out << paint(glyph.good, Tone::good) << ' ' << paint("Nothing to update.", Tone::good)
             << '\n';
-        if (counts.at(3) == 0) {
+        if (counts.at(4) == 0) {
             return;
         }
     }
     if (counts.at(3) != 0) {
+        out << '\n' << paint("New", Tone::heading) << '\n';
+        for (const auto& row : rows) {
+            if (is_new(row)) {
+                put_row(row, glyph.added, Tone::good);
+            }
+        }
+    }
+    if (counts.at(4) != 0) {
         out << '\n' << paint("Held back", Tone::heading) << '\n';
         for (const auto& row : rows) {
             if (!is_held(row)) {
@@ -654,9 +678,10 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             }
         }
     }
-    constexpr std::array<std::array<std::string_view, 2>, 4> nouns{{{" upgrade", " upgrades"},
+    constexpr std::array<std::array<std::string_view, 2>, 5> nouns{{{" upgrade", " upgrades"},
                                                                     {" downgrade", " downgrades"},
                                                                     {" rebuild", " rebuilds"},
+                                                                    {" new", " new"},
                                                                     {" held", " held"}}};
     out << '\n';
     bool first = true;

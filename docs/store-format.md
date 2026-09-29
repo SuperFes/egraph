@@ -171,10 +171,12 @@ weighs the package against its repositories under `--update`:
 
 A candidate is one version of a cp in one repository: every visible one, and each masked one
 that is installed. The cps are the installed ones, and every cp that emerge could have to pull
-in: named by an atom in a dependency record or a visible candidate's node lists that no
-installed package matches, outside any `||` or all-of group installed packages satisfy, and
-followed through the candidates of the cps so reached until nothing new is named. Blockers name
-nothing.
+in, named in a dependency record's or a visible candidate's node lists: by an atom no installed
+package matches, outside any `||` or all-of group installed packages satisfy; or by any
+alternative of a `||` group whose satisfied atoms an update could all leave unsatisfied (every
+installed package one matches has a visible version in its slot that the atom rejects, USE
+aside). The candidates of the cps so reached are followed in turn until nothing new is named.
+Blockers name nothing.
 
 1. String ids: cp, cpv, repo, slot, sub-slot.
 2. USE: list of string ids, the flags the ebuild would be built with now, within its IUSE.

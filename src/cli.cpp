@@ -605,12 +605,11 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
         return fail(err, stores.error());
     }
     const auto store = session.dependencies(invocation.dynamic_deps);
-    const auto graph = session.graph(invocation.dynamic_deps);
-    if (!store || !graph) {
-        return fail(err, store ? graph.error() : store.error());
+    if (!store) {
+        return fail(err, store.error());
     }
     const auto lines =
-        update_lines(*store, *graph, stores->get().evaluated, command.rebuilds, command.held);
+        update_lines(*store, stores->get().evaluated, command.rebuilds, command.held);
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme);
     } else {

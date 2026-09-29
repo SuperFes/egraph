@@ -275,10 +275,14 @@ Blockers stay out of scope until a comparison needs them.
   packages' dynamic ones) reach where nothing installed satisfies them, followed to closure and
   kept incrementally. On the dev box: 5,023 candidates, 36 more cps (`dev-cpp/mm-common` among
   them), a full build 12% more instructions.
-- 14b: `updates` as a plan: new packages each target (or a kept package's dynamic dependencies)
-  pulls in, with what pulls them; a target whose dependency only a held update would satisfy is
-  held by it in turn, to a fixed point. Compared with `emerge -puD @installed` as a set on every
-  scenario, and with `-uDN @world` on the dev box.
+- 14b (done): `updates` as a plan (`plan.cpp`): new packages each target (or a kept package's
+  dependencies) pulls in, with what pulls them; a target whose dependency nothing the plan can
+  hold satisfies is held by it in turn, and an installed package whose update a target's atom
+  rejects falls back, to a fixed point. The closure follows every alternative of a `||` an
+  update could break. Equal to `emerge -puD @installed` on every scenario; on the dev box, the
+  25 merges are `emerge -puDN @world`'s 23 plus two USE rebuilds outside @world (12c), with
+  `dev-cpp/mm-common` pulled in by `glibmm`. 5,079 candidates, 54 more cps, a full build 81.3G
+  instructions.
 - 14c: slot-operator rebuilds: a dependent whose `:=` atom a target's new slot or sub-slot
   breaks is rebuilt, as emerge does.
 - 14d: the plan in merge order: as a tree down to each package's world root, and as a table

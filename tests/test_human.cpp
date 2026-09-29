@@ -183,6 +183,22 @@ TEST_CASE("held updates come once each, their holders under them") {
                         "\n1 held\n");
 }
 
+TEST_CASE("new packages come under their own heading, with what pulls them in") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{
+                              "dev-cpp/glibmm-2.66\tupgrade\tdev-cpp/glibmm-2.66-r1\tgentoo",
+                              "dev-cpp/mm-common-1.0.8\tnew\tdev-cpp/mm-common-1.0.8\tgentoo\t"
+                              "dev-cpp/glibmm-2.66-r1 dev-cpp/mm-common",
+                          },
+                          plain);
+    CHECK(out.str() == "U dev-cpp/glibmm     2.66  > 2.66-r1  ::gentoo\n"
+                       "\nNew\n"
+                       "N dev-cpp/mm-common  1.0.8            ::gentoo  "
+                       "dev-cpp/glibmm-2.66-r1 dev-cpp/mm-common\n"
+                       "\n1 upgrade, 1 new\n");
+}
+
 TEST_CASE("broken groups by package and counts") {
     const std::vector<std::string> records{
         "a/b-1\tPDEPEND\tx/gone",

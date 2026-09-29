@@ -10,7 +10,6 @@ from compare import _sonames, possible_mismatches
 from conftest import dynamic_option, portdb, write_stores
 from egraph_build import oracle, roots
 from egraph_build.model import Edge
-from scenarios import SCENARIOS
 
 EGRAPH = os.environ.get("EGRAPH")
 
@@ -119,6 +118,8 @@ def parse_updates(text):
     found = {}
     for line in text.splitlines():
         cpv, kind, target, repo, *flags = line.split("\t")
+        if kind == "new":
+            continue
         names = (
             frozenset(rebuild_flag(flag) for flag in flags[0].split())
             if flags
@@ -134,16 +135,14 @@ def parse_updates(text):
     ids=["update", "newuse", "changed-use"],
 )
 def test_updates_are_emerges(
-    request, scenario, system, dynamic_deps, option, newuse, changed_use
+    scenario, system, dynamic_deps, option, newuse, changed_use
 ):
-    """What emerge -puD @installed replaces: dependents' atoms hold updates back, and the deep
-    resolution falls back to the best version they accept, as plain -u does not."""
+    """What emerge -puD @installed merges: dependents' atoms hold updates back, the deep
+    resolution falls back to the best version they accept, as plain -u does not, and what the
+    merges and the kept packages need that nothing installed provides comes in new."""
     from portage.versions import cpv_getversion, vercmp
 
     import update
-
-    if SCENARIOS[request.node.callspec.params["scenario"]].get("pulls"):
-        pytest.skip("targets pull in new packages here")
 
     expected = update.updates(
         scenario.trees,
@@ -157,21 +156,15 @@ def test_updates_are_emerges(
         pytest.skip("emerge cannot resolve @installed here")
     _, path = system
     options = [*dynamic_option(dynamic_deps), *filter(None, [option])]
-    found = parse_updates(egraph(path, "updates", *options).stdout)
+    output = egraph(path, "updates", *options).stdout
+    new = {
+        fields[0]
+        for fields in (line.split("\t") for line in output.splitlines())
+        if fields[1] == "new"
+    }
+    found = parse_updates(output)
     replaced = {cpv: replacement for cpv, (_, replacement) in found.items()}
-    # emerge may satisfy a dependent another way, by pulling in a package nothing installed
-    # provides: a resolver's choice egraph leaves out, holding the update instead.
-    held = {
-        line.split("\t")[0]
-        for line in egraph(path, "updates", "--held", *options).stdout.splitlines()
-        if line.split("\t")[1] == "held"
-    }
-    resolved = {
-        cpv: replacement
-        for cpv, replacement in expected.replaced.items()
-        if not (expected.new and cpv in held and cpv not in replaced)
-    }
-    assert replaced == resolved
+    assert (replaced, new) == (expected.replaced, expected.new)
     for cpv, (kind, replacement) in found.items():
         order = vercmp(cpv_getversion(replacement.cpv), cpv_getversion(cpv))
         assert kind == (

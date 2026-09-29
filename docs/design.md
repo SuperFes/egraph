@@ -276,19 +276,20 @@ when its own version has no visible ebuild (depgraph's `_equiv_ebuild_visible`: 
 repository, else any), which can mean a downgrade. `-N` (`--newuse`) and `-U` (`--changed-use`)
 add rebuilds of the same version for changed USE, with depgraph's `_reinstall_for_flags` and
 the flags in emerge's notation (`flag*` changed, `flag%` new in IUSE, `(-flag%)` gone from it).
-The builder decides all of it; the C++ side labels upgrades and downgrades by version and weighs
-each against the installed dependents, as `emerge -uD` does (roadmap 12b). A dependent's
-dependency holds an update when it would go unsatisfied with the target in place of the
-installed package: the target (with the USE it would be built with) must match the atom, a
-slot operator's sub-slot aside (emerge rebuilds the dependent instead), unless another
-alternative of a `||` stays satisfied. The dependencies are read as the other queries read them
-(`--dynamic-deps`). A held upgrade falls back to the best visible version in the slot every
-dependent accepts (`<dev-python/astroid-4.1` picks 4.0.x), or stays put; a held rebuild for USE
-stays put. `--held` adds each held update once, with the dependents holding it and their atoms
-that do; the human layout lists them under a "Held back" heading, each dependent on a line of
-its own. egraph never
-lists new slots, slot-operator rebuilds, or what emerge pulls in to satisfy a dependent another
-way (a new package for a `||`), which are the resolver's.
+The builder decides all of it; the C++ side plans the merge as `emerge -uD` would (`plan.cpp`,
+roadmap 14b). Each installed package in scope takes its target, or falls back to the best
+visible version in its slot that no member of the plan rejects, or stays put. A member's
+dependency (a kept package's own, read with or without `--dynamic-deps`, or a merged
+candidate's, reduced under the USE it would be built with) must be satisfied by the plan: by a
+package it keeps or merges, a slot operator's sub-slot aside (emerge rebuilds the dependent
+instead), or else by pulling in the best visible version that matches into a slot nothing
+occupies (a new package, with the dependency that pulled it). A `||` takes its first
+alternative that can be satisfied so. When nothing can satisfy a dependency, the installed
+package it would take away is rejected, or else the target that (through what it pulls in)
+needs it, and the choice moves down a version; the plan repeats until nothing moves. A held
+rebuild for USE stays put. `--held` adds each held update once, with the members and atoms that
+hold it; the human layout lists them under a "Held back" heading and new packages under "New".
+Blockers are not weighed, and slot-operator rebuilds are not yet listed.
 
 In removal mode `dep_zapdeps` asks which packages are *available*: an installed package whose
 own metadata is masked (keywords, `package.mask`, license, invalid strings; under dynamic deps

@@ -403,3 +403,7 @@ process including load and the freshness check of 2,575 inputs.
 - An incremental build with nothing changed: 10.3G to 15.4G, then 14.5G once candidate trees
   are named while decoding rather than through `_replace`. The rest is decoding and encoding
   the extra nodes in Python, the floor recorded under step 9f.
+- With every `||` alternative an update could break in the closure (step 14b): 5,079
+  candidates, 54 cps beyond the installed ones (podman's stack, rust, openjdk, perl-core among
+  them, through `||` groups whose installed choice has a newer version outside the bound). A
+  full build of both stores: 81.3G instructions.

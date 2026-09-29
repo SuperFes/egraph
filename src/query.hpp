@@ -46,47 +46,33 @@ struct PendingUpdate {
     std::string flags;
 };
 
+// By the versions of cp's cpvs from and to.
+[[nodiscard]] UpdateKind update_kind(std::string_view cp, std::string_view from,
+                                     std::string_view to);
+
 // The package's pending update, if emerge -u would replace it or, with rebuilds, rebuild it for
 // USE.
 [[nodiscard]] std::optional<PendingUpdate>
 pending_update(const Evaluated& evaluated, std::uint32_t package, UseRebuilds rebuilds);
 
-// An installed dependent's atom that rejects an update's target.
-struct Holder {
-    std::uint32_t parent = 0;
-    // String id of the atom in the store the dependencies were read from.
-    std::uint32_t atom = 0;
-    auto operator<=>(const Holder&) const = default;
-};
+// Indices into Evaluated::candidates that the package's wanted update falls back to when its
+// target is rejected: the other visible versions in the target's slot, newer than the installed
+// one for an upgrade, best first and of one version the target's repository first. None for a
+// rebuild.
+[[nodiscard]] std::vector<std::uint32_t>
+fallbacks(const Evaluated& evaluated, std::uint32_t package, const PendingUpdate& wanted);
 
-// A pending update weighed against the installed dependents' atoms, as emerge -uD weighs it.
-struct WeighedUpdate {
-    // What emerge would do: the pending update, or an update to the best visible version in the
-    // slot every dependent accepts; nothing when none does.
-    std::optional<PendingUpdate> update;
-    // The pending update when dependents reject it, and the atoms that do, sorted.
-    std::optional<PendingUpdate> held;
-    std::vector<Holder> holders;
-};
-
-// The package's pending update against the dependencies in store (read with or without dynamic
-// deps) of the packages in scope, every installed one when scope is empty. An atom holds unless
-// the target matches it; a slot operator's sub-slot does not count (emerge rebuilds the
-// dependent instead), nor does an alternative of a || group that another installed package
-// still satisfies.
-[[nodiscard]] WeighedUpdate weigh_update(const Store& store, const Graph& graph,
-                                         const Evaluated& evaluated, std::uint32_t package,
-                                         UseRebuilds rebuilds, const std::vector<bool>& scope = {});
-
-// What emerge -uD would replace, as "cpv<TAB>kind<TAB>target cpv<TAB>repo": kind upgrade,
-// downgrade, or rebuild when the installed package is masked and the target has its version.
-// With rebuilds, each USE rebuild too, kind rebuild with "<TAB>flags" appended, the flags in
-// emerge's notation, space-separated. With held, also each update dependents hold back, once:
-// "cpv<TAB>held<TAB>target cpv<TAB>repo<TAB>flags", the flags a held USE rebuild is for (else
-// empty), then a field per dependent holding it: its cpv, then each of its atoms that do, space-
-// separated. In the installed packages' order.
-[[nodiscard]] std::vector<std::string> update_lines(const Store& store, const Graph& graph,
-                                                    const Evaluated& evaluated,
+// What emerge -uD would merge (plan_updates), as "cpv<TAB>kind<TAB>target cpv<TAB>repo": kind
+// upgrade, downgrade, or rebuild when the installed package is masked and the target has its
+// version. With rebuilds, each USE rebuild too, kind rebuild with "<TAB>flags" appended, the flags
+// in emerge's notation, space-separated. With held, also each update held back or fallen back,
+// once: "cpv<TAB>held<TAB>target cpv<TAB>repo<TAB>flags", the flags a held USE rebuild is for
+// (else empty), then a field per package whose dependencies reject it (a dependent, or the
+// target or what it would pull in): its cpv, then each of its atoms that do, space-separated. In
+// the installed packages' order; then each package new in its slot,
+// "cpv<TAB>new<TAB>cpv<TAB>repo<TAB>puller atom", by cpv, with the package and atom that pull it
+// in.
+[[nodiscard]] std::vector<std::string> update_lines(const Store& store, const Evaluated& evaluated,
                                                     UseRebuilds rebuilds, bool held = false,
                                                     const std::vector<bool>& scope = {});
 

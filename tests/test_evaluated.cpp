@@ -130,10 +130,7 @@ TEST_CASE("the sample evaluated store decodes") {
     REQUIRE(depend.size() == 1);
     CHECK(evaluated->string(depend.front().atom) == "app-misc/a");
     CHECK(std::ranges::equal(evaluated->ids_in(depend.front().matches), std::array{0U}));
-    const auto b2_rdepend = evaluated->nodes_in(b2.deps.at(4));
-    REQUIRE(b2_rdepend.size() == 1);
-    CHECK(evaluated->string(b2_rdepend.front().atom) == "dev-libs/gone");
-    CHECK(evaluated->ids_in(b2_rdepend.front().matches).empty());
+    CHECK(evaluated->nodes_in(b2.deps.at(4)).empty());
 }
 
 TEST_CASE("every evaluated truncation is rejected") {
@@ -334,9 +331,8 @@ TEST_CASE("updates are what emerge -u would replace, and rebuild for USE when as
     const auto evaluated = egraph::decode_evaluated(sample());
     REQUIRE(evaluated.has_value());
     const auto store = installed();
-    const auto graph = egraph::build_graph(store);
     const auto lines = [&](egraph::UseRebuilds rebuilds) {
-        return egraph::update_lines(store, graph, *evaluated, rebuilds);
+        return egraph::update_lines(store, *evaluated, rebuilds);
     };
     const std::vector<std::string> upgrade{"dev-libs/b-1\tupgrade\tdev-libs/b-2\ttest_repo"};
     CHECK(lines(egraph::UseRebuilds::none) == upgrade);
@@ -348,44 +344,23 @@ TEST_CASE("updates are what emerge -u would replace, and rebuild for USE when as
                                    upgrade.front()});
 }
 
-// b-1's target is b-2, in slot 0/0; nothing else of dev-libs/b is visible.
-TEST_CASE("an atom of an installed dependent the target does not match holds the update") {
+// b-1's target is b-2, in slot 0/0; nothing else of dev-libs/b is visible. (tests/test_plan.cpp
+// weighs holds in full.)
+TEST_CASE("updates list what dependents hold back, and who") {
     const auto evaluated = egraph::decode_evaluated(sample());
     REQUIRE(evaluated.has_value());
-    const auto weigh = [&](std::string_view atom, Beside beside,
-                           const std::vector<bool>& scope = {}) {
-        const auto store = depending_through(atom, beside);
-        return egraph::weigh_update(store, egraph::build_graph(store), *evaluated, 1,
-                                    egraph::UseRebuilds::none, scope);
+    const auto lines = [&](std::string_view atom, Beside beside = Beside::nothing) {
+        return egraph::update_lines(depending_through(atom, beside), *evaluated,
+                                    egraph::UseRebuilds::none, true);
     };
-    const auto held = [&](std::string_view atom, Beside beside = Beside::nothing) {
-        const auto weighed = weigh(atom, beside);
-        return !weighed.update && weighed.held &&
-               weighed.holders == std::vector<egraph::Holder>{{.parent = 0, .atom = 17}};
-    };
-    const auto free = [&](std::string_view atom, Beside beside = Beside::nothing) {
-        const auto weighed = weigh(atom, beside);
-        return weighed.update && weighed.update->target == 2 && !weighed.held &&
-               weighed.holders.empty();
-    };
-    CHECK(free("dev-libs/b"));
-    CHECK(held("<dev-libs/b-2"));
-    CHECK(held("dev-libs/b:0/1"));
-    // emerge rebuilds the dependent against the new sub-slot instead.
-    CHECK(free("dev-libs/b:0/1="));
-    CHECK(held("dev-libs/b:1="));
-    // A || holds unless another installed package keeps it satisfied.
-    CHECK(held("<dev-libs/b-2", Beside::unsatisfied));
-    CHECK(free("<dev-libs/b-2", Beside::satisfied));
-    // Out of scope, a dependent holds nothing.
-    const std::vector<bool> scope{false, true};
-    CHECK(weigh("<dev-libs/b-2", Beside::nothing, scope).update);
-
-    const auto store = depending_through("<dev-libs/b-2", Beside::nothing);
-    CHECK(egraph::update_lines(store, egraph::build_graph(store), *evaluated,
-                               egraph::UseRebuilds::none, true) ==
-          std::vector<std::string>{
-              "dev-libs/b-1\theld\tdev-libs/b-2\ttest_repo\t\tapp-misc/a-1 <dev-libs/b-2"});
+    const std::vector<std::string> upgrade{"dev-libs/b-1\tupgrade\tdev-libs/b-2\ttest_repo"};
+    const std::vector<std::string> held{
+        "dev-libs/b-1\theld\tdev-libs/b-2\ttest_repo\t\tapp-misc/a-1 <dev-libs/b-2"};
+    CHECK(lines("dev-libs/b") == upgrade);
+    CHECK(lines("<dev-libs/b-2") == held);
+    // A || holds unless another alternative is installed or can be pulled in; nothing can.
+    CHECK(lines("<dev-libs/b-2", Beside::unsatisfied) == held);
+    CHECK(lines("<dev-libs/b-2", Beside::satisfied) == upgrade);
 }
 
 TEST_CASE("an update's kind follows the versions") {
@@ -397,9 +372,7 @@ TEST_CASE("an update's kind follows the versions") {
         dependencies.varints({2, 1, 3}).varint(0).varints({0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0});
         const auto evaluated = egraph::decode_evaluated(evaluated_with_section(4, dependencies));
         REQUIRE(evaluated.has_value());
-        const auto store = installed();
-        return egraph::update_lines(store, egraph::build_graph(store), *evaluated,
-                                    egraph::UseRebuilds::none);
+        return egraph::update_lines(installed(), *evaluated, egraph::UseRebuilds::none);
     };
     CHECK(lines(1, 2) ==
           std::vector<std::string>{"app-misc/a-1\tupgrade\tapp-misc/a-2\ttest_repo"});

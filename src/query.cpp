@@ -1,5 +1,7 @@
 #include "query.hpp"
 
+#include "plan.hpp"
+
 #include "atom.hpp"
 #include "version.hpp"
 
@@ -93,18 +95,6 @@ std::vector<std::string> possible_lines(const Evaluated& evaluated,
 
 namespace {
 
-UpdateKind update_kind(std::string_view cp, std::string_view from, std::string_view to) {
-    const auto version = [&cp](std::string_view cpv) {
-        return parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
-    };
-    const auto old = version(from);
-    const auto target = version(to);
-    const int order = old && target ? vercmp(*target, *old) : 0;
-    return order > 0   ? UpdateKind::upgrade
-           : order < 0 ? UpdateKind::downgrade
-                       : UpdateKind::rebuild;
-}
-
 constexpr std::string_view kind_name(UpdateKind kind) {
     switch (kind) {
     case UpdateKind::upgrade:
@@ -123,6 +113,18 @@ bool state_changed(std::string_view flag) {
 }
 
 } // namespace
+
+UpdateKind update_kind(std::string_view cp, std::string_view from, std::string_view to) {
+    const auto version = [&cp](std::string_view cpv) {
+        return parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
+    };
+    const auto old = version(from);
+    const auto target = version(to);
+    const int order = old && target ? vercmp(*target, *old) : 0;
+    return order > 0   ? UpdateKind::upgrade
+           : order < 0 ? UpdateKind::downgrade
+                       : UpdateKind::rebuild;
+}
 
 std::optional<PendingUpdate> pending_update(const Evaluated& evaluated, std::uint32_t package,
                                             UseRebuilds rebuilds) {
@@ -159,160 +161,108 @@ std::optional<Version> version_of(std::string_view cp, std::string_view cpv) {
     return parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
 }
 
-// The atoms of parents' dependencies that would go unsatisfied were package replaced by the
-// candidate, sorted.
-std::vector<Holder> holders_of(const Store& store, const Evaluated& evaluated,
-                               std::span<const std::uint32_t> parents, std::uint32_t package,
-                               const Candidate& candidate) {
-    std::vector<Holder> holders;
-    for (const auto parent : parents) {
-        for (const auto range : store.packages.at(parent).deps) {
-            const auto nodes = store.nodes_in(range);
-            const auto matched = [&](std::size_t i) {
-                return std::ranges::contains(store.ids_in(element(nodes, i).matches), package);
-            };
-            const auto accepts = [&](std::size_t i) {
-                auto atom = parse_atom(store.string(element(nodes, i).atom));
-                if (!atom) {
-                    return true;
-                }
-                if (atom->slot_operator) {
-                    atom->sub_slot.reset();
-                }
-                return matches(store, evaluated, candidate, *atom);
-            };
-            const auto after = satisfied(nodes, [&](std::size_t i) {
-                const auto ids = store.ids_in(element(nodes, i).matches);
-                return std::ranges::any_of(ids, [package](auto id) { return id != package; }) ||
-                       (matched(i) && accepts(i));
-            });
-            for (std::size_t i = 0; i < nodes.size(); ++i) {
-                const auto& node = element(nodes, i);
-                if (node.type != NodeType::atom || !matched(i) || accepts(i)) {
-                    continue;
-                }
-                auto top = i;
-                while (element(nodes, top).parent != no_parent) {
-                    top = element(nodes, top).parent;
-                }
-                if (!after.at(top)) {
-                    holders.push_back({.parent = parent, .atom = node.atom});
-                }
-            }
-        }
-    }
-    std::ranges::sort(holders);
-    const auto [first, last] = std::ranges::unique(holders);
-    holders.erase(first, last);
-    return holders;
-}
-
 } // namespace
 
-WeighedUpdate weigh_update(const Store& store, const Graph& graph, const Evaluated& evaluated,
-                           std::uint32_t package, UseRebuilds rebuilds,
-                           const std::vector<bool>& scope) {
-    auto wanted = pending_update(evaluated, package, rebuilds);
-    if (!wanted) {
+std::vector<std::uint32_t> fallbacks(const Evaluated& evaluated, std::uint32_t package,
+                                     const PendingUpdate& wanted) {
+    if (wanted.kind == UpdateKind::rebuild) {
         return {};
     }
-    std::vector<std::uint32_t> parents;
-    for (const auto& edge : graph.rdeps(package)) {
-        if (edge.parent != package && (scope.empty() || scope.at(edge.parent))) {
-            parents.push_back(edge.parent);
-        }
-    }
-    std::ranges::sort(parents);
-    const auto [first, last] = std::ranges::unique(parents);
-    parents.erase(first, last);
-
-    const auto& target = evaluated.candidates.at(wanted->target);
-    auto holders = holders_of(store, evaluated, parents, package, target);
-    if (holders.empty()) {
-        return {.update = std::move(wanted), .held = {}, .holders = {}};
-    }
-    WeighedUpdate weighed{.update = {}, .held = wanted, .holders = std::move(holders)};
-    // A rebuild for USE has no other version to fall back to.
-    if (wanted->kind == UpdateKind::rebuild) {
-        return weighed;
-    }
+    const auto& target = evaluated.candidates.at(wanted.target);
     const auto cp = evaluated.string(target.cp);
-    const auto cpv = evaluated.string(evaluated.packages.at(package).cpv);
-    const auto installed = version_of(cp, cpv);
-    // Other visible versions in the slot, newer than the installed one for an upgrade, best first
-    // and of one version the target's repository first.
+    const auto installed = version_of(cp, evaluated.string(evaluated.packages.at(package).cpv));
     struct Fallback {
         std::uint32_t index = 0;
         Version version;
     };
-    std::vector<Fallback> fallbacks;
+    std::vector<Fallback> found;
     for (std::uint32_t i = 0; i < evaluated.candidates.size(); ++i) {
         const auto& candidate = evaluated.candidates.at(i);
-        if (i == wanted->target || candidate.cp != target.cp || candidate.slot != target.slot ||
+        if (i == wanted.target || candidate.cp != target.cp || candidate.slot != target.slot ||
             !candidate.visible()) {
             continue;
         }
         auto version = version_of(cp, evaluated.string(candidate.cpv));
         if (!version || !installed || vercmp(*version, *installed) == 0 ||
-            (wanted->kind == UpdateKind::upgrade && vercmp(*version, *installed) < 0)) {
+            (wanted.kind == UpdateKind::upgrade && vercmp(*version, *installed) < 0)) {
             continue;
         }
-        fallbacks.push_back({.index = i, .version = std::move(*version)});
+        found.push_back({.index = i, .version = std::move(*version)});
     }
-    std::ranges::stable_sort(fallbacks, [&](const Fallback& a, const Fallback& b) {
+    std::ranges::stable_sort(found, [&](const Fallback& a, const Fallback& b) {
         if (const int order = vercmp(a.version, b.version); order != 0) {
             return order > 0;
         }
         return evaluated.candidates.at(a.index).repo == target.repo &&
                evaluated.candidates.at(b.index).repo != target.repo;
     });
-    for (const auto& fallback : fallbacks) {
-        const auto& candidate = evaluated.candidates.at(fallback.index);
-        if (holders_of(store, evaluated, parents, package, candidate).empty()) {
-            weighed.update =
-                PendingUpdate{.kind = update_kind(cp, cpv, evaluated.string(candidate.cpv)),
-                              .target = fallback.index,
-                              .flags = {}};
-            break;
-        }
+    std::vector<std::uint32_t> indices;
+    indices.reserve(found.size());
+    for (const auto& fallback : found) {
+        indices.push_back(fallback.index);
     }
-    return weighed;
+    return indices;
 }
 
-std::vector<std::string> update_lines(const Store& store, const Graph& graph,
-                                      const Evaluated& evaluated, UseRebuilds rebuilds, bool held,
+std::vector<std::string> update_lines(const Store& store, const Evaluated& evaluated,
+                                      UseRebuilds rebuilds, bool held,
                                       const std::vector<bool>& scope) {
-    std::vector<std::string> lines;
+    const auto plan = plan_updates(store, evaluated, rebuilds, scope);
     const auto target_fields = [&evaluated](std::uint32_t target) {
         const auto& candidate = evaluated.candidates.at(target);
         return std::format("{}\t{}", evaluated.string(candidate.cpv),
                            evaluated.string(candidate.repo));
     };
-    for (std::uint32_t id = 0; id < evaluated.packages.size(); ++id) {
-        const auto weighed = weigh_update(store, graph, evaluated, id, rebuilds, scope);
-        const auto cpv = evaluated.string(evaluated.packages.at(id).cpv);
-        if (const auto& update = weighed.update) {
-            auto line = std::format("{}\t{}\t{}", cpv, kind_name(update->kind),
-                                    target_fields(update->target));
-            if (!update->flags.empty()) {
-                line += std::format("\t{}", update->flags);
+    const auto member = [&](const Member& found) {
+        return found.candidate ? evaluated.string(evaluated.candidates.at(found.index).cpv)
+                               : store.string(store.packages.at(found.index).cpv);
+    };
+    std::vector<std::optional<std::string>> replaced(store.packages.size());
+    std::vector<std::string> added;
+    for (const auto& merge : plan.merges) {
+        if (merge.replaces) {
+            auto line =
+                std::format("{}\t{}\t{}", store.string(store.packages.at(*merge.replaces).cpv),
+                            kind_name(merge.kind), target_fields(merge.candidate));
+            if (!merge.flags.empty()) {
+                line += std::format("\t{}", merge.flags);
             }
-            lines.push_back(std::move(line));
-        }
-        if (held && weighed.held) {
-            auto line = std::format("{}\theld\t{}\t{}", cpv, target_fields(weighed.held->target),
-                                    weighed.held->flags);
-            // Holders are sorted by dependent, then atom.
-            for (std::size_t i = 0; i < weighed.holders.size(); ++i) {
-                const auto& holder = weighed.holders.at(i);
-                if (i == 0 || weighed.holders.at(i - 1).parent != holder.parent) {
-                    line += std::format("\t{}", store.string(store.packages.at(holder.parent).cpv));
-                }
-                line += std::format(" {}", store.string(holder.atom));
+            replaced.at(*merge.replaces) = std::move(line);
+        } else {
+            const auto cpv = evaluated.string(evaluated.candidates.at(merge.candidate).cpv);
+            auto line = std::format("{}\tnew\t{}", cpv, target_fields(merge.candidate));
+            if (const auto& by = merge.pulled_by) {
+                line += std::format("\t{} {}", member(by->member), by->atom);
             }
-            lines.push_back(std::move(line));
+            added.push_back(std::move(line));
         }
     }
+    std::vector<std::optional<std::string>> held_lines(store.packages.size());
+    if (held) {
+        for (const auto& back : plan.held) {
+            auto line =
+                std::format("{}\theld\t{}\t{}", store.string(store.packages.at(back.package).cpv),
+                            target_fields(back.wanted.target), back.wanted.flags);
+            // Reasons are sorted by member, then atom.
+            for (std::size_t i = 0; i < back.reasons.size(); ++i) {
+                const auto& reason = back.reasons.at(i);
+                if (i == 0 || back.reasons.at(i - 1).member != reason.member) {
+                    line += std::format("\t{}", member(reason.member));
+                }
+                line += std::format(" {}", reason.atom);
+            }
+            held_lines.at(back.package) = std::move(line);
+        }
+    }
+    std::vector<std::string> lines;
+    for (std::size_t id = 0; id < store.packages.size(); ++id) {
+        for (auto* line : {&replaced.at(id), &held_lines.at(id)}) {
+            if (*line) {
+                lines.push_back(std::move(**line));
+            }
+        }
+    }
+    std::ranges::move(added, std::back_inserter(lines));
     return lines;
 }
 
