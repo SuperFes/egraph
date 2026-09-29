@@ -584,7 +584,7 @@ void App::handle(const Key& key) {
     } else if (dialog_) {
         dialog_.reset();
     } else if (prompt_) {
-        handle_prompt(key);
+        handle_prompt(*prompt_, key);
     } else if (is(key, U':') &&
                !(list_.searching && pages_.empty() && !output_ && !checked_ && !watched_)) {
         prompt_.emplace();
@@ -595,7 +595,7 @@ void App::handle(const Key& key) {
             watched_->due = true;
         }
     } else if (output_) {
-        handle_output(key);
+        handle_output(*output_, key);
     } else if (checked_) {
         handle_check(key);
     } else if (watched_) {
@@ -619,7 +619,7 @@ std::vector<std::string> nonempty_lines(std::string_view text) {
 
 } // namespace
 
-void App::finish_command(Answer answer) {
+void App::finish_command(const Answer& answer) {
     if (!command_) {
         return;
     }
@@ -659,8 +659,7 @@ void App::finish_command(Answer answer) {
     }
 }
 
-void App::handle_prompt(const Key& key) {
-    auto& text = *prompt_;
+void App::handle_prompt(std::string& text, const Key& key) {
     if (key.kind == KeyKind::character && key.code >= U' ') {
         append_utf8(text, key.code);
     } else if (key.kind == KeyKind::backspace) {
@@ -681,8 +680,7 @@ void App::handle_prompt(const Key& key) {
     }
 }
 
-void App::handle_output(const Key& key) {
-    auto& output = *output_;
+void App::handle_output(Output& output, const Key& key) {
     if (is(key, U'q') || key.kind == KeyKind::escape || key.kind == KeyKind::left ||
         is(key, U'h')) {
         output_.reset();

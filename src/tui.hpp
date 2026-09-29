@@ -349,7 +349,7 @@ class App {
     [[nodiscard]] const std::optional<std::string>& prompt() const { return prompt_; }
     // A command typed at the prompt, waiting for run() to answer it.
     [[nodiscard]] const std::optional<std::string>& command_requested() const { return command_; }
-    void finish_command(Answer answer);
+    void finish_command(const Answer& answer);
     // What the last command printed: rows of its tab-separated fields, each linked to the first
     // installed package a field names.
     struct Output {
@@ -413,8 +413,8 @@ class App {
     void handle_check(const Key& key);
     void handle_watch(const Key& key);
     void handle_steve(const Key& key);
-    void handle_prompt(const Key& key);
-    void handle_output(const Key& key);
+    void handle_prompt(std::string& text, const Key& key);
+    void handle_output(Output& output, const Key& key);
     // The package with this cpv, if the store has it.
     [[nodiscard]] std::optional<std::uint32_t> find(std::string_view cpv) const;
 
