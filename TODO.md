@@ -111,5 +111,5 @@ and organised, and a TUI (ncurses, or Notcurses) is welcome.
 
 ## Tooling
 
-- [ ] CLI11's CheckedTransformer error for a bad `--format` prints the enum map
-      (`{dot->0,json->1} OR {0,1}`).
+- [ ] An environment variable with a value its option rejects (`EGRAPH_GLYPHS=foo`) is ignored
+      without a word; the option's default applies.

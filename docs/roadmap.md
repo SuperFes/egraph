@@ -15,7 +15,7 @@ Update the status column as steps land.
 | 7 | Roots and orphans | done |
 | 8 | Consumers | done |
 | 9 | Evaluated and candidate layers | done |
-| 10 | Output and UX | in progress |
+| 10 | Output and UX | done |
 | 11 | Build monitor | done |
 
 ## 0. Scaffold
@@ -179,6 +179,8 @@ Taken ahead of 8 and 9 at the user's direction: output need not look like portag
 - `rdeps --possible` (dependencies behind disabled USE flags): done in 9d.
 - 10c (done): glyphs default to ASCII outside a UTF-8 locale.
 - 10d (done): the TUI's rebuild saves the check's fresh build instead of running a second one.
+- 10e (done): a named option value outside its choices fails naming them, and the numbers
+  behind the names are no longer accepted.
 
 ## 11. Build monitor
 

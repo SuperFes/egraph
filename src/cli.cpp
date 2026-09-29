@@ -58,6 +58,42 @@ CLI::Option* add_field(CLI::App* sub, Invocation& invocation, std::string option
         std::move(description));
 }
 
+// Converts an option's value from one of the names, which the help shows in this order; anything
+// else, the values' own spellings included, fails naming them.
+template <class T>
+CLI::Validator one_of(std::vector<std::pair<std::string, T>> choices, bool ignore_case = false) {
+    std::string names;
+    std::string listed;
+    for (const auto& [name, value] : choices) {
+        names += (names.empty() ? "" : ",") + name;
+        listed += (listed.empty() ? "" : ", ") + name;
+    }
+    const auto folded = [ignore_case](std::string text) {
+        if (ignore_case) {
+            std::ranges::transform(text, text.begin(), [](char c) {
+                return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+            });
+        }
+        return text;
+    };
+    return {[choices = std::move(choices), listed, folded](std::string& input) -> std::string {
+                const auto wanted = folded(input);
+                const auto found =
+                    std::ranges::find(choices, wanted, &std::pair<std::string, T>::first);
+                if (found == choices.end()) {
+                    return std::format("{} is not one of {}", input, listed);
+                }
+                // What CLI11 converts back to the option's type.
+                if constexpr (std::is_enum_v<T>) {
+                    input = std::to_string(std::to_underlying(found->second));
+                } else {
+                    input = found->second ? "true" : "false";
+                }
+                return {};
+            },
+            std::format("{{{}}}", names)};
+}
+
 // Runs egraph-build, its output to log when given; the error when it could not run or did not
 // succeed.
 std::optional<std::string>
@@ -860,34 +896,32 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->envname("EGRAPH_BUILD");
     app.add_flag("--no-refresh", invocation.no_refresh,
                  "Answer from a stale store instead of rebuilding it");
-    const std::map<std::string, Layout> layouts{
-        {"auto", Layout::automatic}, {"human", Layout::human}, {"lines", Layout::lines}};
     app.add_option("--layout", invocation.layout,
                    "Results for people, or as tab-separated lines for scripts (default auto: "
                    "for people on a terminal)")
-        ->transform(CLI::CheckedTransformer(layouts).description("{auto,human,lines}"))
+        ->transform(one_of<Layout>(
+            {{"auto", Layout::automatic}, {"human", Layout::human}, {"lines", Layout::lines}}))
         ->envname("EGRAPH_LAYOUT");
-    const std::map<std::string, ColorMode> colors{
-        {"auto", ColorMode::automatic}, {"always", ColorMode::always}, {"never", ColorMode::never}};
     app.add_option("--color", invocation.color,
                    "Colour the human layout (default auto: on a terminal, unless NO_COLOR is set)")
-        ->transform(CLI::CheckedTransformer(colors).description("{auto,always,never}"));
-    const std::map<std::string, GlyphSet> glyph_sets{
-        {"nerd", GlyphSet::nerd}, {"unicode", GlyphSet::unicode}, {"ascii", GlyphSet::ascii}};
+        ->transform(one_of<ColorMode>({{"auto", ColorMode::automatic},
+                                       {"always", ColorMode::always},
+                                       {"never", ColorMode::never}}));
     app.add_option("--glyphs", invocation.glyphs,
                    "Icons in the human layout: a Nerd Font's, plain Unicode, or ASCII "
                    "(default nerd in a UTF-8 locale, ascii otherwise)")
-        ->transform(CLI::CheckedTransformer(glyph_sets).description("{nerd,unicode,ascii}"))
+        ->transform(one_of<GlyphSet>(
+            {{"nerd", GlyphSet::nerd}, {"unicode", GlyphSet::unicode}, {"ascii", GlyphSet::ascii}}))
         ->envname("EGRAPH_GLYPHS");
 
-    const std::map<std::string, bool> yes_no{{"y", true}, {"n", false}};
+    const auto yes_no = one_of<bool>({{"y", true}, {"n", false}});
     const auto add_dynamic_deps = [&invocation, &yes_no](CLI::App* sub) {
         sub->add_option_function<bool>(
                "--dynamic-deps",
                [&invocation](const bool& value) { invocation.dynamic_deps = value; },
                "Read an installed package's dependencies from its ebuild when the same version is "
                "still in its repository, as emerge's option (default y)")
-            ->transform(CLI::CheckedTransformer(yes_no).description("{y,n}"));
+            ->transform(yes_no);
         return sub;
     };
     constexpr auto possible_help = "Also what the ebuilds would add with USE flags toggled, with "
@@ -915,7 +949,7 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->required();
     add_field(why_cmd, invocation, "--with-bdeps", &Why::build_deps,
               "Whether build-time dependencies keep packages, as emerge's option (default y)")
-        ->transform(CLI::CheckedTransformer(yes_no).description("{y,n}"));
+        ->transform(yes_no);
     add_field(add_command<Match>(app, invocation, "Installed packages each atom matches"),
               invocation, "atoms", &Match::atoms, "Portage atoms, such as '>=dev-libs/openssl-3:0'")
         ->required();
@@ -931,7 +965,7 @@ void configure(CLI::App& app, Invocation& invocation) {
         add_command<Orphans>(app, invocation, "Installed packages emerge --depclean would remove"));
     add_field(orphans_cmd, invocation, "--with-bdeps", &Orphans::build_deps,
               "Whether build-time dependencies keep packages, as emerge's option (default y)")
-        ->transform(CLI::CheckedTransformer(yes_no).description("{y,n}"));
+        ->transform(yes_no);
 
     CLI::App* updates_cmd = add_command<Updates>(
         app, invocation, "Installed packages emerge -u @installed would replace or rebuild");
@@ -949,10 +983,9 @@ void configure(CLI::App& app, Invocation& invocation) {
         "Also the rebuilds emerge --changed-use makes for changed USE");
 
     CLI::App* export_cmd = add_command<Export>(app, invocation, "Export part of the graph");
-    const std::map<std::string, ExportFormat> formats{{"dot", ExportFormat::dot},
-                                                      {"json", ExportFormat::json}};
     add_field(export_cmd, invocation, "--format", &Export::format, "Output format")
-        ->transform(CLI::CheckedTransformer(formats, CLI::ignore_case).description("{dot,json}"));
+        ->transform(
+            one_of<ExportFormat>({{"dot", ExportFormat::dot}, {"json", ExportFormat::json}}, true));
     add_field(export_cmd, invocation, "packages", &Export::packages,
               "Packages whose neighborhood to export; all when omitted");
     export_cmd->add_flag_callback(
@@ -961,12 +994,11 @@ void configure(CLI::App& app, Invocation& invocation) {
         "by default, and the versions each installed package could move to");
     add_field(export_cmd, invocation, "--depth", &Export::depth,
               "Dependency edges to follow out from the packages (default 1)");
-    const std::map<std::string, Direction> directions{{"reverse", Direction::reverse},
-                                                      {"forward", Direction::forward},
-                                                      {"both", Direction::both}};
     add_field(export_cmd, invocation, "--direction", &Export::direction,
               "Follow reverse dependencies, forward ones, or both (default reverse)")
-        ->transform(CLI::CheckedTransformer(directions).description("{reverse,forward,both}"));
+        ->transform(one_of<Direction>({{"reverse", Direction::reverse},
+                                       {"forward", Direction::forward},
+                                       {"both", Direction::both}}));
 
     add_command<Stats>(app, invocation, "Store and graph statistics");
     add_command<Tui>(app, invocation, "Browse the graph in a terminal interface");

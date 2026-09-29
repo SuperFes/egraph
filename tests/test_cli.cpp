@@ -169,6 +169,28 @@ TEST_CASE("the layout is for people on a terminal and lines otherwise") {
     CHECK_THROWS_AS(parse("--glyphs emoji stats"), CLI::ValidationError);
 }
 
+TEST_CASE("a choice is taken by name only, and a wrong one names the choices") {
+    const auto message = [](const std::string& line) {
+        try {
+            parse(line);
+        } catch (const CLI::ValidationError& e) {
+            return std::string{e.what()};
+        }
+        return std::string{};
+    };
+    CHECK(message("--glyphs emoji stats") == "--glyphs: emoji is not one of nerd, unicode, ascii");
+    CHECK(message("export --format svg") == "--format: svg is not one of dot, json");
+    CHECK(message("orphans --with-bdeps maybe") == "--with-bdeps: maybe is not one of y, n");
+    // Not the values behind the names.
+    CHECK(message("--glyphs 2 stats") == "--glyphs: 2 is not one of nerd, unicode, ascii");
+    CHECK(message("orphans --with-bdeps 1") == "--with-bdeps: 1 is not one of y, n");
+
+    CLI::App app;
+    egraph::Invocation invocation;
+    egraph::configure(app, invocation);
+    CHECK(app.help().find("{nerd,unicode,ascii}") != std::string::npos);
+}
+
 TEST_CASE("glyphs default to a Nerd Font's in a UTF-8 locale and ASCII otherwise") {
     using egraph::GlyphSet;
     egraph::Invocation invocation;
