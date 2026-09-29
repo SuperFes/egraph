@@ -17,6 +17,7 @@ Update the status column as steps land.
 | 9 | Evaluated and candidate layers | done |
 | 10 | Output and UX | done |
 | 11 | Build monitor | done |
+| 12 | Updates of `@world` | in progress |
 
 ## 0. Scaffold
 
@@ -209,3 +210,23 @@ one. Not scheduled ahead of 8 and 9.
   glyphs and spinners, dropping out as they merge. Dependencies of versions not yet installed
   come from a builder pass over just the merge list (`egraph-build --pending`), not the
   evaluated layer.
+
+## 12. Updates of `@world`
+
+`egraph updates` answering what `emerge -uDN @world` would, as far as that needs no resolver.
+emerge is the check, not the specification: where egraph's answer is better (naming what holds
+an update back, rather than skipping it), it stays, recorded in `upstream-notes.md`.
+
+- 12a (done): atoms match candidate ebuilds, with the USE each would be built with now, as depgraph
+  matches an ebuild against a dependency (`egraph match --candidates`), in shadow against
+  depgraph's own matching on every scenario. Atoms record slot operators.
+- 12b: bounds. A target that an installed dependent's atom rejects is held back, and the update
+  falls back to the best visible version in the slot every such atom accepts. A slot operator
+  does not hold: emerge rebuilds the dependent instead. `updates --held` lists what is held and
+  by whom, and the TUI's pages say so. Compared with `emerge -pu @installed` on a scenario with
+  bounds.
+- 12c: `updates --world`: only the packages `emerge -uD @world` reaches (those depclean keeps),
+  and only their dependents hold. Compared with `emerge -puDN @world` on every scenario and
+  the live system.
+- Left to a resolver: what the targets' own dependencies pull in (new packages, and updates
+  that need a held one), new slots, and slot-operator rebuilds.

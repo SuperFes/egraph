@@ -147,6 +147,18 @@ SCENARIOS = {
                 'USE_EXPAND_VALUES_ARCH="x86 amd64"',
                 'USE_EXPAND_VALUES_ELIBC="glibc musl"',
             ],
+            "package.use": ["app-misc/u8 a"],
+        },
+        # The installed versions' own ebuilds, for matching ebuilds with the USE they would get.
+        "ebuilds": {
+            **{
+                f"dev-libs/v-{version}": {"EAPI": "8", "SLOT": str(slot)}
+                for slot, version in enumerate(ATOM_VERSIONS)
+            },
+            "app-misc/s-1": {"EAPI": "8", "SLOT": "1/1.5"},
+            "app-misc/s-2": {"EAPI": "8", "SLOT": "2/2.0"},
+            "app-misc/u4-1": {"EAPI": "4", "IUSE": "a +b"},
+            "app-misc/u8-1": {"EAPI": "8", "IUSE": "a +b"},
         },
         "installed": {
             **{

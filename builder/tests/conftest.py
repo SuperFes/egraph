@@ -157,10 +157,10 @@ def write_stores(system, path):
     """The installed store at path and the evaluated one beside it, as one builder run writes
     them."""
     from egraph_build import evaluated, installed, store
+    from egraph_build.profile import implicit_iuse
 
-    store.write(
-        path, store.encode(installed.build(system.vardb), store.Meta("0", "0", "/", 0))
-    )
+    meta = store.Meta("0", "0", "/", 0, implicit_iuse(system.vardb.settings))
+    store.write(path, store.encode(installed.build(system.vardb), meta))
     layer = evaluated.build(system.vardb, portdb(system))
     meta = store.EvaluatedMeta("0", "0", "/", 0, 0)
     store.write(store.evaluated_path(path), store.encode_evaluated(layer, meta))

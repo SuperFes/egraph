@@ -127,3 +127,31 @@ def masked(trees, eroot, dynamic_deps=True):
         str(cpv): bool(graph._pkg(cpv, "installed", root_config, installed=True).masks)
         for cpv in vardb.cpv_all()
     }
+
+
+def candidate_matches(trees, eroot, atom, candidates):
+    """The candidates ("cpv::repo") that atom matches as depgraph matches an ebuild against a
+    dependency: its Package, with the USE it would be built with now."""
+    from _emerge.Package import Package
+    from portage.dep import Atom, match_from_list
+
+    root_config = trees[eroot]["root_config"]
+    portdb = trees[eroot]["porttree"].dbapi
+    keys = list(portdb._aux_cache_keys)
+    wanted = Atom(atom, allow_repo=True)
+    found = set()
+    for candidate in candidates:
+        if candidate.cp != wanted.cp:
+            continue
+        metadata = zip(keys, portdb.aux_get(candidate.cpv, keys, myrepo=candidate.repo))
+        pkg = Package(
+            built=False,
+            cpv=candidate.cpv,
+            installed=False,
+            metadata=metadata,
+            root_config=root_config,
+            type_name="ebuild",
+        )
+        if match_from_list(wanted, [pkg]):
+            found.add(f"{candidate.cpv}::{candidate.repo}")
+    return found

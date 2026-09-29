@@ -26,6 +26,18 @@ int compare(std::string_view a, std::string_view b) {
     return egraph::vercmp(*x, *y);
 }
 
+egraph::Store decoded(const std::vector<std::byte>& bytes) {
+    auto store = egraph::decode(bytes);
+    REQUIRE(store.has_value());
+    return std::move(*store);
+}
+
+egraph::Evaluated decoded_evaluated(const std::vector<std::byte>& bytes) {
+    auto evaluated = egraph::decode_evaluated(bytes);
+    REQUIRE(evaluated.has_value());
+    return std::move(*evaluated);
+}
+
 egraph::Atom parsed(std::string_view text) {
     auto atom = egraph::parse_atom(text);
     REQUIRE(atom.has_value());
@@ -100,6 +112,12 @@ TEST_CASE("atoms parse into their parts") {
     CHECK_FALSE(parsed("cat/foo:*").slot.has_value());
     CHECK(parsed("cat/foo:2=").slot == "2");
     CHECK(parsed("cat/foo-bar").cp == "cat/foo-bar");
+
+    CHECK(atom.slot_operator);
+    CHECK(parsed("cat/foo:=").slot_operator);
+    CHECK(parsed("cat/foo:2=").slot_operator);
+    CHECK_FALSE(parsed("cat/foo:2/2.1").slot_operator);
+    CHECK_FALSE(parsed("cat/foo:*").slot_operator);
 }
 
 // Every one of these is an InvalidAtom to portage too, except the two that only a parent
@@ -126,4 +144,39 @@ TEST_CASE("invalid atoms are rejected with a reason") {
         REQUIRE_FALSE(atom.has_value());
         CHECK_THAT(atom.error(), EndsWith(std::string{why}));
     }
+}
+
+// The evaluated sample's candidates: app-misc/a-1 (USE and IUSE flag), app-misc/a-2 (IUSE flag,
+// masked) and dev-libs/b-2, all in slot 0/0 of test_repo. The profile's IUSE_EFFECTIVE is amd64
+// and elibc_glibc.
+TEST_CASE("ebuilds match with the USE they would be built with") {
+    const auto installed = decoded(egraph::test::assemble(egraph::test::sample_sections()));
+    const auto evaluated =
+        decoded_evaluated(egraph::test::assemble_evaluated(egraph::test::evaluated_sections()));
+    const auto matched = [&](std::string_view text) {
+        std::vector<std::string> found;
+        for (const auto& candidate : evaluated.candidates) {
+            if (egraph::matches(installed, evaluated, candidate, parsed(text))) {
+                found.emplace_back(evaluated.string(candidate.cpv));
+            }
+        }
+        return found;
+    };
+    using Found = std::vector<std::string>;
+    CHECK(matched("app-misc/a") == Found{"app-misc/a-1", "app-misc/a-2"});
+    CHECK(matched(">=app-misc/a-2") == Found{"app-misc/a-2"});
+    CHECK(matched("<app-misc/a-2:0/0::test_repo") == Found{"app-misc/a-1"});
+    CHECK(matched("app-misc/a:0/1").empty());
+    CHECK(matched("app-misc/a::other").empty());
+    CHECK(matched("app-misc/a[flag]") == Found{"app-misc/a-1"});
+    CHECK(matched("app-misc/a[-flag]") == Found{"app-misc/a-2"});
+    // Not in IUSE: only a default decides.
+    CHECK(matched("dev-libs/b[flag]").empty());
+    CHECK(matched("dev-libs/b[flag(+)]") == Found{"dev-libs/b-2"});
+    CHECK(matched("dev-libs/b[-flag(+)]").empty());
+    CHECK(matched("dev-libs/b[-flag(-)]") == Found{"dev-libs/b-2"});
+    // Implicit, and off.
+    CHECK(matched("dev-libs/b[amd64(+)]").empty());
+    CHECK(matched("dev-libs/b[-amd64]") == Found{"dev-libs/b-2"});
+    CHECK(matched("dev-libs/b[elibc_musl(-)]").empty());
 }

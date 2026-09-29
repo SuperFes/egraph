@@ -75,6 +75,12 @@ dependencies with defaults, repository) and means by it exactly what `vardb.matc
 - The matcher runs in shadow against `vardb.match` over a generated corpus of 339 atoms, every
   atom in every scenario, and all 5,667 distinct atoms on the dev box, with no differences.
   Portage is right until a test says otherwise.
+- `match --candidates` matches the installed cps' ebuilds instead, as depgraph matches an ebuild
+  against a dependency: its `Package` with the USE it would be built with now, and the profile's
+  `IUSE_EFFECTIVE` for implicit flags (candidates do not record their EAPI, so an ebuild of EAPI
+  0 to 4 is matched as if it had it). It runs in shadow against `match_from_list` on such
+  `Package`s over the same corpus, every scenario's atoms and every live atom. Atoms record slot
+  operators (`:=`, `:slot/sub=`), which update holds treat as rebuilds rather than bounds.
 
 ## Query output
 

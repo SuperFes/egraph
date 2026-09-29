@@ -117,15 +117,47 @@ bool contains(const std::vector<std::string>& items, std::string_view value) {
     return std::ranges::find(items, value) != items.end();
 }
 
-bool built_with(const Store& store, const Package& pkg, std::string_view flag) {
-    return std::ranges::any_of(store.ids_in(pkg.use),
-                               [&](std::uint32_t id) { return store.string(id) == flag; });
+// What an atom is matched against: an installed package, or an ebuild.
+struct Subject {
+    std::string_view cp;
+    std::string_view cpv;
+    std::string_view slot;
+    std::string_view sub_slot;
+    std::string_view repo;
+    std::vector<std::string_view> use;
+    // With + and - defaults for an installed package.
+    std::vector<std::string_view> iuse;
+    bool iuse_effective = true;
+    // Built packages also count every flag they were built with as in IUSE_EFFECTIVE.
+    bool built = false;
+};
+
+Subject installed_subject(const Store& store, const Package& pkg) {
+    Subject subject{.cp = store.string(pkg.cp),
+                    .cpv = store.string(pkg.cpv),
+                    .slot = store.string(pkg.slot),
+                    .sub_slot = store.string(pkg.sub_slot),
+                    .repo = store.string(pkg.repo),
+                    .use = {},
+                    .iuse = {},
+                    .iuse_effective = pkg.iuse_effective,
+                    .built = true};
+    for (const auto id : store.ids_in(pkg.use)) {
+        subject.use.push_back(store.string(id));
+    }
+    for (const auto id : store.ids_in(pkg.iuse)) {
+        subject.iuse.push_back(store.string(id));
+    }
+    return subject;
 }
 
-// Package._iuse.get_flag with vardb's implicit match: listed in IUSE, or implied.
-bool in_iuse(const Store& store, const Package& pkg, std::string_view flag) {
-    for (const auto id : store.ids_in(pkg.iuse)) {
-        auto listed = store.string(id);
+bool built_with(const Subject& subject, std::string_view flag) {
+    return std::ranges::find(subject.use, flag) != subject.use.end();
+}
+
+// Package._iuse.get_flag with the dbapi's implicit match: listed in IUSE, or implied.
+bool in_iuse(const ImplicitIuse& implicit, const Subject& subject, std::string_view flag) {
+    for (auto listed : subject.iuse) {
         if (listed.starts_with('+') || listed.starts_with('-')) {
             listed.remove_prefix(1);
         }
@@ -133,10 +165,8 @@ bool in_iuse(const Store& store, const Package& pkg, std::string_view flag) {
             return true;
         }
     }
-    const auto& implicit = store.implicit;
-    if (pkg.iuse_effective) {
-        // Built packages also count every flag they were built with.
-        return contains(implicit.effective, flag) || built_with(store, pkg, flag);
+    if (subject.iuse_effective) {
+        return contains(implicit.effective, flag) || (subject.built && built_with(subject, flag));
     }
     return contains(implicit.literals, flag) ||
            std::ranges::any_of(implicit.prefixes, [flag](const std::string& prefix) {
@@ -144,14 +174,15 @@ bool in_iuse(const Store& store, const Package& pkg, std::string_view flag) {
            });
 }
 
-bool use_matches(const Store& store, const Package& pkg, const std::vector<UseDependency>& use) {
+bool use_matches(const ImplicitIuse& implicit, const Subject& subject,
+                 const std::vector<UseDependency>& use) {
     std::vector<std::string_view> enabled;
     std::vector<std::string_view> disabled;
     std::vector<std::string_view> missing_enabled;
     std::vector<std::string_view> missing_disabled;
     for (const auto& dependency : use) {
         const std::string_view flag = dependency.flag;
-        const bool known = in_iuse(store, pkg, flag);
+        const bool known = in_iuse(implicit, subject, flag);
         if (dependency.fallback == UseDependency::Default::none && !known) {
             return false;
         }
@@ -168,7 +199,7 @@ bool use_matches(const Store& store, const Package& pkg, const std::vector<UseDe
     };
     // In USE, and a valid flag for the package.
     const auto set = [&](std::string_view flag) {
-        return built_with(store, pkg, flag) && in_iuse(store, pkg, flag);
+        return built_with(subject, flag) && in_iuse(implicit, subject, flag);
     };
     for (const auto flag : enabled) {
         if (in(missing_disabled, flag)) {
@@ -187,6 +218,49 @@ bool use_matches(const Store& store, const Package& pkg, const std::vector<UseDe
         }
     }
     return true;
+}
+
+bool version_matches(Operator op, const Version& wanted, const Version& version) {
+    switch (op) {
+    case Operator::none:
+        return true;
+    case Operator::equal:
+        return vercmp(version, wanted) == 0;
+    case Operator::glob:
+        return glob_matches(wanted, version);
+    case Operator::approximately:
+        return version.base == wanted.base;
+    case Operator::less:
+        return vercmp(version, wanted) < 0;
+    case Operator::less_equal:
+        return vercmp(version, wanted) <= 0;
+    case Operator::greater:
+        return vercmp(version, wanted) > 0;
+    case Operator::greater_equal:
+        return vercmp(version, wanted) >= 0;
+    }
+    return false;
+}
+
+bool subject_matches(const ImplicitIuse& implicit, const Subject& subject, const Atom& atom) {
+    if (subject.cp != atom.cp) {
+        return false;
+    }
+    if (atom.version) {
+        const auto version =
+            parse_version(subject.cpv.substr(std::min(subject.cpv.size(), subject.cp.size() + 1)));
+        if (!version || !version_matches(atom.op, *atom.version, *version)) {
+            return false;
+        }
+    }
+    if (atom.slot &&
+        (subject.slot != *atom.slot || (atom.sub_slot && subject.sub_slot != *atom.sub_slot))) {
+        return false;
+    }
+    if (atom.repo && subject.repo != *atom.repo) {
+        return false;
+    }
+    return use_matches(implicit, subject, atom.use);
 }
 
 } // namespace
@@ -220,9 +294,10 @@ std::expected<Atom, std::string> parse_atom(std::string_view text) {
     if (const auto colon = rest.find(':'); colon != std::string_view::npos) {
         auto slot = rest.substr(colon + 1);
         rest = rest.substr(0, colon);
+        atom.slot_operator = slot.ends_with('=');
         // := and :* do not restrict the slot; := only means something inside a dependency.
         if (slot != "*" && slot != "=") {
-            if (slot.ends_with('=')) {
+            if (atom.slot_operator) {
                 slot.remove_suffix(1);
             }
             const auto slash = slot.find('/');
@@ -298,65 +373,34 @@ std::expected<Atom, std::string> parse_atom(std::string_view text) {
 }
 
 bool matches(const Store& store, const Package& pkg, const Atom& atom) {
-    const auto cp = store.string(pkg.cp);
-    if (cp != atom.cp) {
+    // Most atoms name another cp; that needs no subject.
+    if (store.string(pkg.cp) != atom.cp) {
         return false;
     }
-    if (atom.version) {
-        const auto cpv = store.string(pkg.cpv);
-        const auto version = parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
-        if (!version) {
-            return false;
-        }
-        const auto& wanted = *atom.version;
-        switch (atom.op) {
-        case Operator::none:
-            break;
-        case Operator::equal:
-            if (vercmp(*version, wanted) != 0) {
-                return false;
-            }
-            break;
-        case Operator::glob:
-            if (!glob_matches(wanted, *version)) {
-                return false;
-            }
-            break;
-        case Operator::approximately:
-            if (version->base != wanted.base) {
-                return false;
-            }
-            break;
-        case Operator::less:
-            if (vercmp(*version, wanted) >= 0) {
-                return false;
-            }
-            break;
-        case Operator::less_equal:
-            if (vercmp(*version, wanted) > 0) {
-                return false;
-            }
-            break;
-        case Operator::greater:
-            if (vercmp(*version, wanted) <= 0) {
-                return false;
-            }
-            break;
-        case Operator::greater_equal:
-            if (vercmp(*version, wanted) < 0) {
-                return false;
-            }
-            break;
-        }
-    }
-    if (atom.slot && (store.string(pkg.slot) != *atom.slot ||
-                      (atom.sub_slot && store.string(pkg.sub_slot) != *atom.sub_slot))) {
+    return subject_matches(store.implicit, installed_subject(store, pkg), atom);
+}
+
+bool matches(const Store& installed, const Evaluated& evaluated, const Candidate& candidate,
+             const Atom& atom) {
+    if (evaluated.string(candidate.cp) != atom.cp) {
         return false;
     }
-    if (atom.repo && store.string(pkg.repo) != *atom.repo) {
-        return false;
+    Subject subject{.cp = evaluated.string(candidate.cp),
+                    .cpv = evaluated.string(candidate.cpv),
+                    .slot = evaluated.string(candidate.slot),
+                    .sub_slot = evaluated.string(candidate.sub_slot),
+                    .repo = evaluated.string(candidate.repo),
+                    .use = {},
+                    .iuse = {},
+                    .iuse_effective = true,
+                    .built = false};
+    for (const auto id : evaluated.ids_in(candidate.use)) {
+        subject.use.push_back(evaluated.string(id));
     }
-    return use_matches(store, pkg, atom.use);
+    for (const auto id : evaluated.ids_in(candidate.iuse)) {
+        subject.iuse.push_back(evaluated.string(id));
+    }
+    return subject_matches(installed.implicit, subject, atom);
 }
 
 } // namespace egraph

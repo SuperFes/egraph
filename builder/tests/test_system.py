@@ -404,6 +404,22 @@ def test_cpp_possible_dependencies_are_the_evaluated_layers(live_evaluated, live
         assert possible == {(e, f) for e, f in every if e.child == cpv}, cpv
 
 
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+def test_cpp_matches_ebuilds_as_depgraph_on_every_live_atom(
+    live_emerge_config, live_layer, live_evaluated, live_store
+):
+    from conftest import System
+    from test_match import assert_ebuilds_match, tree_atoms
+
+    root = live_emerge_config.target_config.root
+    trees = live_emerge_config.trees
+    system = System(root, trees[root]["vartree"].dbapi, trees)
+    atoms = sorted(set(tree_atoms(live_layer)) | set(tree_atoms(live_evaluated)))
+    assert_ebuilds_match(system, live_store, atoms, live_evaluated)
+
+
 @pytest.fixture(scope="module")
 def live_updates(live_emerge_config):
     """emerge -pu @installed's answers by (newuse, changed_use)."""

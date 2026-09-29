@@ -570,11 +570,6 @@ Exit execute(const Rdeps& command, const Invocation& invocation, std::ostream& o
 
 Exit execute(const Match& command, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
-    const auto store = open_store(invocation, err);
-    if (!store) {
-        err << "egraph: " << store.error() << '\n';
-        return Exit::failure;
-    }
     std::vector<Atom> atoms;
     for (const auto& text : command.atoms) {
         auto atom = parse_atom(text);
@@ -585,10 +580,34 @@ Exit execute(const Match& command, const Invocation& invocation, std::ostream& o
         atoms.push_back(std::move(*atom));
     }
     std::vector<std::string> lines;
-    for (std::size_t i = 0; i < atoms.size(); ++i) {
-        for (const auto& pkg : store->packages) {
-            if (matches(*store, pkg, atoms.at(i))) {
-                lines.push_back(std::format("{}\t{}", command.atoms.at(i), store->string(pkg.cpv)));
+    if (command.candidates) {
+        const auto stores = open_stores(invocation, err);
+        if (!stores) {
+            err << "egraph: " << stores.error() << '\n';
+            return Exit::failure;
+        }
+        const auto& evaluated = stores->evaluated;
+        for (std::size_t i = 0; i < atoms.size(); ++i) {
+            for (const auto& candidate : evaluated.candidates) {
+                if (matches(stores->installed, evaluated, candidate, atoms.at(i))) {
+                    lines.push_back(std::format("{}\t{}::{}", command.atoms.at(i),
+                                                evaluated.string(candidate.cpv),
+                                                evaluated.string(candidate.repo)));
+                }
+            }
+        }
+    } else {
+        const auto store = open_store(invocation, err);
+        if (!store) {
+            err << "egraph: " << store.error() << '\n';
+            return Exit::failure;
+        }
+        for (std::size_t i = 0; i < atoms.size(); ++i) {
+            for (const auto& pkg : store->packages) {
+                if (matches(*store, pkg, atoms.at(i))) {
+                    lines.push_back(
+                        std::format("{}\t{}", command.atoms.at(i), store->string(pkg.cpv)));
+                }
             }
         }
     }
@@ -950,9 +969,15 @@ void configure(CLI::App& app, Invocation& invocation) {
     add_field(why_cmd, invocation, "--with-bdeps", &Why::build_deps,
               "Whether build-time dependencies keep packages, as emerge's option (default y)")
         ->transform(yes_no);
-    add_field(add_command<Match>(app, invocation, "Installed packages each atom matches"),
-              invocation, "atoms", &Match::atoms, "Portage atoms, such as '>=dev-libs/openssl-3:0'")
+    CLI::App* match_cmd =
+        add_command<Match>(app, invocation, "Installed packages each atom matches");
+    add_field(match_cmd, invocation, "atoms", &Match::atoms,
+              "Portage atoms, such as '>=dev-libs/openssl-3:0'")
         ->required();
+    match_cmd->add_flag_callback(
+        "--candidates", [&invocation] { std::get<Match>(invocation.command).candidates = true; },
+        "Match the installed cps' ebuilds instead (cpv::repo), with the USE each would be built "
+        "with now, masked ones included");
     CLI::App* soname = add_command<Soname>(app, invocation, "Installed consumers of a soname");
     add_field(soname, invocation, "soname", &Soname::soname, "Soname, such as libssl.so.3")
         ->required();

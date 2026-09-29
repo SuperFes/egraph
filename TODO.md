@@ -78,6 +78,10 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 
 ## Updates
 
+- [ ] Ebuilds match atoms as if their EAPI had IUSE_EFFECTIVE (5 and later): candidates do not
+      record their EAPI. EAPIs 0 to 4 are banned in ::gentoo, but an overlay may still carry
+      them; USE dependencies on implicit flags (arch, `prefix`, USE_EXPAND_HIDDEN) differ there.
+
 - [ ] `updates` lists a newer version an installed dependent's bound holds back (10 of 32 on the
       dev box: `<dev-python/astroid-4.1`, `~sys-firmware/edk2-bin-202408`, `gcr[gtk]` against
       a rebuild without gtk). The dependents' dynamic deps could name each holder

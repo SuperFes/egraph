@@ -53,6 +53,8 @@ struct Why {
 struct Match {
     static constexpr std::string_view name = "match";
     std::vector<std::string> atoms;
+    // The installed cps' ebuilds instead, with the USE each would be built with now.
+    bool candidates = false;
 };
 
 struct Soname {

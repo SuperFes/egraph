@@ -7,7 +7,8 @@ import pytest
 from portage.dep import Atom
 from portage.exception import InvalidAtom
 
-from egraph_build import installed, oracle, store
+from conftest import portdb, write_stores
+from egraph_build import evaluated, installed, oracle, store
 from egraph_build.profile import implicit_iuse
 from scenarios import ATOM_VERSIONS
 
@@ -83,9 +84,9 @@ def valid(text):
     return True
 
 
-def egraph_matches(path, atoms):
+def egraph_matches(path, atoms, *options):
     result = subprocess.run(
-        [EGRAPH, "--store", str(path), "--no-refresh", "match", *atoms],
+        [EGRAPH, "--store", str(path), "--no-refresh", "match", *options, *atoms],
         capture_output=True,
         text=True,
     )
@@ -155,3 +156,52 @@ def test_every_tree_atom_matches_as_portage_does(scenario, tmp_path):
     found = egraph_matches(path, atoms)
     for atom in atoms:
         assert found[atom] == set(oracle.matches(vardb, atom)), atom
+
+
+def assert_ebuilds_match(system, path, atoms, layer=None):
+    """As depgraph, except for ebuilds whose EAPI predates IUSE_EFFECTIVE, which egraph matches
+    as if it had it (see TODO.md). layer is the evaluated layer at path, built when omitted.
+    """
+    import update
+    from egraph_build.profile import has_iuse_effective
+
+    db = portdb(system)
+    layer = layer or evaluated.build(system.vardb, db)
+    candidates = [
+        c
+        for c in layer.candidates()
+        if has_iuse_effective(db.aux_get(c.cpv, ["EAPI"], myrepo=c.repo)[0])
+    ]
+    kept = {f"{c.cpv}::{c.repo}" for c in candidates}
+    found = {
+        atom: cpvs & kept
+        for atom, cpvs in egraph_matches(path, atoms, "--candidates").items()
+    }
+    wrong = [
+        f"{atom}: depgraph {sorted(expected)}, egraph {sorted(found[atom])}"
+        for atom in atoms
+        for expected in [
+            update.candidate_matches(system.trees, system.eroot, atom, candidates)
+        ]
+        if found[atom] != expected
+    ]
+    assert not wrong, "\n".join(wrong)
+
+
+def test_corpus_matches_ebuilds_as_depgraph_does(playgrounds, tmp_path):
+    system = playgrounds("atoms")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path)
+    assert_ebuilds_match(system, path, [atom for atom in corpus() if valid(atom)])
+
+
+def test_every_tree_atom_matches_ebuilds_as_depgraph_does(scenario, tmp_path):
+    path = tmp_path / "installed.egraph"
+    write_stores(scenario, path)
+    layer = evaluated.build(scenario.vardb, portdb(scenario))
+    atoms = sorted(
+        set(tree_atoms(installed.build(scenario.vardb))) | set(tree_atoms(layer))
+    )
+    if not atoms:
+        pytest.skip("no dependency atoms in this scenario")
+    assert_ebuilds_match(scenario, path, atoms)

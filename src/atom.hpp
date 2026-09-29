@@ -1,5 +1,6 @@
 #pragma once
 
+#include "evaluated.hpp"
 #include "store.hpp"
 #include "version.hpp"
 
@@ -41,6 +42,8 @@ struct Atom {
     std::optional<Version> version;
     std::optional<std::string> slot;
     std::optional<std::string> sub_slot;
+    // := or :slot=, :slot/sub-slot=: emerge rebuilds the dependent against a new sub-slot.
+    bool slot_operator = false;
     std::optional<std::string> repo;
     std::vector<UseDependency> use;
 };
@@ -49,5 +52,11 @@ struct Atom {
 
 // Whether an installed package satisfies atom, as portage's vardb.match decides it.
 [[nodiscard]] bool matches(const Store& store, const Package& pkg, const Atom& atom);
+
+// Whether an ebuild, with the USE it would be built with now, satisfies atom, as depgraph matches
+// an ebuild against a dependency. Implicit IUSE is the installed store's profile's, and every
+// ebuild counts as having IUSE_EFFECTIVE (EAPI 5 and later).
+[[nodiscard]] bool matches(const Store& installed, const Evaluated& evaluated,
+                           const Candidate& candidate, const Atom& atom);
 
 } // namespace egraph
