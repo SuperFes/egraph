@@ -82,11 +82,8 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       record their EAPI. EAPIs 0 to 4 are banned in ::gentoo, but an overlay may still carry
       them; USE dependencies on implicit flags (arch, `prefix`, USE_EXPAND_HIDDEN) differ there.
 
-- [ ] `updates` lists a newer version an installed dependent's bound holds back (10 of 32 on the
-      dev box: `<dev-python/astroid-4.1`, `~sys-firmware/edk2-bin-202408`, `gcr[gtk]` against
-      a rebuild without gtk). The dependents' dynamic deps could name each holder
-      ("held by pylint-4.0.9"), matched against the candidate with its USE; cascades (a plugin
-      update needing a held one) would still need resolution.
+- [ ] A dependent's blocker that would match an update's target does not hold it; only its
+      dependencies do.
 - [ ] Candidates count an ebuild visible when `match-visible` does, but depgraph also masks one
       whose metadata is invalid (a conditional on a flag outside its IUSE, say). Package-level
       validation (`_validate_deps`) would have to run per candidate.

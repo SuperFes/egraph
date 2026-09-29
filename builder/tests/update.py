@@ -28,15 +28,29 @@ class Updates(NamedTuple):
     new: frozenset
 
 
-def updates(trees, eroot, newuse=False, changed_use=False):
-    """What emerge -pu @installed (with -N or -U) replaces, rebuilds and adds."""
+def updates(
+    trees,
+    eroot,
+    newuse=False,
+    changed_use=False,
+    deep=False,
+    target="@installed",
+    dynamic_deps=True,
+):
+    """What emerge -pu target (with -N or -U, and -D) replaces, rebuilds and adds."""
     import _emerge.emergelog
     from _emerge.actions import expand_set_arguments
     from _emerge.create_depgraph_params import create_depgraph_params
     from _emerge.depgraph import _frozen_depgraph_config, backtrack_depgraph
     from _emerge.Package import Package
 
-    options = {"--pretend": True, "--update": True}
+    options = {
+        "--pretend": True,
+        "--update": True,
+        "--dynamic-deps": "y" if dynamic_deps else "n",
+    }
+    if deep:
+        options["--deep"] = True
     if newuse:
         options["--newuse"] = True
     if changed_use:
@@ -51,7 +65,7 @@ def updates(trees, eroot, newuse=False, changed_use=False):
     try:
         params = create_depgraph_params(options, None)
         frozen = _frozen_depgraph_config(settings, trees, options, params, None)
-        atoms, _ = expand_set_arguments(["@installed"], None, root_config)
+        atoms, _ = expand_set_arguments([target], None, root_config)
         success, depgraph, _ = backtrack_depgraph(
             settings, trees, options, params, None, atoms, None, frozen_config=frozen
         )

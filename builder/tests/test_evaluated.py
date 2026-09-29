@@ -9,6 +9,7 @@ from portage.versions import cpv_getkey
 
 import compare
 import update
+from scenarios import SCENARIOS
 from egraph_build import evaluated, oracle
 from egraph_build.model import DEP_KINDS, Edge
 
@@ -233,7 +234,11 @@ USE_MODES = [(False, False), (True, False), (False, True)]
 @pytest.mark.parametrize(
     "newuse, changed_use", USE_MODES, ids=["update", "newuse", "changed-use"]
 )
-def test_updates_follow_emerge(scenario, newuse, changed_use):
+def test_updates_follow_emerge(request, scenario, newuse, changed_use):
+    """Where no installed dependent holds an update back: the targets are the best visible
+    versions, and holds are the queries' (test_queries.test_updates_are_emerges)."""
+    if SCENARIOS[request.node.callspec.params["scenario"]].get("bounded"):
+        pytest.skip("installed dependents hold updates back here")
     found = update.updates(scenario.trees, scenario.eroot, newuse, changed_use)
     if not found.success:
         pytest.skip("emerge cannot resolve @installed here")

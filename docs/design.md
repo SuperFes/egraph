@@ -252,10 +252,17 @@ when its own version has no visible ebuild (depgraph's `_equiv_ebuild_visible`: 
 repository, else any), which can mean a downgrade. `-N` (`--newuse`) and `-U` (`--changed-use`)
 add rebuilds of the same version for changed USE, with depgraph's `_reinstall_for_flags` and
 the flags in emerge's notation (`flag*` changed, `flag%` new in IUSE, `(-flag%)` gone from it).
-The builder decides all of it; the C++ side only labels upgrades and downgrades by version.
-egraph does not resolve, so it lists a newer version that an installed dependent's bound (such
-as `<dev-python/astroid-4.1`) holds back, which emerge keeps; it never lists new slots or
-slot-operator rebuilds, which are the resolver's.
+The builder decides all of it; the C++ side labels upgrades and downgrades by version and weighs
+each against the installed dependents, as `emerge -uD` does (roadmap 12b). A dependent's
+dependency holds an update when it would go unsatisfied with the target in place of the
+installed package: the target (with the USE it would be built with) must match the atom, a
+slot operator's sub-slot aside (emerge rebuilds the dependent instead), unless another
+alternative of a `||` stays satisfied. The dependencies are read as the other queries read them
+(`--dynamic-deps`). A held upgrade falls back to the best visible version in the slot every
+dependent accepts (`<dev-python/astroid-4.1` picks 4.0.x), or stays put; a held rebuild for USE
+stays put. `--held` adds each held update with the dependent and atom holding it. egraph never
+lists new slots, slot-operator rebuilds, or what emerge pulls in to satisfy a dependent another
+way (a new package for a `||`), which are the resolver's.
 
 In removal mode `dep_zapdeps` asks which packages are *available*: an installed package whose
 own metadata is masked (keywords, `package.mask`, license, invalid strings; under dynamic deps

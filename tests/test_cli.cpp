@@ -105,7 +105,8 @@ TEST_CASE("updates takes emerge's --newuse and --changed-use") {
     CHECK(rebuilds("updates -U") == UseRebuilds::changed);
     CHECK(rebuilds("updates -U -N") == UseRebuilds::all);
     CHECK(rebuilds("updates -N -U") == UseRebuilds::all);
-    CHECK_THROWS(parse("updates --dynamic-deps n"));
+    CHECK_FALSE(parse("updates --dynamic-deps n").dynamic_deps);
+    CHECK(std::get<egraph::Updates>(parse("updates --held").command).held);
 }
 
 TEST_CASE("dependency queries take emerge's --dynamic-deps, on by default") {

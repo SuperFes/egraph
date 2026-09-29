@@ -690,7 +690,11 @@ Exit execute(const Updates& command, const Invocation& invocation, std::ostream&
         err << "egraph: " << stores.error() << '\n';
         return Exit::failure;
     }
-    const auto lines = update_lines(stores->evaluated, command.rebuilds);
+    const auto& evaluated = stores->evaluated;
+    const auto store = invocation.dynamic_deps ? with_dynamic_deps(stores->installed, evaluated)
+                                               : stores->installed;
+    const auto lines =
+        update_lines(store, build_graph(store), evaluated, command.rebuilds, command.held);
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme);
     } else {
@@ -992,8 +996,11 @@ void configure(CLI::App& app, Invocation& invocation) {
               "Whether build-time dependencies keep packages, as emerge's option (default y)")
         ->transform(yes_no);
 
-    CLI::App* updates_cmd = add_command<Updates>(
-        app, invocation, "Installed packages emerge -u @installed would replace or rebuild");
+    CLI::App* updates_cmd = add_dynamic_deps(add_command<Updates>(
+        app, invocation, "Installed packages emerge -uD would replace or rebuild"));
+    updates_cmd->add_flag_callback(
+        "--held", [&invocation] { std::get<Updates>(invocation.command).held = true; },
+        "Also the updates installed dependents hold back, and which of their atoms do");
     updates_cmd->add_flag_callback(
         "-N,--newuse",
         [&invocation] { std::get<Updates>(invocation.command).rebuilds = UseRebuilds::all; },

@@ -132,19 +132,42 @@ def parse_updates(text):
     [(None, False, False), ("--newuse", True, False), ("--changed-use", False, True)],
     ids=["update", "newuse", "changed-use"],
 )
-def test_updates_are_emerges(scenario, system, option, newuse, changed_use):
+def test_updates_are_emerges(
+    scenario, system, dynamic_deps, option, newuse, changed_use
+):
+    """What emerge -puD @installed replaces: dependents' atoms hold updates back, and the deep
+    resolution falls back to the best version they accept, as plain -u does not."""
     from portage.versions import cpv_getversion, vercmp
 
     import update
 
-    expected = update.updates(scenario.trees, scenario.eroot, newuse, changed_use)
+    expected = update.updates(
+        scenario.trees,
+        scenario.eroot,
+        newuse,
+        changed_use,
+        deep=True,
+        dynamic_deps=dynamic_deps,
+    )
     if not expected.success:
         pytest.skip("emerge cannot resolve @installed here")
     _, path = system
-    found = parse_updates(egraph(path, "updates", *filter(None, [option])).stdout)
-    assert {cpv: replacement for cpv, (_, replacement) in found.items()} == (
-        expected.replaced
-    )
+    options = [*dynamic_option(dynamic_deps), *filter(None, [option])]
+    found = parse_updates(egraph(path, "updates", *options).stdout)
+    replaced = {cpv: replacement for cpv, (_, replacement) in found.items()}
+    # emerge may satisfy a dependent another way, by pulling in a package nothing installed
+    # provides: a resolver's choice egraph leaves out, holding the update instead.
+    held = {
+        line.split("\t")[0]
+        for line in egraph(path, "updates", "--held", *options).stdout.splitlines()
+        if line.split("\t")[1] == "held"
+    }
+    resolved = {
+        cpv: replacement
+        for cpv, replacement in expected.replaced.items()
+        if not (expected.new and cpv in held and cpv not in replaced)
+    }
+    assert replaced == resolved
     for cpv, (kind, replacement) in found.items():
         order = vercmp(cpv_getversion(replacement.cpv), cpv_getversion(cpv))
         assert kind == (

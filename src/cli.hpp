@@ -76,6 +76,8 @@ struct Orphans {
 struct Updates {
     static constexpr std::string_view name = "updates";
     UseRebuilds rebuilds = UseRebuilds::none;
+    // Also the updates installed dependents hold back, and which atoms do.
+    bool held = false;
 };
 
 enum class ExportFormat : std::uint8_t { dot, json };

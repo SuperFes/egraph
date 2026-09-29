@@ -5,6 +5,7 @@
 #include <compare>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -45,6 +46,10 @@ struct Graph {
 // Per node of one dependency list, whether installed packages satisfy it. Blockers always do:
 // they are constraints, not dependencies.
 [[nodiscard]] std::vector<bool> satisfied(std::span<const Node> nodes);
+
+// As above, with atom_satisfied(index) deciding each atom node instead of its installed matches.
+[[nodiscard]] std::vector<bool> satisfied(std::span<const Node> nodes,
+                                          const std::function<bool(std::size_t)>& atom_satisfied);
 
 // Package ids an argument names: an exact cpv, or the installed packages a portage atom
 // matches (a bare cp is one). An error for an argument that is neither.

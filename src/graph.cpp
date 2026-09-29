@@ -60,6 +60,12 @@ std::vector<bool> choices(std::span<const Node> nodes) {
 }
 
 std::vector<bool> satisfied(std::span<const Node> nodes) {
+    return satisfied(nodes,
+                     [&nodes](std::size_t i) { return element(nodes, i).matches.count != 0; });
+}
+
+std::vector<bool> satisfied(std::span<const Node> nodes,
+                            const std::function<bool(std::size_t)>& atom_satisfied) {
     // Children follow their parent, so a backward pass sees every child before its parent.
     // Groups start from the answer for no children: an empty any-of is satisfied, and so is an
     // empty all-of.
@@ -71,7 +77,7 @@ std::vector<bool> satisfied(std::span<const Node> nodes) {
         const auto& node = element(nodes, i);
         switch (node.type) {
         case NodeType::atom:
-            result.at(i) = node.matches.count != 0;
+            result.at(i) = atom_satisfied(i);
             break;
         case NodeType::any_of:
             result.at(i) = !has_children.at(i) || any_child.at(i);

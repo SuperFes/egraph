@@ -51,12 +51,43 @@ struct PendingUpdate {
 [[nodiscard]] std::optional<PendingUpdate>
 pending_update(const Evaluated& evaluated, std::uint32_t package, UseRebuilds rebuilds);
 
-// What emerge -u @installed would replace, as "cpv<TAB>kind<TAB>target cpv<TAB>repo": kind
-// upgrade, downgrade, or rebuild when the installed package is masked and the target has its
-// version. With rebuilds, each USE rebuild too, kind rebuild with "<TAB>flags" appended, the
-// flags in emerge's notation, space-separated. In the installed packages' order.
-[[nodiscard]] std::vector<std::string> update_lines(const Evaluated& evaluated,
-                                                    UseRebuilds rebuilds);
+// An installed dependent's atom that rejects an update's target.
+struct Holder {
+    std::uint32_t parent = 0;
+    // String id of the atom in the store the dependencies were read from.
+    std::uint32_t atom = 0;
+    auto operator<=>(const Holder&) const = default;
+};
+
+// A pending update weighed against the installed dependents' atoms, as emerge -uD weighs it.
+struct WeighedUpdate {
+    // What emerge would do: the pending update, or an update to the best visible version in the
+    // slot every dependent accepts; nothing when none does.
+    std::optional<PendingUpdate> update;
+    // The pending update when dependents reject it, and the atoms that do, sorted.
+    std::optional<PendingUpdate> held;
+    std::vector<Holder> holders;
+};
+
+// The package's pending update against the dependencies in store (read with or without dynamic
+// deps) of the packages in scope, every installed one when scope is empty. An atom holds unless
+// the target matches it; a slot operator's sub-slot does not count (emerge rebuilds the
+// dependent instead), nor does an alternative of a || group that another installed package
+// still satisfies.
+[[nodiscard]] WeighedUpdate weigh_update(const Store& store, const Graph& graph,
+                                         const Evaluated& evaluated, std::uint32_t package,
+                                         UseRebuilds rebuilds, const std::vector<bool>& scope = {});
+
+// What emerge -uD would replace, as "cpv<TAB>kind<TAB>target cpv<TAB>repo": kind upgrade,
+// downgrade, or rebuild when the installed package is masked and the target has its version.
+// With rebuilds, each USE rebuild too, kind rebuild with "<TAB>flags" appended, the flags in
+// emerge's notation, space-separated. With held, also each update dependents hold back, once per
+// atom holding it: "cpv<TAB>held<TAB>target cpv<TAB>repo<TAB>dependent cpv<TAB>atom". In the
+// installed packages' order.
+[[nodiscard]] std::vector<std::string> update_lines(const Store& store, const Graph& graph,
+                                                    const Evaluated& evaluated,
+                                                    UseRebuilds rebuilds, bool held = false,
+                                                    const std::vector<bool>& scope = {});
 
 // Consumers (or providers) of a soname: one "cpv<TAB>multilib category" line each, sorted.
 [[nodiscard]] std::vector<std::string> soname_users(const Store& store, std::string_view soname,

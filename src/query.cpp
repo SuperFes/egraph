@@ -153,21 +153,159 @@ std::optional<PendingUpdate> pending_update(const Evaluated& evaluated, std::uin
     return PendingUpdate{.kind = UpdateKind::rebuild, .target = *pkg.target, .flags = flags};
 }
 
-std::vector<std::string> update_lines(const Evaluated& evaluated, UseRebuilds rebuilds) {
-    std::vector<std::string> lines;
-    for (std::uint32_t id = 0; id < evaluated.packages.size(); ++id) {
-        const auto update = pending_update(evaluated, id, rebuilds);
-        if (!update) {
+namespace {
+
+std::optional<Version> version_of(std::string_view cp, std::string_view cpv) {
+    return parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
+}
+
+// The atoms of parents' dependencies that would go unsatisfied were package replaced by the
+// candidate, sorted.
+std::vector<Holder> holders_of(const Store& store, const Evaluated& evaluated,
+                               std::span<const std::uint32_t> parents, std::uint32_t package,
+                               const Candidate& candidate) {
+    std::vector<Holder> holders;
+    for (const auto parent : parents) {
+        for (const auto range : store.packages.at(parent).deps) {
+            const auto nodes = store.nodes_in(range);
+            const auto matched = [&](std::size_t i) {
+                return std::ranges::contains(store.ids_in(element(nodes, i).matches), package);
+            };
+            const auto accepts = [&](std::size_t i) {
+                auto atom = parse_atom(store.string(element(nodes, i).atom));
+                if (!atom) {
+                    return true;
+                }
+                if (atom->slot_operator) {
+                    atom->sub_slot.reset();
+                }
+                return matches(store, evaluated, candidate, *atom);
+            };
+            const auto after = satisfied(nodes, [&](std::size_t i) {
+                const auto ids = store.ids_in(element(nodes, i).matches);
+                return std::ranges::any_of(ids, [package](auto id) { return id != package; }) ||
+                       (matched(i) && accepts(i));
+            });
+            for (std::size_t i = 0; i < nodes.size(); ++i) {
+                const auto& node = element(nodes, i);
+                if (node.type != NodeType::atom || !matched(i) || accepts(i)) {
+                    continue;
+                }
+                auto top = i;
+                while (element(nodes, top).parent != no_parent) {
+                    top = element(nodes, top).parent;
+                }
+                if (!after.at(top)) {
+                    holders.push_back({.parent = parent, .atom = node.atom});
+                }
+            }
+        }
+    }
+    std::ranges::sort(holders);
+    const auto [first, last] = std::ranges::unique(holders);
+    holders.erase(first, last);
+    return holders;
+}
+
+} // namespace
+
+WeighedUpdate weigh_update(const Store& store, const Graph& graph, const Evaluated& evaluated,
+                           std::uint32_t package, UseRebuilds rebuilds,
+                           const std::vector<bool>& scope) {
+    auto wanted = pending_update(evaluated, package, rebuilds);
+    if (!wanted) {
+        return {};
+    }
+    std::vector<std::uint32_t> parents;
+    for (const auto& edge : graph.rdeps(package)) {
+        if (edge.parent != package && (scope.empty() || scope.at(edge.parent))) {
+            parents.push_back(edge.parent);
+        }
+    }
+    std::ranges::sort(parents);
+    const auto [first, last] = std::ranges::unique(parents);
+    parents.erase(first, last);
+
+    const auto& target = evaluated.candidates.at(wanted->target);
+    auto holders = holders_of(store, evaluated, parents, package, target);
+    if (holders.empty()) {
+        return {.update = std::move(wanted), .held = {}, .holders = {}};
+    }
+    WeighedUpdate weighed{.update = {}, .held = wanted, .holders = std::move(holders)};
+    // A rebuild for USE has no other version to fall back to.
+    if (wanted->kind == UpdateKind::rebuild) {
+        return weighed;
+    }
+    const auto cp = evaluated.string(target.cp);
+    const auto cpv = evaluated.string(evaluated.packages.at(package).cpv);
+    const auto installed = version_of(cp, cpv);
+    // Other visible versions in the slot, newer than the installed one for an upgrade, best first
+    // and of one version the target's repository first.
+    struct Fallback {
+        std::uint32_t index = 0;
+        Version version;
+    };
+    std::vector<Fallback> fallbacks;
+    for (std::uint32_t i = 0; i < evaluated.candidates.size(); ++i) {
+        const auto& candidate = evaluated.candidates.at(i);
+        if (i == wanted->target || candidate.cp != target.cp || candidate.slot != target.slot ||
+            !candidate.visible()) {
             continue;
         }
-        const auto& target = evaluated.candidates.at(update->target);
-        auto line = std::format("{}\t{}\t{}\t{}", evaluated.string(evaluated.packages.at(id).cpv),
-                                kind_name(update->kind), evaluated.string(target.cpv),
-                                evaluated.string(target.repo));
-        if (!update->flags.empty()) {
-            line += std::format("\t{}", update->flags);
+        auto version = version_of(cp, evaluated.string(candidate.cpv));
+        if (!version || !installed || vercmp(*version, *installed) == 0 ||
+            (wanted->kind == UpdateKind::upgrade && vercmp(*version, *installed) < 0)) {
+            continue;
         }
-        lines.push_back(std::move(line));
+        fallbacks.push_back({.index = i, .version = std::move(*version)});
+    }
+    std::ranges::stable_sort(fallbacks, [&](const Fallback& a, const Fallback& b) {
+        if (const int order = vercmp(a.version, b.version); order != 0) {
+            return order > 0;
+        }
+        return evaluated.candidates.at(a.index).repo == target.repo &&
+               evaluated.candidates.at(b.index).repo != target.repo;
+    });
+    for (const auto& fallback : fallbacks) {
+        const auto& candidate = evaluated.candidates.at(fallback.index);
+        if (holders_of(store, evaluated, parents, package, candidate).empty()) {
+            weighed.update =
+                PendingUpdate{.kind = update_kind(cp, cpv, evaluated.string(candidate.cpv)),
+                              .target = fallback.index,
+                              .flags = {}};
+            break;
+        }
+    }
+    return weighed;
+}
+
+std::vector<std::string> update_lines(const Store& store, const Graph& graph,
+                                      const Evaluated& evaluated, UseRebuilds rebuilds, bool held,
+                                      const std::vector<bool>& scope) {
+    std::vector<std::string> lines;
+    const auto target_fields = [&evaluated](std::uint32_t target) {
+        const auto& candidate = evaluated.candidates.at(target);
+        return std::format("{}\t{}", evaluated.string(candidate.cpv),
+                           evaluated.string(candidate.repo));
+    };
+    for (std::uint32_t id = 0; id < evaluated.packages.size(); ++id) {
+        const auto weighed = weigh_update(store, graph, evaluated, id, rebuilds, scope);
+        const auto cpv = evaluated.string(evaluated.packages.at(id).cpv);
+        if (const auto& update = weighed.update) {
+            auto line = std::format("{}\t{}\t{}", cpv, kind_name(update->kind),
+                                    target_fields(update->target));
+            if (!update->flags.empty()) {
+                line += std::format("\t{}", update->flags);
+            }
+            lines.push_back(std::move(line));
+        }
+        if (held && weighed.held) {
+            for (const auto& holder : weighed.holders) {
+                lines.push_back(std::format(
+                    "{}\theld\t{}\t{}\t{}", cpv, target_fields(weighed.held->target),
+                    store.string(store.packages.at(holder.parent).cpv), store.string(holder.atom)));
+            }
+        }
     }
     return lines;
 }

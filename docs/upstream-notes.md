@@ -27,4 +27,8 @@ Each commit passes the resolver suite on its own.
 Record each case where egraph's answer differs from portage's, with the test that proves which
 is right.
 
-None yet.
+- `updates` is `emerge -uD`'s answer for bounded updates, not plain `emerge -u @installed`'s.
+  Without `--deep`, emerge drops an update an installed dependent's bound rejects instead of
+  falling back to a version the bound accepts (`bounds` scenario: astroid 4.0.5 under
+  `<astroid-4.1`, libclc 22.1.9 under `=libclc-22*`), and holds a slot-operator update it would
+  otherwise take with a rebuild. `test_updates_are_emerges` compares with `-uD`.

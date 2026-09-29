@@ -220,13 +220,21 @@ an update back, rather than skipping it), it stays, recorded in `upstream-notes.
 - 12a (done): atoms match candidate ebuilds, with the USE each would be built with now, as depgraph
   matches an ebuild against a dependency (`egraph match --candidates`), in shadow against
   depgraph's own matching on every scenario. Atoms record slot operators.
-- 12b: bounds. A target that an installed dependent's atom rejects is held back, and the update
-  falls back to the best visible version in the slot every such atom accepts. A slot operator
-  does not hold: emerge rebuilds the dependent instead. `updates --held` lists what is held and
-  by whom, and the TUI's pages say so. Compared with `emerge -pu @installed` on a scenario with
-  bounds.
+- 12b (done): bounds. A target that an installed dependent's atom rejects is held back, and the
+  update falls back to the best visible version in the slot every such atom accepts. A slot
+  operator does not hold: emerge rebuilds the dependent instead. `updates --held` lists what is
+  held and by whom. Compared with `emerge -puD @installed` on every scenario; on the dev box it
+  leaves 5 of the 12 differences with `-uDN @world`: 2 for 12c, 3 for a resolver. The TUI still
+  shows unweighed updates until 12d's held view.
 - 12c: `updates --world`: only the packages `emerge -uD @world` reaches (those depclean keeps),
   and only their dependents hold. Compared with `emerge -puDN @world` on every scenario and
   the live system.
+- 12d: remedies for a held update, as a choice rather than emerge's silent skip. Removing a
+  holder is offered only when it is a leaf: nothing installed depends on it, and only world (or
+  nothing) keeps it; then the update goes through, and what else it frees is listed. A holder
+  something else needs is named, not offered. Keeping a holder while updating is only possible
+  through `--nodeps`, which later `-uD` runs undo, so it is shown with that warning. egraph prints
+  the commands (`--deselect`, `-C`, the update); it does not run emerge. `updates --held` and a
+  held-updates view in the TUI.
 - Left to a resolver: what the targets' own dependencies pull in (new packages, and updates
   that need a held one), new slots, and slot-operator rebuilds.
