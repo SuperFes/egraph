@@ -18,6 +18,8 @@ using egraph::test::TempDir;
 using egraph::test::with_section;
 using egraph::test::write_bytes;
 
+using egraph::test::evaluated_with_section;
+
 namespace {
 
 // A store holding only dev-libs/b-1, with its slot given as a sample string id.
@@ -123,4 +125,93 @@ TEST_CASE("check fails without a store or a working builder") {
     invocation.builder = fake_builder(dir.path(), fresh_sample(), 9).string();
     CHECK(egraph::run(invocation, out, err) == egraph::Exit::failure);
     CHECK(err.str().ends_with("exited with status 9\n"));
+}
+
+namespace {
+
+// The evaluated sample with no inputs, fresh beside fresh_sample().
+std::vector<std::byte> fresh_evaluated() {
+    return evaluated_with_section(2, Bytes{}.varint(0));
+}
+
+// Stores a check built at dir/check.egraph.
+egraph::ScratchStores checked_stores(const std::filesystem::path& dir,
+                                     const std::vector<std::byte>& installed) {
+    const auto path = dir / "check.egraph";
+    write_bytes(path, installed);
+    write_bytes(egraph::evaluated_store_path(path), fresh_evaluated());
+    return egraph::ScratchStores{path};
+}
+
+std::vector<std::byte> read_bytes(const std::filesystem::path& path) {
+    const auto text = read_text(path);
+    std::vector<std::byte> bytes;
+    bytes.reserve(text.size());
+    for (const char c : text) {
+        bytes.push_back(static_cast<std::byte>(c));
+    }
+    return bytes;
+}
+
+} // namespace
+
+TEST_CASE("scratch stores are removed with their owner") {
+    const TempDir dir;
+    std::optional<egraph::ScratchStores> first{checked_stores(dir.path(), fresh_sample())};
+    const auto path = first->path();
+    egraph::ScratchStores moved{std::move(*first)};
+    first.reset();
+    CHECK(std::filesystem::exists(path));
+    CHECK(std::filesystem::exists(egraph::evaluated_store_path(path)));
+    {
+        const auto gone = std::move(moved);
+    }
+    CHECK_FALSE(std::filesystem::exists(path));
+    CHECK_FALSE(std::filesystem::exists(egraph::evaluated_store_path(path)));
+}
+
+TEST_CASE("saving copies a check's stores that are still fresh") {
+    const TempDir dir;
+    const auto store = dir.path() / "store" / "installed.egraph";
+    // A builder that would fail, so only the copies can succeed.
+    const auto invocation = command(store, fake_builder(dir.path(), only_b(3), 1), egraph::Tui{});
+    const std::optional checked{checked_stores(dir.path(), fresh_sample())};
+    const auto saved = egraph::save_stores(invocation, checked);
+    REQUIRE(saved.has_value());
+    CHECK(saved->installed.packages.size() == 2);
+    CHECK_FALSE(std::filesystem::exists(dir.path() / "args"));
+    CHECK(read_bytes(store) == fresh_sample());
+    CHECK(read_bytes(egraph::evaluated_store_path(store)) == fresh_evaluated());
+    // The check's own files stay with it.
+    CHECK(std::filesystem::exists(checked->path()));
+}
+
+TEST_CASE("saving builds afresh without a check, or when its stores went stale") {
+    const TempDir dir;
+    const auto store = dir.path() / "store" / "installed.egraph";
+    const auto invocation = command(
+        store, fake_builder(dir.path(), fresh_sample(), 0, fresh_evaluated()), egraph::Tui{});
+    std::optional<egraph::ScratchStores> checked;
+    SECTION("stale") {
+        // The sample records an input the system does not have.
+        checked.emplace(
+            checked_stores(dir.path(), egraph::test::assemble(egraph::test::sample_sections())));
+    }
+    SECTION("no check") {}
+    const auto saved = egraph::save_stores(invocation, checked);
+    REQUIRE(saved.has_value());
+    CHECK(saved->installed.packages.size() == 2);
+    CHECK(read_text(dir.path() / "args") ==
+          std::format("--full --store {} --root /\n", store.string()));
+    CHECK(read_bytes(store) == fresh_sample());
+}
+
+TEST_CASE("saving fails with the builder") {
+    const TempDir dir;
+    const auto store = dir.path() / "installed.egraph";
+    const auto invocation = command(store, fake_builder(dir.path(), only_b(3), 9), egraph::Tui{});
+    const auto saved = egraph::save_stores(invocation, std::nullopt);
+    REQUIRE_FALSE(saved.has_value());
+    CHECK(saved.error().starts_with(
+        std::format("{} exited with status 9", invocation.builder.value())));
 }

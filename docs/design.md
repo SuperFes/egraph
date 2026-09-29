@@ -142,8 +142,10 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   build (the app itself never spawns anything) and lists the drift between the installed
   stores, each package's page a key away. The builder's output goes to a log beside the scratch store rather than the terminal the
   interface owns; if the build fails, a dialog shows its last lines.
-- `u` in the check view acts on drift. As root it runs `egraph rebuild` (a second full build,
-  written through the builder's atomic rename) and shows the result. Anyone else gets a preview:
+- `u` in the check view acts on drift. As root it saves the check's own build, kept in its
+  scratch files until then: while nothing it was built from has changed, copies are renamed over
+  the stores as the builder writes them (installed first, mode 0644, synced); otherwise it runs
+  `egraph rebuild`. Either way it shows the result. Anyone else gets a preview:
   the check's own fresh build replaces the store in memory only, and the title bar says it is not
   saved. The user's cache store is left alone either way; it is refreshed on the next query.
 - `e` watches the running emerges, from the snapshots portage publishes with

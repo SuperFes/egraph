@@ -123,6 +123,32 @@ TEST_CASE("a process's output can go to a log instead of our terminal") {
     REQUIRE_FALSE(unwritable.has_value());
 }
 
+TEST_CASE("a file is replaced by a copy in one step") {
+    namespace fs = std::filesystem;
+    const TempDir dir;
+    const auto source = dir.path() / "source";
+    write_text(source, "new");
+    fs::permissions(source, fs::perms::owner_read | fs::perms::owner_write);
+    const auto target = dir.path() / "sub" / "dir" / "target";
+    REQUIRE(egraph::os::replace_with_copy(source, target).has_value());
+    CHECK(read_text(target) == "new");
+    CHECK(fs::status(target).permissions() == (fs::perms::owner_read | fs::perms::owner_write |
+                                               fs::perms::group_read | fs::perms::others_read));
+    CHECK(read_text(source) == "new");
+
+    write_text(source, "newer");
+    REQUIRE(egraph::os::replace_with_copy(source, target).has_value());
+    CHECK(read_text(target) == "newer");
+
+    const auto missing = egraph::os::replace_with_copy(dir.path() / "missing", target);
+    REQUIRE_FALSE(missing.has_value());
+    CHECK(missing.error() == std::errc::no_such_file_or_directory);
+    CHECK(read_text(target) == "newer");
+    // No temporary file is left beside the target.
+    CHECK(std::distance(fs::directory_iterator{target.parent_path()}, fs::directory_iterator{}) ==
+          1);
+}
+
 TEST_CASE("the refresh command passes the roots through") {
     egraph::Invocation invocation;
     invocation.builder = "/usr/bin/egraph-build";

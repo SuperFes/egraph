@@ -39,6 +39,11 @@ std::expected<int, SpawnError> run(const std::vector<std::string>& argv,
 // the nearest existing directory above it is writable.
 bool can_create(const std::filesystem::path& path);
 
+// Replaces target with a copy of source so readers see the old file or the new one, never a
+// mix: copied beside it (mode 0644), synced, renamed over it. Creates target's directories.
+std::expected<void, std::error_code> replace_with_copy(const std::filesystem::path& source,
+                                                       const std::filesystem::path& target);
+
 // Whether this process runs as root (effective user id 0).
 bool is_root();
 

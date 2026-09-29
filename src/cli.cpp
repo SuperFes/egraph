@@ -21,6 +21,7 @@
 #include <CLI/CLI.hpp>
 
 #include <algorithm>
+#include <array>
 #include <deque>
 #include <expected>
 #include <format>
@@ -327,23 +328,87 @@ std::optional<std::string> quiet_build(const Invocation& invocation,
     return error;
 }
 
+template <class Loaded> struct ScratchBuild {
+    Loaded loaded;
+    ScratchStores files;
+};
+
 // A full build into scratch files, loaded by load_path (Loaded is a Store or Stores); quiet keeps
 // the builder off the terminal.
 template <class Loaded, class Load>
+std::expected<ScratchBuild<Loaded>, std::string> scratch_build(const Invocation& invocation,
+                                                               bool quiet, const Load& load_path) {
+    ScratchStores files{scratch_store()};
+    if (auto error = quiet ? quiet_build(invocation, files.path())
+                           : run_builder(invocation, "--full", files.path())) {
+        return std::unexpected(std::move(*error));
+    }
+    auto loaded = load_path(files.path());
+    if (!loaded) {
+        return std::unexpected(std::move(loaded.error().message));
+    }
+    return ScratchBuild<Loaded>{.loaded = std::move(*loaded), .files = std::move(files)};
+}
+
+// As scratch_build, the files removed once loaded.
+template <class Loaded, class Load>
 std::expected<Loaded, std::string> fresh_build(const Invocation& invocation, bool quiet,
                                                const Load& load_path) {
-    const auto path = scratch_store();
-    const auto error =
-        quiet ? quiet_build(invocation, path) : run_builder(invocation, "--full", path);
-    auto built = error ? std::expected<Loaded, StoreError>{} : load_path(path);
-    std::error_code ignored;
-    std::filesystem::remove(path, ignored);
-    std::filesystem::remove(evaluated_store_path(path), ignored);
-    if (error) {
-        return std::unexpected(*error);
-    }
-    return std::move(built).transform_error([](const StoreError& e) { return e.message; });
+    return scratch_build<Loaded>(invocation, quiet, load_path)
+        .transform([](ScratchBuild<Loaded>&& built) { return std::move(built).loaded; });
 }
+
+} // namespace
+
+ScratchStores::ScratchStores(ScratchStores&& other) noexcept
+    : path_{std::exchange(other.path_, {})} {}
+
+ScratchStores& ScratchStores::operator=(ScratchStores&& other) noexcept {
+    if (this != &other) {
+        remove();
+        path_ = std::exchange(other.path_, {});
+    }
+    return *this;
+}
+
+ScratchStores::~ScratchStores() {
+    remove();
+}
+
+void ScratchStores::remove() const {
+    if (path_.empty()) {
+        return;
+    }
+    std::error_code ignored;
+    std::filesystem::remove(path_, ignored);
+    std::filesystem::remove(evaluated_store_path(path_), ignored);
+}
+
+std::expected<Stores, std::string> save_stores(const Invocation& invocation,
+                                               const std::optional<ScratchStores>& checked) {
+    const auto path = store_path(invocation);
+    if (checked) {
+        if (auto stores = load_stores(checked->path()); stores && !staleness(*stores)) {
+            // Installed first, as the builder writes them.
+            const std::array copies{
+                std::pair{checked->path(), path},
+                std::pair{evaluated_store_path(checked->path()), evaluated_store_path(path)}};
+            for (const auto& [from, to] : copies) {
+                if (const auto copied = os::replace_with_copy(from, to); !copied) {
+                    return std::unexpected(
+                        std::format("{}: {}", to.string(), copied.error().message()));
+                }
+            }
+            return std::move(*stores);
+        }
+    }
+    if (auto error = quiet_build(invocation, path)) {
+        return std::unexpected(std::move(*error));
+    }
+    return load_stores(path).transform_error([](const StoreError& e) { return e.message; });
+}
+
+namespace {
 
 Exit execute(const Check&, const Invocation& invocation, std::ostream& out, std::ostream& err) {
     // Deliberately not refreshed: the point is to compare what queries would read.
@@ -641,27 +706,32 @@ Exit execute(const Tui&, const Invocation& invocation, std::ostream&, std::ostre
         constexpr std::string_view prefix = "egraph: warning: ";
         warnings.push_back(line.starts_with(prefix) ? line.substr(prefix.size()) : line);
     }
+    // Only root writes the store here, from the check's build while it is still fresh; anyone
+    // else previews the check's build instead.
+    const bool saves = os::is_root();
+    std::optional<ScratchStores> checked;
     // The builder cannot share the terminal the interface owns; its output is kept for errors.
     // The drift compares installed stores, whichever dependencies the interface reads.
-    const auto check = [&invocation](const Store& stored) -> tui::CheckResult {
-        auto built = fresh_build<Stores>(invocation, true, load_stores);
+    const auto check = [&invocation, &checked, saves](const Store& stored) -> tui::CheckResult {
+        checked.reset();
+        auto built = scratch_build<Stores>(invocation, true, load_stores);
         if (!built) {
             return std::unexpected(std::move(built.error()));
         }
-        auto lines = drift(stored, built->installed);
-        return tui::Fresh{.store = std::move(built->installed),
-                          .evaluated = std::move(built->evaluated),
+        if (saves) {
+            checked = std::move(built->files);
+        }
+        auto lines = drift(stored, built->loaded.installed);
+        return tui::Fresh{.store = std::move(built->loaded.installed),
+                          .evaluated = std::move(built->loaded.evaluated),
                           .drift = std::move(lines)};
     };
-    // Only root writes the store here; anyone else previews the check's build instead.
     tui::Rebuilder rebuild;
-    if (os::is_root()) {
-        rebuild = [&invocation]() -> std::expected<Stores, std::string> {
-            const auto path = store_path(invocation);
-            if (auto error = quiet_build(invocation, path)) {
-                return std::unexpected(std::move(*error));
-            }
-            return load_stores(path).transform_error([](const StoreError& e) { return e.message; });
+    if (saves) {
+        rebuild = [&invocation, &checked]() {
+            auto saved = save_stores(invocation, checked);
+            checked.reset();
+            return saved;
         };
     }
     const auto run_dir = emerge::status_dir(invocation.eprefix.value_or(""));

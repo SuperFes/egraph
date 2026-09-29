@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <format>
 #include <langinfo.h>
+#include <random>
 #include <spawn.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -68,6 +69,17 @@ class Redirections {
 
 std::uint64_t non_negative(std::int64_t value) {
     return value < 0 ? 0 : static_cast<std::uint64_t>(value);
+}
+
+// fsync(2) on path, a file or a directory.
+std::error_code sync(const std::filesystem::path& path) {
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return {errno, std::generic_category()};
+    }
+    const int error = ::fsync(fd) == 0 ? 0 : errno;
+    ::close(fd);
+    return error == 0 ? std::error_code{} : std::error_code{error, std::generic_category()};
 }
 
 } // namespace
@@ -156,6 +168,47 @@ std::filesystem::path executable() {
 
 bool stdout_is_terminal() {
     return isatty(STDOUT_FILENO) == 1;
+}
+
+std::expected<void, std::error_code> replace_with_copy(const std::filesystem::path& source,
+                                                       const std::filesystem::path& target) {
+    namespace fs = std::filesystem;
+    const auto directory = target.has_parent_path() ? target.parent_path() : fs::path{"."};
+    std::error_code error;
+    fs::create_directories(directory, error);
+    if (error) {
+        return std::unexpected(error);
+    }
+    std::random_device random;
+    const auto temp = directory / std::format(".{}.{:08x}", target.filename().string(), random());
+    // copy_file refuses to overwrite, so the name is ours.
+    fs::copy_file(source, temp, error);
+    if (error) {
+        return std::unexpected(error);
+    }
+    const auto discard = [&temp](std::error_code why) {
+        std::error_code ignored;
+        fs::remove(temp, ignored);
+        return std::unexpected(why);
+    };
+    fs::permissions(temp,
+                    fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read |
+                        fs::perms::others_read,
+                    error);
+    if (error) {
+        return discard(error);
+    }
+    if (const auto unsynced = sync(temp)) {
+        return discard(unsynced);
+    }
+    fs::rename(temp, target, error);
+    if (error) {
+        return discard(error);
+    }
+    if (const auto unsynced = sync(directory)) {
+        return std::unexpected(unsynced);
+    }
+    return {};
 }
 
 bool utf8_locale() {

@@ -101,8 +101,6 @@ and organised, and a TUI (ncurses, or Notcurses) is welcome.
       `x[a?]` outside any `a?` block is never listed as `x[a]` with `+a`. Only the atom changes,
       not what is depended on, except when the looser or stricter atom matches another installed
       slot.
-- [ ] The TUI's rebuild runs a second full build after the check's; saving the check's own
-      scratch store (copied beside the target, then renamed) would halve the wait.
 
 ## Ideas
 

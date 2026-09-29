@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -58,15 +59,24 @@ inline std::string read_text(const std::filesystem::path& path) {
 }
 
 // A stand-in for egraph-build in dir: records its arguments in dir/args, installs `prepared` at
-// the --store path it was given, and exits with status.
-inline std::filesystem::path fake_builder(const std::filesystem::path& dir,
-                                          const std::vector<std::byte>& prepared, int status) {
+// the --store path it was given, and `evaluated` beside it if given, and exits with status.
+inline std::filesystem::path
+fake_builder(const std::filesystem::path& dir, const std::vector<std::byte>& prepared, int status,
+             const std::optional<std::vector<std::byte>>& evaluated = std::nullopt) {
     const auto script = dir / "egraph-build";
+    const auto copy_evaluated = evaluated
+                                    ? std::format("cp '{}' \"${{3%.egraph}}.evaluated.egraph\"\n",
+                                                  (dir / "prepared-evaluated").string())
+                                    : std::string{};
     write_text(script, std::format("#!/bin/sh\necho \"$@\" > '{}'\nmkdir -p \"$(dirname \"$3\")\"\n"
-                                   "cp '{}' \"$3\"\nexit {}\n",
-                                   (dir / "args").string(), (dir / "prepared").string(), status));
+                                   "cp '{}' \"$3\"\n{}exit {}\n",
+                                   (dir / "args").string(), (dir / "prepared").string(),
+                                   copy_evaluated, status));
     std::filesystem::permissions(script, std::filesystem::perms::owner_all);
     write_bytes(dir / "prepared", prepared);
+    if (evaluated) {
+        write_bytes(dir / "prepared-evaluated", *evaluated);
+    }
     return script;
 }
 

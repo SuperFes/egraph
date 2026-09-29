@@ -1,9 +1,11 @@
 #pragma once
 
+#include "evaluated.hpp"
 #include "human.hpp"
 #include "query.hpp"
 
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <iosfwd>
 #include <optional>
@@ -170,6 +172,29 @@ struct Style {
 // The store to build or refresh: --store, else the system store when this process can write it,
 // else the user's.
 [[nodiscard]] std::filesystem::path store_path(const Invocation& invocation);
+
+// Store files a build wrote at a scratch path, the evaluated one beside it; removed with this.
+class ScratchStores {
+  public:
+    explicit ScratchStores(std::filesystem::path path) : path_{std::move(path)} {}
+    ScratchStores(const ScratchStores&) = delete;
+    ScratchStores& operator=(const ScratchStores&) = delete;
+    ScratchStores(ScratchStores&& other) noexcept;
+    ScratchStores& operator=(ScratchStores&& other) noexcept;
+    ~ScratchStores();
+
+    [[nodiscard]] const std::filesystem::path& path() const { return path_; }
+
+  private:
+    void remove() const;
+
+    std::filesystem::path path_;
+};
+
+// Saves the stores at store_path(invocation) and loads them: copies of a check's when nothing
+// they were built from has changed since, else a full build's.
+[[nodiscard]] std::expected<Stores, std::string>
+save_stores(const Invocation& invocation, const std::optional<ScratchStores>& checked);
 
 // The egraph-build command to run.
 [[nodiscard]] std::string builder_program(const Invocation& invocation);
