@@ -2,8 +2,8 @@
 
 Where egraph could go beyond its current charter. None of this is scheduled: each idea needs
 mapping out before it becomes a roadmap step, and the user decides when. Recorded 2026-09-29.
-The service, configuration explaining and linting, what-if and build knowledge are now roadmap
-steps 16 to 20 (2026-09-29).
+Daily use in place of emerge, the service, configuration explaining and linting, what-if and
+build knowledge are now roadmap steps 16 to 20 (2026-09-29).
 
 ## A living app, and a run-and-done tool
 

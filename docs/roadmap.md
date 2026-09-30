@@ -21,8 +21,8 @@ Update the status column as steps land.
 | 13 | A living app | done |
 | 14 | Plans | done |
 | 15 | A system package | in progress |
-| 16 | `egraphd`, the service | planned |
-| 17 | Blockers | planned |
+| 16 | Daily use in place of emerge | planned |
+| 17 | `egraphd`, the service | planned |
 | 18 | Explaining and checking the configuration | planned |
 | 19 | What-if | planned |
 | 20 | Build knowledge | planned |
@@ -342,7 +342,7 @@ built from a release tarball, tested against the portage users run rather than o
   with mandoc.
 - 15d (done): portage hooks a package can install: `/etc/portage/bin/post_emerge` is the user's own
   file, so the dispatcher is installed beside the hooks for the user to link, and postsync.d
-  (which portage runs itself) takes egraph's hook directly. Step 16 replaces both.
+  (which portage runs itself) takes egraph's hook directly. Step 17 replaces both.
 - 15e (done): the ebuild, `app-portage/egraph` in the Bonbon overlay (SuperFes/Bonbon), from
   the GitHub release tarball (github.com/SuperFes/egraph, v0.1.1): python-single-r1 over
   portage's Python versions, `tui` as a USE flag, the whole suite in `src_test` (the playground
@@ -351,7 +351,47 @@ built from a release tarball, tested against the portage users run rather than o
 - 15f: continuous integration on a stock stage3: the whole suite against the installed portage
   release, so a portage change that breaks the builder shows up before users see it.
 
-## 16. `egraphd`, the service
+## 16. Daily use in place of emerge
+
+egraph for what emerge is used for every day: it decides what to merge and in what order, and
+emerge builds and merges it. Decided with the user (2026-09-29): actions need egraph run as root
+(as a user it plans and shows, and refuses to act); a plain update is `emerge -u @world`; no
+binary packages (every merge builds from source).
+
+Trust comes in two phases. First egraph plans and asks, then runs emerge on exactly the plan's
+cpvs (`--oneshot`, the requested packages selected), so emerge's own checks and order still apply
+and any difference from egraph's plan stops the run and is recorded; with the targets fixed,
+emerge skips its deep walk over @world. Once that has shown no differences through weeks of real
+use, egraph schedules the merges itself.
+
+- 16a: the plan for plain `emerge -u @world`: only the root sets' atoms updated, dependencies
+  followed only where needed, an update a bound rejects dropped rather than falling back
+  (`upstream-notes.md`); `-D`, `-N` and `-U` as emerge takes them. Held to emerge on every
+  scenario.
+- 16b: plans for any request, not only updates: atoms, `=cpv`, slots and sets as targets,
+  `--oneshot` and `--noreplace`; a cp outside the store evaluated by the builder on demand and
+  kept; a new package's USE shown.
+- 16c: `--verify`: the same request through `emerge -p`, the merge lists diffed (versions, USE,
+  new packages); every difference fixed or recorded in `upstream-notes.md`.
+- 16d: blockers, weak and strong, as a query and weighed by the plan (formerly step 17).
+- 16e: what makes emerge refuse: REQUIRED_USE and invalid metadata on candidates; a needed USE
+  change explained as autounmask would, the `package.use` line offered and written only on yes.
+- 16f: actions: `update`, `install`, `remove` (through `emerge --depclean` with atoms),
+  `select`, `deselect`: the plan shown, a yes asked for, emerge run on the plan, the stores
+  refreshed at once.
+- 16g: after a merge: the elog summary, pending `._cfg` files (`dispatch-conf` a key away),
+  preserved libraries planned as their consumers' rebuilds, unread news.
+- 16h: `sync`: `emaint sync -a`, then what the sync brought: new updates, news.
+- 16i: a repository index from the builder (every cp, its description, versions per slot,
+  keywords and masks), incremental on sync; search across the repositories, and pages for
+  packages not installed.
+- 16j: the actions in the living app: updates picked, installs from search, orphans removed,
+  a confirmation, the run in the emerge view, a failure's log tail.
+- 16k: egraph's own order, once 16c has shown no differences: each merge an
+  `emerge --oneshot --nodeps`, run in parallel as the plan's waits allow (with steve), a failure
+  skipping only what depends on it.
+
+## 17. `egraphd`, the service
 
 The stores kept current by a service rather than by hooks, and served from memory.
 
@@ -365,11 +405,6 @@ The stores kept current by a service rather than by hooks, and served from memor
   system store get current answers without building their own.
 - History: earlier generations of the stores kept, for `diff` against a point in time and "when
   did this get pulled in, and by what".
-
-## 17. Blockers
-
-The plan's one known gap: weak and strong blockers, as a query and weighed by the plan, so that
-it stands in for `emerge -puDN` completely.
 
 ## 18. Explaining and checking the configuration
 
