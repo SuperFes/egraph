@@ -74,6 +74,9 @@ struct Targets {
     // emerge's arguments are the root sets' atoms, as for @world, rather than every installed
     // package's slot, as for @installed.
     bool roots = false;
+    // emerge --deep: every package in scope is updated, not only the arguments and what their
+    // merges need.
+    bool deep = true;
 };
 
 // The packages in scope once the removed ones are gone, as depclean would keep them then.
@@ -86,7 +89,7 @@ struct RemedyInputs {
     Rescope rescope;
 };
 
-// What emerge -uD would merge (plan_updates), as "cpv<TAB>kind<TAB>target cpv<TAB>repo": kind
+// What emerge -u would merge (plan_updates), as "cpv<TAB>kind<TAB>target cpv<TAB>repo": kind
 // upgrade, downgrade, or rebuild when the installed package is masked and the target has its
 // version. With rebuilds, each USE rebuild too, kind rebuild with "<TAB>flags" appended, the flags
 // in emerge's notation, space-separated. With held, also each update held back or fallen back,
@@ -95,12 +98,12 @@ struct RemedyInputs {
 // target or what it would pull in): its cpv, then each of its atoms that do, space-separated. In
 // the installed packages' order; then each package new in its slot,
 // "cpv<TAB>new<TAB>cpv<TAB>repo<TAB>puller atom", by cpv, with the package and atom that pull it
-// in. A slot-operator rebuild is kind rebuild with empty flags, then "<TAB>merge atom": the merge
-// that breaks its binding and the bound atom. With table, the merges in merge order instead, each
-// line led by "place<TAB>waits<TAB>", its place from 1 and the places it waits for,
-// space-separated; held lines follow, led by two empty fields. With remedies, each held line is
-// followed by its remedies (remedy.hpp), each led by the held cpv as well:
-// "cpv<TAB>holder<TAB>holder cpv<TAB>dependents" for each installed package rejecting it, the
+// in, or "@set atom" for the root atom naming it. A slot-operator rebuild is kind rebuild with
+// empty flags, then "<TAB>merge atom": the merge that breaks its binding and the bound atom. With
+// table, the merges in merge order instead, each line led by "place<TAB>waits<TAB>", its place from
+// 1 and the places it waits for, space-separated; held lines follow, led by two empty fields. With
+// remedies, each held line is followed by its remedies (remedy.hpp), each led by the held cpv as
+// well: "cpv<TAB>holder<TAB>holder cpv<TAB>dependents" for each installed package rejecting it, the
 // installed packages depending on that one space-separated, then a "@set atom" field per root
 // atom selecting it; "cpv<TAB>remove<TAB>frees" when removing the holders lets it through, with
 // the held cpvs that frees besides, space-separated; "cpv<TAB>nodeps" when only holders reject it.
@@ -113,12 +116,11 @@ update_lines(const Store& store, const Evaluated& evaluated, UseRebuilds rebuild
 // place as update_lines' table numbers it, then the root set and the chain of installed packages
 // why finds from the set's atom down to the one the merge replaces (or rebuilds). A new package's
 // chain is that of the member that pulled it in, then its own cpv. A merge nothing keeps has an
-// empty set and its own cpv only. With world, the plan starts from the root sets, covering only
-// what kept holds.
+// empty set and its own cpv only. The plan is plan_updates' for targets.
 [[nodiscard]] std::vector<std::string> update_tree_lines(const Store& store,
                                                          const Evaluated& evaluated,
                                                          const Kept& kept, UseRebuilds rebuilds,
-                                                         bool world = false);
+                                                         const Targets& targets = {});
 // As above, for a plan already made.
 [[nodiscard]] std::vector<std::string> update_tree_lines(const Store& store,
                                                          const Evaluated& evaluated,

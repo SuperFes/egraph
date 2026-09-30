@@ -576,3 +576,149 @@ TEST_CASE("the tree leads each merge down from its root, a new package through i
               "3\t@selected\tapp-misc/top-1\tapp-misc/glibmm-1\tdev-cpp/mm-common-1",
               "4\t@selected\tapp-misc/top-1\tapp-misc/glibmm-1"});
 }
+
+namespace {
+
+constexpr egraph::Targets shallow{.scope = {}, .roots = false, .deep = false};
+constexpr egraph::Targets shallow_world{.scope = {}, .roots = true, .deep = false};
+
+} // namespace
+
+TEST_CASE("without --deep, only the arguments are updated, and what their merges need") {
+    const auto system =
+        make_system({{.cpv = "app-misc/needs-1"},
+                     {.cpv = "dev-libs/base-1"},
+                     {.cpv = "app-misc/user-1", .deps = {{"RDEPEND", "dev-libs/idle"}}},
+                     {.cpv = "dev-libs/idle-1"}},
+                    {{.cpv = "app-misc/needs-1"},
+                     {.cpv = "app-misc/needs-2", .deps = {{"RDEPEND", ">=dev-libs/base-2"}}},
+                     {.cpv = "dev-libs/base-1"},
+                     {.cpv = "dev-libs/base-2"},
+                     {.cpv = "dev-libs/base-3"},
+                     {.cpv = "app-misc/user-1", .deps = {{"RDEPEND", "dev-libs/idle"}}},
+                     {.cpv = "dev-libs/idle-1"},
+                     {.cpv = "dev-libs/idle-2"}},
+                    {"app-misc/needs", "app-misc/user"});
+    CHECK(plan(system, egraph::UseRebuilds::none, shallow_world) ==
+          std::vector<std::string>{"app-misc/needs-1 -> app-misc/needs-2",
+                                   "dev-libs/base-1 -> dev-libs/base-3"});
+    // Every installed package is an argument of @installed.
+    CHECK(plan(system, egraph::UseRebuilds::none, shallow) ==
+          std::vector<std::string>{"app-misc/needs-1 -> app-misc/needs-2",
+                                   "dev-libs/base-1 -> dev-libs/base-3",
+                                   "dev-libs/idle-1 -> dev-libs/idle-2"});
+}
+
+TEST_CASE("without --deep, an update a dependent rejects is dropped, not fallen back") {
+    const auto system =
+        make_system({{.cpv = "app-misc/pylint-1", .deps = {{"RDEPEND", "<dev-libs/astroid-4.1"}}},
+                     {.cpv = "dev-libs/astroid-4.0.4"},
+                     {.cpv = "app-misc/either-1",
+                      .deps = {{"RDEPEND", "|| ( <dev-libs/alt-2 dev-libs/other )"}}},
+                     {.cpv = "dev-libs/alt-1"}},
+                    {{.cpv = "app-misc/pylint-1", .deps = {{"RDEPEND", "<dev-libs/astroid-4.1"}}},
+                     {.cpv = "dev-libs/astroid-4.0.4"},
+                     {.cpv = "dev-libs/astroid-4.0.5"},
+                     {.cpv = "dev-libs/astroid-4.3.2"},
+                     {.cpv = "app-misc/either-1",
+                      .deps = {{"RDEPEND", "|| ( <dev-libs/alt-2 dev-libs/other )"}}},
+                     {.cpv = "dev-libs/alt-1"},
+                     {.cpv = "dev-libs/alt-2"},
+                     {.cpv = "dev-libs/other-1"}});
+    CHECK(plan(system, egraph::UseRebuilds::none, shallow) ==
+          std::vector<std::string>{
+              "dev-libs/astroid-4.0.4 held <- app-misc/pylint-1 <dev-libs/astroid-4.1",
+              "dev-libs/alt-1 held <- app-misc/either-1 <dev-libs/alt-2"});
+    CHECK(plan(system) ==
+          std::vector<std::string>{
+              "dev-libs/astroid-4.0.4 -> dev-libs/astroid-4.0.5",
+              "dev-libs/alt-1 -> dev-libs/alt-2",
+              "new dev-libs/other-1 <- app-misc/either-1 dev-libs/other",
+              "dev-libs/astroid-4.0.4 held <- app-misc/pylint-1 <dev-libs/astroid-4.1"});
+}
+
+TEST_CASE("without --deep, a sub-slot change is dropped rather than rebuild what binds to it") {
+    const auto system =
+        make_system({{.cpv = "dev-libs/solib-1", .slot = "0", .sub_slot = "1"},
+                     {.cpv = "app-misc/consumer-1", .deps = {{"RDEPEND", "dev-libs/solib:0/1="}}}},
+                    {{.cpv = "dev-libs/solib-1", .slot = "0", .sub_slot = "1"},
+                     {.cpv = "dev-libs/solib-2", .slot = "0", .sub_slot = "2"},
+                     {.cpv = "app-misc/consumer-1", .deps = {{"RDEPEND", "dev-libs/solib:="}}}});
+    CHECK(plan(system, egraph::UseRebuilds::none, shallow) ==
+          std::vector<std::string>{
+              "dev-libs/solib-1 held <- app-misc/consumer-1 dev-libs/solib:0/1="});
+}
+
+TEST_CASE("without --deep, a kept package's missing dependencies pull nothing in") {
+    const auto system =
+        make_system({{.cpv = "app-misc/grown-1", .deps = {{"RDEPEND", "dev-libs/fresh"}}}},
+                    {{.cpv = "app-misc/grown-1", .deps = {{"RDEPEND", "dev-libs/fresh"}}},
+                     {.cpv = "dev-libs/fresh-1"}});
+    CHECK(plan(system, egraph::UseRebuilds::none, shallow).empty());
+    CHECK(plan(system) ==
+          std::vector<std::string>{"new dev-libs/fresh-1 <- app-misc/grown-1 dev-libs/fresh"});
+}
+
+TEST_CASE("without --deep, an update needing one another root holds back is dropped") {
+    const auto system =
+        make_system({{.cpv = "app-misc/wants-1"},
+                     {.cpv = "dev-libs/mid-1"},
+                     {.cpv = "app-misc/caps-1", .deps = {{"RDEPEND", "<dev-libs/mid-2"}}}},
+                    {{.cpv = "app-misc/wants-1"},
+                     {.cpv = "app-misc/wants-2", .deps = {{"RDEPEND", ">=dev-libs/mid-2"}}},
+                     {.cpv = "dev-libs/mid-1"},
+                     {.cpv = "dev-libs/mid-2"},
+                     {.cpv = "app-misc/caps-1", .deps = {{"RDEPEND", "<dev-libs/mid-2"}}}},
+                    {"app-misc/wants", "app-misc/caps"});
+    // The update wants-2 needs is no argument's, so it is not listed as held itself.
+    CHECK(plan(system, egraph::UseRebuilds::none, shallow_world) ==
+          std::vector<std::string>{"app-misc/wants-1 held <- app-misc/wants-2 >=dev-libs/mid-2"});
+}
+
+TEST_CASE("a merge needing a newer version of a package nothing keeps replaces it") {
+    // base is outside the scope depclean keeps, so it has no update of its own.
+    const auto system =
+        make_system({{.cpv = "app-misc/needs-1"}, {.cpv = "dev-libs/base-1"}},
+                    {{.cpv = "app-misc/needs-1"},
+                     {.cpv = "app-misc/needs-2", .deps = {{"RDEPEND", ">=dev-libs/base-2"}}},
+                     {.cpv = "dev-libs/base-1"},
+                     {.cpv = "dev-libs/base-2"},
+                     {.cpv = "dev-libs/base-3"}},
+                    {"app-misc/needs"});
+    const egraph::Targets world{.scope = {true, false}, .roots = true};
+    const std::vector<std::string> expected{"app-misc/needs-1 -> app-misc/needs-2",
+                                            "dev-libs/base-1 -> dev-libs/base-3"};
+    CHECK(plan(system, egraph::UseRebuilds::none, world) == expected);
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               {.scope = {true, false}, .roots = true, .deep = false}) == expected);
+}
+
+TEST_CASE("a needed version older than the installed one is no replacement") {
+    const auto system =
+        make_system({{.cpv = "app-misc/old-1"}, {.cpv = "dev-libs/base-2"}},
+                    {{.cpv = "app-misc/old-1"},
+                     {.cpv = "app-misc/old-2", .deps = {{"RDEPEND", "<dev-libs/base-2"}}},
+                     {.cpv = "dev-libs/base-1"},
+                     {.cpv = "dev-libs/base-2"}},
+                    {"app-misc/old"});
+    CHECK(plan(system, egraph::UseRebuilds::none, shallow_world) ==
+          std::vector<std::string>{"app-misc/old-1 held <- app-misc/old-2 <dev-libs/base-2"});
+}
+
+TEST_CASE("a root atom's best version in a slot nothing occupies is pulled in") {
+    const auto system = make_system({{.cpv = "dev-lang/lang-1", .slot = "1"}},
+                                    {{.cpv = "dev-lang/lang-1", .slot = "1"},
+                                     {.cpv = "dev-lang/lang-2", .slot = "2"},
+                                     {.cpv = "dev-lang/lang-3", .slot = "3", .visible = false}},
+                                    {"dev-lang/lang"});
+    const std::vector<std::string> expected{"new dev-lang/lang-2 <- "};
+    CHECK(plan(system, egraph::UseRebuilds::none, {.scope = {}, .roots = true}) == expected);
+    CHECK(plan(system, egraph::UseRebuilds::none, shallow_world) == expected);
+    // @installed's slot atoms name only the installed slot.
+    CHECK(plan(system, egraph::UseRebuilds::none, shallow).empty());
+    // The line names the root atom.
+    CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none, false,
+                               false, {.scope = {}, .roots = true}) ==
+          std::vector<std::string>{
+              "dev-lang/lang-2\tnew\tdev-lang/lang-2\ttest_repo\t@selected dev-lang/lang"});
+}

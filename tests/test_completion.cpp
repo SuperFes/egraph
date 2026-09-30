@@ -67,7 +67,7 @@ TEST_CASE("completions follow the command line's options, commands and what each
     CHECK(found.commands.front().name == "deps");
     const auto* updates = command(found, "updates");
     REQUIRE(updates != nullptr);
-    CHECK(updates->description == "Installed packages emerge -uD would replace or rebuild");
+    CHECK(updates->description == "Installed packages emerge -u would replace or rebuild");
     CHECK(updates->arguments == Takes::nothing);
     const auto* table = option(updates->options, "--table");
     REQUIRE(table != nullptr);
@@ -109,7 +109,7 @@ TEST_CASE("each shell's script names every command and option") {
     CHECK(egraph::completion_script(found, CompletionShell::zsh).starts_with("#compdef egraph\n"));
     CHECK(contains(egraph::completion_script(found, CompletionShell::fish),
                    "complete -c egraph -n 'not __egraph_command' -a updates -d 'Installed "
-                   "packages emerge -uD would replace or rebuild'"));
+                   "packages emerge -u would replace or rebuild'"));
 }
 
 TEST_CASE("descriptions are quoted for each shell") {

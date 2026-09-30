@@ -109,6 +109,17 @@ TEST_CASE("updates takes emerge's --newuse and --changed-use") {
     CHECK(std::get<egraph::Updates>(parse("updates --held").command).held);
 }
 
+TEST_CASE("updates is plain emerge -u unless -D asks for --deep") {
+    const auto deep = [](const std::string& command) {
+        return std::get<egraph::Updates>(parse(command).command).deep;
+    };
+    CHECK_FALSE(deep("updates"));
+    CHECK_FALSE(deep("updates --world"));
+    CHECK(deep("updates -D"));
+    CHECK(deep("updates --deep --world"));
+    CHECK(deep("updates -DN"));
+}
+
 TEST_CASE("dependency queries take emerge's --dynamic-deps, on by default") {
     for (const auto* command :
          {"deps a/b", "rdeps a/b", "why a/b", "orphans", "broken", "affected"}) {

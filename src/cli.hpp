@@ -83,8 +83,10 @@ struct Updates {
     bool table = false;
     // Each merge under the root and packages it comes from.
     bool tree = false;
-    // Only the packages the root sets reach, as emerge -uD @world.
+    // Only the packages the root sets reach, as emerge -u @world.
     bool world = false;
+    // As emerge --deep.
+    bool deep = false;
 };
 
 enum class ExportFormat : std::uint8_t { dot, json };

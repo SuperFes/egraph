@@ -368,10 +368,14 @@ and any difference from egraph's plan stops the run and is recorded; with the ta
 emerge skips its deep walk over @world. Once that has shown no differences through weeks of real
 use, egraph schedules the merges itself.
 
-- 16a: the plan for plain `emerge -u @world`: only the root sets' atoms updated, dependencies
-  followed only where needed, an update a bound rejects dropped rather than falling back
-  (`upstream-notes.md`); `-D`, `-N` and `-U` as emerge takes them. Held to emerge on every
-  scenario.
+- 16a (done): the plan for plain `emerge -u @world`: `updates` without `-D` updates only
+  emerge's arguments, drops an update anything rejects rather than fall back or rebuild a
+  slot-operator dependent, replaces an installed package only where a merge needs a newer
+  version, and lets kept packages' dependencies only reject. `-D` is the deep plan as before.
+  Beside it, two gaps of the deep plan: a root atom's best version in an empty slot is pulled in,
+  and a merge may need a newer version of a package outside the scope. Equal to `emerge -pu` and
+  `-puD` (@installed and @world, plain, -N, -U) on every scenario, `shallow` new among them, and
+  on the dev box, where `--world` merges 5 against `-D`'s 23.
 - 16b: plans for any request, not only updates: atoms, `=cpv`, slots and sets as targets,
   `--oneshot` and `--noreplace`; a cp outside the store evaluated by the builder on demand and
   kept; a new package's USE shown.

@@ -696,12 +696,13 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
     if (depclean && !*depclean) {
         return fail(err, depclean->error());
     }
-    const auto targets = command.world
-                             ? Targets{.scope = (*depclean)->get().kept.packages, .roots = true}
-                             : Targets{};
+    const auto targets = command.world ? Targets{.scope = (*depclean)->get().kept.packages,
+                                                 .roots = true,
+                                                 .deep = command.deep}
+                                       : Targets{.scope = {}, .roots = false, .deep = command.deep};
     if (command.tree) {
         const auto tree = update_tree_lines(*store, evaluated, (*depclean)->get().kept,
-                                            command.rebuilds, command.world);
+                                            command.rebuilds, targets);
         if (const auto style = output(invocation); style.human) {
             human_update_tree(
                 out, update_lines(*store, evaluated, command.rebuilds, false, true, targets), tree,
@@ -1063,7 +1064,7 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->transform(yes_no);
 
     CLI::App* updates_cmd = add_dynamic_deps(add_command<Updates>(
-        app, invocation, "Installed packages emerge -uD would replace or rebuild"));
+        app, invocation, "Installed packages emerge -u would replace or rebuild"));
     updates_cmd->add_flag_callback(
         "--held", [&invocation] { std::get<Updates>(invocation.command).held = true; },
         "Also the updates installed dependents hold back, which of their atoms do, and the "
@@ -1076,7 +1077,11 @@ void configure(CLI::App& app, Invocation& invocation) {
         "Each merge under the root set and the packages it comes from");
     updates_cmd->add_flag_callback(
         "--world", [&invocation] { std::get<Updates>(invocation.command).world = true; },
-        "Only the packages the root sets keep, as emerge -uD @world");
+        "Only the packages the root sets keep, as emerge -u @world");
+    updates_cmd->add_flag_callback(
+        "-D,--deep", [&invocation] { std::get<Updates>(invocation.command).deep = true; },
+        "Every package in scope, not only the arguments and what their merges need, as emerge "
+        "--deep");
     updates_cmd->add_flag_callback(
         "-N,--newuse",
         [&invocation] { std::get<Updates>(invocation.command).rebuilds = UseRebuilds::all; },

@@ -12,7 +12,7 @@ milliseconds: what depends on a package, why it is installed, who links a soname
 what
 .B emerge \-\-depclean
 would remove and what
-.B emerge \-uD
+.B emerge \-u
 would merge.
 .PP
 The store is built by
@@ -159,7 +159,7 @@ would remove.
 .B \-\-with\-bdeps
 .SS updates
 The installed packages
-.B emerge \-uD
+.B emerge \-u
 would replace or rebuild, and the new packages it would pull in.
 .TP
 .B \-\-dynamic\-deps
@@ -176,7 +176,12 @@ Each merge under the root set and the packages it comes from.
 .TP
 .B \-\-world
 Only the packages the root sets keep, as
-.B emerge \-uD @world
+.B emerge \-u @world
+does.
+.TP
+.BR \-D ", " \-\-deep
+Every package in scope, not only the arguments and what their merges need, as
+.B emerge \-\-deep
 does.
 .TP
 .BR \-N ", " \-\-newuse
@@ -297,7 +302,7 @@ What depends on openssl, and through which atom.
 .B egraph why net\-misc/networkmanager
 Why networkmanager is installed.
 .TP
-.B egraph updates \-N \-\-tree
+.B egraph updates \-DN \-\-tree
 What
 .B emerge \-uDN @installed
 would merge, under what keeps it.

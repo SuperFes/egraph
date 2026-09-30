@@ -150,14 +150,17 @@ def merged(text):
     ids=["update", "newuse", "changed-use"],
 )
 @pytest.mark.parametrize("target", ["@installed", "@world"])
+@pytest.mark.parametrize("deep", [False, True], ids=["u", "uD"])
 def test_updates_are_emerges(
-    scenario, system, dynamic_deps, option, newuse, changed_use, target
+    scenario, system, dynamic_deps, option, newuse, changed_use, target, deep
 ):
     """What emerge -puD @installed merges: dependents' atoms hold updates back, the deep
-    resolution falls back to the best version they accept, as plain -u does not, what the
-    merges and the kept packages need that nothing installed provides comes in new, and
-    dependents bound to a replaced sub-slot are rebuilt. With --world, what emerge -puD @world
-    merges: only what the root sets reach is updated, and only it weighs."""
+    resolution falls back to the best version they accept, what the merges and the kept
+    packages need that nothing installed provides comes in new, and dependents bound to a
+    replaced sub-slot are rebuilt. With --world, what emerge -puD @world merges: only what the
+    root sets reach is updated, and only it weighs. Without -D, what plain -pu merges: only the
+    arguments are updated, and what their merges need; an update anything rejects is dropped,
+    with no fallback and no rebuilds."""
     from portage.versions import cpv_getversion, vercmp
 
     import update
@@ -167,7 +170,7 @@ def test_updates_are_emerges(
         scenario.eroot,
         newuse,
         changed_use,
-        deep=True,
+        deep=deep,
         target=target,
         dynamic_deps=dynamic_deps,
     )
@@ -175,7 +178,12 @@ def test_updates_are_emerges(
         pytest.skip(f"emerge cannot resolve {target} here")
     _, path = system
     world = ["--world"] if target == "@world" else []
-    options = [*dynamic_option(dynamic_deps), *filter(None, [option]), *world]
+    options = [
+        *dynamic_option(dynamic_deps),
+        *filter(None, [option]),
+        *world,
+        *(["-D"] if deep else []),
+    ]
     output = egraph(path, "updates", *options).stdout
     assert merged(output) == (expected.replaced, expected.rebuilt, expected.new)
     for cpv, (kind, replacement) in parse_updates(output).items():
@@ -214,32 +222,34 @@ def removals(text):
 @pytest.mark.parametrize("name", sorted(SCENARIOS))
 @pytest.mark.parametrize("target", ["@installed", "@world"])
 @pytest.mark.parametrize("option, newuse", [(None, False), ("--newuse", True)])
+@pytest.mark.parametrize("deep", [False, True], ids=["u", "uD"])
 def test_removals_let_updates_through(
-    name, target, option, newuse, playgrounds, tmp_path
+    name, target, option, newuse, deep, playgrounds, tmp_path
 ):
     """Each removal updates --held offers is emerge's: without the holders, and with their
-    world atoms deselected, emerge -puD merges the held update (named, in case nothing keeps
-    it any more) and every other one the removal frees, wherever emerge can resolve that
-    system at all."""
+    world atoms deselected, emerge -pu (-D as asked) merges the held update (named, in case
+    nothing keeps it any more) and every other one the removal frees, wherever emerge can
+    resolve that system at all."""
     import update
     from conftest import make_playground
 
     path = tmp_path / "installed.egraph"
     write_stores(playgrounds(name), path)
     world = ["--world"] if target == "@world" else []
-    output = egraph(path, "updates", "--held", *filter(None, [option]), *world).stdout
+    options = [*filter(None, [option]), *world, *(["-D"] if deep else [])]
+    output = egraph(path, "updates", "--held", *options).stdout
     found, wanted = removals(output)
     for held, (target_cpv, holders, atoms, frees) in found.items():
         playground = make_playground(name, removed=holders, deselected=atoms)
         try:
             resolves = update.updates(
-                playground.trees, playground.eroot, newuse, deep=True, target=target
+                playground.trees, playground.eroot, newuse, deep=deep, target=target
             ).success
             expected = update.updates(
                 playground.trees,
                 playground.eroot,
                 newuse,
-                deep=True,
+                deep=deep,
                 target=[target, f"={target_cpv}"],
             )
         finally:
@@ -257,7 +267,7 @@ def test_a_leaf_holder_is_offered_for_removal(playgrounds, tmp_path):
     """
     path = tmp_path / "installed.egraph"
     write_stores(playgrounds("bounds"), path)
-    lines = egraph(path, "updates", "--held").stdout.splitlines()
+    lines = egraph(path, "updates", "--held", "-D").stdout.splitlines()
     held = ("dev-libs/astroid-4.0.4", "dev-libs/lone-1", "app-misc/rgb-1_rc3")
     remedies = [
         line
@@ -292,7 +302,7 @@ def test_update_order_is_valid(scenario, system, dynamic_deps):
     if not expected.success:
         pytest.skip("emerge cannot resolve @installed here")
     _, path = system
-    output = egraph(path, "updates", "-t", *dynamic_option(dynamic_deps)).stdout
+    output = egraph(path, "updates", "-t", "-D", *dynamic_option(dynamic_deps)).stdout
     rows = [line.split("\t") for line in output.splitlines()]
     target = {fields[0]: fields[4] for fields in rows}
     place = {fields[4]: int(fields[0]) for fields in rows}

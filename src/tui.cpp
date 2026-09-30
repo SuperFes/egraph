@@ -1425,10 +1425,15 @@ void App::handle_plan(const Key& key) {
         }
         std::vector<std::string> lines;
         if (row.merge) {
-            if (const auto& by = plan_.merges.at(*row.merge).pulled_by) {
+            const auto& merge = plan_.merges.at(*row.merge);
+            if (const auto& by = merge.pulled_by) {
                 lines.push_back(std::format("The plan pulls it in for {}'s {}.",
                                             member_cpv(store(), evaluated(), by->member),
                                             by->atom));
+            } else if (merge.named_by) {
+                const auto& root = store().roots.at(*merge.named_by);
+                lines.push_back(std::format("The plan pulls it in for @{}'s {}.",
+                                            store().string(root.set), store().string(root.atom)));
             }
         }
         show({.error = false,

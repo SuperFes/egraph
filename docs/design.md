@@ -348,7 +348,22 @@ against the best visible version in a newer one, as `--rebuild-if-new-slot` (dep
 is higher than the bound one, and every other kept dependent's atom (a slot operator's whatever
 its slot) and root atom of the bound package accepts it. That slot's installed package is
 updated to it even when nothing kept it; with none installed, it is pulled in. Under
-@installed every package's slot atom is an argument, so neither applies.
+@installed every package's slot atom is an argument, so neither applies. A root atom whose best
+visible match lies in a slot where nothing is installed pulls that version in (a new slot of an
+unslotted atom, `sys-devel/gcc` in @system), named by the root atom. And a merge's dependency
+that only a newer version of an installed package satisfies, where that package has no update of
+its own (it is out of scope), replaces it with the best visible version that matches, rejected
+in turn with the merge that needed it; never a downgrade.
+
+Without `-D` (`--deep`), `updates` plans plain `emerge -u` instead (roadmap 16a), the update
+most people run. Only emerge's arguments take their pending update (every installed package
+under @installed, the root atoms' matches under @world), and only its target: an update
+anything rejects is dropped rather than fall back, and a slot-operator binding it breaks holds
+it rather than rebuild the dependent (emerge only rebuilds installed packages it goes deep
+into). The rule for a merge's dependency that only a newer installed version satisfies covers
+every package outside the arguments here; only the merge is listed as held when it fails. Kept packages' dependencies weigh only as emerge's completed graph weighs
+them: one a merge would break rejects the merge, and one already missing stays missing,
+pulling nothing in. No dependent is moved to a newer slot.
 
 `updates -t` lists the plan in merge order (`order_merges` in `plan.cpp`, roadmap 14d), each
 merge numbered and followed by the places of the earlier merges it waits for: those its DEPEND,

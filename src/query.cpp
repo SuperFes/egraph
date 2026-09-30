@@ -238,6 +238,9 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
             auto line = std::format("{}\tnew\t{}", cpv, target_fields(merge.candidate));
             if (const auto& by = merge.pulled_by) {
                 line += std::format("\t{} {}", member(by->member), by->atom);
+            } else if (merge.named_by) {
+                const auto& root = store.roots.at(*merge.named_by);
+                line += std::format("\t@{} {}", store.string(root.set), store.string(root.atom));
             }
             merge_lines.push_back(std::move(line));
         }
@@ -336,11 +339,10 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
 }
 
 std::vector<std::string> update_tree_lines(const Store& store, const Evaluated& evaluated,
-                                           const Kept& kept, UseRebuilds rebuilds, bool world) {
-    return update_tree_lines(
-        store, evaluated, kept,
-        plan_updates(store, evaluated, rebuilds,
-                     world ? Targets{.scope = kept.packages, .roots = true} : Targets{}));
+                                           const Kept& kept, UseRebuilds rebuilds,
+                                           const Targets& targets) {
+    return update_tree_lines(store, evaluated, kept,
+                             plan_updates(store, evaluated, rebuilds, targets));
 }
 
 std::vector<std::string> update_tree_lines(const Store& store, const Evaluated& evaluated,
@@ -373,10 +375,19 @@ std::vector<std::string> update_tree_lines(const Store& store, const Evaluated& 
         grew = false;
         for (std::size_t i = 0; i < plan.merges.size(); ++i) {
             const auto& merge = plan.merges.at(i);
-            if (chains.at(i) || !merge.pulled_by) {
+            if (chains.at(i)) {
                 continue;
             }
             const auto cpv = evaluated.string(evaluated.candidates.at(merge.candidate).cpv);
+            if (merge.named_by) {
+                chains.at(i) =
+                    std::format("@{}\t{}", store.string(store.roots.at(*merge.named_by).set), cpv);
+                grew = true;
+                continue;
+            }
+            if (!merge.pulled_by) {
+                continue;
+            }
             const auto& by = merge.pulled_by->member;
             if (!by.candidate) {
                 chains.at(i) = std::format("{}\t{}", installed_chain(by.index), cpv);

@@ -36,8 +36,10 @@ struct Merge {
     std::optional<std::uint32_t> replaces;
     UpdateKind kind = UpdateKind::upgrade;
     std::string flags;
-    // For a new package, the dependency that first pulled it in.
+    // For a new package, the dependency that first pulled it in, or the root atom naming it:
+    // an index into Store::roots.
     std::optional<Reason> pulled_by;
+    std::optional<std::uint32_t> named_by;
     // For a slot-operator rebuild of the installed version: the merge whose slot or sub-slot
     // breaks its binding, with the bound atom as the rebuilt package's dependencies print it.
     std::optional<Reason> rebuilt_for;
@@ -70,12 +72,21 @@ struct Plan {
 // dynamic deps) for the installed packages and the candidates' own for what it merges:
 // - each package's pending update, or the best visible version in its slot that no member's
 //   dependency rejects; held back when none is left;
+// - with targets.roots, the best visible version a root atom matches, new in its slot;
 // - whatever a member's dependencies need that nothing in the plan satisfies: the best visible
 //   version that matches, new in its slot, the first alternative of a || that can be satisfied
 //   so. A merge whose own dependencies cannot be satisfied falls back in turn;
 // - a kept dependent bound by a slot operator to a sub-slot a merge replaces: rebuilt from a
 //   visible ebuild of its version, whose dependencies the plan then satisfies; with none, the
-//   binding holds the merge back like any bound.
+//   binding holds the merge back like any bound;
+// - a merge's dependency that only a newer version of an installed package without an update of
+//   its own satisfies: that package replaced with the best visible match, rejected in turn with
+//   the merge that needed it.
+// Without targets.deep, what plain emerge -u would: only emerge's arguments take their pending
+// update, and only its target; a rejected one is dropped and a broken binding holds its merge.
+// Kept packages'
+// dependencies only reject what a merge takes away from them; what they already lack stays
+// missing.
 // Blockers are not weighed.
 [[nodiscard]] Plan plan_updates(const Store& store, const Evaluated& evaluated,
                                 UseRebuilds rebuilds, const Targets& targets = {});

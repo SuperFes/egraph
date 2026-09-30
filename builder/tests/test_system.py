@@ -456,10 +456,11 @@ def test_updates_cover_emerges(live_evaluated, live_updates, newuse, changed_use
     [(None, False, False), ("--newuse", True, False), ("--changed-use", False, True)],
     ids=["update", "newuse", "changed-use"],
 )
+@pytest.mark.parametrize("deep", [False, True], ids=["u", "uD"])
 def test_world_updates_are_emerges(
-    live_emerge_config, live_store, option, newuse, changed_use
+    live_emerge_config, live_store, option, newuse, changed_use, deep
 ):
-    """updates --world merges what emerge -puD @world does."""
+    """updates --world merges what emerge -pu @world does, and with -D what -puD does."""
     from test_queries import merged
     from update import updates
 
@@ -469,11 +470,12 @@ def test_world_updates_are_emerges(
         config.target_config.root,
         newuse,
         changed_use,
-        deep=True,
+        deep=deep,
         target="@world",
     )
     assert expected.success
-    output = _egraph(live_store, "updates", "--world", *filter(None, [option]))
+    options = [*filter(None, [option]), *(["-D"] if deep else [])]
+    output = _egraph(live_store, "updates", "--world", *options)
     assert merged(output) == (expected.replaced, expected.rebuilt, expected.new)
 
 

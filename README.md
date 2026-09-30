@@ -14,7 +14,7 @@ egraph why net-misc/networkmanager   # path from @world / @system to the package
 egraph soname libssl.so.3            # installed consumers of a soname
 egraph broken                        # installed deps nothing installed satisfies
 egraph orphans                       # what depclean would remove
-egraph updates -N --tree             # what emerge -uDN would merge, under what keeps it
+egraph updates -DN --tree            # what emerge -uDN would merge, under what keeps it
 egraph export --dot app-misc/foo     # neighborhood as graphviz
 egraph rebuild | egraph check        # rebuild the store, or diff it against a fresh build
 ```
