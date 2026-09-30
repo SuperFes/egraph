@@ -20,6 +20,12 @@ Update the status column as steps land.
 | 12 | Updates of `@world` | done |
 | 13 | A living app | done |
 | 14 | Plans | done |
+| 15 | A system package | in progress |
+| 16 | `egraphd`, the service | planned |
+| 17 | Blockers | planned |
+| 18 | Explaining and checking the configuration | planned |
+| 19 | What-if | planned |
+| 20 | Build knowledge | planned |
 
 ## 0. Scaffold
 
@@ -317,3 +323,63 @@ Blockers stay out of scope until a comparison needs them.
   place and waits. Held to `why` on every scenario.
 - 14e (done): the tree as a view in the living app (`p` from the list), its installed packages
   opening their pages, kept on its package across a refresh.
+
+## 15. A system package
+
+egraph installed as any Gentoo package is: from an ebuild (`app-portage/egraph`) in an overlay,
+built from a release tarball, tested against the portage users run rather than our fork.
+
+- 15a: packaging basics: the licence file, a version, `meson dist`, and defaults a packager can
+  build with (the installed portage, no checkout's test keys); the development builds name the
+  fork explicitly.
+- 15b: shell completions (bash, zsh, fish) generated from the CLI's own definition, so they
+  cannot drift from it, and installed where each shell looks.
+- 15c: man pages, held to the CLI by a test that every command and option is documented.
+- 15d: portage hooks a package can install: `/etc/portage/bin/post_emerge` is the user's own
+  file, so the dispatcher is installed beside the hooks for the user to link, and postsync.d
+  (which portage runs itself) takes egraph's hook directly. Step 16 replaces both.
+- 15e: the ebuild, in the overlay: the builder for the Python versions portage supports, the
+  store directory, `tui` as a USE flag, the unit tests in `src_test`.
+- 15f: continuous integration on a stock stage3: the whole suite against the installed portage
+  release, so a portage change that breaks the builder shows up before users see it.
+
+## 16. `egraphd`, the service
+
+The stores kept current by a service rather than by hooks, and served from memory.
+
+- Refresh on change: inotify on the vdb, the repositories and `/etc/portage`, debounced, an
+  incremental build at low priority (nice, ionice, its own cgroup). It replaces the hooks and
+  notices hand edits to `package.use` too.
+- Unprivileged: its own user, only `/var/cache/egraph` writable (`ProtectSystem=strict`); a
+  systemd unit and an OpenRC script.
+- Queries over a Unix socket, the stores loaded once: the CLI and TUI are clients when the
+  service runs, and read the store themselves when it does not. Users who cannot write the
+  system store get current answers without building their own.
+- History: earlier generations of the stores kept, for `diff` against a point in time and "when
+  did this get pulled in, and by what".
+
+## 17. Blockers
+
+The plan's one known gap: weak and strong blockers, as a query and weighed by the plan, so that
+it stands in for `emerge -puDN` completely.
+
+## 18. Explaining and checking the configuration
+
+- Where a flag's state comes from: the profile stack, `make.conf`, `package.use`, with file and
+  line.
+- Configuration that does nothing: entries for packages not installed or flags outside IUSE,
+  keywords already stable, masks matching nothing, entries that contradict each other.
+
+## 19. What-if
+
+Flags and `package.env` toggled in the app, per package or globally, the plan shown changing.
+The service keeps a warm portage configuration in Python, so a re-evaluation costs a fraction of
+an emerge run (`docs/vision.md`).
+
+## 20. Build knowledge
+
+- Build history from the emerge monitor's cgroup readings: time and peak memory per package,
+  which gives every plan an estimate ("34 rebuilds, about 2 h, 6 GB peak").
+- GLSAs matched against the store at once, and a filter in the list.
+- Space: what removing a package frees with the orphans it leaves (the vdb's SIZE).
+- Notifications: security fixes pending, a stale sync, broken soname dependencies after a merge.

@@ -112,8 +112,6 @@ and organised, and a TUI (ncurses, or Notcurses) is welcome.
       not what is depended on, except when the looser or stricter atom matches another installed
       slot.
 
-- [ ] The plan (`updates -t`, `--tree`) as a view of the living app, beside the emerge view.
-
 ## Ideas
 
 - [ ] An in-process bash-compatible interpreter, instead of spawning bash. Nothing on egraph's
