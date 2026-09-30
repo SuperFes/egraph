@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import time
+from pathlib import Path
 
 import portage
 import pytest
@@ -399,16 +400,69 @@ def reevaluate(playground, previous, previous_evaluated, installed_build_ns=None
     ev = build.evaluate_incremental(
         vardb, portdb, previous_evaluated, result, installed_build_ns
     )
-    expected = build.evaluate(*fresh_databases(playground))
+    expected = build.evaluate(
+        *fresh_databases(playground), previous_evaluated[2].requested()
+    )
     assert evaluated.to_json(ev.layer) == evaluated.to_json(expected.layer)
     assert ev.inputs == expected.inputs
     return ev
+
+
+def request(evaluated_system, *cps):
+    """The evaluated system with cps evaluated on request by an incremental build."""
+    playground, previous, previous_evaluated = evaluated_system
+    vardb, portdb = fresh_databases(playground)
+    result = build.incremental(vardb, *previous)
+    ev = build.evaluate_incremental(
+        vardb,
+        portdb,
+        previous_evaluated,
+        result,
+        previous[0].build_time_ns,
+        requested=cps,
+    )
+    expected = build.evaluate(*fresh_databases(playground), requested=cps)
+    assert evaluated.to_json(ev.layer) == evaluated.to_json(expected.layer)
+    assert ev.inputs == expected.inputs
+    ev_meta = previous_evaluated[0]._replace(build_time_ns=ev.started_ns)
+    return ev, (playground, previous, (ev_meta, ev.inputs, ev.layer))
 
 
 def test_evaluated_nothing_changed(evaluated_system):
     ev = reevaluate(*evaluated_system)
     assert not ev.full
     assert ev.evaluated == frozenset()
+
+
+def test_evaluated_request_reads_only_what_it_reaches(evaluated_system):
+    ev, _ = request(evaluated_system, "www-apps/unused")
+    assert not ev.full
+    assert ev.evaluated == {"www-apps/unused", "www-apps/helper"}
+    assert ev.layer.requested() == ("www-apps/unused",)
+
+
+def test_evaluated_requests_are_kept(evaluated_system):
+    _, requested = request(evaluated_system, "www-apps/unused")
+    ev = reevaluate(*requested)
+    assert not ev.full
+    assert ev.layer.requested() == ("www-apps/unused",)
+    assert ev.layer.candidates("www-apps/helper")
+
+
+def test_evaluated_requests_survive_a_full_build(evaluated_system):
+    _, requested = request(evaluated_system, "www-apps/unused")
+    playground = requested[0]
+    write_atomically(
+        os.path.join(playground.eroot, "etc/portage/package.mask"), "app-misc/eula\n"
+    )
+    ev = reevaluate(*requested)
+    assert ev.full
+    assert ev.layer.requested() == ("www-apps/unused",)
+
+
+def test_evaluated_request_of_an_installed_cp_is_dropped(evaluated_system):
+    ev, _ = request(evaluated_system, "app-misc/dyn")
+    assert ev.layer.requested() == ()
 
 
 def test_evaluated_package_added(evaluated_system):
@@ -592,9 +646,11 @@ def test_strict_mode_catches_a_wrong_evaluated_incremental(
     monkeypatch.setenv("EGRAPH_STRICT", "1")
     real = build.evaluate_incremental
 
-    def forgetful(vardb, portdb, previous, installed_build, installed_build_ns):
+    def forgetful(vardb, portdb, previous, installed_build, installed_build_ns, **kw):
         # Keeps the previous dependencies of unchanged packages.
-        result = real(vardb, portdb, previous, installed_build, installed_build_ns)
+        result = real(
+            vardb, portdb, previous, installed_build, installed_build_ns, **kw
+        )
         kept = [previous[2].package(cpv) for cpv in result.layer.installed()]
         return result._replace(
             layer=evaluated.EvaluatedLayer(kept, result.layer.candidates()),
@@ -608,3 +664,56 @@ def test_strict_mode_catches_a_wrong_evaluated_incremental(
     assert cli.main(["--incremental", "--store", str(path)]) == cli.EXIT_FAILURE
     assert "evaluated store differs from a full build" in capsys.readouterr().err
     assert (path.read_bytes(), evaluated_path.read_bytes()) == before
+
+
+@pytest.fixture
+def repository_cli(evaluated_system, monkeypatch, tmp_path):
+    playground = evaluated_system[0]
+    monkeypatch.setattr(
+        cli, "open_databases", lambda *args: fresh_databases(playground)
+    )
+    path = tmp_path / "installed.egraph"
+    assert cli.main(["--full", "--store", str(path)]) == cli.EXIT_OK
+    return playground, path
+
+
+def requested_in(path):
+    return store.decode_evaluated(Path(store.evaluated_path(path)).read_bytes())[
+        2
+    ].requested()
+
+
+def test_evaluate_requests_cps_until_a_rebuild(repository_cli, monkeypatch):
+    _, path = repository_cli
+    monkeypatch.setenv("EGRAPH_STRICT", "1")
+    assert cli.main(["--evaluate", "www-apps/unused", "--store", str(path)]) == 0
+    assert requested_in(path) == ("www-apps/unused",)
+    assert cli.main(["--incremental", "--store", str(path)]) == cli.EXIT_OK
+    assert requested_in(path) == ("www-apps/unused",)
+    assert cli.main(["--full", "--store", str(path)]) == cli.EXIT_OK
+    assert requested_in(path) == ()
+
+
+def test_evaluate_without_a_store_builds_one(repository_cli, tmp_path):
+    other = tmp_path / "other.egraph"
+    assert cli.main(["--evaluate", "www-apps/unused", "--store", str(other)]) == 0
+    assert requested_in(other) == ("www-apps/unused",)
+
+
+@pytest.mark.parametrize(
+    "words, message",
+    [
+        (["www-apps/nowhere"], "www-apps/nowhere: no ebuilds in the repositories"),
+        (["unused"], "unused: not a category/package name"),
+        (["=www-apps/unused-1"], "=www-apps/unused-1: not a category/package name"),
+        ([], "--evaluate takes the cps to evaluate"),
+    ],
+)
+def test_evaluate_refuses_what_is_not_a_repository_cp(
+    repository_cli, capsys, words, message
+):
+    _, path = repository_cli
+    before = Path(store.evaluated_path(path)).read_bytes()
+    assert cli.main(["--evaluate", *words, "--store", str(path)]) == cli.EXIT_USAGE
+    assert f"egraph-build: {message}" in capsys.readouterr().err
+    assert Path(store.evaluated_path(path)).read_bytes() == before

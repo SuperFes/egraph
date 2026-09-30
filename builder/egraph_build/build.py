@@ -217,10 +217,10 @@ class EvaluatedBuild(NamedTuple):
     full: bool
 
 
-def evaluate(vardb, portdb):
-    """A full build of the evaluated layer."""
+def evaluate(vardb, portdb, requested=()):
+    """A full build of the evaluated layer, with the requested cps (EvaluatedLayer.requested)."""
     started = time.time_ns()
-    layer, read = evaluated.rebuild(vardb, portdb, None, None)
+    layer, read = evaluated.rebuild(vardb, portdb, None, None, requested=requested)
     # Stat'ed after the build, which the racy window allows: anything changed since started
     # is newer than it.
     inputs = evaluated_inputs(vardb.settings, portdb, layer.cps())
@@ -262,23 +262,27 @@ def _scope(path, locations, categories, known_categories):
     return None
 
 
-def evaluate_incremental(vardb, portdb, previous, installed_build, installed_build_ns):
+def evaluate_incremental(
+    vardb, portdb, previous, installed_build, installed_build_ns, requested=()
+):
     """Rebuild the evaluated layer from a previous evaluated store, evaluating only the cps
-    whose installed packages or repository metadata changed.
+    whose installed packages or repository metadata changed, and the requested cps new to it.
 
     previous is that store's (EvaluatedMeta, Inputs, EvaluatedLayer), installed_build the Build
     of the installed store written beside the new one, and installed_build_ns the build start
     of the installed store it replaces. The vdb changes come from installed_build, so a full
     installed build, or a previous store built against another one, means a full build here.
+    Either way the previous store's requested cps are kept.
     """
     settings = vardb.settings
     meta, inputs, layer = previous
+    requested = frozenset(layer.requested()).union(requested)
     if (
         installed_build.full
         or meta.eroot != settings["EROOT"]
         or meta.installed_build_time_ns != installed_build_ns
     ):
-        return evaluate(vardb, portdb)
+        return evaluate(vardb, portdb, requested)
     started = time.time_ns()
     cpvs = _cpvs(vardb)
     cps = sorted(set(layer.cps()) | {cpv_getkey(cpv) for cpv in cpvs})
@@ -305,7 +309,7 @@ def evaluate_incremental(vardb, portdb, previous, installed_build, installed_bui
                 continue
         scope = _scope(path, locations, categories, known_categories)
         if scope is None:
-            return evaluate(vardb, portdb)
+            return evaluate(vardb, portdb, requested)
         if scope:
             scopes.add(scope)
     removed = previous_cpvs - set(cpvs)
@@ -317,7 +321,13 @@ def evaluate_incremental(vardb, portdb, previous, installed_build, installed_bui
     )
     match = installed.Matcher(vardb)
     ev, read = evaluated.rebuild(
-        vardb, portdb, layer, dirty, _Rematcher(touched, match), match
+        vardb,
+        portdb,
+        layer,
+        dirty,
+        _Rematcher(touched, match),
+        match,
+        requested,
     )
     if ev.cps() != cps:
         current = evaluated_inputs(settings, portdb, ev.cps())

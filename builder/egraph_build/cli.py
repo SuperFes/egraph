@@ -33,6 +33,13 @@ def parser():
         help="re-evaluate only the packages whose inputs changed",
     )
     mode.add_argument(
+        "--evaluate",
+        dest="mode",
+        action="store_const",
+        const="evaluate",
+        help="as --incremental, also evaluating each ENTRY, a cp, until the next --full",
+    )
+    mode.add_argument(
         "--json",
         dest="mode",
         action="store_const",
@@ -62,7 +69,8 @@ def parser():
         "entries",
         nargs="*",
         metavar="ENTRY",
-        help="with --pending: a merge list entry, ebuild:CPV or binary:CPV",
+        help="with --pending: a merge list entry, ebuild:CPV or binary:CPV; with "
+        "--evaluate: a cp in a repository",
     )
     p.add_argument(
         "--store",
@@ -199,12 +207,29 @@ def _strict_failure(what):
     return EXIT_FAILURE
 
 
-def write_store(args, incremental):
+def _refusal(portdb, words):
+    """Why words are not all cps with ebuilds in portdb's repositories, or None."""
+    from portage.dep import Atom, isvalidatom
+
+    known = frozenset(portdb.cp_all())
+    for word in words:
+        if not isvalidatom(word) or Atom(word).cp != word:
+            return f"{word}: not a category/package name"
+        if word not in known:
+            return f"{word}: no ebuilds in the repositories"
+    return None
+
+
+def write_store(args, incremental, requested=()):
     import portage
 
     from egraph_build import __version__, build, evaluated, installed, profile, store
 
     vardb, portdb = open_databases(args.config_root, args.root, args.eprefix)
+    refusal = _refusal(portdb, requested)
+    if refusal:
+        print(f"egraph-build: {refusal}", file=sys.stderr)
+        return EXIT_USAGE
     strict = os.environ.get("EGRAPH_STRICT") == "1"
     path = args.store or store.default_path(vardb.settings["EROOT"])
     evaluated_path = store.evaluated_path(path)
@@ -219,10 +244,15 @@ def write_store(args, incremental):
             return _strict_failure("installed store")
     if previous_evaluated:
         ev = build.evaluate_incremental(
-            vardb, portdb, previous_evaluated, result, previous[0].build_time_ns
+            vardb,
+            portdb,
+            previous_evaluated,
+            result,
+            previous[0].build_time_ns,
+            requested=requested,
         )
     else:
-        ev = build.evaluate(vardb, portdb)
+        ev = build.evaluate(vardb, portdb, requested)
     if ev.layer.installed() != result.layer.installed():
         print(
             "egraph-build: the installed packages changed during the build",
@@ -230,7 +260,9 @@ def write_store(args, incremental):
         )
         return EXIT_FAILURE
     if not ev.full and strict:
-        expected = evaluated.to_json(build.evaluate(vardb, portdb).layer)
+        expected = evaluated.to_json(
+            build.evaluate(vardb, portdb, ev.layer.requested()).layer
+        )
         if evaluated.to_json(ev.layer) != expected:
             return _strict_failure("evaluated store")
     meta = store.Meta(
@@ -261,8 +293,13 @@ def main(argv=None):
         return EXIT_OK if e.code == 0 else EXIT_USAGE
     if args.mode == "pending":
         return write_pending(args)
+    if args.mode == "evaluate":
+        if not args.entries:
+            print("egraph-build: --evaluate takes the cps to evaluate", file=sys.stderr)
+            return EXIT_USAGE
+        return write_store(args, incremental=True, requested=args.entries)
     if args.entries:
-        print("egraph-build: entries are for --pending", file=sys.stderr)
+        print("egraph-build: entries are for --pending and --evaluate", file=sys.stderr)
         return EXIT_USAGE
     if args.mode == "json":
         from egraph_build import build, installed

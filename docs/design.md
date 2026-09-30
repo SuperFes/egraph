@@ -468,7 +468,10 @@ visibility and USE files, a repository's masks, moves, layout, license groups an
 another repository's eclasses), a full installed build, or an evaluated store built against
 another installed store means a full evaluated build. Decided with the user: a sync
 evaluates whole categories again; with several repositories, tracking single cps would not buy
-much.
+much. A cp evaluated on request (`egraph-build --evaluate`, roadmap 16b2) is evaluated with what
+it reaches and kept by every later build, a full evaluated build included, until `--full` (`egraph
+rebuild`) or until it is installed; automatic full builds are too frequent (any configuration
+edit) to drop it at.
 
 No merge-time hook is needed, and edits to the vdb made outside portage are caught too.
 

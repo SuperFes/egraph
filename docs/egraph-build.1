@@ -3,7 +3,7 @@
 egraph-build \- evaluate the installed packages through portage and write egraph's store
 .SH SYNOPSIS
 .B egraph-build
-.RB [ \-\-full | \-\-incremental | \-\-json | \-\-evaluated\-json | \-\-pending ]
+.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-pending ]
 .RI [ options ]
 .RI [ entry ...]
 .SH DESCRIPTION
@@ -28,6 +28,16 @@ Evaluate every installed package (the default).
 .TP
 .B \-\-incremental
 Evaluate again only the packages whose inputs changed since the stores were written.
+.TP
+.B \-\-evaluate
+As
+.BR \-\-incremental ,
+and evaluate each
+.IR entry ,
+a category/package name with ebuilds in a repository, with what it would pull in.
+The evaluated store keeps them through later builds until a
+.BR \-\-full
+one, or until they are installed.
 .TP
 .B \-\-json
 Print the installed layer as canonical JSON instead of writing the store.

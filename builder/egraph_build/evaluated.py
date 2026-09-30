@@ -579,11 +579,12 @@ def build(vardb, portdb, match=None):
     return rebuild(vardb, portdb, None, None, match=match)[0]
 
 
-def rebuild(vardb, portdb, previous, cps, carry=None, match=None):
+def rebuild(vardb, portdb, previous, cps, carry=None, match=None, requested=()):
     """(layer, the cps read through portage): as build, but only the cps in cps go through
     portage, every one when cps is None; the other installed packages come from previous, an
     EvaluatedLayer, through carry (unchanged when None), and their cps' candidates with them,
-    as do the candidates of the other cps the dependencies still reach.
+    as do the candidates of the other cps the dependencies still reach. The requested cps
+    that are in a repository and not installed are evaluated too, with what they reach.
     """
     from portage.package.ebuild.config import config
 
@@ -644,10 +645,14 @@ def rebuild(vardb, portdb, previous, cps, carry=None, match=None):
                     **read_masked(vardb, portdb, installed_settings, cpv, updates)
                 )
             packages.append(pkg)
+    repository_cps = portdb.cp_all()
+    requested = (
+        frozenset(requested).intersection(repository_cps).difference(installed_cps)
+    )
     # What emerge may have to pull in (reached_cps), and theirs in turn.
     reached = set(installed_cps)
     breaks = may_break(by_cp)
-    queue = []
+    queue = sorted(requested)
     for deps in itertools.chain(
         (pkg.deps for pkg in packages),
         (c.deps for found in by_cp.values() for c in found),
@@ -665,7 +670,8 @@ def rebuild(vardb, portdb, previous, cps, carry=None, match=None):
         EvaluatedLayer(
             packages,
             [c for found in by_cp.values() for c in found],
-            portdb.cp_all(),
+            repository_cps,
+            requested,
         ),
         frozenset(read),
     )

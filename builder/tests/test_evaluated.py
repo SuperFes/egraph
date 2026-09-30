@@ -48,6 +48,23 @@ def test_a_new_layer_requests_nothing(scenario):
     assert build(scenario).requested() == ()
 
 
+def test_requested_cps_are_evaluated_with_what_they_pull_in(playgrounds):
+    system = playgrounds("repository")
+    assert "www-apps/unused" not in {c.cp for c in build(system).candidates()}
+    layer, read = evaluated.rebuild(
+        system.vardb,
+        portdb(system),
+        None,
+        None,
+        requested={"www-apps/unused", "app-misc/dyn", "www-apps/nowhere"},
+    )
+    # An installed cp is evaluated anyway, and one without ebuilds has nothing to evaluate.
+    assert layer.requested() == ("www-apps/unused",)
+    assert [c.cpv for c in layer.candidates("www-apps/unused")] == ["www-apps/unused-1"]
+    assert [c.cpv for c in layer.candidates("www-apps/helper")] == ["www-apps/helper-1"]
+    assert {"www-apps/unused", "www-apps/helper"} <= read
+
+
 def test_dependencies_follow_the_oracle(scenario):
     layer = build(scenario)
     for cpv in oracle.installed(scenario.vardb):
