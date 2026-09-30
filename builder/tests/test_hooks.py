@@ -121,3 +121,10 @@ def test_every_builder_module_is_installed():
     )
     modules = {path.name for path in (SOURCE / "builder" / "egraph_build").glob("*.py")}
     assert modules == listed
+
+
+def test_the_builder_reports_the_project_version():
+    from egraph_build import __version__
+
+    project = re.search(r"version: '([^']+)'", (SOURCE / "meson.build").read_text())
+    assert __version__ == project.group(1)
