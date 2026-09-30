@@ -232,6 +232,7 @@ inline std::vector<std::byte> fresh_sample() {
 //   emerge -u.
 // Candidates of app-misc/a: a-1, visible, USE and IUSE "flag"; a-2, masked by keyword; of
 // dev-libs/b: b-2, visible, with DEPEND app-misc/a matching a-1.
+// The repositories hold app-misc/a and dev-libs/b; dev-libs/gone was evaluated on request.
 inline constexpr std::initializer_list<std::string_view> evaluated_strings{"",
                                                                            "app-misc/a-1",
                                                                            "dev-libs/b-1",
@@ -296,7 +297,9 @@ inline std::vector<Section> evaluated_sections() {
             {.id = 2, .bytes = inputs.bytes()},
             {.id = 3, .bytes = strings.bytes()},
             {.id = 4, .bytes = dependencies.bytes()},
-            {.id = 5, .bytes = candidates.bytes()}};
+            {.id = 5, .bytes = candidates.bytes()},
+            {.id = 6, .bytes = Bytes{}.list({5, 13}).bytes()},
+            {.id = 7, .bytes = Bytes{}.list({14}).bytes()}};
 }
 
 inline std::vector<std::byte> assemble_evaluated(const std::vector<Section>& sections) {

@@ -19,7 +19,9 @@ using encoding::size32;
 
 constexpr std::uint32_t section_dependencies = 4;
 constexpr std::uint32_t section_candidates = 5;
-constexpr std::size_t section_count = 5;
+constexpr std::uint32_t section_repository = 6;
+constexpr std::uint32_t section_requested = 7;
+constexpr std::size_t section_count = 7;
 constexpr std::uint32_t source_count = 3;
 
 std::optional<StoreError> read_meta(std::span<const std::byte> section, Evaluated& evaluated) {
@@ -104,6 +106,23 @@ std::optional<StoreError> read_candidates(std::span<const std::byte> section, Ev
     return r.error();
 }
 
+// A sorted list of distinct cps.
+std::optional<StoreError> read_cps(std::span<const std::byte> section, std::string_view name,
+                                   Evaluated& evaluated, Range& cps) {
+    Reader r(section, name);
+    cps = read_ids(r, evaluated.ids, size32(evaluated.strings.size()), "string");
+    if (r.ok()) {
+        const auto ids = evaluated.ids_in(cps);
+        if (std::ranges::adjacent_find(ids, [&](std::uint32_t a, std::uint32_t b) {
+                return evaluated.string(a) >= evaluated.string(b);
+            }) != ids.end()) {
+            r.fail("cps out of order");
+        }
+    }
+    r.finish();
+    return r.error();
+}
+
 } // namespace
 
 std::expected<Evaluated, StoreError> decode_evaluated(std::span<const std::byte> data) {
@@ -135,6 +154,14 @@ std::expected<Evaluated, StoreError> decode_evaluated(std::span<const std::byte>
         return std::unexpected(*error);
     }
     if (auto error = read_dependencies(section(section_dependencies), evaluated)) {
+        return std::unexpected(*error);
+    }
+    if (auto error = read_cps(section(section_repository), "repository", evaluated,
+                              evaluated.repository_cps)) {
+        return std::unexpected(*error);
+    }
+    if (auto error =
+            read_cps(section(section_requested), "requested", evaluated, evaluated.requested)) {
         return std::unexpected(*error);
     }
     return evaluated;

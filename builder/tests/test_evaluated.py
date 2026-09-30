@@ -1,6 +1,8 @@
 """The evaluated layer against the oracle on every scenario, and by hand on two of them."""
 
 import collections
+import glob
+import os
 
 import pytest
 from portage import best
@@ -32,6 +34,18 @@ def installed_cps(system):
 
 def test_every_installed_package_is_evaluated(scenario):
     assert build(scenario).installed() == oracle.installed(scenario.vardb)
+
+
+def test_repository_cps_are_every_cp_with_an_ebuild(scenario):
+    found = set()
+    for repo in portdb(scenario).porttrees:
+        for path in glob.glob(os.path.join(repo, "*", "*", "*.ebuild")):
+            found.add("/".join(path.split(os.sep)[-3:-1]))
+    assert build(scenario).repository_cps() == tuple(sorted(found))
+
+
+def test_a_new_layer_requests_nothing(scenario):
+    assert build(scenario).requested() == ()
 
 
 def test_dependencies_follow_the_oracle(scenario):

@@ -33,14 +33,18 @@ INPUT_FILE, INPUT_DIRECTORY, INPUT_SYMLINK, INPUT_MISSING = range(4)
 DEFAULT_PATH = "var/cache/egraph/installed.egraph"
 
 EVALUATED_MAGIC = b"EGRAPHEV"
-EVALUATED_FORMAT_VERSION = 4
-SECTION_DEPENDENCIES, SECTION_CANDIDATES = range(4, 6)
+EVALUATED_FORMAT_VERSION = 5
+SECTION_DEPENDENCIES, SECTION_CANDIDATES, SECTION_REPOSITORY, SECTION_REQUESTED = range(
+    4, 8
+)
 EVALUATED_SECTIONS = (
     SECTION_META,
     SECTION_INPUTS,
     SECTION_STRINGS,
     SECTION_DEPENDENCIES,
     SECTION_CANDIDATES,
+    SECTION_REPOSITORY,
+    SECTION_REQUESTED,
 )
 
 _HEADER = struct.Struct("<8sII")
@@ -288,6 +292,14 @@ def encode_evaluated(layer, meta, inputs=()):
             w.varint(strings(message))
         _write_trees(w, c.deps, strings, index)
     sections[SECTION_CANDIDATES] = w.out
+
+    for section, cps in (
+        (SECTION_REPOSITORY, layer.repository_cps()),
+        (SECTION_REQUESTED, layer.requested()),
+    ):
+        w = _Writer()
+        w.ids([strings(cp) for cp in cps])
+        sections[section] = w.out
 
     sections[SECTION_STRINGS] = _write_strings(strings)
     return _frame(
@@ -546,6 +558,15 @@ def decode_evaluated(data):
         candidates.append(Candidate(*fields, *lists, errors, deps))
     r.done()
 
+    cp_lists = []
+    for section, name in (
+        (SECTION_REPOSITORY, "repository"),
+        (SECTION_REQUESTED, "requested"),
+    ):
+        r = _Reader(sections[section], name)
+        cp_lists.append(tuple(strings[i] for i in r.ids(nstrings)))
+        r.done()
+
     packages = []
     for cpv, source, eapi, errors, deps, possible, weighed in raw:
         visible, masked, vdb_masked, target, rebuild = weighed
@@ -573,7 +594,7 @@ def decode_evaluated(data):
                 rebuild,
             )
         )
-    return meta, inputs, EvaluatedLayer(packages, candidates)
+    return meta, inputs, EvaluatedLayer(packages, candidates, *cp_lists)
 
 
 def write(path, data):

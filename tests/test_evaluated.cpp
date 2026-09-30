@@ -131,6 +131,16 @@ TEST_CASE("the sample evaluated store decodes") {
     CHECK(evaluated->string(depend.front().atom) == "app-misc/a");
     CHECK(std::ranges::equal(evaluated->ids_in(depend.front().matches), std::array{0U}));
     CHECK(evaluated->nodes_in(b2.deps.at(4)).empty());
+    const auto strings = [&](egraph::Range range) {
+        std::vector<std::string_view> found;
+        for (const auto id : evaluated->ids_in(range)) {
+            found.push_back(evaluated->string(id));
+        }
+        return found;
+    };
+    CHECK(strings(evaluated->repository_cps) ==
+          std::vector<std::string_view>{"app-misc/a", "dev-libs/b"});
+    CHECK(strings(evaluated->requested) == std::vector<std::string_view>{"dev-libs/gone"});
 }
 
 TEST_CASE("every evaluated truncation is rejected") {
@@ -223,6 +233,13 @@ TEST_CASE("evaluated records are checked") {
     trailing.varint(0).varint(0);
     CHECK_THAT(rejection(evaluated_with_section(5, trailing)),
                Catch::Matchers::StartsWith("candidates: trailing bytes"));
+
+    CHECK_THAT(rejection(evaluated_with_section(6, Bytes{}.list({99}))),
+               Catch::Matchers::StartsWith("repository: string 99 out of range"));
+    CHECK_THAT(rejection(evaluated_with_section(6, Bytes{}.list({13, 5}))),
+               Catch::Matchers::StartsWith("repository: cps out of order"));
+    CHECK_THAT(rejection(evaluated_with_section(7, Bytes{}.list({14, 14}))),
+               Catch::Matchers::StartsWith("requested: cps out of order"));
 }
 
 TEST_CASE("an evaluated store loads only beside its installed store") {

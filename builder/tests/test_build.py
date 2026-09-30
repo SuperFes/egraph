@@ -302,6 +302,9 @@ def test_evaluated_inputs(playgrounds):
     for repo in (main, overlay):
         assert paths[repo] == store.INPUT_DIRECTORY
         assert os.path.join(repo, "eclass") in paths
+    # Every category, for the cps it lists.
+    for category in ("app-misc", "dev-libs", "www-apps"):
+        assert paths[os.path.join(main, category)] == store.INPUT_DIRECTORY
     # The main repository through its metadata cache only; others down to their ebuilds.
     assert os.path.join(main, "app-misc", "over") not in paths
     assert os.path.join(main, "app-misc", "dyn") not in paths
@@ -313,7 +316,8 @@ def test_evaluated_inputs(playgrounds):
         "dev-libs/new/new-1.ebuild",
     ):
         assert os.path.join(overlay, relative) in paths, relative
-    # Only the installed categories.
+    # Only the installed categories' packages.
+    assert os.path.join(main, "metadata", "md5-cache", "www-apps") not in paths
     assert all("/sys-apps" not in path for path in paths)
 
 
@@ -480,6 +484,26 @@ def test_evaluated_synced_dependency_reads_the_cp_it_pulls_in(evaluated_system):
     assert [c.cpv for c in ev.layer.candidates("app-misc/pulled")] == [
         "app-misc/pulled-1"
     ]
+
+
+def test_evaluated_new_cp_elsewhere_is_only_listed(evaluated_system):
+    playground, _, (_, previous_inputs, _) = evaluated_system
+    main = repository(playground, "test_repo")
+    os.makedirs(os.path.join(main, "www-apps/other"))
+    write_atomically(
+        os.path.join(main, "www-apps/other/other-1.ebuild"),
+        'EAPI="8"\nKEYWORDS="x86"\nSLOT="0"\n',
+    )
+    sync(playground, "test_repo")
+    ev = reevaluate(*evaluated_system)
+    assert not ev.full
+    assert ev.evaluated == frozenset()
+    assert "www-apps/other" in ev.layer.repository_cps()
+    # So the store is stale.
+    category = os.path.join(main, "www-apps")
+    assert {i for i in previous_inputs if i.path == category} != {
+        i for i in ev.inputs if i.path == category
+    }
 
 
 def test_evaluated_overlay_ebuild_reevaluates_its_cp(evaluated_system):

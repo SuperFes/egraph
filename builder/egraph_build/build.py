@@ -128,7 +128,8 @@ def repository_paths(portdb, cps):
 
     The main repository changes by sync, which replaces files, so its metadata cache
     directories show every change. Other repositories may be edited in place and may have no
-    cache, so their package directories and ebuilds count too.
+    cache, so their package directories and ebuilds count too. Every category directory
+    counts, for the cps it lists.
     """
     main = portdb.repositories.mainRepo()
     categories = sorted({cp.partition("/")[0] for cp in cps})
@@ -136,6 +137,11 @@ def repository_paths(portdb, cps):
     for name in portdb.getRepositories():
         location = portdb.getRepositoryPath(name)
         paths.append(location)
+        paths.extend(
+            os.path.join(location, category)
+            for category in sorted(portdb.settings.categories)
+            if os.path.isdir(os.path.join(location, category))
+        )
         for relative in (
             "eclass",
             "metadata/layout.conf",
@@ -154,11 +160,6 @@ def repository_paths(portdb, cps):
         )
         if main is not None and name == main.name:
             continue
-        paths.extend(
-            os.path.join(location, category)
-            for category in categories
-            if os.path.isdir(os.path.join(location, category))
-        )
         for cp in cps:
             directory = os.path.join(location, cp)
             if os.path.isdir(directory):
@@ -241,9 +242,10 @@ def _kind_only(portdb):
     return found
 
 
-def _scope(path, locations, categories):
-    """The installed category or cp an evaluated input bears on alone, or None when it can
-    bear on any package. locations are the repositories', longest first."""
+def _scope(path, locations, categories, known_categories):
+    """The installed category or cp an evaluated input bears on alone, "" when it only lists
+    cps, or None when it can bear on any package. locations are the repositories', longest
+    first."""
     for location in locations:
         if not path.startswith(location + os.sep):
             continue
@@ -252,6 +254,8 @@ def _scope(path, locations, categories):
             parts = parts[2:]
             if len(parts) != 1:
                 return None
+        elif len(parts) == 1 and parts[0] in known_categories - categories:
+            return ""
         if parts[0] not in categories or len(parts) > 3:
             return None
         return "/".join(parts[:2])
@@ -285,6 +289,7 @@ def evaluate_incremental(vardb, portdb, previous, installed_build, installed_bui
     kind_only = _kind_only(portdb)
     previous_cpvs = set(layer.installed())
     categories = {cp.partition("/")[0] for cp in cps}
+    known_categories = frozenset(portdb.settings.categories)
     locations = sorted(
         (portdb.getRepositoryPath(name) for name in portdb.getRepositories()),
         key=len,
@@ -298,10 +303,11 @@ def evaluate_incremental(vardb, portdb, previous, installed_build, installed_bui
                 continue
             if path in kind_only and old.kind == new.kind:
                 continue
-        scope = _scope(path, locations, categories)
+        scope = _scope(path, locations, categories, known_categories)
         if scope is None:
             return evaluate(vardb, portdb)
-        scopes.add(scope)
+        if scope:
+            scopes.add(scope)
     removed = previous_cpvs - set(cpvs)
     touched = {cpv_getkey(cpv) for cpv in installed_build.evaluated | removed}
     dirty = frozenset(

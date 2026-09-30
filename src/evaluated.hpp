@@ -13,7 +13,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t evaluated_format_version = 4;
+inline constexpr std::uint32_t evaluated_format_version = 5;
 
 // Where an installed package's dependency strings came from under --dynamic-deps=y.
 enum class DepSource : std::uint8_t { ebuild, vdb, moved };
@@ -100,6 +100,10 @@ struct Evaluated : Tables {
     std::vector<Dependencies> packages;
     std::vector<Possible> possible;
     std::vector<Candidate> candidates;
+    // String ids of cps, sorted: every cp with an ebuild in a repository, and the cps evaluated
+    // on request beside those the installed packages reach.
+    Range repository_cps;
+    Range requested;
 
     [[nodiscard]] std::span<const Possible> possible_in(Range range) const EGRAPH_LIFETIMEBOUND {
         return std::span{possible}.subspan(range.first, range.count);

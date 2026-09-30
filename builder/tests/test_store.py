@@ -93,6 +93,21 @@ def test_evaluated_round_trip(scenario):
     assert evaluated.to_json(decoded) == evaluated.to_json(layer)
 
 
+def test_requested_cps_round_trip(playgrounds):
+    layer = build_evaluated(playgrounds("repository"))
+    requested = evaluated.EvaluatedLayer(
+        list(layer),
+        layer.candidates(),
+        layer.repository_cps(),
+        ("app-misc/over", "dev-libs/new"),
+    )
+    _, _, decoded = store.decode_evaluated(
+        store.encode_evaluated(requested, EVALUATED_META)
+    )
+    assert decoded.requested() == ("app-misc/over", "dev-libs/new")
+    assert decoded.repository_cps() == layer.repository_cps()
+
+
 @pytest.fixture(scope="module")
 def evaluated_store(playgrounds):
     layer = build_evaluated(playgrounds("repository"))

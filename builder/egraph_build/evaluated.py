@@ -123,9 +123,11 @@ def _candidate_key(candidate):
 
 
 class EvaluatedLayer:
-    def __init__(self, packages, candidates):
+    def __init__(self, packages, candidates, repository_cps=(), requested=()):
         self._packages = {pkg.cpv: pkg for pkg in sorted(packages, key=_cpv)}
         self._candidates = tuple(sorted(candidates, key=_candidate_key))
+        self._repository_cps = tuple(sorted(repository_cps))
+        self._requested = tuple(sorted(requested))
 
     def __iter__(self):
         return iter(self._packages.values())
@@ -142,6 +144,14 @@ class EvaluatedLayer:
             {cpv_getkey(cpv) for cpv in self._packages}
             | {c.cp for c in self._candidates}
         )
+
+    def repository_cps(self):
+        """Every cp with an ebuild in a repository, sorted."""
+        return self._repository_cps
+
+    def requested(self):
+        """The cps evaluated on request, beside those the installed packages reach; sorted."""
+        return self._requested
 
     def candidates(self, cp=None):
         """Candidates sorted by cp, cpv and repo; only cp's when given."""
@@ -652,7 +662,11 @@ def rebuild(vardb, portdb, previous, cps, carry=None, match=None):
         for c in by_cp[cp]:
             queue.extend(reached_cps(c.deps, breaks) - reached)
     return (
-        EvaluatedLayer(packages, [c for found in by_cp.values() for c in found]),
+        EvaluatedLayer(
+            packages,
+            [c for found in by_cp.values() for c in found],
+            portdb.cp_all(),
+        ),
         frozenset(read),
     )
 
@@ -703,5 +717,11 @@ def to_json(layer):
         }
         for c in layer.candidates()
     ]
-    document = {"format": 4, "packages": packages, "candidates": candidates}
+    document = {
+        "format": 5,
+        "packages": packages,
+        "candidates": candidates,
+        "repository_cps": list(layer.repository_cps()),
+        "requested": list(layer.requested()),
+    }
     return json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"

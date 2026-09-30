@@ -1,6 +1,6 @@
 # Store format
 
-Status: format version 4 (evaluated store: 3), implemented by `builder/egraph_build/store.py`
+Status: format version 4 (evaluated store: 5), implemented by `builder/egraph_build/store.py`
 (writer and a Python reader) and `src/store.cpp` and `src/evaluated.cpp` (C++ readers). Any
 layout change bumps the version.
 
@@ -109,7 +109,7 @@ The installed packages as emerge sees them against the repositories: their depen
 store it was built against, named after it (`installed.egraph` → `installed.evaluated.egraph`:
 the last extension replaced by `.evaluated.egraph`), and is written by the same builder run.
 
-It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 4.
+It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 5.
 Package ids are the installed store's, so an evaluated store is current only while the installed
 store beside it has the build start recorded in its meta, and its own inputs stat the same.
 
@@ -120,8 +120,10 @@ store beside it has the build start recorded in its meta, and its own inputs sta
 | 3 | Strings | as in the installed store |
 | 4 | Dependencies | count, equal to the installed store's package count, then one record per installed package in its order |
 | 5 | Candidates | count, then the records below, sorted by cp, cpv and repo |
+| 6 | Repository | list of string ids: every cp with an ebuild in a repository, sorted |
+| 7 | Requested | list of string ids: the cps evaluated on request beside those the installed packages reach, sorted |
 
-All five sections are required.
+All seven sections are required.
 
 A dependency record is how emerge reads the package's dependencies by default, and how it
 weighs the package against its repositories under `--update`:
@@ -190,7 +192,7 @@ Blockers name nothing.
 Inputs are the installed store's configuration and profile inputs, the user's visibility and USE
 configuration (`package.accept_keywords`, `package.mask`, `package.unmask`, `package.license`,
 `package.use` and their relatives, `env`, `repos.conf`), and per repository its root, layout,
-repository-wide masks, license groups, categories, package moves and eclass directory, the
-metadata cache directory of every category of the store's cps (installed and candidate), and
-outside the main repository the category and package directories and ebuilds of every such cp
-it carries.
+repository-wide masks, license groups, categories, package moves and eclass directory, every
+category directory (for the cps it lists), the metadata cache directory of every category of the
+store's cps (installed and candidate), and outside the main repository the package directories
+and ebuilds of every such cp it carries.

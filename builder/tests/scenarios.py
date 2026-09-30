@@ -284,6 +284,8 @@ SCENARIOS = {
             "app-misc/over-1::overlay": {"EAPI": "8", "KEYWORDS": "x86"},
             "app-misc/over-2::overlay": {"EAPI": "8", "KEYWORDS": "x86"},
             "dev-libs/new-1::overlay": {"EAPI": "8", "KEYWORDS": "x86"},
+            # A category nothing installed is in.
+            "www-apps/unused-1": {"EAPI": "8", "KEYWORDS": "x86"},
         },
         "installed": {
             "app-misc/dyn-1": {"EAPI": "8", "RDEPEND": "dev-libs/old"},

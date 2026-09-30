@@ -407,3 +407,14 @@ process including load and the freshness check of 2,575 inputs.
   candidates, 54 cps beyond the installed ones (podman's stack, rust, openjdk, perl-core among
   them, through `||` groups whose installed choice has a newer version outside the bound). A
   full build of both stores: 81.3G instructions.
+
+## Repository cps in the evaluated store (2026-09-30, roadmap step 16b2)
+
+- Dev box: 21,869 cps across 8 repositories; `cp_all()` lists them in 170 ms. The evaluated
+  store grows from 2.01 MB to 2.48 MB, and its inputs from 2,159 to 2,394 (every repository's
+  category directories).
+- `egraph updates` on its own store (`--store`): 255.3M to 269.0M instructions (+5.4%),
+  decoding the strings and the list.
+- Without `--store`, a user's run first tries the system store; a system store of the older
+  format costs the whole installed store's decode (36.6M instructions) before the evaluated
+  store's version rejects it, until the system package is upgraded too.

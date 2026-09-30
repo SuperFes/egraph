@@ -256,7 +256,7 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string_list(out, evaluated, candidate.use);
         out << '}';
     }
-    out << R"(],"format":4,"packages":[)";
+    out << R"(],"format":5,"packages":[)";
     first = true;
     for (const auto& pkg : evaluated.packages) {
         out << (first ? "{\"cpv\":" : ",{\"cpv\":");
@@ -302,7 +302,11 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         out << ",\"vdb_masked\":" << (pkg.vdb_masked ? "true" : "false")
             << ",\"visible\":" << (pkg.visible ? "true" : "false") << '}';
     }
-    out << "]}\n";
+    out << "],\"repository_cps\":";
+    write_string_list(out, evaluated, evaluated.repository_cps);
+    out << ",\"requested\":";
+    write_string_list(out, evaluated, evaluated.requested);
+    out << "}\n";
 }
 
 std::string package_json(const Store& store, const Package& pkg) {

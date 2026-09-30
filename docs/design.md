@@ -457,9 +457,11 @@ old stores, on any difference.
 The evaluated store is rebuilt the same way, from the vdb changes the installed build found and
 its own inputs. A cp is evaluated again (candidates, dependencies, possible dependencies, update
 and masks) when it gained, lost or changed an installed package, when the metadata cache
-directory of its category changed in any repository, or outside the main repository when its
-category or package directory or an ebuild changed; the other packages only have the atoms that
-name a changed cp matched again. A repository's root and metadata cache directory only list
+directory of its category changed in any repository, when its category directory changed, or
+outside the main repository when its package directory or an ebuild changed; the other packages
+only have the atoms that name a changed cp matched again. Every build lists the repositories'
+cps again (170 ms on the dev box, 21,869 of them), so a category directory of no cp in the
+store only makes it stale. A repository's root and metadata cache directory only list
 inputs of their own, and the main repository's cache records each ebuild's eclasses, so for
 those only a change of kind counts. Every other input (configuration, profiles, the user's
 visibility and USE files, a repository's masks, moves, layout, license groups and categories,
