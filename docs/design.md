@@ -431,7 +431,8 @@ removed), each package directory (in-place changes, which portage writes by rena
 configuration that decides how USE dependencies match: `make.globals`, `make.conf`, the
 `make.profile` link and every profile directory with its entries, and what the root sets are read
 from: the world and world_sets files and portage's set configuration (`sets.conf` files and the
-user sets directory). A path recorded as missing is stale once it exists.
+user sets directory), and the builder's own modules. A path recorded as missing is stale once
+it exists.
 
 Timestamps are coarse, so an input modified within 1 s before the build started is never trusted
 as unchanged (the racy-git rule); a store built right after a merge refreshes once more and then
@@ -448,9 +449,10 @@ On load `egraph` stats every input (2,575 `lstat` calls on the dev box, about 2.
 `--incremental` re-reads only the packages that were added or whose directory changed, and in
 the others re-matches only the atoms naming a cp that gained, lost or changed a package. Root sets
 are read again on every build, so a world or set file edit costs no more than that. A changed
-configuration input or another EROOT means a full build. `EGRAPH_STRICT=1` compares
-every incremental build against a full one and fails, leaving both old stores, on any
-difference.
+configuration input or builder module, another EROOT, or a store written by another egraph or
+portage version means a full build; a portage upgrade changes the vdb, so the store goes stale.
+`EGRAPH_STRICT=1` compares every incremental build against a full one and fails, leaving both
+old stores, on any difference.
 
 The evaluated store is rebuilt the same way, from the vdb changes the installed build found and
 its own inputs. A cp is evaluated again (candidates, dependencies, possible dependencies, update

@@ -9,10 +9,14 @@ import portage
 import pytest
 from portage.versions import cpv_getkey
 
-from egraph_build import build, cli, evaluated, installed, store
+from egraph_build import __version__, build, cli, evaluated, installed, store
 from egraph_build.installed import ATOM
 
 HOUR_NS = 3600 * 10**9
+
+
+def meta_for(eroot, started_ns):
+    return store.Meta(__version__, portage.VERSION, eroot, started_ns)
 
 
 def age(root):
@@ -64,7 +68,7 @@ def system(mutable_playground):
     playground = mutable_playground("reference")
     age(playground.eroot)
     first = build.full(fresh_vardb(playground))
-    meta = store.Meta("0", "0", playground.eroot, first.started_ns)
+    meta = meta_for(playground.eroot, first.started_ns)
     return playground, meta, first
 
 
@@ -97,6 +101,7 @@ def test_inputs_cover_the_vdb_and_the_profile(system):
     assert kinds[os.path.join(world, "world")] == store.INPUT_FILE
     assert kinds[os.path.join(world, "world_sets")] == store.INPUT_FILE
     assert kinds[os.path.join(user, "sets")] == store.INPUT_DIRECTORY
+    assert kinds[build.__file__] == store.INPUT_FILE
 
 
 def test_nothing_changed(system):
@@ -194,11 +199,26 @@ def test_created_config_file_forces_a_full_build(system):
     assert rebuild(playground, meta, first).full
 
 
+def test_builder_change_forces_a_full_build(system):
+    playground, meta, first = system
+    inputs = tuple(
+        item._replace(size=item.size + 1) if item.path == build.__file__ else item
+        for item in first.inputs
+    )
+    assert rebuild(playground, meta, first._replace(inputs=inputs)).full
+
+
+@pytest.mark.parametrize("field", ["egraph_version", "portage_version"])
+def test_another_version_forces_a_full_build(system, field):
+    playground, meta, first = system
+    assert rebuild(playground, meta._replace(**{field: "0"}), first).full
+
+
 def test_racy_inputs_are_not_trusted(mutable_playground):
     playground = mutable_playground("reference")
     # Not aged: every input was written within the racy window of the build.
     first = build.full(fresh_vardb(playground))
-    meta = store.Meta("0", "0", playground.eroot, first.started_ns)
+    meta = meta_for(playground.eroot, first.started_ns)
     assert rebuild(playground, meta, first).full
 
 
@@ -358,7 +378,7 @@ def evaluated_system(mutable_playground):
     first = build.full(vardb)
     ev = build.evaluate(vardb, portdb)
     eroot = vardb.settings["EROOT"]
-    meta = store.Meta("0", "0", eroot, first.started_ns)
+    meta = meta_for(eroot, first.started_ns)
     ev_meta = store.EvaluatedMeta("0", "0", eroot, ev.started_ns, first.started_ns)
     return (
         playground,

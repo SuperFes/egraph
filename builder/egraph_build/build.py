@@ -9,7 +9,7 @@ import portage
 from portage.dep import Atom
 from portage.versions import cpv_getkey
 
-from egraph_build import evaluated, installed, roots
+from egraph_build import __version__, evaluated, installed, roots
 from egraph_build.installed import ATOM, STRONG_BLOCKER, WEAK_BLOCKER, InstalledLayer
 from egraph_build.store import (
     INPUT_DIRECTORY,
@@ -83,6 +83,14 @@ def config_paths(settings):
         paths.append(profile)
         paths.extend(_entries(profile))
     return paths
+
+
+def builder_paths():
+    """The builder's own modules: a changed builder can read any package differently."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    return [
+        os.path.join(here, name) for name in os.listdir(here) if name.endswith(".py")
+    ]
 
 
 # The user's configuration that decides visibility and USE, beyond what config_paths covers.
@@ -179,6 +187,7 @@ def collect_inputs(settings, cpvs):
     paths.extend(os.path.join(vdb, cpv) for cpv in cpvs)
     paths.extend(config_paths(settings))
     paths.extend(roots.input_paths(settings))
+    paths.extend(builder_paths())
     return tuple(sorted({stat_input(path) for path in paths}))
 
 
@@ -363,12 +372,14 @@ class _Rematcher:
 def incremental(vardb, meta, inputs, layer):
     """Rebuild from a previous store, reading only what changed since it was built.
 
-    A changed config input, or a store built for another EROOT, means a full build: the
-    profile decides how every USE dependency matches. Roots are cheap and always read again,
+    A changed config input or builder module, or a store built for another EROOT or by another
+    egraph or portage version, means a full build: the profile decides how every USE
+    dependency matches, and the builder and portage how every package reads. Roots are cheap and always read again,
     so a world or set file edit is not a config change.
     """
     settings = vardb.settings
-    if meta.eroot != settings["EROOT"]:
+    built_by = (meta.egraph_version, meta.portage_version)
+    if meta.eroot != settings["EROOT"] or built_by != (__version__, portage.VERSION):
         return full(vardb)
     started = time.time_ns()
     cpvs = _cpvs(vardb)
