@@ -85,6 +85,7 @@ egraph_lib = static_library(
   'src/steve.cpp',
   'src/store.cpp',
   'src/tui.cpp',
+  'src/verify.cpp',
   'src/version.cpp',
   build_info_hpp,
   dependencies: [cli11, json, notcurses],
@@ -222,11 +223,12 @@ unit_tests = executable(
   'tests/test_steve.cpp',
   'tests/test_store.cpp',
   'tests/test_tui.cpp',
+  'tests/test_verify.cpp',
   dependencies: [egraph_dep, catch2],
   cpp_args: '-DEGRAPH_SOURCE_DIR="' + meson.project_source_root() + '"',
 )
 # Tests set egraph's options themselves, whatever the user's environment says.
-egraph_variables = ['EGRAPH_STORE', 'EGRAPH_BUILD', 'EGRAPH_LAYOUT', 'EGRAPH_GLYPHS', 'ROOT',
+egraph_variables = ['EGRAPH_STORE', 'EGRAPH_BUILD', 'EGRAPH_EMERGE', 'EGRAPH_LAYOUT', 'EGRAPH_GLYPHS', 'ROOT',
                     'PORTAGE_CONFIGROOT', 'PORTAGE_OVERRIDE_EPREFIX']
 # Empty rather than unset: environment().unset() leaves an inherited variable in place (portage
 # exports PORTAGE_CONFIGROOT to a package's tests), and CLI11 takes an empty one as absent.

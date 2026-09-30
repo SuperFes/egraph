@@ -125,8 +125,9 @@ struct RemedyInputs {
 // (else empty), then a field per package whose dependencies reject it (a dependent, or the
 // target or what it would pull in): its cpv, then each of its atoms that do, space-separated. In
 // the installed packages' order; then each package new in its slot,
-// "cpv<TAB>new<TAB>cpv<TAB>repo<TAB>puller atom", by cpv, with the package and atom that pull it
-// in, or "@set atom" for the root atom naming it. A slot-operator rebuild is kind rebuild with
+// "cpv<TAB>new<TAB>cpv<TAB>repo<TAB>USE<TAB>puller atom", by cpv, with its use_display and the
+// package and atom that pull it in, or "@set atom" for the root atom naming it: the reason left
+// off when empty, and the USE too when both are. A slot-operator rebuild is kind rebuild with
 // empty flags, then "<TAB>merge atom": the merge that breaks its binding and the bound atom. With
 // table, the merges in merge order instead, each line led by "place<TAB>waits<TAB>", its place from
 // 1 and the places it waits for, space-separated; held lines follow, led by two empty fields. With

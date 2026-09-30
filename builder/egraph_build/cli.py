@@ -10,6 +10,8 @@ EXIT_USAGE = 2
 EXIT_NOT_IMPLEMENTED = 3
 # egraph check: the store differs from a fresh build.
 EXIT_DRIFT = 4
+# --verify: emerge --pretend would merge otherwise.
+EXIT_DIFFERS = 5
 
 
 def parser():

@@ -127,6 +127,28 @@ TEST_CASE("orphans end with a count") {
     CHECK(none.str() == "+ Nothing to remove.\n");
 }
 
+TEST_CASE("a verified plan says emerge agrees, or lists where it does not") {
+    std::ostringstream same;
+    egraph::human_verification(same, {}, plain);
+    CHECK(same.str() == "\n+ emerge --pretend merges the same.\n");
+
+    std::ostringstream differ;
+    egraph::human_verification(differ,
+                               std::vector<std::string>{
+                                   "app-misc/kind-1::r\tkind\trebuild\tnew",
+                                   "app-misc/only-ours-1::r\tegraph\tnew",
+                                   "app-misc/only-theirs-3::r\temerge\tdowngrade",
+                                   "dev-libs/use-1::r\tuse\tUSE=\"x -y\"\tUSE=\"-x -y\"",
+                               },
+                               plain);
+    CHECK(differ.str() == "\n! emerge --pretend merges otherwise:\n"
+                          "  app-misc/kind-1::r         rebuild here, new in emerge\n"
+                          "  app-misc/only-ours-1::r    only here (new)\n"
+                          "  app-misc/only-theirs-3::r  only in emerge (downgrade)\n"
+                          "  dev-libs/use-1::r          USE=\"x -y\" here\n"
+                          "                             USE=\"-x -y\" in emerge\n");
+}
+
 TEST_CASE("updates line up versions and repositories, and count each kind") {
     std::ostringstream out;
     egraph::human_updates(out,

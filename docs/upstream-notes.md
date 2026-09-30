@@ -22,6 +22,14 @@ Each commit passes the resolver suite on its own.
 - A persisted installed graph with stat-based freshness, which removes the per-run vdb walk.
 - Dependency kinds kept as separate graphs, which removes the manufactured cycle (`findings.md`).
 
+## Portage bugs found
+
+- `emerge --usepkg=n` counts as `--usepkg` for `--with-bdeps`' default: the parser stores the
+  `n` as `False` in `myopts`, and `create_depgraph_params` asks only whether the key is there,
+  so build-time dependencies stop weighing and a rebuild bound through DEPEND alone is dropped
+  (`slotops`: `app-misc/ddep` under `-uDN`). `--verify` leaves the option out;
+  `test_verified_updates_agree_with_emerge` runs the real emerge on every scenario.
+
 ## Divergences from portage
 
 Record each case where egraph's answer differs from portage's, with the test that proves which
@@ -34,8 +42,8 @@ is right.
   rebuild would hold its host while freeing another plugin's update).
 - Among equal versions of a cp (`1.0` and `1.00`), emerge picks in directory order: `cp_list`
   sorts stably after `os.listdir`, so the pick depends on the filesystem (CI's container and a
-  tmpfs disagree). egraph's does not; `ties` in `test_queries.py` counts equal versions as one
-  choice when comparing plans.
+  tmpfs disagree). egraph's does not; `ties` in `test_queries.py` and `--verify` count equal
+  versions as one choice when comparing plans.
 - Flags that emerge's `_alnum_sort_key` counts equal (`a07` and `a7`) come out of a set in
   hash order when it shows a package's USE; egraph orders them as text (`test_plan.cpp`, "flags
   sort as emerge's alnum key does").

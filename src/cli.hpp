@@ -4,6 +4,7 @@
 #include "human.hpp"
 #include "job.hpp"
 #include "query.hpp"
+#include "verify.hpp"
 
 #include <cstdint>
 #include <expected>
@@ -28,6 +29,8 @@ enum class Exit : std::uint8_t {
     not_implemented = 3,
     // egraph check: the store differs from a fresh build.
     drift = 4,
+    // --verify: emerge --pretend would merge otherwise.
+    differs = 5,
 };
 
 struct Deps {
@@ -87,6 +90,8 @@ struct Updates {
     bool world = false;
     // As emerge --deep.
     bool deep = false;
+    // The plan held to emerge --pretend's.
+    bool verify = false;
 };
 
 // A request planned as emerge --pretend would merge it.
@@ -101,6 +106,8 @@ struct PlanCommand {
     bool noreplace = false;
     // In merge order, with what each waits for.
     bool table = false;
+    // The plan held to emerge --pretend's.
+    bool verify = false;
 };
 
 enum class ExportFormat : std::uint8_t { dot, json };
@@ -166,6 +173,8 @@ struct Invocation {
     std::optional<std::filesystem::path> store;
     // Run to refresh a stale store; unset, the egraph-build next to egraph, else the one in PATH.
     std::optional<std::string> builder;
+    // Run to verify a plan; unset, the emerge in PATH.
+    std::optional<std::string> emerge;
     bool no_refresh = false;
     // emerge --dynamic-deps: dependency queries read an installed package's dependencies from its
     // ebuild when the same version is still in its repository (the evaluated store).
@@ -246,6 +255,10 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
 [[nodiscard]] std::vector<std::string> pending_command(const Invocation& invocation,
                                                        const std::filesystem::path& output,
                                                        const std::vector<std::string>& entries);
+
+// The emerge command line that pretends to carry out request under the invocation's roots.
+[[nodiscard]] std::vector<std::string> emerge_command(const Invocation& invocation,
+                                                      const EmergeRequest& request);
 
 // Declares every option and subcommand on app; app.parse() then fills invocation, which must
 // outlive the parse.

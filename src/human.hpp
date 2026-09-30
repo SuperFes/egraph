@@ -210,6 +210,10 @@ remedy_lines(std::span<const std::string_view> holders, std::span<const std::str
 void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme,
                    bool table = false);
 
+// merge_differences' records after a plan: that emerge --pretend agrees, or where it does not.
+void human_verification(std::ostream& out, std::span<const std::string> records,
+                        const Theme& theme);
+
 // update_tree_lines' records as a tree under each root set, merges drawn from table (update_lines'
 // table records) with their place and waits, the packages between them plain.
 void human_update_tree(std::ostream& out, std::span<const std::string> table,

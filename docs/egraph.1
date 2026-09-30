@@ -75,6 +75,16 @@ else the one next to
 else the one in
 .BR PATH ).
 .TP
+.BI \-\-emerge " command"
+The
+.B emerge
+that
+.B \-\-verify
+runs (default
+.BR $EGRAPH_EMERGE ,
+else the one in
+.BR PATH ).
+.TP
 .B \-\-no\-refresh
 Answer from a stale store instead of bringing it up to date.
 .TP
@@ -196,6 +206,15 @@ makes for changed USE or IUSE.
 Also the rebuilds
 .B emerge \-\-changed\-use
 makes for changed USE.
+.TP
+.B \-\-verify
+Also run
+.B emerge \-\-pretend
+on the same request, under the same roots and without
+.BR EMERGE_DEFAULT_OPTS ,
+and show where its merge list differs: a package only one of them merges, a different kind of
+merge, or a new package's USE. The differences go to standard error in the lines layout, and
+make the exit status 5.
 .SS plan \fItarget\fR...
 What
 .B emerge \-\-pretend
@@ -247,6 +266,15 @@ makes.
 .TP
 .BR \-t ", " \-\-table
 In merge order, each with the places of the merges it waits for.
+.TP
+.B \-\-verify
+Also run
+.B emerge \-\-pretend
+on the same request, under the same roots and without
+.BR EMERGE_DEFAULT_OPTS ,
+and show where its merge list differs: a package only one of them merges, a different kind of
+merge, or a new package's USE. The differences go to standard error in the lines layout, and
+make the exit status 5.
 .SS export \fR[\fIpackage\fR...]
 Part of the graph, or all of it without packages, for other tools.
 .TP
@@ -295,9 +323,9 @@ standard input).
 Defaults for
 .BR \-\-root ", " \-\-config\-root " and " \-\-eprefix .
 .TP
-.BR EGRAPH_STORE ", " EGRAPH_BUILD ", " EGRAPH_LAYOUT ", " EGRAPH_GLYPHS
+.BR EGRAPH_STORE ", " EGRAPH_BUILD ", " EGRAPH_EMERGE ", " EGRAPH_LAYOUT ", " EGRAPH_GLYPHS
 Defaults for
-.BR \-\-store ", " \-\-builder ", " \-\-layout " and " \-\-glyphs .
+.BR \-\-store ", " \-\-builder ", " \-\-emerge ", " \-\-layout " and " \-\-glyphs .
 .TP
 .B NO_COLOR
 When set and not empty, no colour unless
@@ -348,6 +376,10 @@ without Notcurses.
 .B 4
 .B check
 found the store differing from a fresh build.
+.TP
+.B 5
+.B \-\-verify
+found emerge merging otherwise.
 .SH EXAMPLES
 .TP
 .B egraph rdeps dev\-libs/openssl

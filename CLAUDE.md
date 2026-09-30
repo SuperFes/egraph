@@ -43,6 +43,7 @@ meson compile -C build                                # egraph, and build/egraph
 meson install -C build --destdir /tmp/root           # also /etc/portage hooks (-Dportage_hooks)
 build/egraph orphans                                  # works in place; store in ~/.cache/egraph
 printf 'updates -N\norphans\n' | build/egraph shell      # many commands, one session
+build/egraph updates -D --verify                      # the plan beside emerge --pretend's
 build/egraph                                          # interactive: TUI on a terminal, : for commands
 meson test -C build --print-errorlogs                 # Catch2 + pytest
 meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false ...  # plus the fork options
@@ -90,6 +91,8 @@ evaluated store's bits.
 `test_orphans.py` holds `egraph orphans` to it and `test_why.py` checks every `why` chain against
 depclean's recorded parents, on every scenario with and without build-time deps and with and
 without dynamic deps (the `dynamic_deps` fixture); `test_system.py` does both on the live system.
+`test_verify.py` runs the real emerge binary on each playground, through a wrapper script
+pointing it there, for `--verify`.
 Test stores come from `conftest.write_stores`, which writes the evaluated store beside the
 installed one as a builder run does. Scenario packages get an accepted
 KEYWORDS in `conftest.py`, because depclean's `||` choices depend on visibility and egraph assumes

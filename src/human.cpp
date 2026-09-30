@@ -562,6 +562,43 @@ void human_orphans(std::ostream& out, std::span<const std::string> records, cons
         << '\n';
 }
 
+void human_verification(std::ostream& out, std::span<const std::string> records,
+                        const Theme& theme) {
+    const auto& paint = theme.paint;
+    out << '\n';
+    if (records.empty()) {
+        out << paint(theme.glyph().good, Tone::good) << ' '
+            << paint("emerge --pretend merges the same.", Tone::good) << '\n';
+        return;
+    }
+    out << paint(theme.glyph().broken, Tone::bad) << ' '
+        << paint("emerge --pretend merges otherwise:", Tone::bad) << '\n';
+    const auto rows = split_all(records);
+    std::size_t width = 0;
+    for (const auto& row : rows) {
+        width = std::max(width, row.front().size());
+    }
+    for (const auto& row : rows) {
+        const auto key = row.front();
+        const auto colons = key.find("::");
+        out << "  " << paint_cpv(key.substr(0, colons), paint)
+            << paint(key.substr(colons), Tone::repo) << std::string(width - key.size() + 2, ' ');
+        const auto what = row.at(1);
+        if (what == "egraph") {
+            out << paint(std::format("only here ({})", row.at(2)), Tone::note);
+        } else if (what == "emerge") {
+            out << paint(std::format("only in emerge ({})", row.at(2)), Tone::note);
+        } else if (what == "kind") {
+            out << paint(std::format("{} here, {} in emerge", row.at(2), row.at(3)), Tone::note);
+        } else {
+            out << paint(row.at(2), Tone::use) << paint(" here", Tone::note) << '\n'
+                << std::string(width + 4, ' ') << paint(row.at(3), Tone::use)
+                << paint(" in emerge", Tone::note);
+        }
+        out << '\n';
+    }
+}
+
 std::string holder_note(std::span<const std::string_view> dependents,
                         std::span<const std::string_view> sets) {
     std::vector<std::string_view> others;

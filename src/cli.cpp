@@ -514,6 +514,39 @@ Exit fail(std::ostream& err, std::string_view message) {
     return Exit::failure;
 }
 
+// Holds plan to what emerge --pretend merges for request, and shows where they differ.
+Exit verify(const Invocation& invocation, std::string_view command, const EmergeRequest& request,
+            const Evaluated& evaluated, const Plan& plan, std::ostream& out, std::ostream& err) {
+    const auto style = output(invocation);
+    out << std::flush;
+    const auto printed = output_of(emerge_command(invocation, request));
+    if (!printed) {
+        // emerge explains itself at length; its last lines say why.
+        constexpr std::size_t shown = 20;
+        std::string_view text = printed.error();
+        auto start = text.size();
+        for (std::size_t lines = 0; lines < shown && start > 0; ++lines) {
+            start = text.rfind('\n', start - 1);
+            if (start == std::string_view::npos) {
+                start = 0;
+                break;
+            }
+        }
+        err << "egraph: " << command << ": emerge --pretend failed:\n"
+            << text.substr(start == 0 ? 0 : start + 1) << '\n';
+        return Exit::failure;
+    }
+    const auto differences =
+        merge_differences(planned_merges(evaluated, plan), parse_pretend(*printed));
+    if (style.human) {
+        human_verification(out, differences, style.theme);
+    } else if (!differences.empty()) {
+        err << "egraph: " << command << ": emerge --pretend merges otherwise:\n";
+        write_lines(err, differences);
+    }
+    return differences.empty() ? Exit::ok : Exit::differs;
+}
+
 Exit edges(const std::vector<std::string>& packages, bool reverse, bool possible, Session& session,
            const Invocation& invocation, std::ostream& out, std::ostream& err) {
     if (possible && !invocation.dynamic_deps) {
@@ -701,6 +734,18 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
                                                  .roots = true,
                                                  .deep = command.deep}
                                        : Targets{.scope = {}, .roots = false, .deep = command.deep};
+    const auto verified = [&] {
+        if (!command.verify) {
+            return Exit::ok;
+        }
+        const EmergeRequest request{.targets = {command.world ? "@world" : "@installed"},
+                                    .update = true,
+                                    .deep = command.deep,
+                                    .rebuilds = command.rebuilds,
+                                    .dynamic_deps = invocation.dynamic_deps};
+        return verify(invocation, Updates::name, request, evaluated,
+                      plan_updates(*store, evaluated, command.rebuilds, targets), out, err);
+    };
     if (command.tree) {
         const auto tree = update_tree_lines(*store, evaluated, (*depclean)->get().kept,
                                             command.rebuilds, targets);
@@ -711,7 +756,7 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
         } else {
             write_lines(out, tree);
         }
-        return Exit::ok;
+        return verified();
     }
     std::optional<RemedyInputs> remedies;
     if (command.held) {
@@ -736,7 +781,7 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
     } else {
         write_lines(out, lines);
     }
-    return Exit::ok;
+    return verified();
 }
 
 // The request the targets name, the cps only the repositories know evaluated first.
@@ -828,7 +873,17 @@ Exit execute(const PlanCommand& command, Session& session, const Invocation& inv
     } else {
         write_lines(out, lines);
     }
-    return Exit::ok;
+    if (!command.verify) {
+        return Exit::ok;
+    }
+    const EmergeRequest emerge_request{.targets = command.targets,
+                                       .update = command.update,
+                                       .deep = command.deep,
+                                       .noreplace = command.noreplace,
+                                       .rebuilds = command.rebuilds,
+                                       .dynamic_deps = invocation.dynamic_deps};
+    return verify(invocation, PlanCommand::name, emerge_request, evaluated,
+                  plan_updates(*store, evaluated, command.rebuilds, targets), out, err);
 }
 
 Exit execute(const Why& command, Session& session, const Invocation& invocation, std::ostream& out,
@@ -1074,6 +1129,10 @@ void configure(CLI::App& app, Invocation& invocation) {
                    "egraph, else egraph-build in PATH)")
         ->type_name("COMMAND")
         ->envname("EGRAPH_BUILD");
+    app.add_option("--emerge", invocation.emerge,
+                   "emerge command that --verify runs (default: emerge in PATH)")
+        ->type_name("COMMAND")
+        ->envname("EGRAPH_EMERGE");
     app.add_flag("--no-refresh", invocation.no_refresh,
                  "Answer from a stale store instead of rebuilding it");
     app.add_option("--layout", invocation.layout,
@@ -1187,6 +1246,9 @@ void configure(CLI::App& app, Invocation& invocation) {
             rebuilds = rebuilds == UseRebuilds::all ? rebuilds : UseRebuilds::changed;
         },
         "Also the rebuilds emerge --changed-use makes for changed USE");
+    updates_cmd->add_flag_callback(
+        "--verify", [&invocation] { std::get<Updates>(invocation.command).verify = true; },
+        "Also ask emerge --pretend, and show where its merge list differs");
 
     CLI::App* plan_cmd = add_dynamic_deps(add_command<PlanCommand>(
         app, invocation, "What emerge --pretend would merge for a request"));
@@ -1219,6 +1281,9 @@ void configure(CLI::App& app, Invocation& invocation) {
     plan_cmd->add_flag_callback(
         "-t,--table", [&invocation] { std::get<PlanCommand>(invocation.command).table = true; },
         "In merge order, each with the places of the merges it waits for");
+    plan_cmd->add_flag_callback(
+        "--verify", [&invocation] { std::get<PlanCommand>(invocation.command).verify = true; },
+        "Also ask emerge --pretend, and show where its merge list differs");
 
     CLI::App* export_cmd = add_command<Export>(app, invocation, "Export part of the graph");
     add_field(export_cmd, invocation, "--format", &Export::format, "Output format")
@@ -1337,6 +1402,21 @@ std::vector<std::string> builder_command(const Invocation& invocation, std::stri
                                   path.string()};
     add_roots(argv, invocation);
     argv.insert(argv.end(), cps.begin(), cps.end());
+    return argv;
+}
+
+std::vector<std::string> emerge_command(const Invocation& invocation,
+                                        const EmergeRequest& request) {
+    std::vector<std::string> argv{invocation.emerge.value_or("emerge"), "--root",
+                                  invocation.root.string()};
+    if (invocation.config_root) {
+        argv.insert(argv.end(), {"--config-root", invocation.config_root->string()});
+    }
+    if (invocation.eprefix) {
+        argv.insert(argv.end(), {"--prefix", invocation.eprefix->string()});
+    }
+    const auto arguments = pretend_arguments(request);
+    argv.insert(argv.end(), arguments.begin(), arguments.end());
     return argv;
 }
 

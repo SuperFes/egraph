@@ -383,8 +383,8 @@ use, egraph schedules the merges itself.
     against the stores, emerge's greedy slots, reinstalls and `--noreplace`, backtracking for
     what an argument must merge, and `-uD` recursing only from the arguments. Equal to `emerge -p`,
     `-pu`, `-puD` and `-pn` for 1660 requests over every scenario but four `-uD` atoms in
-    `slotops` (cascading slot-operator rebuilds outside the reach, which emerge drops), pinned
-    for 16c. `--oneshot` only matters to the actions, so it moves to 16f.
+    `slotops` (cascading slot-operator rebuilds outside the reach, which emerge drops), settled
+    in 16c. `--oneshot` only matters to the actions, so it moves to 16f.
   - 16b2 (done): a cp outside the stores evaluated by the builder on demand: the evaluated
     store lists every repository cp (format 5), so names resolve as emerge resolves them (the one
     category outside virtual and acct-* beside the others), and `plan` has `egraph-build
@@ -397,8 +397,17 @@ use, egraph schedules the merges itself.
     profile forces or masks in parentheses (the evaluated store keeps both, format 6). In
     `updates` and `plan` lines, on its own line in human output, and in the living app's plan.
     Equal to emerge's own `_display_use` for every new package of every compared plan.
-- 16c: `--verify`: the same request through `emerge -p`, the merge lists diffed (versions, USE,
-  new packages); every difference fixed or recorded in `upstream-notes.md`.
+- 16c (done): `--verify` on `updates` and `plan`: the same request through the real
+  `emerge --pretend --verbose` (without EMERGE_DEFAULT_OPTS), its merge list read back and
+  compared: what is merged from which repository, the kind of merge, and a new package's USE,
+  equal versions counting as one. Differences follow the plan (on standard error in the lines
+  layout), with exit status 5.
+  `test_verify.py` holds it to the emerge binary on every scenario. That caught
+  `--usepkg=n` turning off `--with-bdeps`' default, a portage bug (`upstream-notes.md`). It also
+  settled the four `slotops` atoms pinned in 16b1 as egraph's error: under `-uD`, emerge
+  rebuilds outside the reach only for a merge that breaks a binding within it, and drops the
+  merge otherwise. On the dev box, `updates`, alone and with `-D`, `--world` and `-N`, agrees
+  with emerge, up to 47 merges.
 - 16d: blockers, weak and strong, as a query and weighed by the plan (formerly step 17).
 - 16e: what makes emerge refuse: REQUIRED_USE and invalid metadata on candidates; a needed USE
   change explained as autounmask would, the `package.use` line offered and written only on yes.

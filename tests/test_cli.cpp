@@ -33,6 +33,24 @@ TEST_CASE("a package argument lands in its command") {
     CHECK_FALSE(invocation.builder.has_value());
 }
 
+TEST_CASE("emerge pretends under the same roots") {
+    const egraph::EmergeRequest request{.targets = {"@world"}, .update = true};
+    const auto with = [&request](std::vector<std::string> head) {
+        const auto rest = egraph::pretend_arguments(request);
+        head.insert(head.end(), rest.begin(), rest.end());
+        return head;
+    };
+    egraph::Invocation invocation;
+    CHECK(egraph::emerge_command(invocation, request) == with({"emerge", "--root", "/"}));
+    invocation.emerge = "/opt/emerge";
+    invocation.root = "/mnt/gentoo";
+    invocation.config_root = "/mnt/config";
+    invocation.eprefix = "/prefix";
+    CHECK(egraph::emerge_command(invocation, request) ==
+          with({"/opt/emerge", "--root", "/mnt/gentoo", "--config-root", "/mnt/config", "--prefix",
+                "/prefix"}));
+}
+
 TEST_CASE("roots are passed through") {
     const auto invocation = parse("--root /mnt/target --config-root /mnt/config broken");
     CHECK(invocation.root == std::filesystem::path{"/mnt/target"});
@@ -134,7 +152,17 @@ TEST_CASE("plan takes emerge's targets and its selection options") {
     CHECK(deep.rebuilds == egraph::UseRebuilds::all);
     CHECK(plan("plan -n foo").noreplace);
     CHECK(plan("plan -uU foo").rebuilds == egraph::UseRebuilds::changed);
+    CHECK_FALSE(plain.verify);
+    CHECK(plan("plan --verify foo").verify);
     CHECK_THROWS(parse("plan"));
+}
+
+TEST_CASE("updates and plan can be verified against emerge, the one in PATH by default") {
+    CHECK_FALSE(std::get<egraph::Updates>(parse("updates").command).verify);
+    CHECK(std::get<egraph::Updates>(parse("updates --verify -D").command).verify);
+    CHECK_FALSE(parse("updates").emerge.has_value());
+    CHECK(parse("--emerge /opt/emerge updates --verify").emerge == "/opt/emerge");
+    CHECK_THROWS(parse("orphans --verify"));
 }
 
 TEST_CASE("dependency queries take emerge's --dynamic-deps, on by default") {

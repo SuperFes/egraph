@@ -85,7 +85,13 @@ def portage_environment():
         importlib.reload(portage.data)
     portage._internal_caller = True
     # The tests choose egraph's store, builder and layout, whatever the user's environment says.
-    for variable in ("EGRAPH_STORE", "EGRAPH_BUILD", "EGRAPH_LAYOUT", "EGRAPH_GLYPHS"):
+    for variable in (
+        "EGRAPH_STORE",
+        "EGRAPH_BUILD",
+        "EGRAPH_EMERGE",
+        "EGRAPH_LAYOUT",
+        "EGRAPH_GLYPHS",
+    ):
         os.environ.pop(variable, None)
     # Never read the running system's config by accident.
     portage._disable_legacy_globals()
