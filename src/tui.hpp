@@ -10,8 +10,10 @@
 #include "evaluated.hpp"
 #include "graph.hpp"
 #include "human.hpp"
+#include "plan.hpp"
 #include "pressure.hpp"
 #include "query.hpp"
+#include "remedy.hpp"
 #include "screen.hpp"
 #include "steve.hpp"
 #include "store.hpp"
@@ -67,8 +69,9 @@ struct Link {
 // An alert is a note that needs attention. A missing row is an unsatisfied dependency, its text
 // rendered as portage does and its kinds in link.kinds; a replaced row is a build-time one whose
 // package is now installed at another version or slot. An update row is what emerge -u would do
-// to the page package; an unmatched row a dependency the ebuild would add with flags toggled that
-// nothing installed satisfies, its atom in link.atom.
+// to the page package, a held row the update the plan holds back; an unmatched row a dependency
+// the ebuild would add with flags toggled that nothing installed satisfies, its atom in
+// link.atom. A remedy row is a line of the commands past a held update.
 enum class RowType : std::uint8_t {
     heading,
     note,
@@ -79,7 +82,9 @@ enum class RowType : std::uint8_t {
     root,
     path,
     update,
-    unmatched
+    held,
+    unmatched,
+    remedy
 };
 
 // A page row. Links at depth 0 are the page package's own; unfolding a link puts its links,
@@ -103,8 +108,11 @@ struct Row {
     std::vector<std::uint32_t> instead;
     // For links and unmatched rows the ebuild would add: the flags to toggle, "+flag" or "-flag".
     std::string flags;
-    // For an update row.
+    // For an update or held row; an update row's text names the merge a slot-operator rebuild
+    // is for.
     std::optional<PendingUpdate> update;
+    // For a remedy row, its label padded to the others'.
+    std::optional<RemedyLine> remedy;
 };
 
 // Sets each row's last and rails, walking up from the bottom: a level's line continues past a
@@ -312,9 +320,16 @@ class App {
         return !evaluated().packages.empty() &&
                evaluated().packages.size() == installed().packages.size();
     }
+    // What emerge -uD would merge for the package, as the plan weighs it.
     [[nodiscard]] const std::optional<PendingUpdate>& update_of(std::uint32_t package) const {
         return updates_.at(package);
     }
+    // The package's update the plan holds back, as an index into plan().held and remedies().
+    [[nodiscard]] std::optional<std::uint32_t> held_of(std::uint32_t package) const {
+        return held_.at(package);
+    }
+    [[nodiscard]] const Plan& plan() const { return plan_; }
+    [[nodiscard]] const std::vector<Remedy>& remedies() const { return remedies_; }
     [[nodiscard]] const List& list() const { return list_; }
     // Pages opened from the list or the check view, the one showing last.
     [[nodiscard]] const std::vector<Page>& pages() const { return pages_; }
@@ -434,6 +449,11 @@ class App {
     std::vector<std::size_t> broken_at_run_time_;
     std::vector<Masking> masking_;
     std::vector<std::optional<PendingUpdate>> updates_;
+    // Per package, what the merge a slot-operator rebuild is for; empty otherwise.
+    std::vector<std::string> rebuilt_for_;
+    Plan plan_;
+    std::vector<Remedy> remedies_;
+    std::vector<std::optional<std::uint32_t>> held_;
     bool build_deps_ = true;
     Kept kept_;
     std::vector<std::optional<std::uint32_t>> root_of_;
@@ -565,19 +585,28 @@ inline Span update_glyph(const PendingUpdate& update, const Glyphs& glyph) {
 }
 
 // A pending update after a package in the list: the version it moves to, or that it is rebuilt.
+// A held one says so, after any version it falls back to.
 inline std::vector<Span> update_mark(const App& app, std::uint32_t package, const Glyphs& glyph) {
     const auto& update = app.update_of(package);
-    if (!update) {
-        return {};
-    }
-    const auto& evaluated = app.evaluated();
-    const auto version = split_cpv(evaluated.string(evaluated.candidates.at(update->target).cpv));
-    return {{"  ", {}},
+    const auto held = app.held_of(package);
+    std::vector<Span> spans;
+    if (update) {
+        const auto& evaluated = app.evaluated();
+        const auto version =
+            split_cpv(evaluated.string(evaluated.candidates.at(update->target).cpv));
+        spans = {
+            {"  ", {}},
             update_glyph(*update, glyph),
             update->kind == UpdateKind::rebuild
                 ? Span{" rebuild", tone_pen(Tone::use)}
                 : Span{std::format(" {}", version.version),
                        tone_pen(update->kind == UpdateKind::upgrade ? Tone::good : Tone::bad)}};
+    }
+    if (held) {
+        spans.push_back({"  ", {}});
+        spans.push_back({std::format("{} held", glyph.held), tone_pen(Tone::bad)});
+    }
+    return spans;
 }
 
 // A USE rebuild's flags as emerge shows them, those whose state changed in the use tone.
@@ -763,14 +792,21 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
             put_spans(screen, at, 0, spans, size.cols);
             break;
         }
-        case RowType::update: {
+        case RowType::update:
+        case RowType::held: {
             if (!row.update) {
                 break;
             }
             const auto& update = *row.update;
             const auto& target = app.evaluated().candidates.at(update.target);
-            std::vector<Span> spans{{"   ", {}}, update_glyph(update, glyph)};
-            if (update.kind == UpdateKind::rebuild) {
+            std::vector<Span> spans{{"   ", {}},
+                                    row.type == RowType::held
+                                        ? Span{std::string{glyph.held}, tone_pen(Tone::bad)}
+                                        : update_glyph(update, glyph)};
+            if (update.kind == UpdateKind::rebuild && !row.text.empty()) {
+                spans.push_back({" rebuild for ", tone_pen(Tone::use)});
+                spans.push_back({row.text, tone_pen(Tone::note)});
+            } else if (update.kind == UpdateKind::rebuild) {
                 spans.push_back({update.flags.empty() ? " rebuild, its own ebuild being masked"
                                                       : " rebuild for",
                                  tone_pen(Tone::use)});
@@ -787,6 +823,14 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
             put_spans(screen, at, 0, spans, size.cols);
             break;
         }
+        case RowType::remedy:
+            if (row.remedy) {
+                put_spans(screen, at, 3,
+                          {{row.remedy->label, tone_pen(Tone::heading)},
+                           {row.remedy->text, tone_pen(row.remedy->tone)}},
+                          size.cols);
+            }
+            break;
         case RowType::unmatched: {
             std::vector<Span> spans{{"   ", {}}};
             for (std::size_t k = 0; k < kind_shorthands.size(); ++k) {

@@ -7,9 +7,11 @@
 #include <array>
 #include <cstdint>
 #include <iosfwd>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace egraph {
 
@@ -181,6 +183,26 @@ void human_broken(std::ostream& out, std::span<const std::string> broken,
 
 void human_soname(std::ostream& out, std::span<const std::string> records, std::string_view soname,
                   bool providers, const Theme& theme);
+
+// A held update's holder as a sentence: the installed packages depending on it, and the root
+// sets ("@selected", "@system") whose atoms select it.
+[[nodiscard]] std::string holder_note(std::span<const std::string_view> dependents,
+                                      std::span<const std::string_view> sets);
+
+// One line of the commands past a held update, the label on the first line of each remedy.
+struct RemedyLine {
+    std::string label;
+    std::string text;
+    Tone tone = Tone::note;
+};
+
+// The commands past a held update to target (a cpv): with frees, removing the holders (cpvs),
+// deselecting their world atoms first, then the update, naming the other held packages it
+// frees; with nodeps, the update without its dependencies.
+[[nodiscard]] std::vector<RemedyLine>
+remedy_lines(std::span<const std::string_view> holders, std::span<const std::string_view> deselect,
+             std::string_view target, const std::optional<std::vector<std::string_view>>& frees,
+             bool nodeps);
 
 // updates records: one line per package, its versions or the flags it would be rebuilt for. With
 // table, records from update_lines' table: in merge order, each led by its place and followed by

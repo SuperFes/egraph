@@ -162,9 +162,12 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   depclean runs once at start and again on `b`.
 - It opens both stores and reads dependencies as the queries do (`--dynamic-deps`, y by
   default), with depclean passing over masked packages as `orphans` does. Rows with a pending
-  update show the version it moves to, or that it is rebuilt, and `u` shows only those, as
-  `egraph updates -N` lists them. A page says what the update is (the target and repository, or
-  the flags a USE rebuild is for), and after what the package depends on and is needed by, what
+  update show the version it moves to, or that it is rebuilt, and those it holds back say so,
+  and `u` shows only those, as `egraph updates -N --held` weighs them (the plan, roadmap 12d2).
+  A page says what the update is (the target and repository, the flags a USE rebuild is for, or
+  the merge a slot-operator rebuild is for); a held one's page lists its holders as links, with
+  the atoms that hold it and what keeps each, then the remedies' commands as `--held` prints
+  them. After what the package depends on and is needed by, what
   its ebuild would depend on with flags toggled, and whose ebuilds would depend on it, each
   marked with the toggles (`deps` and `rdeps --possible`); what nothing installed satisfies is
   listed but cannot be opened.

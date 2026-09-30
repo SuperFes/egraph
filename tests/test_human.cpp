@@ -216,8 +216,8 @@ TEST_CASE("a held update's holders say what keeps them, and its remedies follow 
           "      needed by a/kwin-1, a/qemu-1, a/gtk-4 and 1 more; kept by @system\n"
           "    x/pop-1   =x/clc-22*\n"
           "      nothing depends on it or keeps it\n"
-          "    to keep them:   emerge -1 --nodeps =x/clc-23\n"
-          "                    which a later emerge -uD undoes\n"
+          "    to keep them: emerge -1 --nodeps =x/clc-23\n"
+          "                  which a later emerge -uD undoes\n"
           "H x/own  1  > 2   ::gentoo\n"
           "    x/own-2  x/missing\n"
           "\n3 held\n");

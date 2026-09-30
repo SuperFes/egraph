@@ -245,14 +245,97 @@ std::vector<Row> unsatisfied_rows(const Store& store, std::uint32_t package, boo
     return rows;
 }
 
-// What emerge -u would do to package.
-std::vector<Row> update_rows(const std::optional<PendingUpdate>& update) {
+// What emerge -uD would do to package, with the merge a slot-operator rebuild is for.
+std::vector<Row> update_rows(const std::optional<PendingUpdate>& update, std::string rebuilt_for) {
     if (!update) {
         return {};
     }
-    auto row = text_row(RowType::update, "");
+    auto row = text_row(RowType::update, std::move(rebuilt_for));
     row.update = update;
     return {text_row(RowType::heading, "Update"), std::move(row), text_row(RowType::note, "")};
+}
+
+// The update the plan holds back, each holder as a link with the atoms that hold it and what
+// keeps it, then the commands past it.
+std::vector<Row> held_rows(const Store& store, const Graph& graph, const Evaluated& evaluated,
+                           const Plan& plan, const Remedy& remedy) {
+    const auto& back = plan.held.at(remedy.held);
+    const auto dependents = links(store, graph, back.package, true);
+    auto held = text_row(RowType::held, "");
+    held.update = back.wanted;
+    std::vector<Row> rows{text_row(RowType::heading, "Held back"), std::move(held)};
+    const auto cpv = [&store](std::uint32_t id) { return store.string(store.packages.at(id).cpv); };
+    // Reasons name a member by its cpv; a rebuild's shares its installed package's.
+    const auto member = [&](const Member& found) {
+        return found.candidate ? evaluated.string(evaluated.candidates.at(found.index).cpv)
+                               : cpv(found.index);
+    };
+    std::vector<std::string_view> holders;
+    std::vector<std::string_view> deselect;
+    for (const auto& holder : remedy.holders) {
+        std::string atoms;
+        for (const auto& reason : back.reasons) {
+            if (member(reason.member) == cpv(holder.package)) {
+                atoms += std::format("{}{}", atoms.empty() ? "" : " ", reason.atom);
+            }
+        }
+        auto link = link_row({.package = holder.package, .atom = 0, .choice = false}, 0, true);
+        // The kinds its installed dependencies name the held package through.
+        for (const auto& found : dependents) {
+            if (found.package == holder.package) {
+                for (std::size_t k = 0; k < found.kinds.size(); ++k) {
+                    link.link.kinds.at(k) = link.link.kinds.at(k) || found.kinds.at(k);
+                }
+            }
+        }
+        link.text = std::move(atoms);
+        rows.push_back(std::move(link));
+        std::vector<std::string_view> needing;
+        needing.reserve(holder.dependents.size());
+        for (const auto dependent : holder.dependents) {
+            needing.push_back(cpv(dependent));
+        }
+        std::vector<std::string> sets;
+        for (const auto root : holder.roots) {
+            const auto& atom = store.roots.at(root);
+            sets.push_back(std::format("@{}", store.string(atom.set)));
+            if (store.string(atom.set) == "selected") {
+                deselect.push_back(store.string(atom.atom));
+            }
+        }
+        const std::vector<std::string_view> set_views(sets.begin(), sets.end());
+        rows.push_back(text_row(RowType::note, holder_note(needing, set_views)));
+        holders.push_back(cpv(holder.package));
+    }
+    // The rest of what holds it: its own dependencies, or those of what it would pull in.
+    for (const auto& reason : back.reasons) {
+        const auto name = member(reason.member);
+        if (std::ranges::find(holders, name) == holders.end()) {
+            rows.push_back(text_row(RowType::note, std::format("{}  {}", name, reason.atom)));
+        }
+    }
+    std::optional<std::vector<std::string_view>> frees;
+    if (remedy.removable) {
+        frees.emplace();
+        for (const auto freed : remedy.frees) {
+            frees->push_back(cpv(plan.held.at(freed).package));
+        }
+    }
+    const auto lines = remedy_lines(
+        holders, deselect, evaluated.string(evaluated.candidates.at(back.wanted.target).cpv), frees,
+        remedy.nodeps);
+    std::size_t width = 0;
+    for (const auto& line : lines) {
+        width = std::max(width, line.label.size() + 1);
+    }
+    for (auto line : lines) {
+        line.label.resize(width, ' ');
+        auto row = text_row(RowType::remedy, "");
+        row.remedy = std::move(line);
+        rows.push_back(std::move(row));
+    }
+    rows.push_back(text_row(RowType::note, ""));
+    return rows;
 }
 
 // A possible dependency's toggles as the user would set them: "+flag" or "-flag".
@@ -499,13 +582,35 @@ void App::index() {
     }
     masking_.clear();
     updates_.assign(count, std::nullopt);
+    rebuilt_for_.assign(count, {});
+    held_.assign(count, std::nullopt);
+    plan_ = {};
+    remedies_.clear();
     if (has_evaluated()) {
         masking_.reserve(count);
         for (std::uint32_t id = 0; id < count; ++id) {
             const auto& pkg = evaluated().packages.at(id);
             masking_.push_back(
                 {.masked = dynamic_deps_ ? pkg.masked : pkg.vdb_masked, .visible = pkg.visible});
-            updates_.at(id) = pending_update(evaluated(), id, shown_rebuilds);
+        }
+        plan_ = plan_updates(store, evaluated(), shown_rebuilds);
+        for (const auto& merge : plan_.merges) {
+            if (!merge.replaces) {
+                continue;
+            }
+            updates_.at(*merge.replaces) =
+                PendingUpdate{.kind = merge.kind, .target = merge.candidate, .flags = merge.flags};
+            if (const auto& why = merge.rebuilt_for) {
+                const auto member =
+                    why->member.candidate
+                        ? evaluated().string(evaluated().candidates.at(why->member.index).cpv)
+                        : store.string(store.packages.at(why->member.index).cpv);
+                rebuilt_for_.at(*merge.replaces) = std::format("{} {}", member, why->atom);
+            }
+        }
+        remedies_ = egraph::remedies(store, evaluated(), graph, plan_, shown_rebuilds, {});
+        for (std::uint32_t i = 0; i < plan_.held.size(); ++i) {
+            held_.at(plan_.held.at(i).package) = i;
         }
     }
 }
@@ -536,7 +641,7 @@ void App::filter() {
     for (std::uint32_t id = 0; id < folded_.size(); ++id) {
         if ((list_.only == Only::orphans && kept_.packages.at(id)) ||
             (list_.only == Only::broken && broken(id) == 0) ||
-            (list_.only == Only::updates && !updates_.at(id))) {
+            (list_.only == Only::updates && !updates_.at(id) && !held_.at(id))) {
             continue;
         }
         if (folded_.at(id).find(query) != std::string::npos) {
@@ -549,7 +654,12 @@ void App::filter() {
 void App::open(std::uint32_t package) {
     Page page{
         .package = package, .rows = kept_rows(store(), kept_, package, build_deps_), .cursor = {}};
-    std::ranges::move(update_rows(updates_.at(package)), std::back_inserter(page.rows));
+    std::ranges::move(update_rows(updates_.at(package), rebuilt_for_.at(package)),
+                      std::back_inserter(page.rows));
+    if (const auto held = held_.at(package)) {
+        std::ranges::move(held_rows(store(), graph_.get(), evaluated(), plan_, remedies_.at(*held)),
+                          std::back_inserter(page.rows));
+    }
     std::ranges::move(unsatisfied_rows(store(), package, build_deps_),
                       std::back_inserter(page.rows));
     std::ranges::move(page_rows(store(), graph_.get(), package), std::back_inserter(page.rows));

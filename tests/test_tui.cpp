@@ -1,6 +1,7 @@
 #include "tui.hpp"
 
 #include "store_writer.hpp"
+#include "system_builder.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -1511,4 +1512,71 @@ TEST_CASE("a command's errors and warnings show in a dialog") {
     FakeScreen screen{12, 60, {}};
     egraph::tui::draw(screen, app, ascii);
     CHECK(contains(screen.text(), "the command printed nothing"));
+}
+
+TEST_CASE("held updates show in the list, and a held package's page offers its remedies") {
+    // skin holds rgb, and only world keeps it; kwin holds lazy, and panel needs kwin.
+    auto system = egraph::test::make_system(
+        {{.cpv = "app-misc/kwin-1", .deps = {{"RDEPEND", "<dev-libs/lazy-2"}}},
+         {.cpv = "app-misc/panel-1", .deps = {{"RDEPEND", "app-misc/kwin"}}},
+         {.cpv = "app-misc/skin-1", .deps = {{"RDEPEND", "<dev-libs/rgb-2"}}},
+         {.cpv = "dev-libs/lazy-1"},
+         {.cpv = "dev-libs/rgb-1"},
+         {.cpv = "dev-libs/up-1"}},
+        {{.cpv = "dev-libs/lazy-1"},
+         {.cpv = "dev-libs/lazy-2"},
+         {.cpv = "dev-libs/rgb-1"},
+         {.cpv = "dev-libs/rgb-2"},
+         {.cpv = "dev-libs/up-1"},
+         {.cpv = "dev-libs/up-2"}},
+        {"app-misc/panel", "app-misc/skin"});
+    egraph::tui::App app{egraph::Stores{.installed = std::move(system.store),
+                                        .evaluated = std::move(system.evaluated)},
+                         true};
+    FakeScreen screen{30, 120, {}};
+    app.handle(character(U'u'));
+    CHECK(app.list().shown == std::vector<std::uint32_t>{3, 4, 5});
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "dev-libs/lazy-1  H held"));
+    CHECK(contains(screen.text(), "dev-libs/up-1  U 2"));
+
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    CHECK(app.pages().back().package == 4);
+    egraph::tui::draw(screen, app, ascii);
+    auto text = screen.text();
+    CHECK(contains(text, "Held back"));
+    CHECK(contains(text, "   H upgrade to dev-libs/rgb-2  ::test_repo"));
+    CHECK(contains(text, " > R....   app-misc/skin-1                           <dev-libs/rgb-2"));
+    CHECK(contains(text, "nothing depends on it; only @selected keeps it"));
+    CHECK(contains(text, "   to remove it: emerge --deselect app-misc/skin"));
+    CHECK(contains(text, "                 emerge -C =app-misc/skin-1"));
+    CHECK(contains(text, "                 emerge -1 =dev-libs/rgb-2"));
+    CHECK(contains(text, "   to keep it:   emerge -1 --nodeps =dev-libs/rgb-2"));
+
+    // The holder is a link to its own page.
+    const auto& page = app.pages().back();
+    const auto holder = std::ranges::find_if(page.rows, [](const egraph::tui::Row& row) {
+        return row.type == RowType::link && row.link.package == 2;
+    });
+    REQUIRE(holder != page.rows.end());
+    while (app.pages().back().cursor.at !=
+           static_cast<std::size_t>(holder - app.pages().back().rows.begin())) {
+        app.handle(key(KeyKind::down));
+    }
+    app.handle(key(KeyKind::enter));
+    CHECK(app.pages().back().package == 2);
+
+    // A holder something else needs is only named.
+    app.handle(key(KeyKind::escape));
+    app.handle(key(KeyKind::escape));
+    app.handle(key(KeyKind::up));
+    app.handle(key(KeyKind::enter));
+    CHECK(app.pages().back().package == 3);
+    egraph::tui::draw(screen, app, ascii);
+    text = screen.text();
+    CHECK(contains(text, "needed by app-misc/panel-1"));
+    CHECK_FALSE(contains(text, "to remove"));
+    CHECK(contains(text, "to keep it:"));
 }

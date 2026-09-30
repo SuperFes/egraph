@@ -226,8 +226,7 @@ an update back, rather than skipping it), it stays, recorded in `upstream-notes.
   update falls back to the best visible version in the slot every such atom accepts. A slot
   operator does not hold: emerge rebuilds the dependent instead. `updates --held` lists what is
   held and by whom. Compared with `emerge -puD @installed` on every scenario; on the dev box it
-  leaves 5 of the 12 differences with `-uDN @world`: 2 for 12c, 3 for a resolver. The TUI still
-  shows unweighed updates until 12d's held view.
+  leaves 5 of the 12 differences with `-uDN @world`: 2 for 12c, 3 for a resolver.
 - 12c (done): `updates --world`: only the packages `emerge -uD @world` reaches (those depclean
   keeps) are updated, and only their dependents hold. emerge's arguments are then the root
   sets' atoms rather than every installed package, which shows in two ways: a `||` keeps an
@@ -249,7 +248,9 @@ an update back, rather than skipping it), it stays, recorded in `upstream-notes.
     holders, on every scenario. On the dev box, removing openrgb-plugin-skin (world only) lets
     openrgb 1.0 through and frees the two plugins it held; the other six of the 9 held
     updates have holders something else needs.
-  - 12d2: a held-updates view in the TUI.
+  - 12d2 (done): the TUI weighs updates with the plan (`-N`, @installed): the list marks what
+    it holds back, and a held package's page lists its holders as links with what keeps each,
+    then the remedies' commands.
 - What the targets' own dependencies pull in (new packages and slots, and updates that need a
   held one) and slot-operator rebuilds moved to step 14.
 

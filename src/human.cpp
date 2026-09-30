@@ -10,6 +10,7 @@
 #include <optional>
 #include <ostream>
 #include <ranges>
+#include <utility>
 #include <vector>
 
 namespace egraph {
@@ -561,41 +562,32 @@ void human_orphans(std::ostream& out, std::span<const std::string> records, cons
         << '\n';
 }
 
-namespace {
-
-// A holder's dependents and root atoms, from its remedy line, as a sentence.
-std::string holder_note(const Fields& fields) {
-    std::vector<std::string_view> dependents;
-    if (!fields.empty() && !fields.front().empty()) {
-        for (const auto part : std::views::split(fields.front(), ' ')) {
-            dependents.emplace_back(part);
-        }
-    }
-    std::vector<std::string_view> sets;
+std::string holder_note(std::span<const std::string_view> dependents,
+                        std::span<const std::string_view> sets) {
+    std::vector<std::string_view> others;
     bool selected = false;
-    for (std::size_t i = 1; i < fields.size(); ++i) {
-        const auto set = fields.at(i).substr(0, fields.at(i).find(' '));
+    for (const auto set : sets) {
         if (set == "@selected") {
             selected = true;
-        } else if (!std::ranges::contains(sets, set)) {
-            sets.push_back(set);
+        } else if (!std::ranges::contains(others, set)) {
+            others.push_back(set);
         }
     }
     std::string note;
     if (!dependents.empty()) {
         constexpr std::size_t shown = 3;
         note = "needed by ";
-        for (std::size_t i = 0; i < std::min(shown, dependents.size()); ++i) {
-            note += std::format("{}{}", i == 0 ? "" : ", ", dependents.at(i));
+        for (const auto dependent : dependents.first(std::min(shown, dependents.size()))) {
+            note += std::format("{}{}", note.ends_with(' ') ? "" : ", ", dependent);
         }
         if (dependents.size() > shown) {
             note += std::format(" and {} more", dependents.size() - shown);
         }
     }
-    if (!sets.empty()) {
+    if (!others.empty()) {
         note += note.empty() ? "kept by " : "; kept by ";
-        for (std::size_t i = 0; i < sets.size(); ++i) {
-            note += std::format("{}{}", i == 0 ? "" : ", ", sets.at(i));
+        for (std::size_t i = 0; i < others.size(); ++i) {
+            note += std::format("{}{}", i == 0 ? "" : ", ", others.at(i));
         }
     }
     if (note.empty()) {
@@ -605,47 +597,95 @@ std::string holder_note(const Fields& fields) {
     return note;
 }
 
-// The commands past a held update: removing its holders when that lets it through, then
-// merging it without its dependencies.
-void put_remedies(std::ostream& out, std::string_view indent, const Fields& row,
-                  const std::map<std::string_view, Fields, std::less<>>& holders,
-                  std::optional<std::string_view> frees, bool nodeps, const Painter& paint) {
-    const auto target = std::format("={}", row.at(2));
+std::vector<RemedyLine> remedy_lines(std::span<const std::string_view> holders,
+                                     std::span<const std::string_view> deselect,
+                                     std::string_view target,
+                                     const std::optional<std::vector<std::string_view>>& frees,
+                                     bool nodeps) {
     const auto them = holders.size() == 1 ? "it" : "them";
-    const auto remove_label = std::format("to remove {}:", them);
-    const auto keep_label = std::format("to keep {}:", them);
-    const auto width = std::max(remove_label.size(), keep_label.size()) + 1;
-    const auto put = [&](std::string_view label, std::string_view text, Tone tone) {
-        out << indent << "    " << paint(label, Tone::heading) << spaces(label.size(), width)
-            << paint(text, tone) << '\n';
-    };
+    std::vector<RemedyLine> lines;
     if (frees) {
-        std::string deselect;
-        std::string unmerge;
-        for (const auto& [holder, fields] : holders) {
-            unmerge += std::format(" ={}", holder);
-            for (std::size_t i = 1; i < fields.size(); ++i) {
-                deselect += std::format(" {}", fields.at(i).substr(fields.at(i).find(' ') + 1));
-            }
-        }
-        std::string_view label = remove_label;
+        std::string label = std::format("to remove {}:", them);
+        const auto add = [&](std::string text, Tone tone) {
+            lines.push_back(
+                {.label = std::exchange(label, {}), .text = std::move(text), .tone = tone});
+        };
         if (!deselect.empty()) {
-            put(label, "emerge --deselect" + deselect, Tone::use);
-            label = {};
+            std::string atoms;
+            for (const auto atom : deselect) {
+                atoms += std::format(" {}", atom);
+            }
+            add("emerge --deselect" + atoms, Tone::use);
         }
-        put(label, "emerge -C" + unmerge, Tone::use);
-        put({}, "emerge -1 " + target, Tone::use);
+        std::string unmerge;
+        for (const auto holder : holders) {
+            unmerge += std::format(" ={}", holder);
+        }
+        add("emerge -C" + unmerge, Tone::use);
+        add(std::format("emerge -1 ={}", target), Tone::use);
         if (!frees->empty()) {
             std::string freed;
-            for (const auto cpv : std::views::split(*frees, ' ')) {
-                freed += std::format("{}{}", freed.empty() ? "" : ", ", std::string_view{cpv});
+            for (const auto cpv : *frees) {
+                freed += std::format("{}{}", freed.empty() ? "" : ", ", cpv);
             }
-            put({}, "which also frees " + freed, Tone::good);
+            add("which also frees " + freed, Tone::good);
         }
     }
     if (nodeps) {
-        put(keep_label, "emerge -1 --nodeps " + target, Tone::use);
-        put({}, "which a later emerge -uD undoes", Tone::bad);
+        lines.push_back({.label = std::format("to keep {}:", them),
+                         .text = std::format("emerge -1 --nodeps ={}", target),
+                         .tone = Tone::use});
+        lines.push_back(
+            {.label = {}, .text = "which a later emerge -uD undoes", .tone = Tone::bad});
+    }
+    return lines;
+}
+
+namespace {
+
+std::vector<std::string_view> words(std::string_view text) {
+    std::vector<std::string_view> found;
+    if (!text.empty()) {
+        for (const auto part : std::views::split(text, ' ')) {
+            found.emplace_back(part);
+        }
+    }
+    return found;
+}
+
+// A holder's remedy line fields (dependents, then "@set atom" per root) as a sentence.
+std::string holder_fields_note(const Fields& fields) {
+    std::vector<std::string_view> sets;
+    for (std::size_t i = 1; i < fields.size(); ++i) {
+        sets.push_back(fields.at(i).substr(0, fields.at(i).find(' ')));
+    }
+    return holder_note(fields.empty() ? std::vector<std::string_view>{} : words(fields.front()),
+                       sets);
+}
+
+void put_remedies(std::ostream& out, std::string_view indent, const Fields& row,
+                  const std::map<std::string_view, Fields, std::less<>>& holders,
+                  std::optional<std::string_view> frees, bool nodeps, const Painter& paint) {
+    std::vector<std::string_view> cpvs;
+    std::vector<std::string_view> deselect;
+    for (const auto& [holder, fields] : holders) {
+        cpvs.push_back(holder);
+        for (std::size_t i = 1; i < fields.size(); ++i) {
+            const auto space = fields.at(i).find(' ');
+            if (fields.at(i).substr(0, space) == "@selected") {
+                deselect.push_back(fields.at(i).substr(space + 1));
+            }
+        }
+    }
+    const auto lines = remedy_lines(cpvs, deselect, row.at(2),
+                                    frees ? std::optional{words(*frees)} : std::nullopt, nodeps);
+    std::size_t width = 0;
+    for (const auto& line : lines) {
+        width = std::max(width, line.label.size() + 1);
+    }
+    for (const auto& line : lines) {
+        out << indent << "    " << paint(line.label, Tone::heading)
+            << spaces(line.label.size(), width) << paint(line.text, line.tone) << '\n';
     }
 }
 
@@ -841,8 +881,8 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                 if (found != remedies.end()) {
                     if (const auto info = found->second.holders.find(holder);
                         info != found->second.holders.end()) {
-                        out << indent << "      " << paint(holder_note(info->second), Tone::note)
-                            << '\n';
+                        out << indent << "      "
+                            << paint(holder_fields_note(info->second), Tone::note) << '\n';
                     }
                 }
             }
