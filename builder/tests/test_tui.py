@@ -70,6 +70,9 @@ def test_tui_shows_the_store_and_quits(playgrounds, tmp_path):
     tmux(socket, "new-session", "-d", "-s", "t", "-x", "90", "-y", "16", command)
     try:
         packages = len(installed.build(vardb).installed())
+        # It opens on the updates, of which there are none here.
+        wait_for(socket, "nothing to update")
+        tmux(socket, "send-keys", "-t", "t", "u")
         wait_for(socket, f"{packages} of {packages} packages")
         # Search, keep the search, open the one match.
         tmux(socket, "send-keys", "-t", "t", "/", "world", "Enter")
@@ -107,8 +110,7 @@ def test_tui_lists_and_shows_pending_updates(playgrounds, tmp_path):
     command = f"{EGRAPH} --store {path} --no-refresh tui; echo EXIT=$?; sleep 30"
     tmux(socket, "new-session", "-d", "-s", "t", "-x", "110", "-y", "30", command)
     try:
-        wait_for(socket, "/ to search")
-        tmux(socket, "send-keys", "-t", "t", "u")
+        # It opens on the updates.
         screen = wait_for(socket, " updates")
         assert "dev-libs/lib-2" in screen
         assert "app-misc/eula-1" not in screen
@@ -174,7 +176,7 @@ def test_tui_previews_a_fresh_build_without_saving_it(system, tmp_path):
     )
     tmux(socket, "new-session", "-d", "-s", "t", "-x", "100", "-y", "16", command)
     try:
-        wait_for(socket, f"{packages - 1} of {packages - 1} packages")
+        wait_for(socket, " updates")
         # --no-refresh's warning would be lost under the interface, which repeats it.
         screen = wait_for(socket, "answering from a stale store")
         assert " Warning " in screen
@@ -188,6 +190,7 @@ def test_tui_previews_a_fresh_build_without_saving_it(system, tmp_path):
         screen = wait_for(socket, "Showing the fresh build")
         assert "preview, not saved" in screen
         tmux(socket, "send-keys", "-t", "t", "Escape")
+        tmux(socket, "send-keys", "-t", "t", "u")
         wait_for(socket, f"{packages} of {packages} packages")
         tmux(socket, "send-keys", "-t", "t", "q")
         wait_for(socket, "EXIT=0")

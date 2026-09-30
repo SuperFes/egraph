@@ -1285,16 +1285,11 @@ TEST_CASE("with the evaluated store, pages read dependencies as emerge does") {
     }
 }
 
-TEST_CASE("the list marks pending updates, and u shows only those") {
+TEST_CASE("the list opens on pending updates, and u shows them among the rest") {
     egraph::tui::App app{only_b_updates(), true};
-    FakeScreen screen{10, 120, {}};
-    egraph::tui::draw(screen, app, ascii);
-    CHECK_FALSE(contains(screen.line(3), "  U "));
-    CHECK(contains(screen.line(4), "dev-libs/b-1  U 2"));
-    CHECK(contains(screen.line(9), "u updates"));
-    app.handle(character(U'u'));
     CHECK(app.list().only == egraph::tui::Only::updates);
     CHECK(app.list().shown == std::vector<std::uint32_t>{1});
+    FakeScreen screen{10, 120, {}};
     egraph::tui::draw(screen, app, ascii);
     CHECK(contains(screen.line(0), "1 updates"));
     CHECK(contains(screen.line(9), "u all"));
@@ -1305,7 +1300,12 @@ TEST_CASE("the list marks pending updates, and u shows only those") {
     CHECK(contains(screen.text(), "no package matches"));
     app.handle(key(KeyKind::escape));
     app.handle(character(U'u'));
+    CHECK(app.list().only == egraph::tui::Only::all);
     CHECK(app.list().shown.size() == 2);
+    egraph::tui::draw(screen, app, ascii);
+    CHECK_FALSE(contains(screen.line(3), "  U "));
+    CHECK(contains(screen.line(4), "dev-libs/b-1  U 2"));
+    CHECK(contains(screen.line(9), "u updates"));
 }
 
 TEST_CASE("the list says when nothing is pending") {
@@ -1319,7 +1319,7 @@ TEST_CASE("the list says when nothing is pending") {
     dependencies.varints({1, 0, 0, 0}).list({});
     egraph::tui::App app{
         egraph::Stores{.installed = sample(), .evaluated = evaluated_sample(dependencies)}, true};
-    FakeScreen screen{10, 120, {character(U'u')}};
+    FakeScreen screen{10, 120, {}};
     egraph::tui::run(screen, app, ascii, {.check = no_check});
     CHECK(app.list().shown.empty());
     CHECK(contains(screen.text(), "nothing to update"));
@@ -1534,7 +1534,6 @@ TEST_CASE("held updates show in the list, and a held package's page offers its r
                                         .evaluated = std::move(system.evaluated)},
                          true};
     FakeScreen screen{30, 120, {}};
-    app.handle(character(U'u'));
     CHECK(app.list().shown == std::vector<std::uint32_t>{3, 4, 5});
     egraph::tui::draw(screen, app, ascii);
     CHECK(contains(screen.text(), "dev-libs/lazy-1  H held"));

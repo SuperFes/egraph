@@ -531,6 +531,10 @@ App::App(Stores stores, bool dynamic_deps, Update update) : App(no_store(), no_g
                                        dynamic_deps));
     index();
     recompute();
+    // What there is to do first, when the evaluated store says.
+    if (has_evaluated()) {
+        list_.only = Only::updates;
+    }
     filter();
 }
 
