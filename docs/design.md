@@ -372,6 +372,12 @@ never gets to. The check is portage's `check_required_use` ported (`src/required
 portage's tree and its re-parenting in an arena), on the tokens the builder stores and the USE
 the candidate has, and `test_required_use.py` holds it to portage's over generated strings and
 every string in the live repositories.
+A candidate's dependencies under USE other than its own (roadmap 16e3) come from its stored
+tokens, reduced by portage's `use_reduce` ported (`src/use_reduce.cpp`, with the atoms' USE
+conditionals evaluated as `Atom.evaluate_conditionals` prints them) and laid out as the builder
+lays out its node lists; `test_use_reduce.py` holds it to the builder's reduction over generated
+strings, every scenario candidate under every USE of its IUSE, and the live repositories'
+conditional strings, and checks that each candidate's own USE gives back its stored nodes.
 
 `updates --world` plans `emerge -uD @world` instead (roadmap 12c): the packages depclean keeps
 are in scope, and one outside keeps its version while its dependencies weigh nothing. emerge's

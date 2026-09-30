@@ -435,6 +435,12 @@ use, egraph schedules the merges itself.
     `required` scenario holds the cases, and the check is shadowed against portage's over
     generated strings and the live repositories'.
   - 16e3: USE changes as autounmask proposes them.
+    - 16e3a (done): evaluated store format 8 keeps each candidate's dependency tokens, and
+      `use_reduce` is ported to reduce them under other USE, shadowed against the builder's
+      reduction.
+    - 16e3b: the planner's autounmask: a USE dependency no version meets as it is built meets it
+      with its flags changed, its dependencies then reduced under the new USE; the plan shows the
+      changed USE and the `package.use` lines with their "required by" chains, and is refused.
   - 16e4: `--verify` over the new refusals; the `package.use` line offered and written.
 - 16f: actions: `update`, `install` (`--oneshot`, or the targets selected), `remove` (through
   `emerge --depclean` with atoms), `select`, `deselect`: the plan shown, a yes asked for, emerge

@@ -13,7 +13,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t evaluated_format_version = 7;
+inline constexpr std::uint32_t evaluated_format_version = 8;
 
 // Where an installed package's dependency strings came from under --dynamic-deps=y.
 enum class DepSource : std::uint8_t { ebuild, vdb, moved };
@@ -85,6 +85,9 @@ struct Candidate {
     // whether its EAPI holds an empty group satisfied.
     Range required_use;
     bool empty_groups_true = false;
+    // String ids in Evaluated::ids, one per entry of dep_kinds: the dependency string's tokens,
+    // to reduce under other USE (reduce_dependencies). Empty for a masked candidate.
+    std::array<Range, dep_kinds.size()> tokens;
 
     [[nodiscard]] bool visible() const { return reasons.count == 0; }
 };

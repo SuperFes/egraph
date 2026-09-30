@@ -519,7 +519,7 @@ def test_every_repository_required_use_checks_as_portage_does(live_databases):
     import test_required_use
 
     if not test_required_use.SHADOW:
-        pytest.skip("set EGRAPH_REQUIRED_USE to the shadow binary (meson test does)")
+        pytest.skip("set EGRAPH_SHADOW to the shadow binary (meson test does)")
     _, portdb = live_databases
     strings = set()
     for cp in portdb.cp_all():
@@ -551,3 +551,42 @@ def test_every_repository_required_use_checks_as_portage_does(live_databases):
         if answer != test_required_use.portage_answer(*case)
     ]
     assert not wrong
+
+
+def test_every_repository_dependency_string_reduces_as_portage_does(live_databases):
+    """Each distinct dependency string of the live repositories, under sampled USE of its
+    ebuild's IUSE."""
+    import portage
+    from portage.eapi import eapi_empty_groups_always_true
+
+    import test_use_reduce
+
+    if not test_use_reduce.SHADOW:
+        pytest.skip("set EGRAPH_SHADOW to the shadow binary (meson test does)")
+    _, portdb = live_databases
+    keys = ["EAPI", "IUSE", *evaluated.DEP_KINDS]
+    strings = {}
+    for cp in portdb.cp_all():
+        for cpv in portdb.cp_list(cp):
+            try:
+                metadata = dict(zip(keys, portdb.aux_get(cpv, keys)))
+            except KeyError:
+                continue
+            iuse = frozenset(flag.lstrip("+-") for flag in metadata["IUSE"].split())
+            for kind in evaluated.DEP_KINDS:
+                if "?" in metadata[kind]:
+                    strings.setdefault((metadata[kind], metadata["EAPI"]), iuse)
+    rng = random.Random(16)
+    cases = []
+    for (string, eapi), iuse in sorted(strings.items(), key=lambda item: item[0]):
+        try:
+            test_use_reduce._one(string, frozenset(), eapi)
+        except portage.exception.PortageException:
+            continue
+        for _ in range(4):
+            use = frozenset(flag for flag in iuse if rng.random() < 0.5)
+            cases.append(
+                (tuple(string.split()), use, eapi, eapi_empty_groups_always_true(eapi))
+            )
+    assert cases
+    assert not test_use_reduce.disagreements(cases)

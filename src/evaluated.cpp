@@ -104,6 +104,9 @@ std::optional<StoreError> read_candidates(std::span<const std::byte> section, Ev
         }
         candidate.required_use = read_ids(r, evaluated.ids, strings, "string");
         candidate.empty_groups_true = r.index(2, "empty groups") == 1;
+        for (auto& kind : candidate.tokens) {
+            kind = read_ids(r, evaluated.ids, strings, "string");
+        }
         evaluated.candidates.push_back(candidate);
     }
     r.finish();

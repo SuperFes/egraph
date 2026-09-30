@@ -143,6 +143,7 @@ TEST_CASE("the sample evaluated store decodes") {
         }
         return found;
     };
+    CHECK(strings(b2.tokens.at(1)) == std::vector<std::string_view>{"app-misc/a"});
     CHECK(strings(evaluated->repository_cps) ==
           std::vector<std::string_view>{"app-misc/a", "dev-libs/b"});
     CHECK(strings(evaluated->requested) == std::vector<std::string_view>{"dev-libs/gone"});

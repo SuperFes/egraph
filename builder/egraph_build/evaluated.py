@@ -121,6 +121,9 @@ class Candidate(NamedTuple):
     required_use: tuple = ()
     # Its EAPI's empty_groups_always_true; False for a masked candidate.
     empty_groups_true: bool = False
+    # Per kind, its dependency string's tokens as use_reduce splits them, for USE it could be
+    # built with instead; empty for a masked candidate.
+    tokens: tuple = NO_DEPS
 
 
 def _cpv(pkg):
@@ -511,7 +514,9 @@ def read_candidates(portdb, settings, cp, installed_cpvs, match, ebuild_use=None
             slot, _, sub_slot = metadata["SLOT"].partition("/")
             use = tuple(sorted(settings["PORTAGE_USE"].split()))
             deps, errors, required_use, empty_groups_true = NO_DEPS, (), (), False
+            tokens = NO_DEPS
             if not reasons:
+                tokens = tuple(tuple(metadata[kind].split()) for kind in DEP_KINDS)
                 attrs = _get_eapi_attrs(metadata["EAPI"])
                 empty_groups_true = attrs.empty_groups_always_true
                 deps, errors = installed.dependency_trees(
@@ -543,6 +548,7 @@ def read_candidates(portdb, settings, cp, installed_cpvs, match, ebuild_use=None
                     deps=deps,
                     required_use=required_use,
                     empty_groups_true=empty_groups_true,
+                    tokens=tokens,
                 )
             )
     return found
@@ -774,11 +780,12 @@ def to_json(layer):
             "deps": installed.deps_json(c.deps),
             "required_use": list(c.required_use),
             "empty_groups_true": c.empty_groups_true,
+            "tokens": [list(kind) for kind in c.tokens],
         }
         for c in layer.candidates()
     ]
     document = {
-        "format": 7,
+        "format": 8,
         "packages": packages,
         "candidates": candidates,
         "repository_cps": list(layer.repository_cps()),

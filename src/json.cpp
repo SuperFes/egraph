@@ -257,11 +257,16 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string(out, evaluated, candidate.slot);
         out << ",\"sub_slot\":";
         write_string(out, evaluated, candidate.sub_slot);
-        out << ",\"use\":";
+        out << ",\"tokens\":[";
+        for (std::size_t kind = 0; kind < candidate.tokens.size(); ++kind) {
+            out << (kind == 0 ? "" : ",");
+            write_string_list(out, evaluated, candidate.tokens.at(kind));
+        }
+        out << "],\"use\":";
         write_string_list(out, evaluated, candidate.use);
         out << '}';
     }
-    out << R"(],"format":7,"packages":[)";
+    out << R"(],"format":8,"packages":[)";
     first = true;
     for (const auto& pkg : evaluated.packages) {
         out << (first ? "{\"cpv\":" : ",{\"cpv\":");

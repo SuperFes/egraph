@@ -9,10 +9,10 @@ import subprocess
 import pytest
 from portage.dep import check_required_use
 
-SHADOW = os.environ.get("EGRAPH_REQUIRED_USE")
+SHADOW = os.environ.get("EGRAPH_SHADOW")
 
 pytestmark = pytest.mark.skipif(
-    not SHADOW, reason="set EGRAPH_REQUIRED_USE to the shadow binary (meson test does)"
+    not SHADOW, reason="set EGRAPH_SHADOW to the shadow binary (meson test does)"
 )
 
 FLAGS = ("a", "b", "c", "d")
@@ -43,7 +43,12 @@ def shadow(cases):
     """The C++ answers for (required_use, use, empty_true) cases."""
     lines = "".join(
         json.dumps(
-            {"tokens": required.split(), "use": sorted(use), "empty_true": empty_true}
+            {
+                "check": "required_use",
+                "tokens": required.split(),
+                "use": sorted(use),
+                "empty_true": empty_true,
+            }
         )
         + "\n"
         for required, use, empty_true in cases

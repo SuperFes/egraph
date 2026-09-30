@@ -87,6 +87,7 @@ egraph_lib = static_library(
   'src/steve.cpp',
   'src/store.cpp',
   'src/tui.cpp',
+  'src/use_reduce.cpp',
   'src/verify.cpp',
   'src/version.cpp',
   build_info_hpp,
@@ -227,14 +228,16 @@ unit_tests = executable(
   'tests/test_steve.cpp',
   'tests/test_store.cpp',
   'tests/test_tui.cpp',
+  'tests/test_use_reduce.cpp',
   'tests/test_verify.cpp',
   dependencies: [egraph_dep, catch2],
   cpp_args: '-DEGRAPH_SOURCE_DIR="' + meson.project_source_root() + '"',
 )
-# Answers REQUIRED_USE checks for builder/tests/test_required_use.py, which holds them to portage's.
-required_use_shadow = executable(
-  'required-use-shadow',
-  'tests/required_use_shadow.cpp',
+# Answers REQUIRED_USE checks and dependency reductions for the builder's tests, which hold them
+# to portage's.
+shadow_exe = executable(
+  'shadow',
+  'tests/shadow.cpp',
   dependencies: [egraph_dep, json],
 )
 # Tests set egraph's options themselves, whatever the user's environment says.
@@ -259,7 +262,7 @@ if pytest.found()
   # The golden tests run the C++ reader on stores the Python writer produced.
   builder_env.set('EGRAPH', egraph_exe.full_path())
   builder_env.set('EGRAPH_COMPLETIONS', meson.current_build_dir())
-  builder_env.set('EGRAPH_REQUIRED_USE', required_use_shadow.full_path())
+  builder_env.set('EGRAPH_SHADOW', shadow_exe.full_path())
   if get_option('portage_lib') != ''
     builder_env.set('PYTHONPATH', get_option('portage_lib'))
   endif
@@ -271,7 +274,7 @@ if pytest.found()
     pytest,
     args: ['-p', 'no:cacheprovider', '-q', meson.project_source_root() / 'builder' / 'tests'],
     env: builder_env,
-    depends: [egraph_exe, completion_scripts, required_use_shadow],
+    depends: [egraph_exe, completion_scripts, shadow_exe],
     timeout: 600,
   )
 else

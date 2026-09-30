@@ -299,6 +299,17 @@ inline System make_system(const std::vector<Installed>& installed, std::vector<A
                 ++candidate.required_use.count;
             }
             candidate.empty_groups_true = ebuild.empty_groups_true;
+            for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+                auto& range = candidate.tokens.at(kind);
+                range = {.first = static_cast<std::uint32_t>(evaluated.ids.size()), .count = 0};
+                if (const auto text = ebuild.deps.find(dep_kinds.at(kind));
+                    text != ebuild.deps.end()) {
+                    for (const auto& token : detail::tokens(text->second)) {
+                        evaluated.ids.push_back(evaluated_intern(token));
+                        ++range.count;
+                    }
+                }
+            }
         }
         evaluated.candidates.push_back(candidate);
     }

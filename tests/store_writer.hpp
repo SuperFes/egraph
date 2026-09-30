@@ -289,14 +289,16 @@ inline std::vector<Section> evaluated_sections() {
     Bytes candidates;
     candidates.varint(3);
     // cp, cpv, repo, slot, sub-slot, USE, IUSE, forced, reasons, errors, the five node lists,
-    // REQUIRED_USE and empty groups.
+    // REQUIRED_USE, empty groups and the five token lists.
     candidates.varints({5, 1, 7, 6, 6}).list({8}).list({8}).list({8}).list({}).varint(0);
-    candidates.varints({0, 0, 0, 0, 0}).list({8}).varint(0);
+    candidates.varints({0, 0, 0, 0, 0}).list({8}).varint(0).list({}).list({}).list({});
+    candidates.list({}).list({});
     candidates.varints({5, 9, 7, 6, 6}).list({}).list({8}).list({}).list({10}).varint(0);
     candidates.varints({0, 0, 0, 0, 0}).list({}).varint(0);
+    candidates.list({}).list({}).list({}).list({}).list({});
     candidates.varints({13, 18, 7, 6, 6}).list({}).list({}).list({}).list({}).varint(0);
     candidates.varint(0).varint(1).varints({0, 0, 5}).list({0}).varints({0, 0, 0});
-    candidates.list({}).varint(1);
+    candidates.list({}).varint(1).list({}).list({5}).list({}).list({}).list({});
 
     return {{.id = 1, .bytes = meta.bytes()},
             {.id = 2, .bytes = inputs.bytes()},
