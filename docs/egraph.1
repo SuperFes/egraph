@@ -1,0 +1,299 @@
+.TH EGRAPH 1 2026-09-29 "egraph @VERSION@" "User Commands"
+.SH NAME
+egraph \- query the dependency graph of the installed packages
+.SH SYNOPSIS
+.B egraph
+.RI [ options ]
+.RI [ command " [" command-options ] " [" arguments ]]
+.SH DESCRIPTION
+.B egraph
+keeps the dependency graph of a Gentoo system in a store file and answers questions about it in
+milliseconds: what depends on a package, why it is installed, who links a soname, what is broken,
+what
+.B emerge \-\-depclean
+would remove and what
+.B emerge \-uD
+would merge.
+.PP
+The store is built by
+.BR egraph-build (1),
+which evaluates the installed packages through portage.
+Every command first checks that the store still describes the system and brings it up to date
+when it does not, unless
+.B \-\-no\-refresh
+says otherwise.
+The answers are held to portage's own on generated systems and on a live one.
+.PP
+Without a command,
+.B egraph
+opens its interactive interface on a terminal (the same as
+.BR "egraph tui" ),
+and reads commands one per line otherwise (the same as
+.BR "egraph shell" ).
+.PP
+Packages are named by installed cpv
+.RI ( dev-libs/openssl-3.5.0 )
+or cp
+.RI ( dev-libs/openssl ,
+every installed version); atoms take portage's syntax.
+.SH OPTIONS
+These come before the command.
+.TP
+.BR \-h ", " \-\-help
+Print the options, or a command's, and exit.
+.TP
+.B \-\-version
+Print the version and exit.
+.TP
+.BI \-\-root " dir"
+The root whose installed packages to query (default
+.BR $ROOT ,
+else
+.IR / ).
+.TP
+.BI \-\-config\-root " dir"
+The root of the portage configuration to evaluate them with (default
+.BR $PORTAGE_CONFIGROOT ).
+.TP
+.BI \-\-eprefix " dir"
+The offset prefix of a prefix installation (default
+.BR $PORTAGE_OVERRIDE_EPREFIX ).
+.TP
+.BI \-\-store " file"
+The store to read (default
+.BR $EGRAPH_STORE ,
+else the system store; see
+.BR FILES ).
+.TP
+.BI \-\-builder " command"
+The
+.B egraph-build
+that refreshes the store (default
+.BR $EGRAPH_BUILD ,
+else the one next to
+.BR egraph ,
+else the one in
+.BR PATH ).
+.TP
+.B \-\-no\-refresh
+Answer from a stale store instead of bringing it up to date.
+.TP
+.BR \-\-layout " auto|human|lines"
+Results for people, or as tab-separated lines for scripts (default
+.BR $EGRAPH_LAYOUT ,
+else
+.BR auto :
+for people on a terminal).
+.TP
+.BR \-\-color " auto|always|never"
+Colour the layout for people (default
+.BR auto :
+on a terminal, unless
+.B NO_COLOR
+is set).
+.TP
+.BR \-\-glyphs " nerd|unicode|ascii"
+Icons in the layout for people: a Nerd Font's, plain Unicode, or ASCII (default
+.BR $EGRAPH_GLYPHS ,
+else
+.B nerd
+in a UTF-8 locale and
+.B ascii
+otherwise).
+.SH COMMANDS
+Commands that read dependencies take
+.BR \-\-dynamic\-deps " y|n" :
+read an installed package's dependencies from its ebuild when the same version is still in its
+repository, as emerge's option of the name does (default
+.BR y ).
+Those that follow what keeps a package take
+.BR \-\-with\-bdeps " y|n" :
+whether build-time dependencies keep packages, as emerge's option does (default
+.BR y ).
+.SS deps \fIpackage\fR...
+What installed packages depend on, with the atom and the kinds of dependency for each.
+.TP
+.B \-\-dynamic\-deps
+.TP
+.B \-\-possible
+Also what the ebuilds would add with USE flags toggled, with the flags.
+.SS rdeps \fIpackage\fR...
+What depends on installed packages.
+.TP
+.B \-\-dynamic\-deps
+.TP
+.B \-\-possible
+Also what the ebuilds would depend on them with USE flags toggled, with the flags.
+.SS why \fIatom\fR
+The shortest chain of dependencies from a root set
+.RI ( @selected ", " @system ", " @profile )
+that keeps each installed package the atom matches, as depclean finds it.
+.TP
+.B \-\-dynamic\-deps
+.TP
+.B \-\-with\-bdeps
+.SS match \fIatom\fR...
+The installed packages each atom matches.
+.TP
+.B \-\-candidates
+Match the installed cps' ebuilds instead
+.RI ( cpv::repo ),
+with the USE each would be built with now, masked ones included.
+.SS soname \fIsoname\fR
+The installed packages that need a soname
+.RI ( libssl.so.3 ).
+.TP
+.B \-\-providers
+The packages providing it instead.
+.SS broken
+Installed dependencies that nothing installed satisfies.
+.TP
+.B \-\-dynamic\-deps
+.SS orphans
+The installed packages
+.B emerge \-\-depclean
+would remove.
+.TP
+.B \-\-dynamic\-deps
+.TP
+.B \-\-with\-bdeps
+.SS updates
+The installed packages
+.B emerge \-uD
+would replace or rebuild, and the new packages it would pull in.
+.TP
+.B \-\-dynamic\-deps
+.TP
+.B \-\-held
+Also the updates that installed dependents hold back, which of their atoms do, and the commands
+that would get past them.
+.TP
+.BR \-t ", " \-\-table
+In merge order, each with the places of the merges it waits for.
+.TP
+.B \-\-tree
+Each merge under the root set and the packages it comes from.
+.TP
+.B \-\-world
+Only the packages the root sets keep, as
+.B emerge \-uD @world
+does.
+.TP
+.BR \-N ", " \-\-newuse
+Also the rebuilds
+.B emerge \-\-newuse
+makes for changed USE or IUSE.
+.TP
+.BR \-U ", " \-\-changed\-use
+Also the rebuilds
+.B emerge \-\-changed\-use
+makes for changed USE.
+.SS export \fR[\fIpackage\fR...]
+Part of the graph, or all of it without packages, for other tools.
+.TP
+.BR \-\-format " dot|json"
+Graphviz or JSON (default
+.BR dot ).
+.TP
+.B \-\-evaluated
+The evaluated store instead, whole and as JSON: the dependencies emerge reads by default, and the
+versions each installed package could move to.
+.TP
+.BI \-\-depth " n"
+Dependency edges to follow out from the packages (default 1).
+.TP
+.BR \-\-direction " reverse|forward|both"
+Which edges to follow (default
+.BR reverse ).
+.SS stats
+Store and graph statistics.
+.SS tui
+The interactive interface: the installed packages, pending updates, orphans and broken ones, each
+package's page, the plan, the running emerges, and a
+.B :
+prompt taking these commands. It keeps the store current while it is open.
+.SS shell
+Commands read one per line from standard input, the stores loaded once; the global options that
+choose the stores are taken from the command line only.
+.SS rebuild
+Rebuild the store from scratch.
+.SS refresh
+Bring the store up to date if what it was built from changed, printing nothing.
+.SS check
+Compare the store with a fresh build, exiting 4 when they differ.
+.SS affected
+What a set of merges can affect, as JSON, for portage's neighborhood completion.
+.TP
+.B \-\-dynamic\-deps
+.TP
+.BI \-\-request " file"
+The JSON request (default
+.BR \- :
+standard input).
+.SH ENVIRONMENT
+.TP
+.BR ROOT ", " PORTAGE_CONFIGROOT ", " PORTAGE_OVERRIDE_EPREFIX
+Defaults for
+.BR \-\-root ", " \-\-config\-root " and " \-\-eprefix .
+.TP
+.BR EGRAPH_STORE ", " EGRAPH_BUILD ", " EGRAPH_LAYOUT ", " EGRAPH_GLYPHS
+Defaults for
+.BR \-\-store ", " \-\-builder ", " \-\-layout " and " \-\-glyphs .
+.TP
+.B NO_COLOR
+When set and not empty, no colour unless
+.B \-\-color always
+asks for it.
+.TP
+.B XDG_CACHE_HOME
+Where the user's own store goes (default
+.IR ~/.cache ).
+.SH FILES
+.TP
+.I ${ROOT}${EPREFIX}/var/cache/egraph/installed.egraph
+The system store, with the evaluated store beside it; written by root.
+.TP
+.I ${XDG_CACHE_HOME}/egraph/installed.egraph
+The store of a user who cannot write the system store, used while the system store is not
+current.
+.TP
+.IR /etc/portage/postsync.d/egraph ", " /etc/portage/post_emerge.d/egraph
+Refresh the store after a sync, and after an emerge that changed the installed packages.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Failure, such as a package that is not installed or a store that could not be built.
+.TP
+.B 2
+The command line could not be parsed.
+.TP
+.B 3
+The command is not in this build:
+.B tui
+without Notcurses.
+.TP
+.B 4
+.B check
+found the store differing from a fresh build.
+.SH EXAMPLES
+.TP
+.B egraph rdeps dev\-libs/openssl
+What depends on openssl, and through which atom.
+.TP
+.B egraph why net\-misc/networkmanager
+Why networkmanager is installed.
+.TP
+.B egraph updates \-N \-\-tree
+What
+.B emerge \-uDN @installed
+would merge, under what keeps it.
+.TP
+.B egraph \-\-layout lines orphans
+What depclean would remove, one cpv a line, for a script.
+.SH SEE ALSO
+.BR egraph-build (1),
+.BR emerge (1),
+.BR portage (5)

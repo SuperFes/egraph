@@ -337,7 +337,9 @@ built from a release tarball, tested against the portage users run rather than o
   they cannot drift from it, and installed where each shell looks. Options and commands, fixed
   choices, directories and files by the option's type name, and installed cps from the vdb under
   `${ROOT}`; each script is loaded by its own shell in the tests.
-- 15c: man pages, held to the CLI by a test that every command and option is documented.
+- 15c (done): man pages, `egraph(1)` and `egraph-build(1)`, held to the CLI by tests that
+  every command and option is documented, each command's under its own subsection, and linted
+  with mandoc.
 - 15d: portage hooks a package can install: `/etc/portage/bin/post_emerge` is the user's own
   file, so the dispatcher is installed beside the hooks for the user to link, and postsync.d
   (which portage runs itself) takes egraph's hook directly. Step 16 replaces both.

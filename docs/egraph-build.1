@@ -1,0 +1,89 @@
+.TH EGRAPH-BUILD 1 2026-09-29 "egraph @VERSION@" "User Commands"
+.SH NAME
+egraph-build \- evaluate the installed packages through portage and write egraph's store
+.SH SYNOPSIS
+.B egraph-build
+.RB [ \-\-full | \-\-incremental | \-\-json | \-\-evaluated\-json | \-\-pending ]
+.RI [ options ]
+.RI [ entry ...]
+.SH DESCRIPTION
+.B egraph-build
+imports portage, read-only, and writes what
+.BR egraph (1)
+answers from: the installed store (every installed package's dependencies, slots, sonames and the
+root sets) and the evaluated store beside it (the dependencies emerge reads, masks, and the
+versions each package could move to).
+Both are written to temporary files and renamed into place, so readers never see a partial store.
+.PP
+.B egraph
+runs it itself whenever the store no longer describes the system, so it rarely needs running by
+hand.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Print the options and exit.
+.TP
+.B \-\-full
+Evaluate every installed package (the default).
+.TP
+.B \-\-incremental
+Evaluate again only the packages whose inputs changed since the stores were written.
+.TP
+.B \-\-json
+Print the installed layer as canonical JSON instead of writing the store.
+.TP
+.B \-\-evaluated\-json
+Print the evaluated layer as canonical JSON instead of writing the store.
+.TP
+.B \-\-pending
+Write what each
+.I entry
+of a merge list
+.RB ( ebuild:\fIcpv\fR " or " binary:\fIcpv\fR )
+waits for, as JSON, to
+.BR \-\-output .
+.TP
+.BI \-\-output " file"
+The file
+.B \-\-pending
+writes, apart from anything portage prints.
+.TP
+.BI \-\-store " file"
+The store to write (default
+.BR $EGRAPH_STORE ,
+else
+.IR ${EROOT}/var/cache/egraph/installed.egraph );
+the evaluated store goes beside it.
+.TP
+.BI \-\-root " dir"
+The root whose installed packages to evaluate (default
+.BR $ROOT ).
+.TP
+.BI \-\-config\-root " dir"
+The root of the portage configuration to evaluate them with (default
+.BR $PORTAGE_CONFIGROOT ).
+.TP
+.BI \-\-eprefix " dir"
+The offset prefix of a prefix installation (default
+.BR $PORTAGE_OVERRIDE_EPREFIX ).
+.SH ENVIRONMENT
+.TP
+.BR ROOT ", " PORTAGE_CONFIGROOT ", " PORTAGE_OVERRIDE_EPREFIX ", " EGRAPH_STORE
+Defaults for
+.BR \-\-root ", " \-\-config\-root ", " \-\-eprefix " and " \-\-store .
+.TP
+.B EGRAPH_STRICT
+When 1, an incremental build is also compared with a full one, and a difference fails it.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Failure.
+.TP
+.B 2
+The command line could not be parsed.
+.SH SEE ALSO
+.BR egraph (1),
+.BR portage (5)

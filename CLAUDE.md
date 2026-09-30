@@ -140,6 +140,8 @@ needs the heap.
 - Keep the tree flat: `src/`, `tests/`, `builder/egraph_build/`, `builder/tests/`, `docs/`,
   `hooks/` (the portage hooks `meson install` puts under `/etc/portage`).
 - Every feature lands as stub, then tests, then implementation; one roadmap step per commit series.
+- A new command or option is documented in `docs/egraph.1` (or `docs/egraph-build.1`);
+  `test_man` fails otherwise. Completions follow on their own.
 - Any divergence from portage needs a test proving egraph is right, recorded in
   `docs/upstream-notes.md`.
 - Performance claims use `perf stat -e instructions:u,cycles:u` with interleaved A/B runs;

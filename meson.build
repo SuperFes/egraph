@@ -162,6 +162,16 @@ python.install_sources(
   subdir: 'egraph_build',
 )
 
+foreach page : ['egraph.1', 'egraph-build.1']
+  install_man(
+    configure_file(
+      input: 'docs' / page,
+      output: page,
+      configuration: {'VERSION': meson.project_version()},
+    ),
+  )
+endforeach
+
 # portage's post_emerge hook, as a dispatcher over /etc/portage/post_emerge.d, and egraph's entry
 # there and in postsync.d, which refreshes the stores after every emerge that changed the
 # installed packages and after every sync.
@@ -193,6 +203,7 @@ unit_tests = executable(
   'tests/test_check.cpp',
   'tests/test_cli.cpp',
   'tests/test_completion.cpp',
+  'tests/test_man.cpp',
   'tests/test_depclean.cpp',
   'tests/test_emerge.cpp',
   'tests/test_evaluated.cpp',
@@ -209,6 +220,7 @@ unit_tests = executable(
   'tests/test_store.cpp',
   'tests/test_tui.cpp',
   dependencies: [egraph_dep, catch2],
+  cpp_args: '-DEGRAPH_SOURCE_DIR="' + meson.project_source_root() + '"',
 )
 # Tests set egraph's options themselves, whatever the user's environment says.
 egraph_variables = ['EGRAPH_STORE', 'EGRAPH_BUILD', 'EGRAPH_LAYOUT', 'EGRAPH_GLYPHS', 'ROOT',
