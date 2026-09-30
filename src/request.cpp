@@ -5,8 +5,10 @@
 #include <algorithm>
 #include <array>
 #include <format>
+#include <functional>
 #include <set>
 #include <string_view>
+#include <utility>
 
 namespace egraph {
 
@@ -19,8 +21,11 @@ bool known_set(std::string_view name) {
     return name == "world" || std::ranges::contains(world_sets, name);
 }
 
-std::set<std::string, std::less<>> known_cps(const Store& store, const Evaluated& evaluated) {
-    std::set<std::string, std::less<>> cps;
+using Cps = std::set<std::string, std::less<>>;
+
+// The cps the stores answer for: installed, or with candidates.
+Cps evaluated_cps(const Store& store, const Evaluated& evaluated) {
+    Cps cps;
     for (const auto& pkg : store.packages) {
         cps.emplace(store.string(pkg.cp));
     }
@@ -30,9 +35,14 @@ std::set<std::string, std::less<>> known_cps(const Store& store, const Evaluated
     return cps;
 }
 
-// The word with its category filled in from the one cp the stores know its name in.
-std::expected<std::string, std::string>
-with_category(std::string_view word, const std::set<std::string, std::less<>>& cps) {
+// The categories emerge passes over for a name that another category has too.
+bool stands_aside(std::string_view cp) {
+    return cp.starts_with("virtual/") || cp.starts_with("acct-group/") ||
+           cp.starts_with("acct-user/");
+}
+
+// The word with its category filled in from the one cp in cps with its name, as emerge fills it.
+std::expected<std::string, std::string> with_category(std::string_view word, const Cps& cps) {
     const auto name_at = word.find_first_not_of("<>=~");
     const auto op = word.substr(0, name_at == std::string_view::npos ? word.size() : name_at);
     const auto rest = word.substr(op.size());
@@ -51,9 +61,14 @@ with_category(std::string_view word, const std::set<std::string, std::less<>>& c
         }
     }
     if (found.empty()) {
-        return std::unexpected(std::format("{}: no package by that name in the stores", word));
+        return std::unexpected(
+            std::format("{}: no package by that name in the repositories", word));
     }
     if (found.size() > 1) {
+        const auto aside = [](const std::string& text) { return stands_aside(text); };
+        if (std::ranges::count_if(found, std::not_fn(aside)) == 1) {
+            return *std::ranges::find_if_not(found, aside);
+        }
         std::string listed;
         for (std::size_t i = 0; i < found.size(); ++i) {
             const auto cp = parse_atom(found.at(i))->cp;
@@ -104,7 +119,8 @@ std::optional<std::string> refusal(const Store& store, const Evaluated& evaluate
 std::expected<Request, std::string> parse_request(const Store& store, const Evaluated& evaluated,
                                                   std::span<const std::string> words) {
     Request request;
-    std::optional<std::set<std::string, std::less<>>> cps;
+    // Filled on the first atom: the cps the stores answer for, and those with every repository's.
+    std::optional<std::pair<Cps, Cps>> cps;
     for (const auto& word : words) {
         if (word.starts_with('@')) {
             const auto name = std::string_view{word}.substr(1);
@@ -125,18 +141,30 @@ std::expected<Request, std::string> parse_request(const Store& store, const Eval
             continue;
         }
         if (!cps) {
-            cps = known_cps(store, evaluated);
+            auto known = evaluated_cps(store, evaluated);
+            auto all = known;
+            for (const auto id : evaluated.ids_in(evaluated.repository_cps)) {
+                all.emplace(evaluated.string(id));
+            }
+            cps.emplace(std::move(known), std::move(all));
         }
+        const auto& [known, all] = *cps;
         auto text = word.starts_with('!') ? std::expected<std::string, std::string>{word}
-                                          : with_category(word, *cps);
+                                          : with_category(word, all);
         if (!text) {
             return std::unexpected(text.error());
         }
-        if (auto error = refusal(store, evaluated, *text)) {
+        const auto atom = parse_atom(*text);
+        if (atom && !known.contains(atom->cp) && all.contains(atom->cp)) {
+            if (!std::ranges::contains(request.unevaluated, atom->cp)) {
+                request.unevaluated.push_back(atom->cp);
+            }
+        } else if (auto error = refusal(store, evaluated, *text)) {
             return std::unexpected(std::move(*error));
         }
         request.arguments.push_back({.set = "", .atom = std::move(*text)});
     }
+    std::ranges::sort(request.unevaluated);
     return request;
 }
 

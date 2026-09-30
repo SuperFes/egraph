@@ -56,6 +56,11 @@ class Session {
     };
     [[nodiscard]] Loaded<Depclean> depclean(bool build_deps, bool dynamic) EGRAPH_LIFETIMEBOUND;
 
+    // Has egraph-build evaluate cps into the store this invocation may write (the system store
+    // as root, the user's otherwise) and answers from it from now on, as adopt(); the error when
+    // the build or the load failed.
+    [[nodiscard]] std::optional<std::string> evaluate(std::span<const std::string> cps);
+
     // Sends later warnings to warnings instead.
     void warn_to(std::ostream& warnings EGRAPH_KEPT_BY_THIS) { warnings_ = warnings; }
 
@@ -78,7 +83,8 @@ class Session {
 // succeed.
 [[nodiscard]] std::optional<std::string>
 run_builder(const Invocation& invocation, std::string_view mode, const std::filesystem::path& path,
-            const std::optional<std::filesystem::path>& log = std::nullopt);
+            const std::optional<std::filesystem::path>& log = std::nullopt,
+            std::span<const std::string> cps = {});
 
 // Why a builder run failed, from how it ended; nothing when it succeeded.
 [[nodiscard]] std::optional<std::string>

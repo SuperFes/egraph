@@ -16,12 +16,16 @@ struct Request {
     // @installed: every installed package's slot is an argument.
     bool installed = false;
     std::vector<Argument> arguments;
+    // The cps of arguments that only the repositories know: the builder evaluates them before
+    // they are planned. Sorted, distinct.
+    std::vector<std::string> unevaluated;
 };
 
 // The arguments words name, each a set the store holds (@world, @selected, @system, @profile,
-// @installed) or an atom; an atom without a category takes the one the stores know its name in.
-// An error for an unknown set, an invalid or ambiguous atom, and an atom that nothing installed
-// and no visible ebuild matches.
+// @installed) or an atom; an atom without a category takes the one the repositories or the
+// installed packages know its name in, the one outside virtual, acct-group and acct-user when
+// the others are there, as emerge picks. An error for an unknown set, an invalid or ambiguous
+// atom, and an atom that nothing installed and no visible ebuild matches, once evaluated.
 [[nodiscard]] std::expected<Request, std::string>
 parse_request(const Store& store, const Evaluated& evaluated, std::span<const std::string> words);
 

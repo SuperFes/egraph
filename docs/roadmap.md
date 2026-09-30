@@ -385,8 +385,13 @@ use, egraph schedules the merges itself.
     `-pu`, `-puD` and `-pn` for 1660 requests over every scenario but four `-uD` atoms in
     `slotops` (cascading slot-operator rebuilds outside the reach, which emerge drops), pinned
     for 16c. `--oneshot` only matters to the actions, so it moves to 16f.
-  - 16b2: a cp outside the stores evaluated by the builder on demand and kept until the next
-    full build.
+  - 16b2 (done): a cp outside the stores evaluated by the builder on demand: the evaluated
+    store lists every repository cp (format 5), so names resolve as emerge resolves them (the one
+    category outside virtual and acct-* beside the others), and `plan` has `egraph-build
+    --evaluate` read what only the repositories know, with what it pulls in. Kept through every
+    later build until `egraph rebuild`, or until installed, since configuration edits make full
+    builds too often to drop it at. Every scenario's requests are now compared with every cp
+    evaluated, with no difference from emerge.
   - 16b3: a new package's USE shown.
 - 16c: `--verify`: the same request through `emerge -p`, the merge lists diffed (versions, USE,
   new packages); every difference fixed or recorded in `upstream-notes.md`.

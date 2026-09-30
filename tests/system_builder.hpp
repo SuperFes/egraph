@@ -14,6 +14,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -154,6 +155,23 @@ inline Version version_of(std::string_view cpv) {
 // Installed packages' dependencies are their evaluated ones too. An installed package's target
 // is the best visible candidate in its slot, when that is newer, or any other when no visible
 // candidate has its version. World holds @selected's atoms, system @system's.
+// Adds cps to those with ebuilds in the repositories, kept sorted and distinct.
+inline void add_repository_cps(System& system, const std::vector<std::string>& cps) {
+    auto& evaluated = system.evaluated;
+    std::set<std::string> all(cps.begin(), cps.end());
+    for (const auto id : evaluated.ids_in(evaluated.repository_cps)) {
+        all.emplace(evaluated.string(id));
+    }
+    detail::Interner intern(evaluated);
+    std::vector<std::uint32_t> ids;
+    for (const auto& cp : all) {
+        ids.push_back(intern(cp));
+    }
+    evaluated.repository_cps = {.first = static_cast<std::uint32_t>(evaluated.ids.size()),
+                                .count = static_cast<std::uint32_t>(ids.size())};
+    evaluated.ids.insert(evaluated.ids.end(), ids.begin(), ids.end());
+}
+
 inline System make_system(const std::vector<Installed>& installed, std::vector<Available> available,
                           const std::vector<std::string>& world = {},
                           const std::vector<std::string>& system_set = {}) {
@@ -259,6 +277,11 @@ inline System make_system(const std::vector<Installed>& installed, std::vector<A
         }
         evaluated.packages.push_back(record);
     }
+    std::vector<std::string> cps;
+    for (const auto& ebuild : available) {
+        cps.emplace_back(detail::cp_of(ebuild.cpv));
+    }
+    add_repository_cps(system, cps);
     return system;
 }
 

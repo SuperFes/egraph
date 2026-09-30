@@ -195,6 +195,11 @@ TEST_CASE("the refresh command passes the roots through") {
           std::vector<std::string>{"/usr/bin/egraph-build", "--incremental", "--store", "/s",
                                    "--root", "/mnt", "--config-root", "/cfg", "--eprefix",
                                    "/prefix"});
+    const std::vector<std::string> cps{"x/y", "x/z"};
+    CHECK(egraph::builder_command(invocation, "--evaluate", "/s", cps) ==
+          std::vector<std::string>{"/usr/bin/egraph-build", "--evaluate", "--store", "/s", "--root",
+                                   "/mnt", "--config-root", "/cfg", "--eprefix", "/prefix", "x/y",
+                                   "x/z"});
     CHECK(egraph::store_path(invocation) ==
           fs::path{"/mnt/prefix/var/cache/egraph/installed.egraph"});
     CHECK(egraph::pending_command(invocation, "/o.json", {"ebuild:x/y-1", "binary:x/z-2"}) ==

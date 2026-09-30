@@ -292,7 +292,7 @@ def test_plans_are_emerges(playgrounds, tmp_path, name, mode):
 
     system = playgrounds(name)
     path = tmp_path / "installed.egraph"
-    write_stores(system, path)
+    write_stores(system, path, request_all=True)
     options, flags = PLAN_MODES[mode]
     differences = set()
     for target in plan_requests(name):
@@ -301,10 +301,6 @@ def test_plans_are_emerges(playgrounds, tmp_path, name, mode):
         )
         result = egraph(path, "plan", *flags, target, check=False)
         if not expected.success:
-            continue
-        # A cp outside the stores is refused.
-        if result.returncode != 0 and "nothing matches" in result.stderr:
-            assert not system.vardb.match(target)
             continue
         assert result.returncode == 0, (target, result.stderr)
         if not ties(plan_merges(result.stdout), expected.merges):

@@ -739,12 +739,52 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
     return Exit::ok;
 }
 
+// The request the targets name, the cps only the repositories know evaluated first.
+std::expected<Request, std::string> resolve_request(const PlanCommand& command, Session& session,
+                                                    const Invocation& invocation) {
+    for (bool evaluated = false;; evaluated = true) {
+        const auto stores = session.stores();
+        if (!stores) {
+            return std::unexpected(stores.error());
+        }
+        const auto store = session.dependencies(invocation.dynamic_deps);
+        if (!store) {
+            return std::unexpected(store.error());
+        }
+        auto request = parse_request(*store, stores->get().evaluated, command.targets);
+        if (!request || request->unevaluated.empty()) {
+            return request;
+        }
+        std::string cps;
+        for (const auto& cp : request->unevaluated) {
+            cps += std::format("{}{}", cps.empty() ? "" : ", ", cp);
+        }
+        if (evaluated) {
+            return std::unexpected(std::format("{}: egraph-build did not evaluate it", cps));
+        }
+        if (invocation.no_refresh) {
+            return std::unexpected(std::format(
+                "{}: not evaluated yet, and --no-refresh keeps egraph-build from evaluating it",
+                cps));
+        }
+        if (auto error = session.evaluate(request->unevaluated)) {
+            return std::unexpected(std::move(*error));
+        }
+    }
+}
+
 Exit execute(const PlanCommand& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     if (!command.update && (command.deep || command.rebuilds != UseRebuilds::none)) {
         err << "egraph: plan: -D, -N and -U are only planned with -u\n";
         return Exit::usage;
     }
+    const auto request = resolve_request(command, session, invocation);
+    if (!request) {
+        err << "egraph: plan: " << request.error() << '\n';
+        return Exit::failure;
+    }
+    // Loaded again, as evaluating replaced them.
     const auto stores = session.stores();
     if (!stores) {
         return fail(err, stores.error());
@@ -754,11 +794,6 @@ Exit execute(const PlanCommand& command, Session& session, const Invocation& inv
         return fail(err, store.error());
     }
     const auto& evaluated = stores->get().evaluated;
-    const auto request = parse_request(*store, evaluated, command.targets);
-    if (!request) {
-        err << "egraph: plan: " << request.error() << '\n';
-        return Exit::failure;
-    }
     // An empty set asks for nothing.
     if (!request->installed && request->arguments.empty()) {
         return Exit::ok;
@@ -1296,10 +1331,12 @@ void add_roots(std::vector<std::string>& argv, const Invocation& invocation) {
 } // namespace
 
 std::vector<std::string> builder_command(const Invocation& invocation, std::string_view mode,
-                                         const std::filesystem::path& path) {
+                                         const std::filesystem::path& path,
+                                         std::span<const std::string> cps) {
     std::vector<std::string> argv{builder_program(invocation), std::string{mode}, "--store",
                                   path.string()};
     add_roots(argv, invocation);
+    argv.insert(argv.end(), cps.begin(), cps.end());
     return argv;
 }
 

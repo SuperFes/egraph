@@ -157,3 +157,68 @@ def test_refresh_brings_the_store_up_to_date_and_prints_nothing(system):
     assert egraph(system, "refresh").returncode == 0
     assert builds(system)[-1].startswith("--incremental --store ")
     assert query(system, "--no-refresh").stdout == expected(playground)
+
+
+@pytest.fixture
+def repository_system(mutable_playground, tmp_path):
+    """The repository scenario, whose www-apps cps are in no store until asked for."""
+    playground = mutable_playground("repository")
+    age(playground.eroot)
+    log = tmp_path / "builds"
+    builder = tmp_path / "egraph-build"
+    builder.write_text(
+        "#!/bin/sh\n"
+        f'echo "$@" >> "{log}"\n'
+        f'PYTHONPATH="{BUILDER_DIR}:{PORTAGE_LIB}" exec "{sys.executable}" -m egraph_build "$@"\n'
+    )
+    builder.chmod(0o755)
+    return playground, tmp_path / "installed.egraph", builder, log
+
+
+def in_repository(system, *args):
+    """egraph in the playground's environment, which names its repositories."""
+    playground, store, builder, _ = system
+    return subprocess.run(
+        [EGRAPH, "--store", str(store), "--builder", str(builder), *args],
+        capture_output=True,
+        text=True,
+        env=dict(playground.settings.environ(), EGRAPH_STRICT="1"),
+    )
+
+
+def evaluations(system):
+    log = system[3]
+    lines = log.read_text().splitlines() if log.exists() else []
+    return [line for line in lines if line.startswith("--evaluate")]
+
+
+def test_plan_evaluates_a_cp_only_the_repositories_know(repository_system):
+    result = in_repository(repository_system, "plan", "www-apps/unused")
+    assert result.returncode == 0, result.stderr
+    merges = {line.split("\t")[2] for line in result.stdout.splitlines()}
+    assert merges == {"www-apps/unused-1", "www-apps/helper-1"}
+    assert len(evaluations(repository_system)) == 1
+    assert "www-apps/unused" in evaluations(repository_system)[0].split()
+    # Kept: the next plan needs no builder run.
+    again = in_repository(repository_system, "plan", "unused")
+    assert again.returncode == 0, again.stderr
+    assert again.stdout == result.stdout
+    assert len(evaluations(repository_system)) == 1
+
+
+def test_plan_without_refresh_does_not_evaluate(repository_system):
+    assert in_repository(repository_system, "stats").returncode == 0
+    result = in_repository(repository_system, "--no-refresh", "plan", "www-apps/unused")
+    assert result.returncode == 1
+    assert result.stderr == (
+        "egraph: plan: www-apps/unused: not evaluated yet, and --no-refresh keeps "
+        "egraph-build from evaluating it\n"
+    )
+    assert evaluations(repository_system) == []
+
+
+def test_plan_refuses_a_name_no_repository_knows(repository_system):
+    result = in_repository(repository_system, "plan", "nowhere")
+    assert result.returncode == 1
+    assert "nowhere: no package by that name in the repositories" in result.stderr
+    assert evaluations(repository_system) == []

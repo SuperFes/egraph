@@ -234,11 +234,12 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
 // The egraph-build command to run.
 [[nodiscard]] std::string builder_program(const Invocation& invocation);
 
-// The egraph-build command line that writes the store at path; mode is --full or
-// --incremental.
+// The egraph-build command line that writes the store at path; mode is --full, --incremental,
+// or --evaluate with the cps to evaluate.
 [[nodiscard]] std::vector<std::string> builder_command(const Invocation& invocation,
                                                        std::string_view mode,
-                                                       const std::filesystem::path& path);
+                                                       const std::filesystem::path& path,
+                                                       std::span<const std::string> cps = {});
 
 // The egraph-build command line that writes what each merge list entry ("ebuild:cpv" or
 // "binary:cpv") waits for to output.

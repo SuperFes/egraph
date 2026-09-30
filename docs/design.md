@@ -383,6 +383,11 @@ taking the best version in its slot and leaving build-time bindings alone.
 `test_plans_are_emerges` holds every scenario's cps, `=cpv`s, slot atoms and root sets to
 `emerge -p`, `-pu`, `-puD` and `-pn`; four `-uD` atoms in `slotops`, whose reach needs
 slot-operator rebuilds outside it that emerge's backtracking drops whole, still differ.
+A name without a category is looked up among every repository cp and the installed ones, as
+emerge's `_dep_expand` does, taking the one outside virtual, acct-group and acct-user when the
+others share it. An argument whose cp only the repositories know (no candidates yet) is
+evaluated first by `egraph-build --evaluate` into the store this user may write, then planned;
+the comparison runs with every cp evaluated so.
 
 `updates -t` lists the plan in merge order (`order_merges` in `plan.cpp`, roadmap 14d), each
 merge numbered and followed by the places of the earlier merges it waits for: those its DEPEND,

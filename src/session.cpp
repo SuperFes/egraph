@@ -63,8 +63,9 @@ std::expected<Loaded, std::string> open_current(const Invocation& invocation, st
 
 std::optional<std::string> run_builder(const Invocation& invocation, std::string_view mode,
                                        const std::filesystem::path& path,
-                                       const std::optional<std::filesystem::path>& log) {
-    return builder_error(invocation, os::run(builder_command(invocation, mode, path), log));
+                                       const std::optional<std::filesystem::path>& log,
+                                       std::span<const std::string> cps) {
+    return builder_error(invocation, os::run(builder_command(invocation, mode, path, cps), log));
 }
 
 std::optional<std::string> builder_error(const Invocation& invocation,
@@ -141,6 +142,19 @@ void Session::adopt(std::shared_ptr<const Stores> stores, std::filesystem::path 
     dynamic_.reset();
     graphs_ = {};
     depclean_ = {};
+}
+
+std::optional<std::string> Session::evaluate(std::span<const std::string> cps) {
+    const auto path = store_path(invocation_);
+    if (auto error = run_builder(invocation_, "--evaluate", path, std::nullopt, cps)) {
+        return error;
+    }
+    auto loaded = load_stores(path);
+    if (!loaded) {
+        return std::move(loaded.error().message);
+    }
+    adopt(std::make_shared<const Stores>(std::move(*loaded)), path);
+    return std::nullopt;
 }
 
 Loaded<Store> Session::dependencies(bool dynamic) {

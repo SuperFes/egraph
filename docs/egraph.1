@@ -198,11 +198,16 @@ What
 .B emerge \-\-pretend
 would merge for the targets, in the lines
 .B updates
-prints: atoms (a name without its category takes the one the stores know it in) and the sets
+prints: atoms (a name without its category takes the one the repositories know it in) and the sets
 .BR @world ", " @selected ", " @system ", " @profile " and " @installed .
 A package the request names is merged even when installed, as plain
 .B emerge
-does. A package outside the stores is refused for now.
+does. A package only the repositories know is evaluated first by
+.BR egraph\-build " \-\-evaluate"
+(not with
+.BR \-\-no\-refresh ),
+and stays in the store until
+.BR "egraph rebuild" .
 .TP
 .B \-\-dynamic\-deps
 .TP

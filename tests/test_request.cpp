@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+using egraph::test::add_repository_cps;
 using egraph::test::make_system;
 
 namespace {
@@ -66,7 +67,41 @@ TEST_CASE("a name without a category takes the one the stores know it in") {
     CHECK(parse(system, {"deep"})->arguments ==
           std::vector<egraph::Argument>{{.set = "", .atom = "dev-libs/deep"}});
     CHECK(parse(system, {"lib"}).error() == "lib: ambiguous, in dev-libs/lib and dev-python/lib");
-    CHECK(parse(system, {"nowhere"}).error() == "nowhere: no package by that name in the stores");
+    CHECK(parse(system, {"nowhere"}).error() ==
+          "nowhere: no package by that name in the repositories");
+}
+
+TEST_CASE("a name without a category takes the one the repositories know it in") {
+    auto system = sample();
+    add_repository_cps(system, {"net-misc/elsewhere", "www-apps/lib"});
+    const auto elsewhere = parse(system, {"elsewhere"});
+    REQUIRE(elsewhere);
+    CHECK(elsewhere->arguments ==
+          std::vector<egraph::Argument>{{.set = "", .atom = "net-misc/elsewhere"}});
+    CHECK(parse(system, {"lib"}).error() ==
+          "lib: ambiguous, in dev-libs/lib, dev-python/lib and www-apps/lib");
+}
+
+TEST_CASE("a name takes its one category beside virtuals and accounts, as emerge does") {
+    auto system = sample();
+    add_repository_cps(system,
+                       {"virtual/tool", "acct-user/tool", "virtual/only", "acct-group/only"});
+    CHECK(parse(system, {"tool"})->arguments ==
+          std::vector<egraph::Argument>{{.set = "", .atom = "app-misc/tool"}});
+    CHECK(parse(system, {"only"}).error() ==
+          "only: ambiguous, in acct-group/only and virtual/only");
+}
+
+TEST_CASE("a cp only the repositories know is left for the builder to evaluate") {
+    auto system = sample();
+    add_repository_cps(system, {"net-misc/elsewhere"});
+    const auto request =
+        parse(system, {"net-misc/elsewhere", ">=net-misc/elsewhere-2", "app-misc/tool"});
+    REQUIRE(request);
+    CHECK(request->arguments.size() == 3);
+    CHECK(request->unevaluated == std::vector<std::string>{"net-misc/elsewhere"});
+    CHECK(parse(system, {"app-misc/tool"})->unevaluated.empty());
+    CHECK(parse(system, {"net-misc/nowhere"}).error() == "net-misc/nowhere: nothing matches");
 }
 
 TEST_CASE("an atom nothing installed or visible matches is refused") {
