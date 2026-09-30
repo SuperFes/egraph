@@ -294,6 +294,19 @@ dependencies join the plan like a merge's; with no such ebuild the binding holds
 like a bound, so it falls back to a version in the bound sub-slot. The line names the merge the
 rebuild is for. Blockers are not weighed.
 
+`updates --world` plans `emerge -uD @world` instead (roadmap 12c): the packages depclean keeps
+are in scope, and one outside keeps its version while its dependencies weigh nothing. emerge's
+arguments are the root sets' atoms here, not a slot atom per installed package, and only an
+argument is updated regardless of what depends on it. So a `||` whose installed alternative an
+update would take away rejects that update when no root atom names the package, rather than
+switch alternatives. And a kept dependent bound by a slot operator to an older slot is rebuilt
+against the best visible version in a newer one, as `--rebuild-if-new-slot` (depgraph's
+`_slot_operator_update_probe`): when its ebuild's atoms naming the cp name no slot, the version
+is higher than the bound one, and every other kept dependent's atom (a slot operator's whatever
+its slot) and root atom of the bound package accepts it. That slot's installed package is
+updated to it even when nothing kept it; with none installed, it is pulled in. Under
+@installed every package's slot atom is an argument, so neither applies.
+
 `updates -t` lists the plan in merge order (`order_merges` in `plan.cpp`, roadmap 14d), each
 merge numbered and followed by the places of the earlier merges it waits for: those its DEPEND,
 BDEPEND, RDEPEND or IDEPEND match (every member of a `||`, as `pending.py` counts them; PDEPEND

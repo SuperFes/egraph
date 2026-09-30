@@ -130,18 +130,33 @@ def parse_updates(text):
     return found
 
 
+def merged(text):
+    """What updates output merges, as update.updates' replaced, rebuilt and new."""
+    lines = [line.split("\t") for line in text.splitlines()]
+    replaced = {
+        cpv: replacement for cpv, (_, replacement) in parse_updates(text).items()
+    }
+    rebuilt = {
+        fields[0] for fields in lines if fields[1] == "rebuild" and len(fields) > 5
+    }
+    new = {fields[0] for fields in lines if fields[1] == "new"}
+    return replaced, rebuilt, new
+
+
 @pytest.mark.parametrize(
     "option, newuse, changed_use",
     [(None, False, False), ("--newuse", True, False), ("--changed-use", False, True)],
     ids=["update", "newuse", "changed-use"],
 )
+@pytest.mark.parametrize("target", ["@installed", "@world"])
 def test_updates_are_emerges(
-    scenario, system, dynamic_deps, option, newuse, changed_use
+    scenario, system, dynamic_deps, option, newuse, changed_use, target
 ):
     """What emerge -puD @installed merges: dependents' atoms hold updates back, the deep
     resolution falls back to the best version they accept, as plain -u does not, what the
     merges and the kept packages need that nothing installed provides comes in new, and
-    dependents bound to a replaced sub-slot are rebuilt."""
+    dependents bound to a replaced sub-slot are rebuilt. With --world, what emerge -puD @world
+    merges: only what the root sets reach is updated, and only it weighs."""
     from portage.versions import cpv_getversion, vercmp
 
     import update
@@ -152,31 +167,17 @@ def test_updates_are_emerges(
         newuse,
         changed_use,
         deep=True,
+        target=target,
         dynamic_deps=dynamic_deps,
     )
     if not expected.success:
-        pytest.skip("emerge cannot resolve @installed here")
+        pytest.skip(f"emerge cannot resolve {target} here")
     _, path = system
-    options = [*dynamic_option(dynamic_deps), *filter(None, [option])]
+    world = ["--world"] if target == "@world" else []
+    options = [*dynamic_option(dynamic_deps), *filter(None, [option]), *world]
     output = egraph(path, "updates", *options).stdout
-    new = {
-        fields[0]
-        for fields in (line.split("\t") for line in output.splitlines())
-        if fields[1] == "new"
-    }
-    rebuilt = {
-        fields[0]
-        for fields in (line.split("\t") for line in output.splitlines())
-        if fields[1] == "rebuild" and len(fields) > 5
-    }
-    found = parse_updates(output)
-    replaced = {cpv: replacement for cpv, (_, replacement) in found.items()}
-    assert (replaced, rebuilt, new) == (
-        expected.replaced,
-        expected.rebuilt,
-        expected.new,
-    )
-    for cpv, (kind, replacement) in found.items():
+    assert merged(output) == (expected.replaced, expected.rebuilt, expected.new)
+    for cpv, (kind, replacement) in parse_updates(output).items():
         order = vercmp(cpv_getversion(replacement.cpv), cpv_getversion(cpv))
         assert kind == (
             "upgrade" if order > 0 else "downgrade" if order < 0 else "rebuild"

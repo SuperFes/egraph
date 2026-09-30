@@ -63,6 +63,16 @@ pending_update(const Evaluated& evaluated, std::uint32_t package, UseRebuilds re
 [[nodiscard]] std::vector<std::uint32_t>
 fallbacks(const Evaluated& evaluated, std::uint32_t package, const PendingUpdate& wanted);
 
+// The installed packages an update plan starts from, as emerge's targets.
+struct Targets {
+    // The packages in scope; every one when empty. One out of scope keeps its version, and its
+    // dependencies weigh nothing.
+    std::vector<bool> scope;
+    // emerge's arguments are the root sets' atoms, as for @world, rather than every installed
+    // package's slot, as for @installed.
+    bool roots = false;
+};
+
 // What emerge -uD would merge (plan_updates), as "cpv<TAB>kind<TAB>target cpv<TAB>repo": kind
 // upgrade, downgrade, or rebuild when the installed package is masked and the target has its
 // version. With rebuilds, each USE rebuild too, kind rebuild with "<TAB>flags" appended, the flags
@@ -79,16 +89,18 @@ fallbacks(const Evaluated& evaluated, std::uint32_t package, const PendingUpdate
 [[nodiscard]] std::vector<std::string> update_lines(const Store& store, const Evaluated& evaluated,
                                                     UseRebuilds rebuilds, bool held = false,
                                                     bool table = false,
-                                                    const std::vector<bool>& scope = {});
+                                                    const Targets& targets = {});
 
 // Where each merge of the plan comes from, in merge order: "place<TAB>@set<TAB>cpv<TAB>...", its
 // place as update_lines' table numbers it, then the root set and the chain of installed packages
 // why finds from the set's atom down to the one the merge replaces (or rebuilds). A new package's
 // chain is that of the member that pulled it in, then its own cpv. A merge nothing keeps has an
-// empty set and its own cpv only.
+// empty set and its own cpv only. With world, the plan starts from the root sets, covering only
+// what kept holds.
 [[nodiscard]] std::vector<std::string> update_tree_lines(const Store& store,
                                                          const Evaluated& evaluated,
-                                                         const Kept& kept, UseRebuilds rebuilds);
+                                                         const Kept& kept, UseRebuilds rebuilds,
+                                                         bool world = false);
 
 // Consumers (or providers) of a soname: one "cpv<TAB>multilib category" line each, sorted.
 [[nodiscard]] std::vector<std::string> soname_users(const Store& store, std::string_view soname,

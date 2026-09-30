@@ -207,8 +207,8 @@ std::vector<std::uint32_t> fallbacks(const Evaluated& evaluated, std::uint32_t p
 
 std::vector<std::string> update_lines(const Store& store, const Evaluated& evaluated,
                                       UseRebuilds rebuilds, bool held, bool table,
-                                      const std::vector<bool>& scope) {
-    const auto plan = plan_updates(store, evaluated, rebuilds, scope);
+                                      const Targets& targets) {
+    const auto plan = plan_updates(store, evaluated, rebuilds, targets);
     const auto target_fields = [&evaluated](std::uint32_t target) {
         const auto& candidate = evaluated.candidates.at(target);
         return std::format("{}\t{}", evaluated.string(candidate.cpv),
@@ -299,8 +299,10 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
 }
 
 std::vector<std::string> update_tree_lines(const Store& store, const Evaluated& evaluated,
-                                           const Kept& kept, UseRebuilds rebuilds) {
-    const auto plan = plan_updates(store, evaluated, rebuilds);
+                                           const Kept& kept, UseRebuilds rebuilds, bool world) {
+    const auto plan =
+        plan_updates(store, evaluated, rebuilds,
+                     world ? Targets{.scope = kept.packages, .roots = true} : Targets{});
     std::map<std::uint32_t, std::uint32_t> by_candidate;
     for (std::uint32_t i = 0; i < plan.merges.size(); ++i) {
         by_candidate.emplace(plan.merges.at(i).candidate, i);

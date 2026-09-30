@@ -66,9 +66,8 @@ struct Plan {
     std::vector<HeldBack> held;
 };
 
-// What emerge -uD would merge for the installed packages in scope (every one when scope is
-// empty), with store's dependencies (read with or without dynamic deps) for the installed ones
-// and the candidates' own for what it merges:
+// What emerge -uD would merge for targets, with store's dependencies (read with or without
+// dynamic deps) for the installed packages and the candidates' own for what it merges:
 // - each package's pending update, or the best visible version in its slot that no member's
 //   dependency rejects; held back when none is left;
 // - whatever a member's dependencies need that nothing in the plan satisfies: the best visible
@@ -79,6 +78,6 @@ struct Plan {
 //   binding holds the merge back like any bound.
 // Blockers are not weighed.
 [[nodiscard]] Plan plan_updates(const Store& store, const Evaluated& evaluated,
-                                UseRebuilds rebuilds, const std::vector<bool>& scope = {});
+                                UseRebuilds rebuilds, const Targets& targets = {});
 
 } // namespace egraph

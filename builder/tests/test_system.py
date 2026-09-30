@@ -448,6 +448,35 @@ def test_updates_cover_emerges(live_evaluated, live_updates, newuse, changed_use
     assert {cpv: found.get(cpv) for cpv in expected} == expected
 
 
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+@pytest.mark.parametrize(
+    "option, newuse, changed_use",
+    [(None, False, False), ("--newuse", True, False), ("--changed-use", False, True)],
+    ids=["update", "newuse", "changed-use"],
+)
+def test_world_updates_are_emerges(
+    live_emerge_config, live_store, option, newuse, changed_use
+):
+    """updates --world merges what emerge -puD @world does."""
+    from test_queries import merged
+    from update import updates
+
+    config = live_emerge_config
+    expected = updates(
+        config.trees,
+        config.target_config.root,
+        newuse,
+        changed_use,
+        deep=True,
+        target="@world",
+    )
+    assert expected.success
+    output = _egraph(live_store, "updates", "--world", *filter(None, [option]))
+    assert merged(output) == (expected.replaced, expected.rebuilt, expected.new)
+
+
 def test_visible_is_emerges(live_emerge_config, live_evaluated):
     from update import equiv_visible
 

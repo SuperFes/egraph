@@ -6,6 +6,7 @@
 
 #include <format>
 #include <string>
+#include <utility>
 #include <vector>
 
 using egraph::test::Available;
@@ -31,9 +32,9 @@ std::string reason(const egraph::test::System& system, const egraph::Reason& rea
 // "installed held <- member atom; ...".
 std::vector<std::string> plan(const egraph::test::System& system,
                               egraph::UseRebuilds rebuilds = egraph::UseRebuilds::none,
-                              const std::vector<bool>& scope = {}) {
+                              const egraph::Targets& targets = {}) {
     const auto& [store, evaluated] = system;
-    const auto found = egraph::plan_updates(store, evaluated, rebuilds, scope);
+    const auto found = egraph::plan_updates(store, evaluated, rebuilds, targets);
     std::vector<std::string> lines;
     for (const auto& merge : found.merges) {
         const auto target = evaluated.string(evaluated.candidates.at(merge.candidate).cpv);
@@ -123,7 +124,7 @@ TEST_CASE("a kept package's dependencies pull in what they lack, build-time ones
           std::vector<std::string>{"new dev-libs/fresh-1 <- app-misc/grown-1 dev-libs/fresh",
                                    "new dev-libs/tool-1 <- app-misc/grown-1 dev-libs/tool"});
     // Out of scope, they pull nothing in.
-    CHECK(plan(system, egraph::UseRebuilds::none, {false}).empty());
+    CHECK(plan(system, egraph::UseRebuilds::none, {.scope = {false}}).empty());
 }
 
 TEST_CASE("an update that needs a held one is held by its own dependency") {
@@ -170,6 +171,26 @@ TEST_CASE("a dependent's || takes another alternative rather than hold an update
                                    "new dev-libs/other-1 <- app-misc/either-1 dev-libs/other"});
 }
 
+TEST_CASE("a || keeps its installed alternative unless a root atom names it") {
+    const std::vector<Installed> installed{
+        {.cpv = "app-misc/either-1",
+         .deps = {{"RDEPEND", "|| ( <dev-libs/alt-2 dev-libs/other )"}}},
+        {.cpv = "dev-libs/alt-1"}};
+    const std::vector<Available> available{
+        {.cpv = "app-misc/either-1",
+         .deps = {{"RDEPEND", "|| ( <dev-libs/alt-2 dev-libs/other )"}}},
+        {.cpv = "dev-libs/alt-1"},
+        {.cpv = "dev-libs/alt-2"},
+        {.cpv = "dev-libs/other-1"}};
+    CHECK(plan(make_system(installed, available, {"app-misc/either"}), egraph::UseRebuilds::none,
+               {.scope = {}, .roots = true}) ==
+          std::vector<std::string>{"dev-libs/alt-1 held <- app-misc/either-1 <dev-libs/alt-2"});
+    CHECK(plan(make_system(installed, available, {"app-misc/either", "dev-libs/alt"}),
+               egraph::UseRebuilds::none, {.scope = {}, .roots = true}) ==
+          std::vector<std::string>{"dev-libs/alt-1 -> dev-libs/alt-2",
+                                   "new dev-libs/other-1 <- app-misc/either-1 dev-libs/other"});
+}
+
 TEST_CASE("dependents hold an update back to the best version they all accept") {
     const auto system =
         make_system({{.cpv = "app-misc/pylint-1", .deps = {{"RDEPEND", "<dev-libs/astroid-4.1"}}},
@@ -183,8 +204,24 @@ TEST_CASE("dependents hold an update back to the best version they all accept") 
               "dev-libs/astroid-4.0.4 -> dev-libs/astroid-4.0.5",
               "dev-libs/astroid-4.0.4 held <- app-misc/pylint-1 <dev-libs/astroid-4.1"});
     // Out of scope, a dependent holds nothing back.
-    CHECK(plan(system, egraph::UseRebuilds::none, {false, true}) ==
+    CHECK(plan(system, egraph::UseRebuilds::none, {.scope = {false, true}}) ==
           std::vector<std::string>{"dev-libs/astroid-4.0.4 -> dev-libs/astroid-4.3.2"});
+}
+
+TEST_CASE("a package out of scope keeps its version") {
+    const auto system =
+        make_system({{.cpv = "app-misc/tool-1", .deps = {{"RDEPEND", "dev-libs/lib"}}},
+                     {.cpv = "dev-libs/lib-1"},
+                     {.cpv = "app-misc/stray-1"}},
+                    {{.cpv = "app-misc/tool-1", .deps = {{"RDEPEND", "dev-libs/lib"}}},
+                     {.cpv = "dev-libs/lib-1"},
+                     {.cpv = "dev-libs/lib-2"},
+                     {.cpv = "app-misc/stray-1"},
+                     {.cpv = "app-misc/stray-2"}});
+    CHECK(plan(system) == std::vector<std::string>{"dev-libs/lib-1 -> dev-libs/lib-2",
+                                                   "app-misc/stray-1 -> app-misc/stray-2"});
+    CHECK(plan(system, egraph::UseRebuilds::none, {.scope = {true, true, false}}) ==
+          std::vector<std::string>{"dev-libs/lib-1 -> dev-libs/lib-2"});
 }
 
 TEST_CASE("a new sub-slot rebuilds the dependents bound to the old one") {
@@ -207,11 +244,90 @@ TEST_CASE("a new sub-slot rebuilds the dependents bound to the old one") {
               "app-misc/pdep-1 -> app-misc/pdep-1 for dev-libs/lib-2 dev-libs/lib:0/1=",
               "dev-libs/lib-1 -> dev-libs/lib-2"});
     // Out of scope, a dependent is not rebuilt.
-    CHECK(plan(system, egraph::UseRebuilds::none, {false, true, true, true, true}) ==
+    CHECK(plan(system, egraph::UseRebuilds::none, {.scope = {false, true, true, true, true}}) ==
           std::vector<std::string>{
               "app-misc/ddep-1 -> app-misc/ddep-1 for dev-libs/lib-2 dev-libs/lib:0/1=",
               "app-misc/pdep-1 -> app-misc/pdep-1 for dev-libs/lib-2 dev-libs/lib:0/1=",
               "dev-libs/lib-1 -> dev-libs/lib-2"});
+}
+
+TEST_CASE("from the root sets, a slot-operator dependent moves to a newer slot") {
+    const std::vector<Installed> installed{
+        {.cpv = "app-misc/slotop-1", .deps = {{"RDEPEND", "dev-libs/lib:1/1="}}},
+        {.cpv = "dev-libs/lib-1", .slot = "1", .sub_slot = "1"},
+        {.cpv = "dev-libs/lib-2", .slot = "2", .sub_slot = "2"}};
+    const std::vector<Available> available{
+        {.cpv = "app-misc/slotop-1", .deps = {{"RDEPEND", "dev-libs/lib:="}}},
+        {.cpv = "dev-libs/lib-1", .slot = "1", .sub_slot = "1"},
+        {.cpv = "dev-libs/lib-2", .slot = "2", .sub_slot = "2"},
+        {.cpv = "dev-libs/lib-2.1", .slot = "2", .sub_slot = "2.1"}};
+    const egraph::Targets world{.scope = {true, true, false}, .roots = true};
+    // The installed package in the newer slot is updated though nothing kept it.
+    CHECK(plan(make_system(installed, available, {"app-misc/slotop"}), egraph::UseRebuilds::none,
+               world) ==
+          std::vector<std::string>{
+              "app-misc/slotop-1 -> app-misc/slotop-1 for dev-libs/lib-2.1 dev-libs/lib:1/1=",
+              "dev-libs/lib-2 -> dev-libs/lib-2.1"});
+    // Every installed package is an argument of @installed, pinning its slot.
+    CHECK(plan(make_system(installed, available, {"app-misc/slotop"})) ==
+          std::vector<std::string>{"dev-libs/lib-2 -> dev-libs/lib-2.1"});
+    // So is a root atom's.
+    CHECK(plan(make_system(installed, available, {"app-misc/slotop", "dev-libs/lib:1"}),
+               egraph::UseRebuilds::none, world)
+              .empty());
+}
+
+TEST_CASE("a newer slot nothing occupies is pulled in for a slot-operator dependent") {
+    const auto system =
+        make_system({{.cpv = "app-misc/slotop-1", .deps = {{"RDEPEND", "dev-libs/lib:1/1="}}},
+                     {.cpv = "dev-libs/lib-1", .slot = "1", .sub_slot = "1"}},
+                    {{.cpv = "app-misc/slotop-1", .deps = {{"RDEPEND", "dev-libs/lib:="}}},
+                     {.cpv = "dev-libs/lib-1", .slot = "1", .sub_slot = "1"},
+                     {.cpv = "dev-libs/lib-2", .slot = "2", .sub_slot = "2"},
+                     {.cpv = "dev-libs/lib-3", .slot = "3", .sub_slot = "3", .visible = false}},
+                    {"app-misc/slotop"});
+    CHECK(plan(system, egraph::UseRebuilds::none, {.scope = {}, .roots = true}) ==
+          std::vector<std::string>{
+              "app-misc/slotop-1 -> app-misc/slotop-1 for dev-libs/lib-2 dev-libs/lib:1/1=",
+              "new dev-libs/lib-2 <- app-misc/slotop-1 dev-libs/lib:="});
+}
+
+TEST_CASE("a slot-operator dependent stays in its slot when anything else pins it there") {
+    // Each other dependent with its installed dependencies, then its ebuild's.
+    using Other = std::pair<Installed, egraph::test::DepStrings>;
+    const auto with = [](const std::string& ebuild_atom, const std::vector<Other>& others) {
+        std::vector<Installed> installed{
+            {.cpv = "app-misc/slotop-1", .deps = {{"RDEPEND", "dev-libs/lib:1/1="}}},
+            {.cpv = "dev-libs/lib-1", .slot = "1", .sub_slot = "1"}};
+        std::vector<Available> available{
+            {.cpv = "app-misc/slotop-1", .deps = {{"RDEPEND", ebuild_atom}}},
+            {.cpv = "dev-libs/lib-1", .slot = "1", .sub_slot = "1"},
+            {.cpv = "dev-libs/lib-2", .slot = "2", .sub_slot = "2"}};
+        std::vector<std::string> world{"app-misc/slotop"};
+        for (const auto& [other, deps] : others) {
+            installed.push_back(other);
+            available.push_back({.cpv = other.cpv, .deps = deps});
+            world.push_back(other.cpv.substr(0, other.cpv.rfind('-')));
+        }
+        return make_system(installed, available, world);
+    };
+    // The ebuild names the slot.
+    CHECK(plan(with("dev-libs/lib:1=", {}), egraph::UseRebuilds::none, {.scope = {}, .roots = true})
+              .empty());
+    // Another dependent's atom rejects the newer slot; another bound one does not.
+    CHECK(plan(with("dev-libs/lib:=",
+                    {{{.cpv = "app-misc/old-1", .deps = {{"RDEPEND", "<dev-libs/lib-2"}}},
+                      {{"RDEPEND", "<dev-libs/lib-2"}}}}),
+               egraph::UseRebuilds::none, {.scope = {}, .roots = true})
+              .empty());
+    CHECK(plan(with("dev-libs/lib:=",
+                    {{{.cpv = "app-misc/bound-1", .deps = {{"RDEPEND", "dev-libs/lib:1/1="}}},
+                      {{"RDEPEND", "dev-libs/lib:="}}}}),
+               egraph::UseRebuilds::none, {.scope = {}, .roots = true}) ==
+          std::vector<std::string>{
+              "app-misc/slotop-1 -> app-misc/slotop-1 for dev-libs/lib-2 dev-libs/lib:1/1=",
+              "app-misc/bound-1 -> app-misc/bound-1 for dev-libs/lib-2 dev-libs/lib:1/1=",
+              "new dev-libs/lib-2 <- app-misc/slotop-1 dev-libs/lib:="});
 }
 
 TEST_CASE("a dependent that is updated is not rebuilt as well") {

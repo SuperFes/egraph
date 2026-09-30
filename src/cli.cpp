@@ -609,23 +609,29 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
         return fail(err, store.error());
     }
     const auto& evaluated = stores->get().evaluated;
+    const auto depclean = command.tree || command.world
+                              ? std::optional{session.depclean(true, invocation.dynamic_deps)}
+                              : std::nullopt;
+    if (depclean && !*depclean) {
+        return fail(err, depclean->error());
+    }
+    const auto targets = command.world
+                             ? Targets{.scope = (*depclean)->get().kept.packages, .roots = true}
+                             : Targets{};
     if (command.tree) {
-        const auto depclean = session.depclean(true, invocation.dynamic_deps);
-        if (!depclean) {
-            return fail(err, depclean.error());
-        }
-        const auto tree =
-            update_tree_lines(*store, evaluated, depclean->get().kept, command.rebuilds);
+        const auto tree = update_tree_lines(*store, evaluated, (*depclean)->get().kept,
+                                            command.rebuilds, command.world);
         if (const auto style = output(invocation); style.human) {
-            human_update_tree(out, update_lines(*store, evaluated, command.rebuilds, false, true),
-                              tree, style.theme);
+            human_update_tree(
+                out, update_lines(*store, evaluated, command.rebuilds, false, true, targets), tree,
+                style.theme);
         } else {
             write_lines(out, tree);
         }
         return Exit::ok;
     }
     const auto lines =
-        update_lines(*store, evaluated, command.rebuilds, command.held, command.table);
+        update_lines(*store, evaluated, command.rebuilds, command.held, command.table, targets);
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme, command.table);
     } else {
@@ -953,6 +959,9 @@ void configure(CLI::App& app, Invocation& invocation) {
     updates_cmd->add_flag_callback(
         "--tree", [&invocation] { std::get<Updates>(invocation.command).tree = true; },
         "Each merge under the root set and the packages it comes from");
+    updates_cmd->add_flag_callback(
+        "--world", [&invocation] { std::get<Updates>(invocation.command).world = true; },
+        "Only the packages the root sets keep, as emerge -uD @world");
     updates_cmd->add_flag_callback(
         "-N,--newuse",
         [&invocation] { std::get<Updates>(invocation.command).rebuilds = UseRebuilds::all; },

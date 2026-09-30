@@ -228,9 +228,14 @@ an update back, rather than skipping it), it stays, recorded in `upstream-notes.
   held and by whom. Compared with `emerge -puD @installed` on every scenario; on the dev box it
   leaves 5 of the 12 differences with `-uDN @world`: 2 for 12c, 3 for a resolver. The TUI still
   shows unweighed updates until 12d's held view.
-- 12c: `updates --world`: only the packages `emerge -uD @world` reaches (those depclean keeps),
-  and only their dependents hold. Compared with `emerge -puDN @world` on every scenario and
-  the live system.
+- 12c (done): `updates --world`: only the packages `emerge -uD @world` reaches (those depclean
+  keeps) are updated, and only their dependents hold. emerge's arguments are then the root
+  sets' atoms rather than every installed package, which shows in two ways: a `||` keeps an
+  installed alternative no root atom names rather than switch to another (`bounds`), and a kept
+  slot-operator dependent moves to the best visible newer slot when nothing else pins the old
+  one, as `--rebuild-if-new-slot`, updating or pulling in that slot's package (`repository`).
+  Equal to `emerge -puD @world` (plain, -N, -U) on every scenario and on the dev box, where the
+  23 merges of `-N` are emerge's, the two gentoo-sources rebuilds outside @world gone.
 - 12d: remedies for a held update, as a choice rather than emerge's silent skip. Removing a
   holder is offered only when it is a leaf: nothing installed depends on it, and only world (or
   nothing) keeps it; then the update goes through, and what else it frees is listed. A holder
