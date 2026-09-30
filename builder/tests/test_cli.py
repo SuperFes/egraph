@@ -86,3 +86,24 @@ def test_exit_codes_match_egraph():
         if name.startswith("EXIT_")
     }
     assert egraph and builder == egraph
+
+
+def test_the_environment_does_not_override_the_configuration(playgrounds, monkeypatch):
+    """A hook portage runs inherits its configuration, USE and the USE_EXPAND variables among
+    it; taken back from there, they would outrank package.use."""
+    system = playgrounds("atoms")
+    settings = system.vardb.settings
+    monkeypatch.setenv("PORTAGE_REPOSITORIES", settings["PORTAGE_REPOSITORIES"])
+    monkeypatch.setenv("USE", "-a -b")
+    monkeypatch.setenv("KERNEL", "hurd")
+    from portage import config
+
+    where = (settings["PORTAGE_CONFIGROOT"], settings["ROOT"], settings["EPREFIX"])
+    _, portdb = cli.open_databases(*where)
+    clone = config(clone=portdb.settings)
+    clone.setcpv("app-misc/u8-1", mydb=portdb)
+    enabled = clone["PORTAGE_USE"].split()
+    assert {"a", "b"} <= set(enabled)
+    assert "kernel_hurd" not in enabled
+    env = cli.portage_environment(*where)
+    assert "USE" not in env and "KERNEL" not in env

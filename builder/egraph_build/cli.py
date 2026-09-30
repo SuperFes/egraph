@@ -91,12 +91,49 @@ def parser():
     return p
 
 
+# What portage takes from the environment over its configuration files, besides the USE_EXPAND
+# variables themselves.
+_CONFIGURATION = frozenset(
+    (
+        "USE",
+        "USE_EXPAND",
+        "USE_EXPAND_UNPREFIXED",
+        "ACCEPT_KEYWORDS",
+        "ACCEPT_LICENSE",
+        "ACCEPT_PROPERTIES",
+        "ACCEPT_RESTRICT",
+    )
+)
+
+
+def portage_environment(config_root, root, eprefix=None, environ=None):
+    """environ (os.environ by default) without what would override portage's configuration
+    files: a hook portage runs inherits its whole configuration, and USE or POSTGRES_TARGETS
+    taken back from there outrank package.use."""
+    import portage
+
+    env = {
+        name: value
+        for name, value in (os.environ if environ is None else environ).items()
+        if name not in _CONFIGURATION
+    }
+    probe = portage.config(
+        config_root=config_root, target_root=root, eprefix=eprefix, env=env
+    )
+    expanded = set(probe.get("USE_EXPAND", "").split())
+    expanded.update(probe.get("USE_EXPAND_UNPREFIXED", "").split())
+    return {name: value for name, value in env.items() if name not in expanded}
+
+
 def open_vardb(config_root, root, eprefix=None):
     import portage
     from portage.dbapi.vartree import vartree
 
     settings = portage.config(
-        config_root=config_root, target_root=root, eprefix=eprefix
+        config_root=config_root,
+        target_root=root,
+        eprefix=eprefix,
+        env=portage_environment(config_root, root, eprefix),
     )
     return vartree(settings=settings).dbapi
 
@@ -104,12 +141,13 @@ def open_vardb(config_root, root, eprefix=None):
 def _tree(config_root, root, eprefix):
     import portage
 
+    env = portage_environment(config_root, root, eprefix)
     trees = portage.create_trees(
-        config_root=config_root, target_root=root, eprefix=eprefix
+        config_root=config_root, target_root=root, eprefix=eprefix, env=env
     )
-    eroot = portage.config(config_root=config_root, target_root=root, eprefix=eprefix)[
-        "EROOT"
-    ]
+    eroot = portage.config(
+        config_root=config_root, target_root=root, eprefix=eprefix, env=env
+    )["EROOT"]
     return trees[eroot]
 
 
