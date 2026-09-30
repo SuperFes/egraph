@@ -45,5 +45,13 @@ The loop egraph should absorb: run `emerge -pv`, read the USE flags, edit `packa
   orchestration, parallel builds with steve, merge, and a kernel-enforced sandbox (mount
   namespace plus landlock) in place of `LD_PRELOAD`. Checked by building a package both ways
   and diffing the image and vdb entry. First step: run egraph's plan through `ebuild`.
+- Transactional merges: build the whole plan into a staging root (a btrfs snapshot of `/`, or
+  an overlay), check it, and swap it in only once everything built, so a failure half way leaves
+  the system untouched. A snapshot also gives a rollback.
+- Problems presented, not panicked over: where portage refuses outright, egraph explains and
+  offers to try. Example: installing dev-db/mariadb-12 over a file dev-db/mysql-connector-c
+  owned made portage mask mariadb-12, though the collision only matters one way (the connector
+  merges fine when mariadb owns the file). Improvements over portage still follow the
+  divergence rule: a test proving egraph right, recorded in `docs/upstream-notes.md`.
 - A distribution of our own on the Gentoo tree, as ChromiumOS is: a profile and an overlay for
   what differs, our tooling on top, and the packages maintained upstream.
