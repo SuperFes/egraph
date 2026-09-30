@@ -340,7 +340,7 @@ built from a release tarball, tested against the portage users run rather than o
 - 15c (done): man pages, `egraph(1)` and `egraph-build(1)`, held to the CLI by tests that
   every command and option is documented, each command's under its own subsection, and linted
   with mandoc.
-- 15d: portage hooks a package can install: `/etc/portage/bin/post_emerge` is the user's own
+- 15d (done): portage hooks a package can install: `/etc/portage/bin/post_emerge` is the user's own
   file, so the dispatcher is installed beside the hooks for the user to link, and postsync.d
   (which portage runs itself) takes egraph's hook directly. Step 16 replaces both.
 - 15e: the ebuild, in the overlay: the builder for the Python versions portage supports, the

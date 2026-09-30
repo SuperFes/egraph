@@ -18,8 +18,8 @@ option(
   type: 'boolean',
   value: true,
   description: 'Install portage hooks that refresh the stores after each emerge and sync: '
-  + '/etc/portage/bin/post_emerge, a dispatcher, and egraph in /etc/portage/post_emerge.d '
-  + 'and /etc/portage/postsync.d',
+  + 'egraph in /etc/portage/post_emerge.d and /etc/portage/postsync.d, and the dispatcher '
+  + 'for post_emerge.d in ${datadir}/egraph, to link as /etc/portage/bin/post_emerge',
 )
 option(
   'portage_config',

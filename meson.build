@@ -172,9 +172,10 @@ foreach page : ['egraph.1', 'egraph-build.1']
   )
 endforeach
 
-# portage's post_emerge hook, as a dispatcher over /etc/portage/post_emerge.d, and egraph's entry
-# there and in postsync.d, which refreshes the stores after every emerge that changed the
-# installed packages and after every sync.
+# egraph's entry in /etc/portage/post_emerge.d and postsync.d, which refreshes the stores after
+# every emerge that changed the installed packages and after every sync. portage runs postsync.d
+# itself, but only /etc/portage/bin/post_emerge after an emerge, which is the user's own file: the
+# dispatcher running post_emerge.d is installed for the user to link there.
 egraph_hook = configure_file(
   input: 'hooks/egraph.in',
   output: 'egraph-hook',
@@ -183,7 +184,7 @@ egraph_hook = configure_file(
 if get_option('portage_hooks')
   install_data(
     'hooks/post_emerge',
-    install_dir: get_option('portage_config') / 'bin',
+    install_dir: get_option('datadir') / 'egraph',
     install_mode: 'rwxr-xr-x',
   )
   foreach hooks : ['post_emerge.d', 'postsync.d']

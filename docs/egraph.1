@@ -257,8 +257,19 @@ The system store, with the evaluated store beside it; written by root.
 The store of a user who cannot write the system store, used while the system store is not
 current.
 .TP
-.IR /etc/portage/postsync.d/egraph ", " /etc/portage/post_emerge.d/egraph
-Refresh the store after a sync, and after an emerge that changed the installed packages.
+.I /etc/portage/postsync.d/egraph
+Refreshes the store after a sync.
+.TP
+.I /etc/portage/post_emerge.d/egraph
+Refreshes the store after an emerge that changed the installed packages, once the dispatcher is
+linked in place.
+.TP
+.I /usr/share/egraph/post_emerge
+The dispatcher that runs every hook in
+.IR /etc/portage/post_emerge.d .
+portage runs only
+.I /etc/portage/bin/post_emerge
+after an emerge, which is the user's own file; without one, link this there.
 .SH EXIT STATUS
 .TP
 .B 0

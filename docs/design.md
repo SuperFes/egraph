@@ -441,12 +441,13 @@ No merge-time hook is needed, and edits to the vdb made outside portage are caug
   and no output.
 - After an emerge that merged or unmerged anything, portage runs `/etc/portage/bin/post_emerge`
   once (upstream since 2011, though no man page says so), as root with its roots in the
-  environment. egraph installs a dispatcher there that runs every executable in
-  `/etc/portage/post_emerge.d`, as `postsync.d` does for syncs, and its own entry in that
-  directory runs `egraph refresh`, so the next query does not pay for the refresh
-  (`hooks/`; meson options `portage_hooks` and `portage_config`). The same entry goes in
+  environment. That file is the user's, so egraph installs a dispatcher for it as
+  `${datadir}/egraph/post_emerge`, to link there: it runs every executable in
+  `/etc/portage/post_emerge.d`, as `postsync.d` does for syncs, and egraph's own entry in that
+  directory runs `egraph refresh`, so the next query does not pay for the refresh (`hooks/`;
+  meson options `portage_hooks` and `portage_config`). The same entry goes in
   `/etc/portage/postsync.d`, which portage runs after syncing every repository, so a sync
-  refreshes the evaluated store before the next query.
+  refreshes the evaluated store before the next query without any setup.
 - `egraph check`: build a fresh store into a scratch file and diff its packages against the
   stored ones, without refreshing the store first. Prints `+cpv` (missing from the store),
   `-cpv` (no longer installed) or `~cpv` (different) per package and exits 4 on drift. This is

@@ -30,8 +30,13 @@ meson install -C build
 ```
 
 It needs a C++23 compiler, meson, CLI11, nlohmann_json, Catch2, Python 3.9 or later and portage;
-Notcurses for the interactive app (`-Dtui`). `-Dportage_hooks` installs the portage hooks that
-keep the system store current.
+Notcurses for the interactive app (`-Dtui`). `-Dportage_hooks` (the default) installs the portage
+hooks that keep the system store current: syncs refresh it at once, and emerges do once
+portage's post_emerge hook runs the dispatcher (without a post_emerge of your own):
+
+```sh
+ln -s /usr/share/egraph/post_emerge /etc/portage/bin/post_emerge
+```
 
 ## Layout
 
