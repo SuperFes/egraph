@@ -28,6 +28,8 @@ class Updates(NamedTuple):
     new: frozenset
     # The cpvs merged, in emerge's merge order.
     order: tuple = ()
+    # (installed cpv it replaces or "", cpv, repo) for every merge.
+    merges: frozenset = frozenset()
 
 
 def updates(
@@ -38,9 +40,12 @@ def updates(
     deep=False,
     target="@installed",
     dynamic_deps=True,
+    update=True,
+    noreplace=False,
 ):
     """What emerge -pu target (with -N or -U, and -D) replaces, rebuilds and adds. target may
-    be several arguments."""
+    be several arguments. Without update, plain emerge's, or emerge -n's with noreplace.
+    """
     import _emerge.emergelog
     from _emerge.actions import expand_set_arguments
     from _emerge.create_depgraph_params import create_depgraph_params
@@ -49,9 +54,12 @@ def updates(
 
     options = {
         "--pretend": True,
-        "--update": True,
         "--dynamic-deps": "y" if dynamic_deps else "n",
     }
+    if update:
+        options["--update"] = True
+    if noreplace:
+        options["--noreplace"] = True
     if deep:
         options["--deep"] = True
     if newuse:
@@ -78,13 +86,14 @@ def updates(
         _emerge.emergelog._disable = disabled
 
     reinstall = depgraph._dynamic_config._reinstall_nodes
-    replaced, rebuilt, new = {}, set(), set()
+    replaced, rebuilt, new, merges = {}, set(), set(), set()
     for pkg in depgraph._dynamic_config.digraph:
         if not isinstance(pkg, Package) or pkg.installed or pkg.onlydeps:
             continue
         if pkg.root != eroot or pkg.operation != "merge":
             continue
         installed = vardb.match(pkg.slot_atom)
+        merges.add((str(installed[0]) if installed else "", str(pkg.cpv), pkg.repo))
         if not installed:
             new.add(pkg.cpv)
             continue
@@ -105,7 +114,9 @@ def updates(
         and pkg.root == eroot
         and pkg.operation == "merge"
     )
-    return Updates(success, replaced, frozenset(rebuilt), frozenset(new), order)
+    return Updates(
+        success, replaced, frozenset(rebuilt), frozenset(new), order, frozenset(merges)
+    )
 
 
 def equiv_visible(trees, eroot):

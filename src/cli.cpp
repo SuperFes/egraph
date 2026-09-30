@@ -14,6 +14,7 @@
 #include "json.hpp"
 #include "os.hpp"
 #include "pressure.hpp"
+#include "request.hpp"
 #include "session.hpp"
 #include "steve.hpp"
 #include "store.hpp"
@@ -738,6 +739,63 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
     return Exit::ok;
 }
 
+Exit execute(const PlanCommand& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    if (!command.update && (command.deep || command.rebuilds != UseRebuilds::none)) {
+        err << "egraph: plan: -D, -N and -U are only planned with -u\n";
+        return Exit::usage;
+    }
+    const auto stores = session.stores();
+    if (!stores) {
+        return fail(err, stores.error());
+    }
+    const auto store = session.dependencies(invocation.dynamic_deps);
+    if (!store) {
+        return fail(err, store.error());
+    }
+    const auto& evaluated = stores->get().evaluated;
+    const auto request = parse_request(*store, evaluated, command.targets);
+    if (!request) {
+        err << "egraph: plan: " << request.error() << '\n';
+        return Exit::failure;
+    }
+    // An empty set asks for nothing.
+    if (!request->installed && request->arguments.empty()) {
+        return Exit::ok;
+    }
+    const auto selection = command.update      ? Selection::update
+                           : command.noreplace ? Selection::noreplace
+                                               : Selection::reinstall;
+    Targets targets{.scope = {}, .roots = false, .deep = command.deep, .selection = selection};
+    if (request->installed) {
+        if (!request->arguments.empty() || selection != Selection::update) {
+            err << "egraph: plan: @installed is only planned alone and with -u\n";
+            return Exit::usage;
+        }
+    } else {
+        const auto depclean = session.depclean(true, invocation.dynamic_deps);
+        if (!depclean) {
+            return fail(err, depclean.error());
+        }
+        // emerge completes its graph with @world, so the arguments' reach weighs beside it.
+        targets.reach = request_reach(*store, evaluated, *request);
+        targets.scope = depclean->get().kept.packages;
+        for (std::size_t id = 0; id < targets.scope.size(); ++id) {
+            targets.scope.at(id) = targets.scope.at(id) || targets.reach.at(id);
+        }
+        targets.roots = true;
+        targets.request = request->arguments;
+    }
+    const auto lines =
+        update_lines(*store, evaluated, command.rebuilds, false, command.table, targets);
+    if (const auto style = output(invocation); style.human) {
+        human_updates(out, lines, style.theme, command.table);
+    } else {
+        write_lines(out, lines);
+    }
+    return Exit::ok;
+}
+
 Exit execute(const Why& command, Session& session, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
     const auto depclean = session.depclean(command.build_deps, invocation.dynamic_deps);
@@ -1094,6 +1152,38 @@ void configure(CLI::App& app, Invocation& invocation) {
             rebuilds = rebuilds == UseRebuilds::all ? rebuilds : UseRebuilds::changed;
         },
         "Also the rebuilds emerge --changed-use makes for changed USE");
+
+    CLI::App* plan_cmd = add_dynamic_deps(add_command<PlanCommand>(
+        app, invocation, "What emerge --pretend would merge for a request"));
+    add_field(plan_cmd, invocation, "targets", &PlanCommand::targets,
+              "Atoms and sets (@world, @selected, @system, @profile, @installed), as emerge's")
+        ->type_name("PACKAGE")
+        ->required();
+    plan_cmd->add_flag_callback(
+        "-u,--update", [&invocation] { std::get<PlanCommand>(invocation.command).update = true; },
+        "Update each installed slot a target matches, as emerge -u");
+    plan_cmd->add_flag_callback(
+        "-D,--deep", [&invocation] { std::get<PlanCommand>(invocation.command).deep = true; },
+        "Update every package in scope, not only the targets and what their merges need, as "
+        "emerge --deep (with -u)");
+    plan_cmd->add_flag_callback(
+        "-n,--noreplace",
+        [&invocation] { std::get<PlanCommand>(invocation.command).noreplace = true; },
+        "Skip a target something installed matches, as emerge --noreplace");
+    plan_cmd->add_flag_callback(
+        "-N,--newuse",
+        [&invocation] { std::get<PlanCommand>(invocation.command).rebuilds = UseRebuilds::all; },
+        "Also the rebuilds emerge --newuse makes for changed USE or IUSE (with -u)");
+    plan_cmd->add_flag_callback(
+        "-U,--changed-use",
+        [&invocation] {
+            auto& rebuilds = std::get<PlanCommand>(invocation.command).rebuilds;
+            rebuilds = rebuilds == UseRebuilds::all ? rebuilds : UseRebuilds::changed;
+        },
+        "Also the rebuilds emerge --changed-use makes for changed USE (with -u)");
+    plan_cmd->add_flag_callback(
+        "-t,--table", [&invocation] { std::get<PlanCommand>(invocation.command).table = true; },
+        "In merge order, each with the places of the merges it waits for");
 
     CLI::App* export_cmd = add_command<Export>(app, invocation, "Export part of the graph");
     add_field(export_cmd, invocation, "--format", &Export::format, "Output format")

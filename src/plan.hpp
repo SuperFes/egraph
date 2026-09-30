@@ -36,10 +36,9 @@ struct Merge {
     std::optional<std::uint32_t> replaces;
     UpdateKind kind = UpdateKind::upgrade;
     std::string flags;
-    // For a new package, the dependency that first pulled it in, or the root atom naming it:
-    // an index into Store::roots.
+    // For a new package, the dependency that first pulled it in, or the argument naming it.
     std::optional<Reason> pulled_by;
-    std::optional<std::uint32_t> named_by;
+    std::optional<Argument> named_by;
     // For a slot-operator rebuild of the installed version: the merge whose slot or sub-slot
     // breaks its binding, with the bound atom as the rebuilt package's dependencies print it.
     std::optional<Reason> rebuilt_for;
@@ -84,9 +83,15 @@ struct Plan {
 //   the merge that needed it.
 // Without targets.deep, what plain emerge -u would: only emerge's arguments take their pending
 // update, and only its target; a rejected one is dropped and a broken binding holds its merge.
-// Kept packages'
-// dependencies only reject what a merge takes away from them; what they already lack stays
-// missing.
+// Kept packages' dependencies only reject what a merge takes away from them; what they already
+// lack stays missing, as it does with targets.reach for those outside it.
+// With targets.request, its atoms are emerge's arguments, picked as targets.selection says: -u
+// updates each installed slot an atom matches to the best version the atom accepts, and adds the
+// best version's slot; plain emerge merges the best version, installed or not, and -n only when
+// nothing emerge can keep matches. What an argument must merge falls back to the other versions
+// its atom matches and rebuilds what binds to it, as plain emerge does; an atom named alone
+// under -uD keeps its installed version instead. Outside targets.reach, a rebuild takes the best
+// version in its slot, for a run-time binding only.
 // Blockers are not weighed.
 [[nodiscard]] Plan plan_updates(const Store& store, const Evaluated& evaluated,
                                 UseRebuilds rebuilds, const Targets& targets = {});

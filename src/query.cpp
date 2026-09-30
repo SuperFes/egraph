@@ -95,6 +95,11 @@ std::vector<std::string> possible_lines(const Evaluated& evaluated,
     return lines;
 }
 
+std::string argument_text(const Argument& argument) {
+    return argument.set.empty() ? argument.atom
+                                : std::format("@{} {}", argument.set, argument.atom);
+}
+
 namespace {
 
 constexpr std::string_view kind_name(UpdateKind kind) {
@@ -239,8 +244,7 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
             if (const auto& by = merge.pulled_by) {
                 line += std::format("\t{} {}", member(by->member), by->atom);
             } else if (merge.named_by) {
-                const auto& root = store.roots.at(*merge.named_by);
-                line += std::format("\t@{} {}", store.string(root.set), store.string(root.atom));
+                line += std::format("\t{}", argument_text(*merge.named_by));
             }
             merge_lines.push_back(std::move(line));
         }
@@ -380,8 +384,8 @@ std::vector<std::string> update_tree_lines(const Store& store, const Evaluated& 
             }
             const auto cpv = evaluated.string(evaluated.candidates.at(merge.candidate).cpv);
             if (merge.named_by) {
-                chains.at(i) =
-                    std::format("@{}\t{}", store.string(store.roots.at(*merge.named_by).set), cpv);
+                const auto& set = merge.named_by->set;
+                chains.at(i) = std::format("{}{}\t{}", set.empty() ? "" : "@", set, cpv);
                 grew = true;
                 continue;
             }

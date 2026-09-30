@@ -89,6 +89,20 @@ struct Updates {
     bool deep = false;
 };
 
+// A request planned as emerge --pretend would merge it.
+struct PlanCommand {
+    static constexpr std::string_view name = "plan";
+    // Atoms and sets, as emerge's arguments.
+    std::vector<std::string> targets;
+    UseRebuilds rebuilds = UseRebuilds::none;
+    // As emerge -u, --deep and --noreplace.
+    bool update = false;
+    bool deep = false;
+    bool noreplace = false;
+    // In merge order, with what each waits for.
+    bool table = false;
+};
+
 enum class ExportFormat : std::uint8_t { dot, json };
 
 struct Export {
@@ -134,8 +148,9 @@ struct Affected {
     std::string request = "-";
 };
 
-using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Orphans,
-                             Updates, Export, Stats, Rebuild, Refresh, Check, Tui, Shell, Affected>;
+using Command =
+    std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Orphans, Updates,
+                 PlanCommand, Export, Stats, Rebuild, Refresh, Check, Tui, Shell, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

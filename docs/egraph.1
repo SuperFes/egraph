@@ -193,6 +193,52 @@ makes for changed USE or IUSE.
 Also the rebuilds
 .B emerge \-\-changed\-use
 makes for changed USE.
+.SS plan \fItarget\fR...
+What
+.B emerge \-\-pretend
+would merge for the targets, in the lines
+.B updates
+prints: atoms (a name without its category takes the one the stores know it in) and the sets
+.BR @world ", " @selected ", " @system ", " @profile " and " @installed .
+A package the request names is merged even when installed, as plain
+.B emerge
+does. A package outside the stores is refused for now.
+.TP
+.B \-\-dynamic\-deps
+.TP
+.BR \-u ", " \-\-update
+Update each installed slot a target matches instead, and add its best version's slot, as
+.B emerge \-u
+does.
+.TP
+.BR \-D ", " \-\-deep
+With
+.BR \-u ,
+every package in scope, as
+.B emerge \-\-deep
+does.
+.TP
+.BR \-n ", " \-\-noreplace
+Skip a target something installed matches, as
+.B emerge \-\-noreplace
+does.
+.TP
+.BR \-N ", " \-\-newuse
+With
+.BR \-u ,
+also the rebuilds
+.B emerge \-\-newuse
+makes.
+.TP
+.BR \-U ", " \-\-changed\-use
+With
+.BR \-u ,
+also the rebuilds
+.B emerge \-\-changed\-use
+makes.
+.TP
+.BR \-t ", " \-\-table
+In merge order, each with the places of the merges it waits for.
 .SS export \fR[\fIpackage\fR...]
 Part of the graph, or all of it without packages, for other tools.
 .TP

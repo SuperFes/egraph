@@ -193,6 +193,81 @@ def test_updates_are_emerges(
         )
 
 
+def plan_requests(name):
+    """What a scenario is asked for: each cp, each ebuild's =cpv and slot atom, and the root
+    sets."""
+    from portage.versions import cpv_getkey
+
+    scenario = SCENARIOS[name]
+    requests = {"@world", "@selected", "@system"}
+    for key in ("ebuilds", "installed"):
+        for cpv in scenario.get(key, {}):
+            requests.add(cpv_getkey(cpv.split("::")[0]))
+    for cpv, metadata in scenario.get("ebuilds", {}).items():
+        cpv = cpv.split("::")[0]
+        requests.add(f"={cpv}")
+        if "SLOT" in metadata:
+            requests.add(f"{cpv_getkey(cpv)}:{metadata['SLOT'].split('/')[0]}")
+    return sorted(requests)
+
+
+def plan_merges(text):
+    """(installed cpv it replaces or "", cpv, repo) for each merge in plan output."""
+    merges = set()
+    for line in text.splitlines():
+        cpv, kind, target, repo, *_ = line.split("\t")
+        merges.add(("" if kind == "new" else cpv, target, repo))
+    return frozenset(merges)
+
+
+PLAN_MODES = {
+    "u": ({"update": True}, ["-u"]),
+    "uD": ({"update": True, "deep": True}, ["-u", "-D"]),
+    "plain": ({"update": False}, []),
+    "n": ({"update": False, "noreplace": True}, ["-n"]),
+}
+
+# emerge --deep with these atoms reaches a package whose update needs slot-operator rebuilds
+# outside the arguments' reach, and its backtracking drops the lot.
+PLAN_DIFFERENCES = {
+    ("slotops", "uD"): {
+        "app-misc/moving",
+        "=app-misc/moving-2",
+        "app-misc/star",
+        "=app-misc/star-1",
+    },
+}
+
+
+@pytest.mark.parametrize("mode", sorted(PLAN_MODES))
+@pytest.mark.parametrize("name", sorted(SCENARIOS))
+def test_plans_are_emerges(playgrounds, tmp_path, name, mode):
+    """What emerge --pretend merges for each request, with -u, -uD, -n or neither: atoms, slot
+    atoms, =cpv and sets."""
+    import update
+
+    system = playgrounds(name)
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path)
+    options, flags = PLAN_MODES[mode]
+    differences = set()
+    for target in plan_requests(name):
+        expected = update.updates(
+            system.trees, system.eroot, target=[target], **options
+        )
+        result = egraph(path, "plan", *flags, target, check=False)
+        if not expected.success:
+            continue
+        # A cp outside the stores is refused.
+        if result.returncode != 0 and "nothing matches" in result.stderr:
+            assert not system.vardb.match(target)
+            continue
+        assert result.returncode == 0, (target, result.stderr)
+        if plan_merges(result.stdout) != expected.merges:
+            differences.add(target)
+    assert differences == PLAN_DIFFERENCES.get((name, mode), set())
+
+
 def removals(text):
     """{held cpv: (wanted cpv, holder cpvs, world atoms, freed cpvs)} for each held update in
     updates --held output that removing its holders lets through, and {held cpv: wanted cpv}

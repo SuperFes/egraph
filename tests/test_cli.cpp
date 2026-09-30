@@ -120,6 +120,23 @@ TEST_CASE("updates is plain emerge -u unless -D asks for --deep") {
     CHECK(deep("updates -DN"));
 }
 
+TEST_CASE("plan takes emerge's targets and its selection options") {
+    const auto plan = [](const std::string& command) {
+        return std::get<egraph::PlanCommand>(parse(command).command);
+    };
+    const auto plain = plan("plan app-misc/foo @world");
+    CHECK(plain.targets == std::vector<std::string>{"app-misc/foo", "@world"});
+    CHECK_FALSE(plain.update);
+    CHECK_FALSE(plain.noreplace);
+    const auto deep = plan("plan -uDN @world");
+    CHECK(deep.update);
+    CHECK(deep.deep);
+    CHECK(deep.rebuilds == egraph::UseRebuilds::all);
+    CHECK(plan("plan -n foo").noreplace);
+    CHECK(plan("plan -uU foo").rebuilds == egraph::UseRebuilds::changed);
+    CHECK_THROWS(parse("plan"));
+}
+
 TEST_CASE("dependency queries take emerge's --dynamic-deps, on by default") {
     for (const auto* command :
          {"deps a/b", "rdeps a/b", "why a/b", "orphans", "broken", "affected"}) {

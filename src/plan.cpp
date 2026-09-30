@@ -39,24 +39,41 @@ class Planner {
             by_cp_[std::string(evaluated.string(evaluated.candidates.at(i).cp))].push_back(i);
         }
         if (targets.roots) {
+            collect_arguments();
             arguments_.assign(store.packages.size(), false);
-            for (const auto& root : store.roots) {
-                for (const auto id : store.ids_in(root.matches)) {
-                    arguments_.at(id) = true;
-                }
+            alone_.assign(store.packages.size(), false);
+            must_.assign(store.packages.size(), false);
+            for (std::uint32_t i = 0; i < args_.size(); ++i) {
+                select(i);
             }
         }
         for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
-            if (!in_scope(id) || (!targets.deep && !argument(id))) {
+            if (!in_scope(id) || (targets.deep ? !reached(id) : !argument(id))) {
                 continue;
             }
-            if (auto wanted = pending_update(evaluated, id, rebuilds)) {
+            auto wanted = pending_update(evaluated, id, rebuilds);
+            const auto forced = forced_.find(id);
+            if (forced != forced_.end()) {
+                wanted = forced_update(id, forced->second, std::move(wanted));
+            }
+            if (wanted) {
                 auto& choice = choices_.at(id);
                 choice.options.push_back(wanted->target);
-                // Only the deep resolution looks further; plain -u drops a rejected update.
-                if (targets.deep) {
-                    std::ranges::copy(fallbacks(evaluated, id, *wanted),
+                // emerge must merge what it is asked for, so it backtracks to another version.
+                const auto& atom =
+                    forced == forced_.end() ? std::nullopt : args_.at(forced->second.argument).atom;
+                if (atom && must(id)) {
+                    std::ranges::copy(other_matches(wanted->target, *atom),
                                       std::back_inserter(choice.options));
+                } else if (targets.deep && !alone(id)) {
+                    // Only the deep resolution looks further; plain -u drops a rejected update,
+                    // as -uD does an atom's named alone.
+                    for (const auto fallback : fallbacks(evaluated, id, *wanted)) {
+                        if (!atom ||
+                            matches(store, evaluated, evaluated.candidates.at(fallback), *atom)) {
+                            choice.options.push_back(fallback);
+                        }
+                    }
                 }
                 choice.wanted = std::move(wanted);
             }
@@ -64,7 +81,7 @@ class Planner {
         // Only the deep resolution probes an installed dependent for a newer slot.
         if (targets.roots && targets.deep) {
             for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
-                if (in_scope(id) && !choices_.at(id).wanted) {
+                if (in_scope(id) && reached(id) && !choices_.at(id).wanted) {
                     if (auto found = new_slot(id)) {
                         new_slots_.emplace(id, std::move(*found));
                     }
@@ -72,13 +89,6 @@ class Planner {
             }
             for (const auto& [id, moved] : new_slots_) {
                 induce(moved);
-            }
-        }
-        if (targets.roots) {
-            for (std::uint32_t i = 0; i < store.roots.size(); ++i) {
-                if (const auto found = new_for_root(store.string(store.roots.at(i).atom))) {
-                    root_pulls_.emplace_back(i, *found);
-                }
             }
         }
     }
@@ -108,10 +118,25 @@ class Planner {
         }
     };
 
+    // One of emerge's arguments, with the installed packages its atom matches.
+    struct Arg {
+        Argument named;
+        std::optional<Atom> atom;
+        std::vector<std::uint32_t> matches;
+    };
+
+    // An installed package whose target an argument's atom decides: its best version, or none
+    // to keep it.
+    struct Forced {
+        std::optional<std::uint32_t> candidate;
+        // Index into args_.
+        std::uint32_t argument = 0;
+    };
+
     struct Pulled {
         std::uint32_t candidate = 0;
         std::optional<Reason> by;
-        // Index into Store::roots, for one a root atom names.
+        // Index into args_, for one an argument names.
         std::optional<std::uint32_t> named_by;
         // The installed package whose merge pulled it in, if a merge did.
         std::optional<std::uint32_t> root;
@@ -155,10 +180,19 @@ class Planner {
     std::reference_wrapper<const Evaluated> evaluated_ref_;
     std::reference_wrapper<const Targets> targets_ref_;
     std::vector<Choice> choices_;
+    std::vector<Arg> args_;
     // Installed packages that emerge's arguments name; every one when empty.
     std::vector<bool> arguments_;
+    // Those -u updates for an atom named alone rather than in a set: emerge keeps the installed
+    // version rather than fall back or rebuild what binds to it, even with --deep.
+    std::vector<bool> alone_;
+    // Those an argument must merge: emerge backtracks to another version it matches and
+    // rebuilds what binds to it, as it would for a package it must pull in.
+    std::vector<bool> must_;
+    std::map<std::uint32_t, Forced> forced_;
     std::map<std::uint32_t, NewSlot> new_slots_;
-    // Root atoms whose best visible match is new in its slot, with that candidate.
+    // Arguments (indices into args_) whose best visible match is new in its slot, with that
+    // candidate.
     std::vector<std::pair<std::uint32_t, std::uint32_t>> root_pulls_;
     std::map<std::string, std::vector<std::uint32_t>, std::less<>> by_cp_;
     std::map<std::string, std::optional<Atom>, std::less<>> atoms_;
@@ -185,11 +219,155 @@ class Planner {
         return scope.empty() || scope.at(id);
     }
 
+    [[nodiscard]] bool reached(std::uint32_t id) const {
+        const auto& reach = targets_ref_.get().reach;
+        return reach.empty() || reach.at(id);
+    }
+
+    [[nodiscard]] bool alone(std::uint32_t id) const { return !alone_.empty() && alone_.at(id); }
+
+    [[nodiscard]] bool must(std::uint32_t id) const { return !must_.empty() && must_.at(id); }
+
     [[nodiscard]] bool argument(std::uint32_t id) const {
         return arguments_.empty() || arguments_.at(id);
     }
 
     [[nodiscard]] bool deep() const { return targets_ref_.get().deep; }
+
+    void collect_arguments() {
+        const auto& request = targets_ref_.get().request;
+        if (request.empty()) {
+            for (const auto& root : store().roots) {
+                const auto ids = store().ids_in(root.matches);
+                args_.push_back({.named = {.set = std::string(store().string(root.set)),
+                                           .atom = std::string(store().string(root.atom))},
+                                 .atom = atom(store().string(root.atom)),
+                                 .matches = {ids.begin(), ids.end()}});
+            }
+            return;
+        }
+        for (const auto& named : request) {
+            Arg arg{.named = named, .atom = atom(named.atom), .matches = {}};
+            for (std::uint32_t id = 0; arg.atom && id < store().packages.size(); ++id) {
+                if (matches(store(), store().packages.at(id), *arg.atom)) {
+                    arg.matches.push_back(id);
+                }
+            }
+            args_.push_back(std::move(arg));
+        }
+    }
+
+    // What argument i updates, merges or pulls in, as its selection picks.
+    void select(std::uint32_t i) {
+        const auto& arg = args_.at(i);
+        const auto selection = targets_ref_.get().selection;
+        const auto best = arg.atom ? best_match(*arg.atom) : std::nullopt;
+        if (selection == Selection::update) {
+            // Every installed slot the atom matches, as emerge's greedy slots.
+            for (const auto id : arg.matches) {
+                arguments_.at(id) = true;
+                alone_.at(id) = alone_.at(id) || arg.named.set.empty();
+                // With no visible version to move to, only an update the atom accepts.
+                if (!best) {
+                    forced_.try_emplace(id, Forced{.candidate = std::nullopt, .argument = i});
+                }
+            }
+        } else if (selection == Selection::noreplace &&
+                   std::ranges::any_of(arg.matches, [this](std::uint32_t id) {
+                       return !evaluated().packages.at(id).masked;
+                   })) {
+            // Only an installed version emerge can keep skips it, whether or not an ebuild
+            // of it is left.
+            return;
+        }
+        if (!best) {
+            return;
+        }
+        const auto& candidate = evaluated().candidates.at(*best);
+        const auto id = installed_in({std::string(evaluated().string(candidate.cp)),
+                                      std::string(evaluated().string(candidate.slot))});
+        if (!id) {
+            root_pulls_.emplace_back(i, *best);
+            return;
+        }
+        arguments_.at(*id) = true;
+        const bool matched = std::ranges::contains(arg.matches, *id);
+        // Keeping the installed version would not do what is asked.
+        if (selection != Selection::update || !matched) {
+            must_.at(*id) = true;
+        }
+        if (selection != Selection::update) {
+            forced_.insert_or_assign(*id, Forced{.candidate = best, .argument = i});
+            return;
+        }
+        // An installed version the atom matches stays when it is the best of them.
+        const auto& pkg = store().packages.at(*id);
+        const auto cp = store().string(pkg.cp);
+        const auto installed = version_of(store().string(pkg.cpv), cp);
+        const auto to = version_of(evaluated().string(candidate.cpv), cp);
+        const bool keep = matched && installed && to && vercmp(*installed, *to) >= 0;
+        forced_.insert_or_assign(*id,
+                                 Forced{.candidate = keep ? std::nullopt : best, .argument = i});
+    }
+
+    // The update of an installed package an argument decides, from its pending one.
+    [[nodiscard]] std::optional<PendingUpdate>
+    forced_update(std::uint32_t id, const Forced& forced,
+                  std::optional<PendingUpdate> pending) const {
+        const auto& atom = args_.at(forced.argument).atom;
+        const auto selection = targets_ref_.get().selection;
+        // -u keeps the pending update whenever the atom accepts it, a --newuse rebuild among
+        // them.
+        if (selection == Selection::update && atom &&
+            (!pending ||
+             matches(store(), evaluated(), evaluated().candidates.at(pending->target), *atom))) {
+            return forced.candidate && !pending ? std::optional{update_to(id, *forced.candidate)}
+                                                : pending;
+        }
+        if (!forced.candidate) {
+            return std::nullopt;
+        }
+        if (pending && pending->target == *forced.candidate) {
+            return pending;
+        }
+        return update_to(id, *forced.candidate);
+    }
+
+    // The visible versions in the candidate's slot besides it that the atom matches, best first.
+    [[nodiscard]] std::vector<std::uint32_t> other_matches(std::uint32_t candidate,
+                                                           const Atom& wanted) const {
+        const auto& target = evaluated().candidates.at(candidate);
+        struct Found {
+            std::uint32_t index = 0;
+            Version version;
+        };
+        std::vector<Found> found;
+        for (const auto index : by_cp_.at(wanted.cp)) {
+            const auto& other = evaluated().candidates.at(index);
+            auto version = version_of(evaluated().string(other.cpv), wanted.cp);
+            if (index != candidate && other.visible() && other.slot == target.slot && version &&
+                matches(store(), evaluated(), other, wanted)) {
+                found.push_back({.index = index, .version = std::move(*version)});
+            }
+        }
+        std::ranges::stable_sort(
+            found, [](const Found& a, const Found& b) { return vercmp(a.version, b.version) > 0; });
+        std::vector<std::uint32_t> indices;
+        indices.reserve(found.size());
+        for (const auto& each : found) {
+            indices.push_back(each.index);
+        }
+        return indices;
+    }
+
+    [[nodiscard]] PendingUpdate update_to(std::uint32_t id, std::uint32_t candidate) const {
+        const auto& from = store().packages.at(id);
+        return PendingUpdate{
+            .kind = update_kind(store().string(from.cp), store().string(from.cpv),
+                                evaluated().string(evaluated().candidates.at(candidate).cpv)),
+            .target = candidate,
+            .flags = {}};
+    }
 
     const std::optional<Atom>& atom(std::string_view text) {
         auto found = atoms_.find(text);
@@ -225,7 +403,12 @@ class Planner {
     // package the atom matches is replaced, by a version in another slot or sub-slot.
     std::vector<Broken> broken_bindings(std::uint32_t id) {
         std::vector<Broken> found;
+        // Outside --deep's reach, emerge leaves a binding only a build needs as it was built.
+        const bool built = !deep() || !reached(id);
         for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+            if (built && (dep_kinds.at(kind) == "DEPEND" || dep_kinds.at(kind) == "BDEPEND")) {
+                continue;
+            }
             for (const auto& node : nodes({.candidate = false, .index = id}, kind)) {
                 if (node.type != NodeType::atom) {
                     continue;
@@ -458,6 +641,16 @@ class Planner {
         return Member{.candidate = true, .index = moved.candidate};
     }
 
+    // What a slot-operator rebuild merges: outside --deep's reach, emerge's update probe takes
+    // the best visible version in the slot.
+    [[nodiscard]] std::optional<std::uint32_t> rebuild_target(std::uint32_t id) const {
+        if (const auto target = evaluated().packages.at(id).target;
+            target && (!deep() || !reached(id))) {
+            return target;
+        }
+        return rebuild_of(id);
+    }
+
     // A visible ebuild of the installed package's version, from its repository if it can.
     [[nodiscard]] std::optional<std::uint32_t> rebuild_of(std::uint32_t id) const {
         const auto& pkg = store().packages.at(id);
@@ -532,21 +725,6 @@ class Planner {
             const auto& node = element(list, i);
             return node.type != NodeType::atom || satisfied_atom(tables, node);
         });
-    }
-
-    // The best visible candidate that matches the atom, when nothing is installed in its slot.
-    std::optional<std::uint32_t> new_for_root(std::string_view text) {
-        const auto& wanted = atom(text);
-        const auto found = wanted ? best_match(*wanted) : std::nullopt;
-        if (!found) {
-            return std::nullopt;
-        }
-        const auto& candidate = evaluated().candidates.at(*found);
-        if (installed_in({std::string(evaluated().string(candidate.cp)),
-                          std::string(evaluated().string(candidate.slot))})) {
-            return std::nullopt;
-        }
-        return found;
     }
 
     [[nodiscard]] std::optional<std::uint32_t> best_match(const Atom& wanted) const {
@@ -723,7 +901,7 @@ class Planner {
                 continue;
             }
             for (const auto id : tables.ids_in(node.matches)) {
-                if (!kept(id) && !argument(id)) {
+                if (!kept(id) && (!argument(id) || alone(id))) {
                     return std::pair{id, std::string(tables.string(node.atom))};
                 }
             }
@@ -770,7 +948,16 @@ class Planner {
                 // A rebuild's own dependencies stand in for the installed ones. Plain -u
                 // rebuilds nothing installed: the binding holds the merge back.
                 if (const auto broken = broken_bindings(item.member.index); !broken.empty()) {
-                    if (const auto own = deep() ? rebuild_of(item.member.index) : std::nullopt) {
+                    // Plain emerge rebuilds them for what it is asked to merge.
+                    const bool rebuilds =
+                        (deep() && std::ranges::none_of(broken,
+                                                        [this](const Broken& each) {
+                                                            return alone(each.replaced);
+                                                        })) ||
+                        std::ranges::any_of(
+                            broken, [this](const Broken& each) { return must(each.replaced); });
+                    if (const auto own =
+                            rebuilds ? rebuild_target(item.member.index) : std::nullopt) {
                         const auto& first = broken.front();
                         rebuilt_.emplace(
                             item.member.index,
@@ -810,7 +997,7 @@ class Planner {
                     }
                     // Plain -u only checks that a kept package's dependencies stay satisfied:
                     // what a merge takes away is rejected, and what was missing stays so.
-                    if (!deep() && !item.member.candidate) {
+                    if (!item.member.candidate && (!deep() || !reached(item.member.index))) {
                         if (const auto held = replaced_match(tables, list, i)) {
                             rejected[held->first].push_back(
                                 {.member = item.member, .atom = held->second});
@@ -883,14 +1070,18 @@ class Planner {
         Plan plan;
         for (std::uint32_t id = 0; id < choices_.size(); ++id) {
             if (const auto found = rebuilt_.find(id); found != rebuilt_.end()) {
-                plan.merges.push_back({.candidate = found->second.candidate,
-                                       .replaces = id,
-                                       .kind = UpdateKind::rebuild,
-                                       .flags = {},
-                                       .pulled_by = {},
-                                       .named_by = {},
-                                       .rebuilt_for = found->second.why,
-                                       .waits = {}});
+                const auto& candidate = evaluated().candidates.at(found->second.candidate);
+                plan.merges.push_back(
+                    {.candidate = found->second.candidate,
+                     .replaces = id,
+                     .kind = update_kind(evaluated().string(candidate.cp),
+                                         store().string(store().packages.at(id).cpv),
+                                         evaluated().string(candidate.cpv)),
+                     .flags = {},
+                     .pulled_by = {},
+                     .named_by = {},
+                     .rebuilt_for = found->second.why,
+                     .waits = {}});
             }
             const auto& choice = choices_.at(id);
             if (!choice.wanted) {
@@ -932,7 +1123,9 @@ class Planner {
                                    .kind = UpdateKind::upgrade,
                                    .flags = {},
                                    .pulled_by = found.by,
-                                   .named_by = found.named_by,
+                                   .named_by = found.named_by
+                                                   ? std::optional{args_.at(*found.named_by).named}
+                                                   : std::nullopt,
                                    .rebuilt_for = {},
                                    .waits = {}});
         }

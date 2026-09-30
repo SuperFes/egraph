@@ -365,6 +365,25 @@ every package outside the arguments here; only the merge is listed as held when 
 them: one a merge would break rejects the merge, and one already missing stays missing,
 pulling nothing in. No dependent is moved to a newer slot.
 
+`plan` takes any request (roadmap 16b): atoms, `=cpv`, slot atoms and the sets the store holds
+(`request.cpp` expands them, and fills in the category of a bare name from the cps the stores
+know). The atoms become the planner's arguments in place of the root atoms, and emerge's three
+ways to pick an argument's package apply: `-u` updates each installed slot an atom matches
+(greedy slots) to the best version the atom accepts, keeping an installed version that is at
+least as good, and adds the best version's slot; plain `emerge` merges the best version even
+when it is installed; `-n` does so only when nothing emerge can keep (unmasked; a missing
+ebuild does not matter) matches. What an argument must merge, as plain `emerge` does and `-u`
+does for an atom the installed version fails, backtracks to the other versions the atom
+matches, down to reinstalling the installed one, and rebuilds what binds to it; an atom named
+alone under `-uD` keeps its installed version instead, neither falling back nor rebuilding. The
+scope is @world's, as emerge completes its graph with it, plus what the arguments reach through
+their dependencies (and those of the visible versions they match and would move to); with `-D`
+only that reach is updated, and outside it kept packages only weigh, a slot-operator rebuild
+taking the best version in its slot and leaving build-time bindings alone.
+`test_plans_are_emerges` holds every scenario's cps, `=cpv`s, slot atoms and root sets to
+`emerge -p`, `-pu`, `-puD` and `-pn`; four `-uD` atoms in `slotops`, whose reach needs
+slot-operator rebuilds outside it that emerge's backtracking drops whole, still differ.
+
 `updates -t` lists the plan in merge order (`order_merges` in `plan.cpp`, roadmap 14d), each
 merge numbered and followed by the places of the earlier merges it waits for: those its DEPEND,
 BDEPEND, RDEPEND or IDEPEND match (every member of a `||`, as `pending.py` counts them; PDEPEND

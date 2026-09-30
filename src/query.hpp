@@ -66,18 +66,37 @@ pending_update(const Evaluated& evaluated, std::uint32_t package, UseRebuilds re
 [[nodiscard]] std::vector<std::uint32_t>
 fallbacks(const Evaluated& evaluated, std::uint32_t package, const PendingUpdate& wanted);
 
+// An atom emerge takes as an argument, with the set that named it; empty for one named alone.
+struct Argument {
+    std::string set;
+    std::string atom;
+    auto operator<=>(const Argument&) const = default;
+};
+
+// How emerge picks an argument's package: -u updates each installed slot the atom matches and
+// adds the best version's slot; plain emerge merges the best version, installed or not; -n
+// merges it only when nothing installed matches.
+enum class Selection : std::uint8_t { update, reinstall, noreplace };
+
 // The installed packages an update plan starts from, as emerge's targets.
 struct Targets {
     // The packages in scope; every one when empty. One out of scope keeps its version, and its
     // dependencies weigh nothing.
     std::vector<bool> scope;
-    // emerge's arguments are the root sets' atoms, as for @world, rather than every installed
-    // package's slot, as for @installed.
+    // emerge's arguments are atoms, the root sets' unless request names others, rather than
+    // every installed package's slot, as for @installed.
     bool roots = false;
     // emerge --deep: every package in scope is updated, not only the arguments and what their
     // merges need.
     bool deep = true;
+    // With deep, the packages it updates; every one in scope when empty.
+    std::vector<bool> reach = {};
+    std::vector<Argument> request = {};
+    Selection selection = Selection::update;
 };
+
+// "@set atom", or the atom alone.
+[[nodiscard]] std::string argument_text(const Argument& argument);
 
 // The packages in scope once the removed ones are gone, as depclean would keep them then.
 using Rescope = std::function<std::vector<bool>(const std::vector<bool>& removed)>;

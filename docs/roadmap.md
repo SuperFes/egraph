@@ -379,14 +379,23 @@ use, egraph schedules the merges itself.
 - 16b: plans for any request, not only updates: atoms, `=cpv`, slots and sets as targets,
   `--oneshot` and `--noreplace`; a cp outside the store evaluated by the builder on demand and
   kept; a new package's USE shown.
+  - 16b1 (done): `plan TARGET...` with `-u`, `-D`, `-n`, `-N`, `-U`: the targets resolved
+    against the stores, emerge's greedy slots, reinstalls and `--noreplace`, backtracking for
+    what an argument must merge, and `-uD` recursing only from the arguments. Equal to `emerge -p`,
+    `-pu`, `-puD` and `-pn` for 1660 requests over every scenario but four `-uD` atoms in
+    `slotops` (cascading slot-operator rebuilds outside the reach, which emerge drops), pinned
+    for 16c. `--oneshot` only matters to the actions, so it moves to 16f.
+  - 16b2: a cp outside the stores evaluated by the builder on demand and kept until the next
+    full build.
+  - 16b3: a new package's USE shown.
 - 16c: `--verify`: the same request through `emerge -p`, the merge lists diffed (versions, USE,
   new packages); every difference fixed or recorded in `upstream-notes.md`.
 - 16d: blockers, weak and strong, as a query and weighed by the plan (formerly step 17).
 - 16e: what makes emerge refuse: REQUIRED_USE and invalid metadata on candidates; a needed USE
   change explained as autounmask would, the `package.use` line offered and written only on yes.
-- 16f: actions: `update`, `install`, `remove` (through `emerge --depclean` with atoms),
-  `select`, `deselect`: the plan shown, a yes asked for, emerge run on the plan, the stores
-  refreshed at once.
+- 16f: actions: `update`, `install` (`--oneshot`, or the targets selected), `remove` (through
+  `emerge --depclean` with atoms), `select`, `deselect`: the plan shown, a yes asked for, emerge
+  run on the plan, the stores refreshed at once.
 - 16g: after a merge: the elog summary, pending `._cfg` files (`dispatch-conf` a key away),
   preserved libraries planned as their consumers' rebuilds, unread news.
 - 16h: `sync`: `emaint sync -a`, then what the sync brought: new updates, news.

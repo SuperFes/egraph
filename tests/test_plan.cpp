@@ -722,3 +722,229 @@ TEST_CASE("a root atom's best version in a slot nothing occupies is pulled in") 
           std::vector<std::string>{
               "dev-lang/lang-2\tnew\tdev-lang/lang-2\ttest_repo\t@selected dev-lang/lang"});
 }
+
+namespace {
+
+egraph::Targets request(std::vector<std::string> atoms,
+                        egraph::Selection selection = egraph::Selection::update,
+                        bool deep = false) {
+    std::vector<egraph::Argument> arguments;
+    for (auto& atom : atoms) {
+        arguments.push_back({.set = "", .atom = std::move(atom)});
+    }
+    return {.scope = {},
+            .roots = true,
+            .deep = deep,
+            .request = std::move(arguments),
+            .selection = selection};
+}
+
+} // namespace
+
+TEST_CASE("-u updates each installed slot a requested atom matches, and adds its best slot") {
+    const auto system = make_system({{.cpv = "dev-lang/lang-1.0", .slot = "1"},
+                                     {.cpv = "dev-lang/lang-2.0", .slot = "2"},
+                                     {.cpv = "app-misc/other-1"}},
+                                    {{.cpv = "dev-lang/lang-1.0", .slot = "1"},
+                                     {.cpv = "dev-lang/lang-1.1", .slot = "1"},
+                                     {.cpv = "dev-lang/lang-2.0", .slot = "2"},
+                                     {.cpv = "dev-lang/lang-2.1", .slot = "2"},
+                                     {.cpv = "dev-lang/lang-3.0", .slot = "3"},
+                                     {.cpv = "app-misc/other-1"},
+                                     {.cpv = "app-misc/other-2"}});
+    CHECK(plan(system, egraph::UseRebuilds::none, request({"dev-lang/lang"})) ==
+          std::vector<std::string>{"dev-lang/lang-1.0 -> dev-lang/lang-1.1",
+                                   "dev-lang/lang-2.0 -> dev-lang/lang-2.1",
+                                   "new dev-lang/lang-3.0 <- "});
+}
+
+TEST_CASE("-u takes a requested atom's best version in its slot, whichever way it moves") {
+    const auto system = make_system(
+        {{.cpv = "app-misc/up-1"}, {.cpv = "app-misc/down-2"}, {.cpv = "app-misc/ahead-3"}},
+        {{.cpv = "app-misc/up-1"},
+         {.cpv = "app-misc/up-2"},
+         {.cpv = "app-misc/up-3"},
+         {.cpv = "app-misc/down-1"},
+         {.cpv = "app-misc/down-2"},
+         {.cpv = "app-misc/ahead-2"}});
+    CHECK(plan(system, egraph::UseRebuilds::none, request({"<app-misc/up-3"})) ==
+          std::vector<std::string>{"app-misc/up-1 -> app-misc/up-2"});
+    CHECK(plan(system, egraph::UseRebuilds::none, request({"=app-misc/down-1"})) ==
+          std::vector<std::string>{"app-misc/down-2 -> app-misc/down-1"});
+    // emerge keeps no installed version without a visible ebuild when one in its slot is.
+    CHECK(plan(system, egraph::UseRebuilds::none, request({"app-misc/ahead"})) ==
+          std::vector<std::string>{"app-misc/ahead-3 -> app-misc/ahead-2"});
+}
+
+TEST_CASE("-uD falls back only to versions a set's atom matches, and never for one named alone") {
+    const auto system = make_system(
+        {{.cpv = "app-misc/up-1"},
+         {.cpv = "app-misc/pins-1",
+          .deps = {{"RDEPEND", "|| ( =app-misc/up-1 =app-misc/up-2 =app-misc/up-3 )"}}}},
+        {{.cpv = "app-misc/up-1"},
+         {.cpv = "app-misc/up-2"},
+         {.cpv = "app-misc/up-2.5"},
+         {.cpv = "app-misc/up-3"},
+         {.cpv = "app-misc/pins-1",
+          .deps = {{"RDEPEND", "|| ( =app-misc/up-1 =app-misc/up-2 =app-misc/up-3 )"}}}});
+    auto in_set = request({"<app-misc/up-3"}, egraph::Selection::update, true);
+    in_set.request.front().set = "selected";
+    CHECK(plan(system, egraph::UseRebuilds::none, in_set) ==
+          std::vector<std::string>{"app-misc/up-1 -> app-misc/up-2",
+                                   "app-misc/up-1 held <- app-misc/pins-1 =app-misc/up-1"});
+    // Named alone, emerge keeps the installed version instead.
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               request({"<app-misc/up-3"}, egraph::Selection::update, true)) ==
+          std::vector<std::string>{"app-misc/up-1 held <- app-misc/pins-1 =app-misc/up-1"});
+}
+
+TEST_CASE("plain emerge merges a requested atom's best version, installed or not") {
+    const auto system = make_system({{.cpv = "app-misc/same-2"},
+                                     {.cpv = "app-misc/older-1"},
+                                     {.cpv = "dev-lang/lang-1", .slot = "1"}},
+                                    {{.cpv = "app-misc/same-2"},
+                                     {.cpv = "app-misc/older-1"},
+                                     {.cpv = "app-misc/older-2"},
+                                     {.cpv = "app-misc/fresh-1"},
+                                     {.cpv = "dev-lang/lang-1", .slot = "1"},
+                                     {.cpv = "dev-lang/lang-2", .slot = "2"}});
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               request({"app-misc/same", "app-misc/older", "app-misc/fresh", "dev-lang/lang"},
+                       egraph::Selection::reinstall)) ==
+          std::vector<std::string>{"app-misc/same-2 -> app-misc/same-2",
+                                   "app-misc/older-1 -> app-misc/older-2",
+                                   "new app-misc/fresh-1 <- ", "new dev-lang/lang-2 <- "});
+}
+
+TEST_CASE("--noreplace merges a requested atom only when nothing installed matches it") {
+    const auto system = make_system(
+        {{.cpv = "app-misc/up-1"}},
+        {{.cpv = "app-misc/up-1"}, {.cpv = "app-misc/up-2"}, {.cpv = "app-misc/fresh-1"}});
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               request({"app-misc/up"}, egraph::Selection::noreplace))
+              .empty());
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               request({"=app-misc/up-2", "app-misc/fresh"}, egraph::Selection::noreplace)) ==
+          std::vector<std::string>{"app-misc/up-1 -> app-misc/up-2", "new app-misc/fresh-1 <- "});
+}
+
+TEST_CASE("a new package a request names is listed with its argument") {
+    const auto system = make_system({}, {{.cpv = "app-misc/fresh-1"}});
+    CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none, false,
+                               false, request({"app-misc/fresh"})) ==
+          std::vector<std::string>{
+              "app-misc/fresh-1\tnew\tapp-misc/fresh-1\ttest_repo\tapp-misc/fresh"});
+}
+
+TEST_CASE("plain emerge falls back to another version it matches when the best is rejected") {
+    const auto system =
+        make_system({{.cpv = "app-misc/effects-1", .deps = {{"RDEPEND", "app-misc/rgb"}}},
+                     {.cpv = "app-misc/rgb-1"},
+                     {.cpv = "app-misc/skin-1", .deps = {{"RDEPEND", "<app-misc/rgb-2"}}}},
+                    {{.cpv = "app-misc/effects-1", .deps = {{"RDEPEND", "app-misc/rgb"}}},
+                     {.cpv = "app-misc/effects-2", .deps = {{"RDEPEND", ">=app-misc/rgb-2"}}},
+                     {.cpv = "app-misc/rgb-1"},
+                     {.cpv = "app-misc/rgb-2"},
+                     {.cpv = "app-misc/skin-1", .deps = {{"RDEPEND", "<app-misc/rgb-2"}}}});
+    CHECK(
+        plan(system, egraph::UseRebuilds::none,
+             request({"app-misc/effects"}, egraph::Selection::reinstall)) ==
+        std::vector<std::string>{"app-misc/effects-1 -> app-misc/effects-1",
+                                 "app-misc/effects-1 held <- app-misc/effects-2 >=app-misc/rgb-2"});
+}
+
+TEST_CASE("--noreplace replaces a masked installed match, not one whose ebuild is gone") {
+    auto system = make_system({{.cpv = "app-misc/masked-2"}, {.cpv = "app-misc/gone-2"}},
+                              {{.cpv = "app-misc/masked-1"},
+                               {.cpv = "app-misc/masked-2", .visible = false},
+                               {.cpv = "app-misc/gone-1"}});
+    system.evaluated.packages.at(0).masked = true;
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               request({"app-misc/masked", "app-misc/gone"}, egraph::Selection::noreplace)) ==
+          std::vector<std::string>{"app-misc/masked-2 -> app-misc/masked-1"});
+}
+
+TEST_CASE("-u keeps an installed version only an atom's masked ebuild matches") {
+    const auto system =
+        make_system({{.cpv = "app-misc/down-2"}},
+                    {{.cpv = "app-misc/down-1"}, {.cpv = "app-misc/down-2", .visible = false}});
+    // Its pending update is the downgrade to down-1, which =down-2 does not accept.
+    CHECK(plan(system, egraph::UseRebuilds::none, request({"=app-misc/down-2"})).empty());
+    CHECK(plan(system, egraph::UseRebuilds::none, request({"app-misc/down"})) ==
+          std::vector<std::string>{"app-misc/down-2 -> app-misc/down-1"});
+}
+
+TEST_CASE("-u rebuilds what binds to a version it must merge, as plain emerge does") {
+    const auto system =
+        make_system({{.cpv = "dev-libs/bound-0.3", .slot = "0", .sub_slot = "3"},
+                     {.cpv = "app-misc/kwin-1", .deps = {{"RDEPEND", "dev-libs/bound:0/3="}}}},
+                    {{.cpv = "dev-libs/bound-0.3", .slot = "0", .sub_slot = "3"},
+                     {.cpv = "dev-libs/bound-0.4", .slot = "0", .sub_slot = "4"},
+                     {.cpv = "app-misc/kwin-1", .deps = {{"RDEPEND", "dev-libs/bound:="}}}});
+    // The installed version is no answer to =bound-0.4.
+    CHECK(plan(system, egraph::UseRebuilds::none, request({"=dev-libs/bound-0.4"})) ==
+          std::vector<std::string>{
+              "dev-libs/bound-0.3 -> dev-libs/bound-0.4",
+              "app-misc/kwin-1 -> app-misc/kwin-1 for dev-libs/bound-0.4 dev-libs/bound:0/3="});
+    // It is to bound, which -u keeps rather than rebuild what binds to it.
+    CHECK(
+        plan(system, egraph::UseRebuilds::none, request({"dev-libs/bound"})) ==
+        std::vector<std::string>{"dev-libs/bound-0.3 held <- app-misc/kwin-1 dev-libs/bound:0/3="});
+}
+
+TEST_CASE("-uD keeps an atom's installed version that a || prefers") {
+    const auto system =
+        make_system({{.cpv = "app-misc/either-1",
+                      .deps = {{"RDEPEND", "|| ( <dev-libs/alt-2 dev-libs/other )"}}},
+                     {.cpv = "dev-libs/alt-1"}},
+                    {{.cpv = "app-misc/either-1",
+                      .deps = {{"RDEPEND", "|| ( <dev-libs/alt-2 dev-libs/other )"}}},
+                     {.cpv = "dev-libs/alt-1"},
+                     {.cpv = "dev-libs/alt-2"},
+                     {.cpv = "dev-libs/other-1"}},
+                    {"app-misc/either"});
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               request({"dev-libs/alt"}, egraph::Selection::update, true)) ==
+          std::vector<std::string>{"dev-libs/alt-1 held <- app-misc/either-1 <dev-libs/alt-2"});
+}
+
+TEST_CASE("-uD with a reach updates only it, and what lies outside it only weighs") {
+    // grown lacks fresh, and idle has an update, but neither is the argument's.
+    const auto system =
+        make_system({{.cpv = "app-misc/arg-1", .deps = {{"RDEPEND", "dev-libs/dep"}}},
+                     {.cpv = "dev-libs/dep-1"},
+                     {.cpv = "app-misc/grown-1", .deps = {{"RDEPEND", "dev-libs/fresh"}}},
+                     {.cpv = "dev-libs/idle-1"}},
+                    {{.cpv = "app-misc/arg-1", .deps = {{"RDEPEND", "dev-libs/dep"}}},
+                     {.cpv = "app-misc/arg-2", .deps = {{"RDEPEND", "dev-libs/dep dev-libs/new"}}},
+                     {.cpv = "dev-libs/dep-1"},
+                     {.cpv = "dev-libs/dep-2"},
+                     {.cpv = "dev-libs/new-1"},
+                     {.cpv = "app-misc/grown-1", .deps = {{"RDEPEND", "dev-libs/fresh"}}},
+                     {.cpv = "dev-libs/fresh-1"},
+                     {.cpv = "dev-libs/idle-1"},
+                     {.cpv = "dev-libs/idle-2"}});
+    auto targets = request({"app-misc/arg"}, egraph::Selection::update, true);
+    targets.reach = {true, true, false, false};
+    CHECK(plan(system, egraph::UseRebuilds::none, targets) ==
+          std::vector<std::string>{"app-misc/arg-1 -> app-misc/arg-2",
+                                   "dev-libs/dep-1 -> dev-libs/dep-2",
+                                   "new dev-libs/new-1 <- app-misc/arg-2 dev-libs/new"});
+}
+
+TEST_CASE("outside --deep's reach, a rebuild takes the best version, for run-time bindings only") {
+    const auto system =
+        make_system({{.cpv = "dev-libs/lib-1", .slot = "0", .sub_slot = "1"},
+                     {.cpv = "app-misc/moving-1", .deps = {{"RDEPEND", "dev-libs/lib:0/1="}}},
+                     {.cpv = "app-misc/ddep-1", .deps = {{"DEPEND", "dev-libs/lib:0/1="}}}},
+                    {{.cpv = "dev-libs/lib-1", .slot = "0", .sub_slot = "1"},
+                     {.cpv = "dev-libs/lib-2", .slot = "0", .sub_slot = "2"},
+                     {.cpv = "app-misc/moving-1", .deps = {{"RDEPEND", "dev-libs/lib:="}}},
+                     {.cpv = "app-misc/moving-2", .deps = {{"RDEPEND", "dev-libs/lib:="}}},
+                     {.cpv = "app-misc/ddep-1", .deps = {{"DEPEND", "dev-libs/lib:="}}}});
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               request({"dev-libs/lib"}, egraph::Selection::reinstall)) ==
+          std::vector<std::string>{
+              "dev-libs/lib-1 -> dev-libs/lib-2",
+              "app-misc/moving-1 -> app-misc/moving-2 for dev-libs/lib-2 dev-libs/lib:0/1="});
+}

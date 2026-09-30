@@ -1430,10 +1430,11 @@ void App::handle_plan(const Key& key) {
                 lines.push_back(std::format("The plan pulls it in for {}'s {}.",
                                             member_cpv(store(), evaluated(), by->member),
                                             by->atom));
-            } else if (merge.named_by) {
-                const auto& root = store().roots.at(*merge.named_by);
-                lines.push_back(std::format("The plan pulls it in for @{}'s {}.",
-                                            store().string(root.set), store().string(root.atom)));
+            } else if (const auto& named = merge.named_by) {
+                lines.push_back(std::format(
+                    "The plan pulls it in for {}.",
+                    named->set.empty() ? named->atom
+                                       : std::format("@{}'s {}", named->set, named->atom)));
             }
         }
         show({.error = false,
