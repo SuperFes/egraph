@@ -26,6 +26,7 @@ Update the status column as steps land.
 | 18 | Explaining and checking the configuration | planned |
 | 19 | What-if | planned |
 | 20 | Build knowledge | planned |
+| 21 | The fork's speedups upstream | planned |
 
 ## 0. Scaffold
 
@@ -385,3 +386,18 @@ an emerge run (`docs/vision.md`).
 - GLSAs matched against the store at once, and a filter in the list.
 - Space: what removing a package frees with the orphans it leaves (the vdb's SIZE).
 - Notifications: security fixes pending, a stale sync, broken soname dependencies after a merge.
+
+## 21. The fork's speedups upstream
+
+The portage fork's resolver speedups (`docs/upstream-notes.md`) proposed to portage one at a
+time, lowest risk first. The dev box is the evidence base: 2,324 packages, 8 repositories, envs
+per package, heavy USE and keyword rules. Breadth comes from shadow mode, which anyone can run
+without changing what emerge does.
+
+- Rebase the fork onto current master; measure each commit alone on the stable portage
+  (`perf stat`, interleaved), output identical before any speedup counts.
+- Skipping slot-operator probes without a candidate first: on by default already, about half of
+  `-uDN`'s time.
+- Then the query memo and `regenerate()` replay, opt-in first; then neighborhood completion over
+  the in-process installed index, with shadow-mode results from other systems.
+- Facts persisted across runs and the external index stay out until the in-process ones land.
