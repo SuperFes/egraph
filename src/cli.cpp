@@ -960,20 +960,25 @@ void configure(CLI::App& app, Invocation& invocation) {
     app.require_subcommand(0, 1);
 
     app.add_option("--root", invocation.root, "Root whose installed packages to query")
+        ->type_name("DIR")
         ->envname("ROOT")
         ->capture_default_str();
     app.add_option("--config-root", invocation.config_root,
                    "Root of the portage configuration to evaluate them with")
+        ->type_name("DIR")
         ->envname("PORTAGE_CONFIGROOT");
     app.add_option("--eprefix", invocation.eprefix, "Offset prefix of a prefix installation")
+        ->type_name("DIR")
         ->envname("PORTAGE_OVERRIDE_EPREFIX");
     app.add_option("--store", invocation.store,
                    "Store file to read (default: ${ROOT}${EPREFIX}/var/cache/egraph/"
                    "installed.egraph)")
+        ->type_name("FILE")
         ->envname("EGRAPH_STORE");
     app.add_option("--builder", invocation.builder,
                    "egraph-build command that refreshes the store (default: the one next to "
                    "egraph, else egraph-build in PATH)")
+        ->type_name("COMMAND")
         ->envname("EGRAPH_BUILD");
     app.add_flag("--no-refresh", invocation.no_refresh,
                  "Answer from a stale store instead of rebuilding it");
@@ -1011,6 +1016,7 @@ void configure(CLI::App& app, Invocation& invocation) {
         add_dynamic_deps(add_command<Deps>(app, invocation, "What installed packages depend on"));
     add_field(deps_cmd, invocation, "packages", &Deps::packages,
               "Installed cpvs, or cps for every installed version")
+        ->type_name("PACKAGE")
         ->required();
     deps_cmd->add_flag_callback(
         "--possible", [&invocation] { std::get<Deps>(invocation.command).possible = true; },
@@ -1019,6 +1025,7 @@ void configure(CLI::App& app, Invocation& invocation) {
         add_dynamic_deps(add_command<Rdeps>(app, invocation, "What depends on installed packages"));
     add_field(rdeps_cmd, invocation, "packages", &Rdeps::packages,
               "Installed cpvs, or cps for every installed version")
+        ->type_name("PACKAGE")
         ->required();
     rdeps_cmd->add_flag_callback(
         "--possible", [&invocation] { std::get<Rdeps>(invocation.command).possible = true; },
@@ -1027,6 +1034,7 @@ void configure(CLI::App& app, Invocation& invocation) {
         app, invocation, "Shortest chain of dependencies from a root set that keeps a package"));
     add_field(why_cmd, invocation, "package", &Why::package,
               "Portage atom; every installed package it matches is explained")
+        ->type_name("PACKAGE")
         ->required();
     add_field(why_cmd, invocation, "--with-bdeps", &Why::build_deps,
               "Whether build-time dependencies keep packages, as emerge's option (default y)")
@@ -1087,7 +1095,8 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->transform(
             one_of<ExportFormat>({{"dot", ExportFormat::dot}, {"json", ExportFormat::json}}, true));
     add_field(export_cmd, invocation, "packages", &Export::packages,
-              "Packages whose neighborhood to export; all when omitted");
+              "Packages whose neighborhood to export; all when omitted")
+        ->type_name("PACKAGE");
     export_cmd->add_flag_callback(
         "--evaluated", [&invocation] { std::get<Export>(invocation.command).evaluated = true; },
         "Export the evaluated store instead, whole and as JSON: the dependencies emerge reads "
@@ -1114,7 +1123,8 @@ void configure(CLI::App& app, Invocation& invocation) {
             app, invocation,
             "What a set of merges can affect, as JSON, for portage's neighborhood completion")),
         invocation, "--request", &Affected::request,
-        "JSON request file (default -: standard input)");
+        "JSON request file (default -: standard input)")
+        ->type_name("FILE");
 }
 
 Style style(const Invocation& invocation) {

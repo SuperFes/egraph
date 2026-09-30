@@ -66,6 +66,7 @@ egraph_lib = static_library(
   'src/atom.cpp',
   'src/check.cpp',
   'src/cli.cpp',
+  'src/completion.cpp',
   'src/depclean.cpp',
   'src/emerge.cpp',
   'src/encoding.cpp',
@@ -94,6 +95,28 @@ egraph_dep = declare_dependency(
 )
 
 egraph_exe = executable('egraph', 'src/main.cpp', dependencies: egraph_dep, install: true)
+
+# Completion scripts, generated from the command line's definition where each shell looks.
+completions_exe = executable(
+  'egraph-completions',
+  'src/completions_main.cpp',
+  dependencies: egraph_dep,
+)
+completion_scripts = []
+foreach shell : [
+  ['bash', 'egraph.bash', get_option('datadir') / 'bash-completion' / 'completions'],
+  ['zsh', '_egraph', get_option('datadir') / 'zsh' / 'site-functions'],
+  ['fish', 'egraph.fish', get_option('datadir') / 'fish' / 'vendor_completions.d'],
+]
+  completion_scripts += custom_target(
+    'completion-' + shell[0],
+    output: shell[1],
+    command: [completions_exe, shell[0]],
+    capture: true,
+    install: true,
+    install_dir: shell[2],
+  )
+endforeach
 
 # egraph looks for egraph-build next to itself, then in PATH. In the build directory that is a
 # wrapper running the builder from the source tree, under the portage in portage_lib (the
@@ -169,6 +192,7 @@ unit_tests = executable(
   'tests/test_atom.cpp',
   'tests/test_check.cpp',
   'tests/test_cli.cpp',
+  'tests/test_completion.cpp',
   'tests/test_depclean.cpp',
   'tests/test_emerge.cpp',
   'tests/test_evaluated.cpp',
@@ -205,6 +229,7 @@ if pytest.found()
   endforeach
   # The golden tests run the C++ reader on stores the Python writer produced.
   builder_env.set('EGRAPH', egraph_exe.full_path())
+  builder_env.set('EGRAPH_COMPLETIONS', meson.current_build_dir())
   if get_option('portage_lib') != ''
     builder_env.set('PYTHONPATH', get_option('portage_lib'))
   endif
@@ -216,7 +241,7 @@ if pytest.found()
     pytest,
     args: ['-p', 'no:cacheprovider', '-q', meson.project_source_root() / 'builder' / 'tests'],
     env: builder_env,
-    depends: egraph_exe,
+    depends: [egraph_exe, completion_scripts],
     timeout: 600,
   )
 else

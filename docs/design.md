@@ -146,6 +146,15 @@ The records are:
   dependencies over build-time ones. A package depclean would remove gets a message on stderr and
   exit status 1.
 
+## Shell completion
+
+`egraph-completions` (built, not installed) prints each shell's script from the CLI11 definition
+`configure()` builds, and the build installs them (`egraph.bash`, `_egraph`, `egraph.fish`).
+What an option's value is comes from its type name: `DIR`, `FILE`, `COMMAND` and `PACKAGE`, which
+`--help` shows too, and fixed choices from `one_of`'s `{a,b}` description. Packages complete as
+the cps in the vdb under `${ROOT}`, read by the shell itself (a glob and a regular expression that
+strips the version), so a key press never loads a store or starts a refresh.
+
 ## Terminal interface
 
 `egraph tui` (roadmap 10b) is built when Notcurses is found (`-Dtui=auto`, the default). The

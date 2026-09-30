@@ -329,11 +329,13 @@ Blockers stay out of scope until a comparison needs them.
 egraph installed as any Gentoo package is: from an ebuild (`app-portage/egraph`) in an overlay,
 built from a release tarball, tested against the portage users run rather than our fork.
 
-- 15a: packaging basics: the licence file, a version, `meson dist`, and defaults a packager can
+- 15a (done): packaging basics: the licence file, a version, `meson dist`, and defaults a packager can
   build with (the installed portage, no checkout's test keys); the development builds name the
   fork explicitly.
-- 15b: shell completions (bash, zsh, fish) generated from the CLI's own definition, so they
-  cannot drift from it, and installed where each shell looks.
+- 15b (done): shell completions (bash, zsh, fish) generated from the CLI's own definition, so
+  they cannot drift from it, and installed where each shell looks. Options and commands, fixed
+  choices, directories and files by the option's type name, and installed cps from the vdb under
+  `${ROOT}`; each script is loaded by its own shell in the tests.
 - 15c: man pages, held to the CLI by a test that every command and option is documented.
 - 15d: portage hooks a package can install: `/etc/portage/bin/post_emerge` is the user's own
   file, so the dispatcher is installed beside the hooks for the user to link, and postsync.d
