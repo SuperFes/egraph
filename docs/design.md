@@ -294,6 +294,16 @@ dependencies join the plan like a merge's; with no such ebuild the binding holds
 like a bound, so it falls back to a version in the bound sub-slot. The line names the merge the
 rebuild is for. Blockers are not weighed.
 
+`updates -t` lists the plan in merge order (`order_merges` in `plan.cpp`, roadmap 14d), each
+merge numbered and followed by the places of the earlier merges it waits for: those its DEPEND,
+BDEPEND, RDEPEND or IDEPEND match (every member of a `||`, as `pending.py` counts them; PDEPEND
+never). A merge goes once all it waits for has gone, earlier plan order first; where a cycle
+leaves none ready, a run-time wait is dropped before a build-time one, as emerge breaks cycles.
+libc (virtual/libc's provider) and what it waits for go first, since emerge has every merge
+wait for it; that wait is not listed. New packages take their place in the order instead of a
+section of their own. `test_update_order_is_valid` holds it to emerge: every wait emerge's own
+order keeps, egraph's keeps too.
+
 In removal mode `dep_zapdeps` asks which packages are *available*: an installed package whose
 own metadata is masked (keywords, `package.mask`, license, invalid strings; under dynamic deps
 with the ebuild's EAPI, KEYWORDS and dependencies, as FakeVartree reads them) is available only

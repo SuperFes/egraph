@@ -182,8 +182,11 @@ void human_broken(std::ostream& out, std::span<const std::string> broken,
 void human_soname(std::ostream& out, std::span<const std::string> records, std::string_view soname,
                   bool providers, const Theme& theme);
 
-// updates records: one line per package, its versions or the flags it would be rebuilt for.
-void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme);
+// updates records: one line per package, its versions or the flags it would be rebuilt for. With
+// table, records from update_lines' table: in merge order, each led by its place and followed by
+// the places it waits for, new packages among them.
+void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme,
+                   bool table = false);
 
 // match records, one block per atom in the given order.
 void human_match(std::ostream& out, std::span<const std::string> records,

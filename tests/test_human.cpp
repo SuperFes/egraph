@@ -212,6 +212,28 @@ TEST_CASE("a slot-operator rebuild says which merge it is for") {
                        "\n1 upgrade, 1 rebuild\n");
 }
 
+TEST_CASE("the table numbers merges in order, with what each waits for") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{
+                              "1\t\tdev-libs/chain-1\tnew\tdev-libs/chain-1\tgentoo\tdev-cpp/"
+                              "mm-common-1 dev-libs/chain",
+                              "2\t1\tdev-cpp/mm-common-1\tnew\tdev-cpp/mm-common-1\tgentoo\ta/"
+                              "glibmm-2 dev-cpp/mm-common",
+                              "3\t2\ta/glibmm-1\tupgrade\ta/glibmm-2\tgentoo",
+                              "\t\ta/host-1\theld\ta/host-2\tgentoo\t\ta/holder-1 <a/host-2",
+                          },
+                          plain, true);
+    CHECK(out.str() ==
+          "1 N dev-libs/chain     1      ::gentoo       dev-cpp/mm-common-1 dev-libs/chain\n"
+          "2 N dev-cpp/mm-common  1      ::gentoo  w 1  a/glibmm-2 dev-cpp/mm-common\n"
+          "3 U a/glibmm           1 > 2  ::gentoo  w 2\n"
+          "\nHeld back\n"
+          "  H a/host             1 > 2  ::gentoo\n"
+          "      a/holder-1  <a/host-2\n"
+          "\n1 upgrade, 2 new, 1 held\n");
+}
+
 TEST_CASE("broken groups by package and counts") {
     const std::vector<std::string> records{
         "a/b-1\tPDEPEND\tx/gone",

@@ -183,6 +183,41 @@ def test_updates_are_emerges(
         )
 
 
+def test_update_order_is_valid(scenario, system, dynamic_deps):
+    """updates -t merges what emerge -puD @installed does, each after what it waits for
+    wherever emerge's order has it so, and names exactly those of its waits (pending.waits)
+    placed before it."""
+    from egraph_build import pending
+
+    import update
+
+    expected = update.updates(
+        scenario.trees, scenario.eroot, deep=True, dynamic_deps=dynamic_deps
+    )
+    if not expected.success:
+        pytest.skip("emerge cannot resolve @installed here")
+    _, path = system
+    output = egraph(path, "updates", "-t", *dynamic_option(dynamic_deps)).stdout
+    rows = [line.split("\t") for line in output.splitlines()]
+    target = {fields[0]: fields[4] for fields in rows}
+    place = {fields[4]: int(fields[0]) for fields in rows}
+    found = {fields[4]: {target[wait] for wait in fields[1].split()} for fields in rows}
+    emerge_place = {cpv: i for i, cpv in enumerate(expected.order)}
+    assert set(place) == set(emerge_place)
+    db = scenario.trees[scenario.eroot]["porttree"].dbapi
+    waits = pending.waits(
+        db.settings,
+        db,
+        None,
+        [pending.Entry("ebuild", cpv) for cpv in expected.order],
+    )
+    for cpv, others in waits.items():
+        for other in others:
+            if emerge_place[other] < emerge_place[cpv]:
+                assert place[other] < place[cpv], (cpv, other)
+        assert found[cpv] == {o for o in others if place[o] < place[cpv]}, cpv
+
+
 def test_updates_by_hand(playgrounds, tmp_path):
     path = tmp_path / "installed.egraph"
     write_stores(playgrounds("updates"), path)

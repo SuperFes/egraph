@@ -205,7 +205,7 @@ std::vector<std::uint32_t> fallbacks(const Evaluated& evaluated, std::uint32_t p
 }
 
 std::vector<std::string> update_lines(const Store& store, const Evaluated& evaluated,
-                                      UseRebuilds rebuilds, bool held,
+                                      UseRebuilds rebuilds, bool held, bool table,
                                       const std::vector<bool>& scope) {
     const auto plan = plan_updates(store, evaluated, rebuilds, scope);
     const auto target_fields = [&evaluated](std::uint32_t target) {
@@ -217,8 +217,7 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
         return found.candidate ? evaluated.string(evaluated.candidates.at(found.index).cpv)
                                : store.string(store.packages.at(found.index).cpv);
     };
-    std::vector<std::optional<std::string>> replaced(store.packages.size());
-    std::vector<std::string> added;
+    std::vector<std::string> merge_lines;
     for (const auto& merge : plan.merges) {
         if (merge.replaces) {
             auto line =
@@ -230,14 +229,14 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
             if (const auto& why = merge.rebuilt_for) {
                 line += std::format("\t{} {}", member(why->member), why->atom);
             }
-            replaced.at(*merge.replaces) = std::move(line);
+            merge_lines.push_back(std::move(line));
         } else {
             const auto cpv = evaluated.string(evaluated.candidates.at(merge.candidate).cpv);
             auto line = std::format("{}\tnew\t{}", cpv, target_fields(merge.candidate));
             if (const auto& by = merge.pulled_by) {
                 line += std::format("\t{} {}", member(by->member), by->atom);
             }
-            added.push_back(std::move(line));
+            merge_lines.push_back(std::move(line));
         }
     }
     std::vector<std::optional<std::string>> held_lines(store.packages.size());
@@ -258,6 +257,35 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
         }
     }
     std::vector<std::string> lines;
+    if (table) {
+        std::vector<std::size_t> place(plan.merges.size());
+        for (std::size_t i = 0; i < plan.order.size(); ++i) {
+            place.at(plan.order.at(i)) = i + 1;
+        }
+        for (std::size_t i = 0; i < plan.order.size(); ++i) {
+            const auto merge = plan.order.at(i);
+            std::string waits;
+            for (const auto wait : plan.merges.at(merge).waits) {
+                waits += std::format("{}{}", waits.empty() ? "" : " ", place.at(wait));
+            }
+            lines.push_back(std::format("{}\t{}\t{}", i + 1, waits, merge_lines.at(merge)));
+        }
+        for (auto& line : held_lines) {
+            if (line) {
+                lines.push_back(std::format("\t\t{}", *line));
+            }
+        }
+        return lines;
+    }
+    std::vector<std::optional<std::string>> replaced(store.packages.size());
+    std::vector<std::string> added;
+    for (std::size_t i = 0; i < plan.merges.size(); ++i) {
+        if (const auto id = plan.merges.at(i).replaces) {
+            replaced.at(*id) = std::move(merge_lines.at(i));
+        } else {
+            added.push_back(std::move(merge_lines.at(i)));
+        }
+    }
     for (std::size_t id = 0; id < store.packages.size(); ++id) {
         for (auto* line : {&replaced.at(id), &held_lines.at(id)}) {
             if (*line) {

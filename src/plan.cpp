@@ -10,6 +10,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 
 namespace egraph {
@@ -494,7 +495,8 @@ class Planner {
                                        .kind = UpdateKind::rebuild,
                                        .flags = {},
                                        .pulled_by = {},
-                                       .rebuilt_for = found->second.why});
+                                       .rebuilt_for = found->second.why,
+                                       .waits = {}});
             }
             const auto& choice = choices_.at(id);
             if (!choice.wanted) {
@@ -506,7 +508,8 @@ class Planner {
                             .kind = UpdateKind::upgrade,
                             .flags = {},
                             .pulled_by = {},
-                            .rebuilt_for = {}};
+                            .rebuilt_for = {},
+                            .waits = {}};
                 if (choice.at == 0) {
                     merge.kind = choice.wanted->kind;
                     merge.flags = choice.wanted->flags;
@@ -534,17 +537,146 @@ class Planner {
                                    .kind = UpdateKind::upgrade,
                                    .flags = {},
                                    .pulled_by = found.by,
-                                   .rebuilt_for = {}});
+                                   .rebuilt_for = {},
+                                   .waits = {}});
         }
         return plan;
     }
 };
 
+// Sets plan.order and each merge's waits.
+void order_merges(const Store& store, const Evaluated& evaluated, Plan& plan) {
+    const auto count = static_cast<std::uint32_t>(plan.merges.size());
+    const auto candidate = [&](std::uint32_t merge) -> const Candidate& {
+        return evaluated.candidates.at(plan.merges.at(merge).candidate);
+    };
+    std::map<std::string, std::vector<std::uint32_t>, std::less<>> by_cp;
+    for (std::uint32_t merge = 0; merge < count; ++merge) {
+        by_cp[std::string(evaluated.string(candidate(merge).cp))].push_back(merge);
+    }
+    std::map<std::string, std::optional<Atom>, std::less<>> atoms;
+    // The merges each one waits for, true where only a run-time dependency does.
+    std::vector<std::map<std::uint32_t, bool>> needs(count);
+    for (std::uint32_t merge = 0; merge < count; ++merge) {
+        for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+            if (dep_kinds.at(kind) == "PDEPEND") {
+                continue;
+            }
+            const bool runtime = dep_kinds.at(kind) == "RDEPEND";
+            for (const auto& node : evaluated.nodes_in(candidate(merge).deps.at(kind))) {
+                if (node.type != NodeType::atom) {
+                    continue;
+                }
+                const auto text = evaluated.string(node.atom);
+                auto parsed = atoms.find(text);
+                if (parsed == atoms.end()) {
+                    auto atom = parse_atom(text);
+                    if (atom && atom->slot_operator) {
+                        atom->sub_slot.reset();
+                    }
+                    parsed = atoms
+                                 .emplace(std::string(text),
+                                          atom ? std::optional{std::move(*atom)} : std::nullopt)
+                                 .first;
+                }
+                const auto& atom = parsed->second;
+                if (!atom) {
+                    continue;
+                }
+                const auto same = by_cp.find(atom->cp);
+                if (same == by_cp.end()) {
+                    continue;
+                }
+                for (const auto other : same->second) {
+                    if (other == merge || !matches(store, evaluated, candidate(other), *atom)) {
+                        continue;
+                    }
+                    const auto [found, added] = needs.at(merge).emplace(other, runtime);
+                    if (!added) {
+                        found->second = found->second && runtime;
+                    }
+                }
+            }
+        }
+    }
+    // emerge has every merge wait for libc (virtual/libc's provider): it goes first, with what
+    // it waits for, though the waits are not listed.
+    std::vector<bool> early(count);
+    std::vector<std::uint32_t> stack;
+    for (const auto& pkg : store.packages) {
+        if (store.string(pkg.cp) != "virtual/libc") {
+            continue;
+        }
+        for (const auto range : pkg.deps) {
+            for (const auto& node : store.nodes_in(range)) {
+                if (node.type != NodeType::atom) {
+                    continue;
+                }
+                for (const auto id : store.ids_in(node.matches)) {
+                    const auto same = by_cp.find(store.string(store.packages.at(id).cp));
+                    if (same != by_cp.end()) {
+                        std::ranges::copy(same->second, std::back_inserter(stack));
+                    }
+                }
+            }
+        }
+    }
+    while (!stack.empty()) {
+        const auto merge = stack.back();
+        stack.pop_back();
+        if (!early.at(merge)) {
+            early.at(merge) = true;
+            for (const auto& [other, runtime] : needs.at(merge)) {
+                stack.push_back(other);
+            }
+        }
+    }
+    std::vector<bool> placed(count);
+    while (plan.order.size() < count) {
+        // Ready first, then ready but for run-time waits, then the fewest waits left; libc
+        // first among them, then plan order.
+        std::optional<std::tuple<int, bool, std::size_t, std::size_t, std::uint32_t>> best;
+        for (std::uint32_t merge = 0; merge < count; ++merge) {
+            if (placed.at(merge)) {
+                continue;
+            }
+            std::size_t build = 0;
+            std::size_t all = 0;
+            for (const auto& [other, runtime] : needs.at(merge)) {
+                if (!placed.at(other)) {
+                    ++all;
+                    build += runtime ? 0 : 1;
+                }
+            }
+            const std::tuple key{all == 0     ? 0
+                                 : build == 0 ? 1
+                                              : 2,
+                                 !early.at(merge), build, all, merge};
+            if (!best || key < *best) {
+                best = key;
+            }
+        }
+        if (!best) {
+            break;
+        }
+        const auto merge = std::get<4>(*best);
+        for (const auto& [other, runtime] : needs.at(merge)) {
+            if (placed.at(other)) {
+                plan.merges.at(merge).waits.push_back(other);
+            }
+        }
+        placed.at(merge) = true;
+        plan.order.push_back(merge);
+    }
+}
+
 } // namespace
 
 Plan plan_updates(const Store& store, const Evaluated& evaluated, UseRebuilds rebuilds,
                   const std::vector<bool>& scope) {
-    return Planner(store, evaluated, rebuilds, scope).run();
+    auto plan = Planner(store, evaluated, rebuilds, scope).run();
+    order_merges(store, evaluated, plan);
+    return plan;
 }
 
 } // namespace egraph

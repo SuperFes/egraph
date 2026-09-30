@@ -90,6 +90,8 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 - [ ] Candidates count an ebuild visible when `match-visible` does, but depgraph also masks one
       whose metadata is invalid (a conditional on a flag outside its IUSE, say). Package-level
       validation (`_validate_deps`) would have to run per candidate.
+- [ ] `updates -t` counts every member of a `||` as a wait, as `pending.py` does, where the
+      plan knows which alternative it took; a wait on the others can only delay a merge.
 - [ ] A slot-operator binding inside a `||` triggers a rebuild even when another alternative
       stays satisfied; emerge only rebinds the alternative it chose.
 - [ ] A pulled package is the best visible version of its cp that fits; between repositories

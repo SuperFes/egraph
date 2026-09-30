@@ -26,6 +26,8 @@ class Updates(NamedTuple):
     rebuilt: frozenset
     # Packages merged in a slot where nothing is installed.
     new: frozenset
+    # The cpvs merged, in emerge's merge order.
+    order: tuple = ()
 
 
 def updates(
@@ -93,7 +95,15 @@ def updates(
         replaced[str(old)] = Replacement(
             pkg.cpv, pkg.repo, None if flags is None else frozenset(flags)
         )
-    return Updates(success, replaced, frozenset(rebuilt), frozenset(new))
+    order = tuple(
+        pkg.cpv
+        for pkg in (depgraph.altlist() if success else ())
+        if isinstance(pkg, Package)
+        and not pkg.installed
+        and pkg.root == eroot
+        and pkg.operation == "merge"
+    )
+    return Updates(success, replaced, frozenset(rebuilt), frozenset(new), order)
 
 
 def equiv_visible(trees, eroot):

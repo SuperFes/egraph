@@ -78,6 +78,8 @@ struct Updates {
     UseRebuilds rebuilds = UseRebuilds::none;
     // Also the updates installed dependents hold back, and which atoms do.
     bool held = false;
+    // In merge order, with what each waits for.
+    bool table = false;
 };
 
 enum class ExportFormat : std::uint8_t { dot, json };

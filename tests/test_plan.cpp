@@ -303,3 +303,136 @@ TEST_CASE("update lines name the merge a slot-operator rebuild is for") {
               "dev-libs/lib:0/1=",
               "dev-libs/lib-1\tupgrade\tdev-libs/lib-2\ttest_repo"});
 }
+
+namespace {
+
+// Merge targets in plan order, each with what it waits for: "cpv <- cpv, cpv".
+std::vector<std::string> ordered(const egraph::test::System& system) {
+    const auto& [store, evaluated] = system;
+    const auto found = egraph::plan_updates(store, evaluated, egraph::UseRebuilds::none);
+    const auto target = [&](std::uint32_t merge) {
+        return std::string(
+            evaluated.string(evaluated.candidates.at(found.merges.at(merge).candidate).cpv));
+    };
+    std::vector<std::string> lines;
+    for (const auto merge : found.order) {
+        auto line = target(merge);
+        const auto& waits = found.merges.at(merge).waits;
+        for (std::size_t i = 0; i < waits.size(); ++i) {
+            line += std::format("{}{}", i == 0 ? " <- " : ", ", target(waits.at(i)));
+        }
+        lines.push_back(std::move(line));
+    }
+    return lines;
+}
+
+} // namespace
+
+TEST_CASE("merges come after what they wait for") {
+    const auto system =
+        make_system({{.cpv = "app-misc/glibmm-1"}},
+                    {{.cpv = "app-misc/glibmm-1"},
+                     {.cpv = "app-misc/glibmm-2", .deps = {{"BDEPEND", "dev-cpp/mm-common"}}},
+                     {.cpv = "dev-cpp/mm-common-1", .deps = {{"RDEPEND", "dev-libs/chain"}}},
+                     {.cpv = "dev-libs/chain-1"}});
+    CHECK(ordered(system) == std::vector<std::string>{
+                                 "dev-libs/chain-1",
+                                 "dev-cpp/mm-common-1 <- dev-libs/chain-1",
+                                 "app-misc/glibmm-2 <- dev-cpp/mm-common-1",
+                             });
+}
+
+TEST_CASE("PDEPEND never waits") {
+    const auto system = make_system({{.cpv = "app-misc/x-1"}, {.cpv = "app-misc/y-1"}},
+                                    {{.cpv = "app-misc/x-1"},
+                                     {.cpv = "app-misc/x-2", .deps = {{"PDEPEND", "app-misc/y"}}},
+                                     {.cpv = "app-misc/y-1"},
+                                     {.cpv = "app-misc/y-2"}});
+    CHECK(ordered(system) == std::vector<std::string>{"app-misc/x-2", "app-misc/y-2"});
+}
+
+TEST_CASE("a slot-operator rebuild waits for the merge it is for") {
+    const auto system =
+        make_system({{.cpv = "app-misc/rdep-1", .deps = {{"RDEPEND", "dev-libs/lib:0/1="}}},
+                     {.cpv = "dev-libs/lib-1", .sub_slot = "1"}},
+                    {{.cpv = "app-misc/rdep-1", .deps = {{"RDEPEND", "dev-libs/lib:="}}},
+                     {.cpv = "dev-libs/lib-1", .sub_slot = "1"},
+                     {.cpv = "dev-libs/lib-2", .sub_slot = "2"}});
+    CHECK(ordered(system) ==
+          std::vector<std::string>{"dev-libs/lib-2", "app-misc/rdep-1 <- dev-libs/lib-2"});
+}
+
+TEST_CASE("every alternative of a || that merges is waited for") {
+    const auto system =
+        make_system({{.cpv = "app-misc/c-1"}, {.cpv = "app-misc/d-1"}, {.cpv = "app-misc/e-1"}},
+                    {{.cpv = "app-misc/c-1"},
+                     {.cpv = "app-misc/c-2", .deps = {{"RDEPEND", "|| ( app-misc/d app-misc/e )"}}},
+                     {.cpv = "app-misc/d-1"},
+                     {.cpv = "app-misc/d-2"},
+                     {.cpv = "app-misc/e-1"},
+                     {.cpv = "app-misc/e-2"}});
+    CHECK(ordered(system) ==
+          std::vector<std::string>{"app-misc/d-2", "app-misc/e-2",
+                                   "app-misc/c-2 <- app-misc/d-2, app-misc/e-2"});
+}
+
+TEST_CASE("a cycle drops a run-time wait before a build-time one") {
+    // b needs a to build, a needs b to run: a goes first.
+    const auto system = make_system({{.cpv = "app-misc/b-1"}, {.cpv = "app-misc/a-1"}},
+                                    {{.cpv = "app-misc/a-1"},
+                                     {.cpv = "app-misc/a-2", .deps = {{"RDEPEND", "app-misc/b"}}},
+                                     {.cpv = "app-misc/b-1"},
+                                     {.cpv = "app-misc/b-2", .deps = {{"BDEPEND", "app-misc/a"}}}});
+    CHECK(ordered(system) ==
+          std::vector<std::string>{"app-misc/a-2", "app-misc/b-2 <- app-misc/a-2"});
+    // With only build-time waits, one of them has to go.
+    const auto both = make_system({{.cpv = "app-misc/p-1"}, {.cpv = "app-misc/q-1"}},
+                                  {{.cpv = "app-misc/p-1"},
+                                   {.cpv = "app-misc/p-2", .deps = {{"DEPEND", "app-misc/q"}}},
+                                   {.cpv = "app-misc/q-1"},
+                                   {.cpv = "app-misc/q-2", .deps = {{"DEPEND", "app-misc/p"}}}});
+    CHECK(ordered(both) ==
+          std::vector<std::string>{"app-misc/p-2", "app-misc/q-2 <- app-misc/p-2"});
+}
+
+TEST_CASE("the table lists merges in order, each with the places it waits for") {
+    const auto system =
+        make_system({{.cpv = "app-misc/glibmm-1"},
+                     {.cpv = "app-misc/holder-1", .deps = {{"RDEPEND", "<app-misc/host-2"}}},
+                     {.cpv = "app-misc/host-1"}},
+                    {{.cpv = "app-misc/glibmm-1"},
+                     {.cpv = "app-misc/glibmm-2", .deps = {{"BDEPEND", "dev-cpp/mm-common"}}},
+                     {.cpv = "app-misc/holder-1", .deps = {{"RDEPEND", "<app-misc/host-2"}}},
+                     {.cpv = "app-misc/host-1"},
+                     {.cpv = "app-misc/host-2"},
+                     {.cpv = "dev-cpp/mm-common-1", .deps = {{"RDEPEND", "dev-libs/chain"}}},
+                     {.cpv = "dev-libs/chain-1"}});
+    CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none, true,
+                               true) ==
+          std::vector<std::string>{
+              "1\t\tdev-libs/chain-1\tnew\tdev-libs/chain-1\ttest_repo\tdev-cpp/mm-common-1 "
+              "dev-libs/chain",
+              "2\t1\tdev-cpp/mm-common-1\tnew\tdev-cpp/mm-common-1\ttest_repo\tapp-misc/glibmm-2 "
+              "dev-cpp/mm-common",
+              "3\t2\tapp-misc/glibmm-1\tupgrade\tapp-misc/glibmm-2\ttest_repo",
+              "\t\tapp-misc/host-1\theld\tapp-misc/host-2\ttest_repo\t\tapp-misc/holder-1 "
+              "<app-misc/host-2"});
+}
+
+TEST_CASE("libc and what it waits for merge first, as emerge's implicit libc dependency") {
+    const auto system =
+        make_system({{.cpv = "app-misc/a-1"},
+                     {.cpv = "virtual/libc-1", .deps = {{"RDEPEND", "sys-libs/glibc"}}},
+                     {.cpv = "sys-libs/glibc-1"},
+                     {.cpv = "sys-kernel/headers-1"}},
+                    {{.cpv = "app-misc/a-1"},
+                     {.cpv = "app-misc/a-2"},
+                     {.cpv = "virtual/libc-1", .deps = {{"RDEPEND", "sys-libs/glibc"}}},
+                     {.cpv = "sys-libs/glibc-1"},
+                     {.cpv = "sys-libs/glibc-2", .deps = {{"DEPEND", "sys-kernel/headers"}}},
+                     {.cpv = "sys-kernel/headers-1"},
+                     {.cpv = "sys-kernel/headers-2"}});
+    CHECK(ordered(system) == std::vector<std::string>{"sys-kernel/headers-2",
+                                                      "sys-libs/glibc-2 <- sys-kernel/headers-2",
+                                                      "app-misc/a-2"});
+}

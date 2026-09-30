@@ -608,10 +608,10 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
     if (!store) {
         return fail(err, store.error());
     }
-    const auto lines =
-        update_lines(*store, stores->get().evaluated, command.rebuilds, command.held);
+    const auto lines = update_lines(*store, stores->get().evaluated, command.rebuilds, command.held,
+                                    command.table);
     if (const auto style = output(invocation); style.human) {
-        human_updates(out, lines, style.theme);
+        human_updates(out, lines, style.theme, command.table);
     } else {
         write_lines(out, lines);
     }
@@ -931,6 +931,9 @@ void configure(CLI::App& app, Invocation& invocation) {
     updates_cmd->add_flag_callback(
         "--held", [&invocation] { std::get<Updates>(invocation.command).held = true; },
         "Also the updates installed dependents hold back, and which of their atoms do");
+    updates_cmd->add_flag_callback(
+        "-t,--table", [&invocation] { std::get<Updates>(invocation.command).table = true; },
+        "In merge order, each with the places of the merges it waits for");
     updates_cmd->add_flag_callback(
         "-N,--newuse",
         [&invocation] { std::get<Updates>(invocation.command).rebuilds = UseRebuilds::all; },

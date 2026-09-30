@@ -71,9 +71,13 @@ fallbacks(const Evaluated& evaluated, std::uint32_t package, const PendingUpdate
 // target or what it would pull in): its cpv, then each of its atoms that do, space-separated. In
 // the installed packages' order; then each package new in its slot,
 // "cpv<TAB>new<TAB>cpv<TAB>repo<TAB>puller atom", by cpv, with the package and atom that pull it
-// in.
+// in. A slot-operator rebuild is kind rebuild with empty flags, then "<TAB>merge atom": the merge
+// that breaks its binding and the bound atom. With table, the merges in merge order instead, each
+// line led by "place<TAB>waits<TAB>", its place from 1 and the places it waits for,
+// space-separated; held lines follow, led by two empty fields.
 [[nodiscard]] std::vector<std::string> update_lines(const Store& store, const Evaluated& evaluated,
                                                     UseRebuilds rebuilds, bool held = false,
+                                                    bool table = false,
                                                     const std::vector<bool>& scope = {});
 
 // Consumers (or providers) of a soname: one "cpv<TAB>multilib category" line each, sorted.

@@ -41,6 +41,9 @@ struct Merge {
     // For a slot-operator rebuild of the installed version: the merge whose slot or sub-slot
     // breaks its binding, with the bound atom as the rebuilt package's dependencies print it.
     std::optional<Reason> rebuilt_for;
+    // Indices into Plan::merges of the merges before it in Plan::order that its DEPEND,
+    // BDEPEND, RDEPEND or IDEPEND match, every member of a || counting; sorted.
+    std::vector<std::uint32_t> waits;
 };
 
 // An installed package whose pending update the plan leaves out, or replaces with an earlier
@@ -56,6 +59,9 @@ struct HeldBack {
 struct Plan {
     // Replacements in the installed packages' order, then new packages by cpv.
     std::vector<Merge> merges;
+    // Indices into merges, in an order to merge them: each after what it waits for, a run-time
+    // dependency's wait dropped where a cycle leaves no other way, then a build-time one's.
+    std::vector<std::uint32_t> order;
     // In the installed packages' order.
     std::vector<HeldBack> held;
 };

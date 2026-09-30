@@ -558,10 +558,27 @@ void human_orphans(std::ostream& out, std::span<const std::string> records, cons
         << '\n';
 }
 
-void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme,
+                   bool table) {
     const auto& paint = theme.paint;
     const auto& glyph = theme.glyph();
-    const auto rows = split_all(records);
+    auto rows = split_all(records);
+    // A table row's place and the places it waits for, taken off ahead of its fields.
+    std::vector<std::pair<std::string_view, std::string_view>> places(rows.size());
+    std::size_t place_width = 0;
+    std::size_t waits_width = 0;
+    if (table) {
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            auto& row = rows.at(i);
+            places.at(i) = {row.at(0), row.at(1)};
+            row.erase(row.begin(), row.begin() + 2);
+            place_width = std::max(place_width, places.at(i).first.size());
+            if (!places.at(i).second.empty()) {
+                waits_width =
+                    std::max(waits_width, glyph.waiting.size() + 1 + places.at(i).second.size());
+            }
+        }
+    }
     const auto is_held = [](const auto& row) { return row.at(1) == "held"; };
     const auto is_new = [](const auto& row) { return row.at(1) == "new"; };
     // Every row shares the columns, so held ones line up under the updates.
@@ -579,7 +596,12 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     }
     bool flags = false;
     // The package, its version and where it goes, its repository, and any flags.
-    const auto put_row = [&](const auto& row, std::string_view mark, Tone tone) {
+    const auto put_row = [&](std::size_t index, std::string_view mark, Tone tone) {
+        const auto& row = rows.at(index);
+        if (table) {
+            const auto place = places.at(index).first;
+            out << spaces(place.size(), place_width) << paint(place, Tone::count) << ' ';
+        }
         const auto old = split_cpv(row.at(0));
         const auto target = split_cpv(row.at(2));
         const auto cp = row.at(0).substr(0, old.category.size() + 1 + old.name.size());
@@ -595,10 +617,21 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             out << spaces(0, move_width);
         }
         out << "  " << paint("::" + std::string{row.at(3)}, Tone::repo);
+        // The waits column's padding, written only when something follows it.
+        std::size_t pad = 0;
+        if (waits_width != 0) {
+            const auto waits = places.at(index).second;
+            if (waits.empty()) {
+                pad = 2 + waits_width;
+            } else {
+                out << "  " << paint(glyph.waiting, Tone::note) << ' ' << paint(waits, Tone::count);
+                pad = waits_width - (glyph.waiting.size() + 1 + waits.size());
+            }
+        }
         // A package, then its atom: what pulls a new one in, or what a rebuild is for.
         const auto put_why = [&](std::string_view by) {
             const auto cut = std::min(by.find(' '), by.size());
-            out << "  " << paint(by.substr(0, cut), Tone::version) << ' '
+            out << std::string(pad, ' ') << "  " << paint(by.substr(0, cut), Tone::version) << ' '
                 << paint(by.substr(std::min(cut + 1, by.size())), Tone::note);
         };
         if (row.at(1) == "new") {
@@ -609,7 +642,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             put_why(row.at(5));
         } else if (row.size() > 4 && !row.at(4).empty()) {
             flags = true;
-            out << ' ';
+            out << std::string(pad, ' ') << ' ';
             for (const auto flag : std::views::split(row.at(4), ' ')) {
                 const std::string_view text{flag};
                 out << ' ' << paint(text, text.contains('*') ? Tone::use : Tone::note);
@@ -619,19 +652,24 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     };
     // up, down, rebuild, new, held
     std::array<std::size_t, 5> counts{};
-    for (const auto& row : rows) {
+    for (std::size_t index = 0; index < rows.size(); ++index) {
+        const auto& row = rows.at(index);
         if (is_held(row)) {
             ++counts.at(4);
             continue;
         }
         if (is_new(row)) {
             ++counts.at(3);
+            // In merge order, among the rest.
+            if (table) {
+                put_row(index, glyph.added, Tone::good);
+            }
             continue;
         }
         const bool up = row.at(1) == "upgrade";
         const bool down = row.at(1) == "downgrade";
         ++counts.at(up ? 0 : down ? 1 : 2);
-        put_row(row,
+        put_row(index,
                 up     ? glyph.upgrade
                 : down ? glyph.downgrade
                        : glyph.rebuild,
@@ -646,21 +684,22 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             return;
         }
     }
-    if (counts.at(3) != 0) {
+    if (counts.at(3) != 0 && !table) {
         out << '\n' << paint("New", Tone::heading) << '\n';
-        for (const auto& row : rows) {
-            if (is_new(row)) {
-                put_row(row, glyph.added, Tone::good);
+        for (std::size_t index = 0; index < rows.size(); ++index) {
+            if (is_new(rows.at(index))) {
+                put_row(index, glyph.added, Tone::good);
             }
         }
     }
     if (counts.at(4) != 0) {
         out << '\n' << paint("Held back", Tone::heading) << '\n';
-        for (const auto& row : rows) {
+        for (std::size_t index = 0; index < rows.size(); ++index) {
+            const auto& row = rows.at(index);
             if (!is_held(row)) {
                 continue;
             }
-            put_row(row, glyph.held, Tone::bad);
+            put_row(index, glyph.held, Tone::bad);
             // One line per dependent holding it: its cpv, then its atoms that do.
             std::size_t holder_width = 0;
             for (std::size_t i = 5; i < row.size(); ++i) {
@@ -670,8 +709,8 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             for (std::size_t i = 5; i < row.size(); ++i) {
                 const auto field = row.at(i);
                 const auto holder = field.substr(0, field.find(' '));
-                out << "    " << paint(holder, Tone::version)
-                    << spaces(holder.size(), holder_width);
+                out << spaces(0, place_width == 0 ? 0 : place_width + 1) << "    "
+                    << paint(holder, Tone::version) << spaces(holder.size(), holder_width);
                 if (holder.size() < field.size()) {
                     for (const auto atom :
                          std::views::split(field.substr(holder.size() + 1), ' ')) {

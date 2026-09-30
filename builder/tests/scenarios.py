@@ -640,7 +640,8 @@ SCENARIOS = {
     },
     # Slot-operator rebuilds: dependents bound to a sub-slot an update replaces, through RDEPEND,
     # DEPEND and PDEPEND, one updated itself, one with no visible ebuild to rebuild from, one
-    # whose ebuild gained a dependency, and one with :* that never rebuilds.
+    # whose ebuild gained a dependency, and one with :* that never rebuilds. Beside them, two
+    # updates in a cycle, one's run-time dependency against the other's build-time one.
     "slotops": {
         "bounded": True,
         "world": [
@@ -651,6 +652,8 @@ SCENARIOS = {
             "app-misc/gone",
             "app-misc/grown",
             "app-misc/star",
+            "app-misc/ring",
+            "app-misc/loop",
         ],
         "ebuilds": {
             "dev-libs/lib-1": {"EAPI": "8", "SLOT": "0/1"},
@@ -674,6 +677,10 @@ SCENARIOS = {
                 "RDEPEND": "dev-libs/lib:= dev-libs/fresh",
             },
             "app-misc/star-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib:*"},
+            "app-misc/ring-1": {"EAPI": "8"},
+            "app-misc/ring-2": {"EAPI": "8", "RDEPEND": "app-misc/loop"},
+            "app-misc/loop-1": {"EAPI": "8"},
+            "app-misc/loop-2": {"EAPI": "8", "BDEPEND": "app-misc/ring"},
         },
         "installed": {
             "dev-libs/lib-1": {"EAPI": "8", "SLOT": "0/1"},
@@ -685,6 +692,8 @@ SCENARIOS = {
             "app-misc/gone-1": {"EAPI": "8", "RDEPEND": "dev-libs/lone:0/1="},
             "app-misc/grown-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib:0/1="},
             "app-misc/star-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib:*"},
+            "app-misc/ring-1": {"EAPI": "8"},
+            "app-misc/loop-1": {"EAPI": "8"},
         },
     },
 }

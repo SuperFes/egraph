@@ -288,7 +288,10 @@ Blockers stay out of scope until a comparison needs them.
   version, whose own dependencies join the plan (and pull in what they lack); with none, the
   binding holds the merge back to a version in its sub-slot. The line names the merge it is for.
   Equal to emerge's rebuilds on every scenario (`slotops`, `bounds`).
-- 14d: the plan in merge order: as a tree down to each package's world root, and as a table
-  (`-t`) with from, to, why and what each waits for. Pretend only, first in the one-shot
-  output, then as a view of the living app. Checked against emerge's merge list by validity
-  (every build dependency first), not identity.
+- 14d1 (done): the plan in merge order, `updates -t`: each merge numbered, with the places of
+  the merges it waits for (DEPEND, BDEPEND, RDEPEND, IDEPEND), cycles broken at a run-time wait
+  first, libc first as emerge's implicit dependency. Every wait emerge's order keeps is kept, and
+  the waits listed are `pending.py`'s, on every scenario.
+- 14d2: the plan as a tree, each merge down to its world root: `why`'s chain for a replaced or
+  rebuilt package, the pulling chain for a new one. Pretend only, first in the one-shot output,
+  then as a view of the living app.
