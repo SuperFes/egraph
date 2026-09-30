@@ -401,7 +401,10 @@ use, egraph schedules the merges itself.
 - 16h: `sync`: `emaint sync -a`, then what the sync brought: new updates, news.
 - 16i: a repository index from the builder (every cp, its description, versions per slot,
   keywords and masks), incremental on sync; search across the repositories, and pages for
-  packages not installed.
+  packages not installed. Shell completion answered from it by a hidden `egraph complete`, which
+  loads the stores without a freshness check: every cp in the repositories (the vdb alone offers
+  too little to be useful), names without their category, versions after `=`, slots after `:`,
+  and sets.
 - 16j: the actions in the living app: updates picked, installs from search, orphans removed,
   a confirmation, the run in the emerge view, a failure's log tail.
 - 16k: egraph's own order, once 16c has shown no differences: each merge an
