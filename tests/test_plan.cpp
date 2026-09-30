@@ -436,3 +436,27 @@ TEST_CASE("libc and what it waits for merge first, as emerge's implicit libc dep
                                                       "sys-libs/glibc-2 <- sys-kernel/headers-2",
                                                       "app-misc/a-2"});
 }
+
+TEST_CASE("the tree leads each merge down from its root, a new package through its puller") {
+    const auto system =
+        make_system({{.cpv = "app-misc/top-1", .deps = {{"RDEPEND", "app-misc/glibmm"}}},
+                     {.cpv = "app-misc/glibmm-1"},
+                     {.cpv = "app-misc/loose-1"}},
+                    {{.cpv = "app-misc/top-1", .deps = {{"RDEPEND", "app-misc/glibmm"}}},
+                     {.cpv = "app-misc/glibmm-1"},
+                     {.cpv = "app-misc/glibmm-2", .deps = {{"BDEPEND", "dev-cpp/mm-common"}}},
+                     {.cpv = "app-misc/loose-1"},
+                     {.cpv = "app-misc/loose-2"},
+                     {.cpv = "dev-cpp/mm-common-1", .deps = {{"RDEPEND", "dev-libs/chain"}}},
+                     {.cpv = "dev-libs/chain-1"}},
+                    {"app-misc/top"});
+    const auto kept = egraph::keep(system.store, {});
+    CHECK(egraph::update_tree_lines(system.store, system.evaluated, kept,
+                                    egraph::UseRebuilds::none) ==
+          std::vector<std::string>{
+              "1\t\tapp-misc/loose-1",
+              "2\t@selected\tapp-misc/top-1\tapp-misc/glibmm-1\tdev-cpp/mm-common-1\tdev-libs/"
+              "chain-1",
+              "3\t@selected\tapp-misc/top-1\tapp-misc/glibmm-1\tdev-cpp/mm-common-1",
+              "4\t@selected\tapp-misc/top-1\tapp-misc/glibmm-1"});
+}

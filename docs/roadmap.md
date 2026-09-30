@@ -292,6 +292,6 @@ Blockers stay out of scope until a comparison needs them.
   the merges it waits for (DEPEND, BDEPEND, RDEPEND, IDEPEND), cycles broken at a run-time wait
   first, libc first as emerge's implicit dependency. Every wait emerge's order keeps is kept, and
   the waits listed are `pending.py`'s, on every scenario.
-- 14d2: the plan as a tree, each merge down to its world root: `why`'s chain for a replaced or
-  rebuilt package, the pulling chain for a new one. Pretend only, first in the one-shot output,
-  then as a view of the living app.
+- 14d2 (done): the plan as a tree, `updates --tree`: each merge under its root set, down `why`'s
+  chain for a replaced or rebuilt package and the pulling chain for a new one, merges with their
+  place and waits. Held to `why` on every scenario. A view in the living app is still to come.

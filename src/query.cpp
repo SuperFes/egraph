@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <format>
+#include <map>
 #include <ostream>
 #include <set>
 #include <string_view>
@@ -294,6 +295,72 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
         }
     }
     std::ranges::move(added, std::back_inserter(lines));
+    return lines;
+}
+
+std::vector<std::string> update_tree_lines(const Store& store, const Evaluated& evaluated,
+                                           const Kept& kept, UseRebuilds rebuilds) {
+    const auto plan = plan_updates(store, evaluated, rebuilds);
+    std::map<std::uint32_t, std::uint32_t> by_candidate;
+    for (std::uint32_t i = 0; i < plan.merges.size(); ++i) {
+        by_candidate.emplace(plan.merges.at(i).candidate, i);
+    }
+    // "@set<TAB>cpv<TAB>..." down to an installed package, or an empty set and its cpv.
+    const auto installed_chain = [&](std::uint32_t id) {
+        const auto path = why(kept, id);
+        if (!path) {
+            return std::format("\t{}", store.string(store.packages.at(id).cpv));
+        }
+        auto chain = std::format("@{}\t{}", store.string(store.roots.at(path->root.root).set),
+                                 store.string(store.packages.at(path->root.child).cpv));
+        for (const auto& edge : path->edges) {
+            chain += std::format("\t{}", store.string(store.packages.at(edge.child).cpv));
+        }
+        return chain;
+    };
+    std::vector<std::optional<std::string>> chains(plan.merges.size());
+    for (std::size_t i = 0; i < plan.merges.size(); ++i) {
+        if (const auto id = plan.merges.at(i).replaces) {
+            chains.at(i) = installed_chain(*id);
+        }
+    }
+    // New packages hang from what pulled them in, which may itself be new.
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (std::size_t i = 0; i < plan.merges.size(); ++i) {
+            const auto& merge = plan.merges.at(i);
+            if (chains.at(i) || !merge.pulled_by) {
+                continue;
+            }
+            const auto cpv = evaluated.string(evaluated.candidates.at(merge.candidate).cpv);
+            const auto& by = merge.pulled_by->member;
+            if (!by.candidate) {
+                chains.at(i) = std::format("{}\t{}", installed_chain(by.index), cpv);
+            } else if (const auto puller = by_candidate.find(by.index);
+                       puller != by_candidate.end()) {
+                const auto& above = chains.at(puller->second);
+                if (!above) {
+                    continue;
+                }
+                chains.at(i) = std::format("{}\t{}", *above, cpv);
+            } else {
+                continue;
+            }
+            grew = true;
+        }
+    }
+    for (std::size_t i = 0; i < plan.merges.size(); ++i) {
+        if (!chains.at(i)) {
+            chains.at(i) = std::format(
+                "\t{}", evaluated.string(evaluated.candidates.at(plan.merges.at(i).candidate).cpv));
+        }
+    }
+    std::vector<std::string> lines;
+    lines.reserve(plan.order.size());
+    for (std::size_t place = 0; place < plan.order.size(); ++place) {
+        lines.push_back(
+            std::format("{}\t{}", place + 1, chains.at(plan.order.at(place)).value_or("")));
+    }
     return lines;
 }
 

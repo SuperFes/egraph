@@ -188,6 +188,11 @@ void human_soname(std::ostream& out, std::span<const std::string> records, std::
 void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme,
                    bool table = false);
 
+// update_tree_lines' records as a tree under each root set, merges drawn from table (update_lines'
+// table records) with their place and waits, the packages between them plain.
+void human_update_tree(std::ostream& out, std::span<const std::string> table,
+                       std::span<const std::string> tree, const Theme& theme);
+
 // match records, one block per atom in the given order.
 void human_match(std::ostream& out, std::span<const std::string> records,
                  std::span<const std::string> atoms, const Theme& theme);

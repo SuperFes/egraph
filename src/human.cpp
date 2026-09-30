@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <format>
+#include <map>
 #include <ostream>
 #include <ranges>
 #include <vector>
@@ -742,6 +743,112 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         out << '\n'
             << paint("flag* changed  flag% new in IUSE  (-flag%) gone from it", Tone::note) << '\n';
     }
+}
+
+void human_update_tree(std::ostream& out, std::span<const std::string> table,
+                       std::span<const std::string> tree, const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto& glyph = theme.glyph();
+    const auto rows = split_all(table);
+    // Table rows by the cpv a tree names them by: the installed one, or the new package.
+    std::map<std::string_view, std::size_t, std::less<>> merges;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        merges.emplace(rows.at(i).at(2), i);
+    }
+    struct Node {
+        std::string_view label;
+        std::vector<std::size_t> children;
+    };
+    // Node 0 holds the roots; children keep the order the merges first reach them in.
+    std::vector<Node> nodes(1);
+    const auto child = [&nodes](std::size_t parent, std::string_view label) {
+        for (const auto index : nodes.at(parent).children) {
+            if (nodes.at(index).label == label) {
+                return index;
+            }
+        }
+        nodes.push_back({.label = label, .children = {}});
+        nodes.at(parent).children.push_back(nodes.size() - 1);
+        return nodes.size() - 1;
+    };
+    for (const auto& fields : split_all(tree)) {
+        std::size_t at = 0;
+        for (std::size_t i = 1; i < fields.size(); ++i) {
+            at = child(at, fields.at(i));
+        }
+    }
+    const auto put_merge = [&](const Fields& row) {
+        const bool up = row.at(3) == "upgrade";
+        const bool down = row.at(3) == "downgrade";
+        const bool added = row.at(3) == "new";
+        const auto mark = up      ? glyph.upgrade
+                          : down  ? glyph.downgrade
+                          : added ? glyph.added
+                                  : glyph.rebuild;
+        const auto tone = up || added ? Tone::good : down ? Tone::bad : Tone::use;
+        const auto old = split_cpv(row.at(2));
+        out << paint(mark, tone) << ' '
+            << paint_cpv(row.at(2).substr(0, old.category.size() + 1 + old.name.size()), paint)
+            << "  " << paint(old.version, Tone::version);
+        if (row.at(2) != row.at(4)) {
+            out << ' ' << paint(glyph.instead, Tone::note) << ' '
+                << paint(split_cpv(row.at(4)).version, down ? Tone::bad : Tone::good);
+        }
+        out << "  " << paint("::" + std::string{row.at(5)}, Tone::repo) << "  "
+            << paint(row.at(0), Tone::count);
+        if (!row.at(1).empty()) {
+            out << "  " << paint(glyph.waiting, Tone::note) << ' ' << paint(row.at(1), Tone::count);
+        }
+    };
+    const auto walk = [&](this const auto& self, std::size_t index,
+                          const std::string& prefix) -> void {
+        const auto& children = nodes.at(index).children;
+        for (std::size_t i = 0; i < children.size(); ++i) {
+            const bool last = i + 1 == children.size();
+            const auto& node = nodes.at(children.at(i));
+            out << paint(prefix, Tone::note) << paint(last ? glyph.branch : glyph.tee, Tone::note)
+                << ' ';
+            if (const auto merge = merges.find(node.label); merge != merges.end()) {
+                put_merge(rows.at(merge->second));
+            } else {
+                out << paint_cpv(node.label, paint);
+            }
+            out << '\n';
+            self(children.at(i),
+                 prefix + std::string(last ? "   " : std::string(glyph.rail) + " "));
+        }
+    };
+    for (const auto root : nodes.front().children) {
+        const auto set = nodes.at(root).label;
+        if (set.empty()) {
+            out << paint(glyph.orphan, Tone::bad) << ' ' << paint("nothing keeps", Tone::bad);
+        } else {
+            out << paint(set_glyph(set, glyph), Tone::root) << ' ' << paint(set, Tone::root);
+        }
+        out << '\n';
+        walk(root, "");
+    }
+    std::array<std::size_t, 4> counts{};
+    for (const auto& row : rows) {
+        const auto kind = row.at(3);
+        ++counts.at(kind == "upgrade" ? 0 : kind == "downgrade" ? 1 : kind == "rebuild" ? 2 : 3);
+    }
+    constexpr std::array<std::array<std::string_view, 2>, 4> nouns{{{" upgrade", " upgrades"},
+                                                                    {" downgrade", " downgrades"},
+                                                                    {" rebuild", " rebuilds"},
+                                                                    {" new", " new"}}};
+    out << '\n';
+    bool first = true;
+    for (std::size_t i = 0; i < counts.size(); ++i) {
+        if (counts.at(i) == 0) {
+            continue;
+        }
+        out << (first ? "" : paint(", ", Tone::note))
+            << paint(std::to_string(counts.at(i)), Tone::count)
+            << paint(nouns.at(i).at(counts.at(i) == 1 ? 0 : 1), Tone::note);
+        first = false;
+    }
+    out << '\n';
 }
 
 void human_broken(std::ostream& out, std::span<const std::string> broken,

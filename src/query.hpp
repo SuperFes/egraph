@@ -1,5 +1,6 @@
 #pragma once
 
+#include "depclean.hpp"
 #include "evaluated.hpp"
 #include "graph.hpp"
 #include "store.hpp"
@@ -79,6 +80,15 @@ fallbacks(const Evaluated& evaluated, std::uint32_t package, const PendingUpdate
                                                     UseRebuilds rebuilds, bool held = false,
                                                     bool table = false,
                                                     const std::vector<bool>& scope = {});
+
+// Where each merge of the plan comes from, in merge order: "place<TAB>@set<TAB>cpv<TAB>...", its
+// place as update_lines' table numbers it, then the root set and the chain of installed packages
+// why finds from the set's atom down to the one the merge replaces (or rebuilds). A new package's
+// chain is that of the member that pulled it in, then its own cpv. A merge nothing keeps has an
+// empty set and its own cpv only.
+[[nodiscard]] std::vector<std::string> update_tree_lines(const Store& store,
+                                                         const Evaluated& evaluated,
+                                                         const Kept& kept, UseRebuilds rebuilds);
 
 // Consumers (or providers) of a soname: one "cpv<TAB>multilib category" line each, sorted.
 [[nodiscard]] std::vector<std::string> soname_users(const Store& store, std::string_view soname,

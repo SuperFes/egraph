@@ -218,6 +218,40 @@ def test_update_order_is_valid(scenario, system, dynamic_deps):
         assert found[cpv] == {o for o in others if place[o] < place[cpv]}, cpv
 
 
+def test_update_tree_follows_why(scenario, system, dynamic_deps):
+    """updates --tree leads each merge of updates -t down from its root: why's chain for an
+    installed package it replaces, and for a new one the chain of the member that pulled it in
+    (the installed package, or the one a merge replaces)."""
+    _, path = system
+    options = dynamic_option(dynamic_deps)
+    table = [
+        line.split("\t")
+        for line in egraph(path, "updates", "-t", *options).stdout.splitlines()
+    ]
+    tree = [
+        line.split("\t")
+        for line in egraph(path, "updates", "--tree", *options).stdout.splitlines()
+    ]
+    assert [fields[0] for fields in tree] == [fields[0] for fields in table]
+    # The installed cpv a candidate cpv replaces, for a new package's puller.
+    replaced = {fields[4]: fields[2] for fields in table if fields[3] != "new"}
+    for row, fields in zip(table, tree):
+        chain = fields[2:]
+        assert chain[-1] == row[2]
+        if row[3] == "new":
+            puller = row[6].split(" ")[0]
+            if len(chain) > 1:
+                assert chain[-2] in (puller, replaced.get(puller)), row
+            continue
+        why = egraph(path, "why", row[2], *options, check=False)
+        if why.returncode != 0:
+            assert fields[1:] == ["", row[2]]
+            continue
+        lines = [line.split("\t") for line in why.stdout.splitlines()]
+        assert fields[1] == lines[0][0]
+        assert chain == [lines[0][2]] + [edge[3] for edge in lines[1:]]
+
+
 def test_updates_by_hand(playgrounds, tmp_path):
     path = tmp_path / "installed.egraph"
     write_stores(playgrounds("updates"), path)

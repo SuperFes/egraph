@@ -80,6 +80,8 @@ struct Updates {
     bool held = false;
     // In merge order, with what each waits for.
     bool table = false;
+    // Each merge under the root and packages it comes from.
+    bool tree = false;
 };
 
 enum class ExportFormat : std::uint8_t { dot, json };

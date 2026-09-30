@@ -304,6 +304,13 @@ wait for it; that wait is not listed. New packages take their place in the order
 section of their own. `test_update_order_is_valid` holds it to emerge: every wait emerge's own
 order keeps, egraph's keeps too.
 
+`updates --tree` hangs each merge under the root set it comes from (`update_tree_lines`): the
+chain `why` finds down to the installed package it replaces or rebuilds, and for a new package
+the chain of the member that pulled it in, then the package. Chains fold into one tree per set,
+children in the order the merges first reach them; merges show their versions, place and waits
+as in `-t`, the packages between them plainly. Merges nothing keeps (depclean would remove the
+package) come under their own heading. `test_update_tree_follows_why` holds each chain to `why`.
+
 In removal mode `dep_zapdeps` asks which packages are *available*: an installed package whose
 own metadata is masked (keywords, `package.mask`, license, invalid strings; under dynamic deps
 with the ebuild's EAPI, KEYWORDS and dependencies, as FakeVartree reads them) is available only

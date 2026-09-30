@@ -234,6 +234,31 @@ TEST_CASE("the table numbers merges in order, with what each waits for") {
           "\n1 upgrade, 2 new, 1 held\n");
 }
 
+TEST_CASE("the update tree hangs each merge from its root") {
+    const std::vector<std::string> table{
+        "1\t\ta/loose-1\tupgrade\ta/loose-2\tgentoo",
+        "2\t\tx/chain-1\tnew\tx/chain-1\tgentoo\tx/mm-1 x/chain",
+        "3\t2\tx/mm-1\tnew\tx/mm-1\tgentoo\ta/glibmm-2 x/mm",
+        "4\t3\ta/glibmm-1\tupgrade\ta/glibmm-2\tgentoo",
+    };
+    const std::vector<std::string> tree{
+        "1\t\ta/loose-1",
+        "2\t@selected\ta/top-1\ta/glibmm-1\tx/mm-1\tx/chain-1",
+        "3\t@selected\ta/top-1\ta/glibmm-1\tx/mm-1",
+        "4\t@selected\ta/top-1\ta/glibmm-1",
+    };
+    std::ostringstream out;
+    egraph::human_update_tree(out, table, tree, plain);
+    CHECK(out.str() == "- nothing keeps\n"
+                       "`- U a/loose  1 > 2  ::gentoo  1\n"
+                       "@ @selected\n"
+                       "`- a/top-1\n"
+                       "   `- U a/glibmm  1 > 2  ::gentoo  4  w 3\n"
+                       "      `- N x/mm  1  ::gentoo  3  w 2\n"
+                       "         `- N x/chain  1  ::gentoo  2\n"
+                       "\n2 upgrades, 2 new\n");
+}
+
 TEST_CASE("broken groups by package and counts") {
     const std::vector<std::string> records{
         "a/b-1\tPDEPEND\tx/gone",

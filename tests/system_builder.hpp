@@ -152,9 +152,9 @@ inline Version version_of(std::string_view cpv) {
 
 // Installed packages' dependencies are their evaluated ones too. An installed package's target
 // is the best visible candidate in its slot, when that is newer, or any other when no visible
-// candidate has its version.
-inline System make_system(const std::vector<Installed>& installed,
-                          std::vector<Available> available) {
+// candidate has its version. World holds @selected's atoms.
+inline System make_system(const std::vector<Installed>& installed, std::vector<Available> available,
+                          const std::vector<std::string>& world = {}) {
     System system;
     auto& store = system.store;
     auto& evaluated = system.evaluated;
@@ -187,6 +187,14 @@ inline System make_system(const std::vector<Installed>& installed,
     for (std::size_t i = 0; i < installed.size(); ++i) {
         store.packages.at(i).deps =
             detail::trees(installed.at(i).deps, store, store_strings, match);
+    }
+    for (const auto& atom : world) {
+        const auto ids = match(atom);
+        store.roots.push_back({.set = store_strings("selected"),
+                               .atom = store_strings(atom),
+                               .matches = {.first = static_cast<std::uint32_t>(store.ids.size()),
+                                           .count = static_cast<std::uint32_t>(ids.size())}});
+        store.ids.insert(store.ids.end(), ids.begin(), ids.end());
     }
 
     std::ranges::sort(available, [](const Available& a, const Available& b) {
