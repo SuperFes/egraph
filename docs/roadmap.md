@@ -419,6 +419,19 @@ use, egraph schedules the merges itself.
   `blocked`, give 60 requests emerge resolves with uninstalls and 106 it refuses, all equal.
 - 16e: what makes emerge refuse: REQUIRED_USE and invalid metadata on candidates; a needed USE
   change explained as autounmask would, the `package.use` line offered and written only on yes.
+  The candidates' REQUIRED_USE and conditional dependency trees are stored as portage parses them
+  and evaluated by egraph, shadow-tested against portage, rather than precomputed for the
+  current USE.
+  - 16e1 (done): dependencies nothing satisfies, as emerge's backtracking weighs them: a pulled
+    candidate whose dependency no visible version matches is masked and what pulled it chooses
+    again; what emerge must merge with no version left refuses the plan (exit status 6, now for
+    blocks too), the dependencies at the chains' ends listed. Ebuilds with invalid metadata are
+    masked as depgraph masks them. Every scenario's requests that emerge refuses for them are now
+    compared, not skipped; a `refused` scenario holds the cases, and `--verify` reads emerge's
+    refusal.
+  - 16e2: REQUIRED_USE.
+  - 16e3: USE changes as autounmask proposes them.
+  - 16e4: `--verify` over the new refusals; the `package.use` line offered and written.
 - 16f: actions: `update`, `install` (`--oneshot`, or the targets selected), `remove` (through
   `emerge --depclean` with atoms), `select`, `deselect`: the plan shown, a yes asked for, emerge
   run on the plan, the stores refreshed at once.

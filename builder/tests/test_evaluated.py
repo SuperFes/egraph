@@ -12,7 +12,7 @@ from portage.versions import cpv_getkey
 import compare
 import update
 from scenarios import SCENARIOS
-from egraph_build import evaluated, oracle
+from egraph_build import evaluated, masks, oracle
 from egraph_build.model import DEP_KINDS, Edge
 
 _built = {}
@@ -90,11 +90,23 @@ def test_unparsable_dependencies_are_errors(scenario):
         assert {kind for kind, _ in layer.package(cpv).errors} == failing, cpv
 
 
+def depgraph_visible(system, cp):
+    """match-visible without the ebuilds depgraph finds invalid, per repository."""
+    from portage.dep import Atom
+
+    found = set()
+    for repo in portdb(system).getRepositories():
+        for cpv in portdb(system).xmatch("match-visible", Atom(f"{cp}::{repo}")):
+            if not update.invalid_reasons(system.trees, system.eroot, cpv, repo):
+                found.add((cpv, repo))
+    return found
+
+
 def test_visible_candidates_are_the_visible_versions(scenario):
     layer = build(scenario)
     for cp in installed_cps(scenario):
-        visible = {c.cpv for c in layer.candidates(cp) if not c.reasons}
-        assert visible == set(portdb(scenario).xmatch("match-visible", cp)), cp
+        visible = {(c.cpv, c.repo) for c in layer.candidates(cp) if not c.reasons}
+        assert visible == depgraph_visible(scenario, cp), cp
 
 
 def test_masked_candidates_are_installed_and_say_why(scenario):
@@ -103,16 +115,38 @@ def test_masked_candidates_are_installed_and_say_why(scenario):
     for c in layer.candidates():
         if c.reasons:
             assert c.cpv in installed, c
-            assert c.reasons == oracle.mask_reasons(portdb(scenario), c.cpv, c.repo)
+            assert c.reasons == update.invalid_reasons(
+                scenario.trees, scenario.eroot, c.cpv, c.repo
+            ) + oracle.mask_reasons(portdb(scenario), c.cpv, c.repo)
     for cpv in installed:
         for repo in portdb(scenario).getRepositories():
             if not portdb(scenario).cpv_exists(cpv, myrepo=repo):
                 continue
-            reasons = oracle.mask_reasons(portdb(scenario), cpv, repo)
+            reasons = update.invalid_reasons(
+                scenario.trees, scenario.eroot, cpv, repo
+            ) + oracle.mask_reasons(portdb(scenario), cpv, repo)
             found = [c for c in layer.candidates(cpv_getkey(cpv)) if c.cpv == cpv]
             assert [(c.repo, c.reasons) for c in found if c.repo == repo] == [
                 (repo, reasons)
             ], cpv
+
+
+def test_invalid_ebuilds_are_masked(playgrounds):
+    system = playgrounds("refused")
+    layer = evaluated.build(system.vardb, portdb(system))
+    # Visible to portdb, but an update to it is invalid.
+    assert [c.cpv for c in layer.candidates("app-misc/invupd")] == ["app-misc/invupd-1"]
+    assert layer.package("app-misc/invupd-1").target is None
+    assert masks.invalid_ebuild(
+        portdb(system),
+        "app-misc/invupd-2",
+        dict(
+            zip(
+                masks.EBUILD_KEYS,
+                portdb(system).aux_get("app-misc/invupd-2", list(masks.EBUILD_KEYS)),
+            )
+        ),
+    ) == ["LICENSE: USE flag 'foo' referenced in conditional 'foo?' is not in IUSE"]
 
 
 def test_candidate_use_is_the_effective_use(scenario):
@@ -130,7 +164,13 @@ def test_best_visible_per_slot(scenario):
             if not c.reasons:
                 by_slot[c.slot].append(c.cpv)
         found = {slot: best(cpvs) for slot, cpvs in by_slot.items()}
-        assert found == oracle.best_visible(portdb(scenario), cp), cp
+        assert found == oracle.best_visible(
+            portdb(scenario),
+            cp,
+            lambda cpv: update.invalid_reasons(
+                scenario.trees, scenario.eroot, cpv, cpv.repo
+            ),
+        ), cp
 
 
 def test_candidates_are_sorted_and_unique(scenario):
@@ -343,6 +383,8 @@ def test_updates_follow_emerge(request, scenario, newuse, changed_use):
         pytest.skip("installed dependents hold updates back here")
     if SCENARIOS[request.node.callspec.params["scenario"]].get("pulls"):
         pytest.skip("targets pull in new packages here")
+    if SCENARIOS[request.node.callspec.params["scenario"]].get("held"):
+        pytest.skip("dependencies nothing satisfies hold updates back here")
     found = update.updates(scenario.trees, scenario.eroot, newuse, changed_use)
     if not found.success:
         pytest.skip("emerge cannot resolve @installed here")

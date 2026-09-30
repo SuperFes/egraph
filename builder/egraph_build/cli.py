@@ -13,7 +13,7 @@ EXIT_DRIFT = 4
 # --verify: emerge --pretend would merge otherwise.
 EXIT_DIFFERS = 5
 # updates and plan: emerge would refuse the plan for its blockers.
-EXIT_BLOCKED = 6
+EXIT_REFUSED = 6
 
 
 def parser():

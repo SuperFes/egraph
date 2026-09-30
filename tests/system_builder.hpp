@@ -176,6 +176,20 @@ inline void add_repository_cps(System& system, const std::vector<std::string>& c
     evaluated.ids.insert(evaluated.ids.end(), ids.begin(), ids.end());
 }
 
+// Records the cps as evaluated on request, sorted.
+inline void set_requested(System& system, const std::vector<std::string>& cps) {
+    auto& evaluated = system.evaluated;
+    const std::set<std::string> sorted(cps.begin(), cps.end());
+    detail::Interner intern(evaluated);
+    std::vector<std::uint32_t> ids;
+    for (const auto& cp : sorted) {
+        ids.push_back(intern(cp));
+    }
+    evaluated.requested = {.first = static_cast<std::uint32_t>(evaluated.ids.size()),
+                           .count = static_cast<std::uint32_t>(ids.size())};
+    evaluated.ids.insert(evaluated.ids.end(), ids.begin(), ids.end());
+}
+
 // Sets USE_EXPAND's and USE_EXPAND_HIDDEN's variables, lowercased and sorted.
 inline void set_use_expand(System& system, const std::vector<std::string>& expand,
                            const std::vector<std::string>& hidden) {

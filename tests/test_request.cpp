@@ -104,6 +104,14 @@ TEST_CASE("a cp only the repositories know is left for the builder to evaluate")
     CHECK(parse(system, {"net-misc/nowhere"}).error() == "net-misc/nowhere: nothing matches");
 }
 
+TEST_CASE("a cp evaluated on request with no ebuild visible is not evaluated again") {
+    auto system = sample();
+    add_repository_cps(system, {"net-misc/allmasked"});
+    egraph::test::set_requested(system, {"net-misc/allmasked"});
+    CHECK(parse(system, {"net-misc/allmasked"}).error() ==
+          "net-misc/allmasked: nothing visible matches");
+}
+
 TEST_CASE("an atom nothing installed or visible matches is refused") {
     const auto system = sample();
     CHECK(parse(system, {"app-misc/hidden"}).error() ==

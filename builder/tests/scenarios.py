@@ -967,4 +967,67 @@ SCENARIOS = {
             "app-misc/lone-1": {"EAPI": "8"},
         },
     },
+    # What emerge refuses: a dependency no ebuild satisfies, of an argument, of what it pulls in
+    # (another version of which does), two levels down, of an update and of the one version
+    # left, of an installed package, as a build-time or post dependency, where only a masked
+    # ebuild matches, and behind a || another alternative satisfies; ebuilds with invalid
+    # metadata (a conditional on a flag outside IUSE), alone, beside a valid version, and as an
+    # update.
+    "refused": {
+        # Dependencies nothing satisfies hold updates back, which the targets leave to plans.
+        "held": True,
+        "world": [
+            "app-misc/upd",
+            "app-misc/lastupd",
+            "app-misc/broken",
+            "app-misc/brokendep",
+            "app-misc/holder",
+            "app-misc/invupd",
+            "app-misc/deepupd",
+        ],
+        "ebuilds": {
+            "app-misc/argfb-1": {"EAPI": "8"},
+            "app-misc/argfb-2": {"EAPI": "8", "RDEPEND": "dev-libs/missing"},
+            "app-misc/puller-1": {"EAPI": "8", "RDEPEND": "dev-libs/pulled"},
+            "dev-libs/pulled-1": {"EAPI": "8"},
+            "dev-libs/pulled-2": {"EAPI": "8", "RDEPEND": "dev-libs/missing"},
+            "app-misc/chain-1": {"EAPI": "8", "RDEPEND": "dev-libs/link"},
+            "dev-libs/link-1": {"EAPI": "8", "RDEPEND": "dev-libs/end"},
+            "dev-libs/end-1": {"EAPI": "8", "RDEPEND": "dev-libs/missing"},
+            "app-misc/deepupd-1": {"EAPI": "8"},
+            "app-misc/deepupd-2": {"EAPI": "8", "RDEPEND": "dev-libs/link"},
+            "app-misc/upd-1": {"EAPI": "8"},
+            "app-misc/upd-2": {"EAPI": "8", "RDEPEND": "dev-libs/missing"},
+            "app-misc/lastupd-2": {"EAPI": "8", "RDEPEND": "dev-libs/missing"},
+            "app-misc/broken-1": {"EAPI": "8", "RDEPEND": "dev-libs/missing"},
+            "app-misc/brokendep-1": {"EAPI": "8", "RDEPEND": "dev-libs/gone"},
+            "app-misc/wantsmasked-1": {"EAPI": "8", "RDEPEND": "dev-libs/testing"},
+            "dev-libs/testing-1": {"EAPI": "8", "KEYWORDS": "~x86"},
+            "app-misc/choice-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-libs/missing dev-libs/there )",
+            },
+            "dev-libs/there-1": {"EAPI": "8"},
+            "app-misc/builddep-1": {"EAPI": "8", "BDEPEND": "dev-libs/missing"},
+            "app-misc/postdep-1": {"EAPI": "8", "PDEPEND": "dev-libs/missing"},
+            "app-misc/holder-1": {"EAPI": "8", "RDEPEND": "dev-libs/held"},
+            "dev-libs/held-1": {"EAPI": "8"},
+            "dev-libs/held-2": {"EAPI": "8", "RDEPEND": "dev-libs/missing"},
+            "app-misc/inv-1": {"EAPI": "8", "RDEPEND": "foo? ( dev-libs/there )"},
+            "app-misc/invfb-1": {"EAPI": "8"},
+            "app-misc/invfb-2": {"EAPI": "8", "RDEPEND": "foo? ( dev-libs/there )"},
+            "app-misc/invupd-1": {"EAPI": "8"},
+            "app-misc/invupd-2": {"EAPI": "8", "LICENSE": "foo? ( MIT )"},
+        },
+        "installed": {
+            "app-misc/upd-1": {"EAPI": "8"},
+            "app-misc/lastupd-1": {"EAPI": "8"},
+            "app-misc/broken-1": {"EAPI": "8", "RDEPEND": "dev-libs/missing"},
+            "app-misc/brokendep-1": {"EAPI": "8", "RDEPEND": "dev-libs/gone"},
+            "app-misc/holder-1": {"EAPI": "8", "RDEPEND": "dev-libs/held"},
+            "dev-libs/held-1": {"EAPI": "8"},
+            "app-misc/invupd-1": {"EAPI": "8"},
+            "app-misc/deepupd-1": {"EAPI": "8"},
+        },
+    },
 }

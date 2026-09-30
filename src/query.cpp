@@ -425,19 +425,23 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
             }
         }
     }
-    // Uninstalls, then blocks, after everything else.
-    std::vector<std::string> blocker_rows;
-    blocker_rows.reserve(plan.uninstalls.size() + plan.blocks.size());
+    // Uninstalls, blocks and unsatisfied dependencies, after everything else.
+    std::vector<std::string> trailing_rows;
+    trailing_rows.reserve(plan.uninstalls.size() + plan.blocks.size() + plan.unsatisfied.size());
     const auto block_fields = [&](const Block& block) {
         return std::format("{}\t{}\t{}", member(block.holder), block.atom, member(block.blocked));
     };
     for (const auto& each : plan.uninstalls) {
-        blocker_rows.push_back(
+        trailing_rows.push_back(
             std::format("{}\tuninstall\t{}", package(each.package), block_fields(each.why)));
     }
     for (const auto& each : plan.blocks) {
-        blocker_rows.push_back(std::format("{}\tblocks\t{}\t{}", member(each.holder), each.atom,
-                                           member(each.blocked)));
+        trailing_rows.push_back(std::format("{}\tblocks\t{}\t{}", member(each.holder), each.atom,
+                                            member(each.blocked)));
+    }
+    for (const auto& each : plan.unsatisfied) {
+        trailing_rows.push_back(
+            std::format("{}\tunsatisfied\t{}", each.member ? member(*each.member) : "", each.atom));
     }
     std::vector<std::string> lines;
     if (table) {
@@ -458,7 +462,7 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
                 lines.push_back(std::format("\t\t{}", line));
             }
         }
-        for (const auto& line : blocker_rows) {
+        for (const auto& line : trailing_rows) {
             lines.push_back(std::format("\t\t{}", line));
         }
         return lines;
@@ -479,7 +483,7 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
         std::ranges::move(held_lines.at(id), std::back_inserter(lines));
     }
     std::ranges::move(added, std::back_inserter(lines));
-    std::ranges::move(blocker_rows, std::back_inserter(lines));
+    std::ranges::move(trailing_rows, std::back_inserter(lines));
     return lines;
 }
 

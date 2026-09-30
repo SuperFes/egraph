@@ -10,7 +10,7 @@ from portage.versions import cpv_getkey, cpv_getversion, vercmp
 from compare import _sonames, possible_mismatches
 from conftest import dynamic_option, portdb, write_stores
 from egraph_build import oracle, roots
-from egraph_build.cli import EXIT_BLOCKED
+from egraph_build.cli import EXIT_REFUSED
 from egraph_build.model import Edge
 from scenarios import SCENARIOS
 
@@ -30,7 +30,7 @@ def egraph(path, *args, check=True, env=None):
     )
     # A plan emerge would refuse for its blockers is still a plan.
     if check:
-        assert result.returncode in (0, EXIT_BLOCKED), result.stderr
+        assert result.returncode in (0, EXIT_REFUSED), result.stderr
     return result
 
 
@@ -137,6 +137,27 @@ def blocker_rows(text):
     return frozenset(uninstalls), frozenset(blocks)
 
 
+def unsatisfied_rows(text):
+    """The atoms of the unsatisfied rows in updates or plan output."""
+    return frozenset(
+        fields[2]
+        for fields in (line.split("\t") for line in text.splitlines())
+        if fields[1] == "unsatisfied"
+    )
+
+
+def refusal_agrees(text, expected):
+    """Whether egraph refuses the plan where emerge does, for blockers or dependencies nothing
+    satisfies, and among the latter names those emerge shows."""
+    return (
+        not expected.unsatisfied or expected.unsatisfied <= unsatisfied_rows(text)
+    ) and bool(unsatisfied_rows(text)) == bool(expected.unsatisfied)
+
+
+def refuses(expected):
+    return expected.blocked or bool(expected.unsatisfied)
+
+
 def blockers_agree(rows, expected):
     """Whether blocker_rows are emerge's: the same blocks, and the same uninstalls unless it
     refuses the plan, when it lists none."""
@@ -219,7 +240,7 @@ def test_updates_are_emerges(
         target=target,
         dynamic_deps=dynamic_deps,
     )
-    if not expected.success and not expected.blocked:
+    if not expected.success and not refuses(expected):
         pytest.skip(f"emerge cannot resolve {target} here")
     _, path = system
     world = ["--world"] if target == "@world" else []
@@ -230,8 +251,13 @@ def test_updates_are_emerges(
         *(["-D"] if deep else []),
     ]
     result = egraph(path, "updates", *options, check=False)
-    assert result.returncode == (EXIT_BLOCKED if expected.blocked else 0), result.stderr
+    assert result.returncode == (
+        EXIT_REFUSED if refuses(expected) else 0
+    ), result.stderr
     output = result.stdout
+    assert refusal_agrees(output, expected)
+    if expected.unsatisfied:
+        return
     assert blockers_agree(blocker_rows(output), expected)
     assert merged(output) == (expected.replaced, expected.rebuilt, expected.new)
     assert new_use(output) == expected.use
@@ -337,12 +363,19 @@ def test_plans_are_emerges(playgrounds, tmp_path, name, mode):
             system.trees, system.eroot, target=[target], **options
         )
         result = egraph(path, "plan", *flags, target, check=False)
-        if not expected.success and not expected.blocked:
+        if not expected.success and not refuses(expected):
             continue
-        assert result.returncode == (EXIT_BLOCKED if expected.blocked else 0), (
+        if result.returncode == 1 and target in expected.unsatisfied:
+            # Nothing installed or visible matches the argument, which egraph refuses up front.
+            assert "matches" in result.stderr, target
+            continue
+        assert result.returncode == (EXIT_REFUSED if refuses(expected) else 0), (
             target,
             result.stderr,
         )
+        assert refusal_agrees(result.stdout, expected), target
+        if expected.unsatisfied:
+            continue
         if not ties(plan_merges(result.stdout), expected.merges):
             differences.add(target)
         assert blockers_agree(blocker_rows(result.stdout), expected), target

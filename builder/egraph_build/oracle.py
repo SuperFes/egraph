@@ -253,12 +253,15 @@ def mask_reasons(portdb, cpv, repo=None):
     return tuple(getmaskingstatus(cpv, settings=settings, portdb=portdb, myrepo=repo))
 
 
-def best_visible(portdb, cp):
-    """{slot: best visible cpv} over every repository's versions of cp."""
+def best_visible(portdb, cp, invalid=lambda cpv: False):
+    """{slot: best visible cpv} over every repository's versions of cp, less those invalid
+    holds for (a cpv with its repo), which match-visible counts but depgraph masks."""
     from portage import best
 
     by_slot = {}
     for cpv in portdb.xmatch("match-visible", cp):
+        if invalid(cpv):
+            continue
         (slot,) = portdb.aux_get(cpv, ["SLOT"])
         by_slot.setdefault(slot.partition("/")[0], []).append(cpv)
     return {slot: str(best(cpvs)) for slot, cpvs in sorted(by_slot.items())}

@@ -57,7 +57,22 @@ std::vector<std::string> plan(const egraph::test::System& system,
         }
         lines.push_back(std::move(line));
     }
+    for (const auto& each : found.unsatisfied) {
+        lines.push_back(std::format("unsatisfied {} {}",
+                                    each.member ? member(system, *each.member) : "argument",
+                                    each.atom));
+    }
     return lines;
+}
+
+// Plain emerge with atoms as its arguments.
+egraph::Targets reinstall(const std::vector<std::string>& atoms, bool deep = false) {
+    egraph::Targets targets{.scope = {}, .roots = true, .deep = deep};
+    for (const auto& atom : atoms) {
+        targets.request.push_back({.set = "", .atom = atom});
+    }
+    targets.selection = egraph::Selection::reinstall;
+    return targets;
 }
 
 } // namespace
@@ -1032,4 +1047,133 @@ TEST_CASE("outside --deep's reach, a rebuild takes the best version, for run-tim
           std::vector<std::string>{
               "dev-libs/lib-1 -> dev-libs/lib-2",
               "app-misc/moving-1 -> app-misc/moving-2 for dev-libs/lib-2 dev-libs/lib:0/1="});
+}
+
+TEST_CASE("a new package whose dependency nothing satisfies falls back to another version") {
+    const auto system =
+        make_system({}, {{.cpv = "app-misc/argfb-1"},
+                         {.cpv = "app-misc/argfb-2", .deps = {{"RDEPEND", "dev-libs/missing"}}},
+                         {.cpv = "app-misc/puller-1", .deps = {{"RDEPEND", "dev-libs/pulled"}}},
+                         {.cpv = "dev-libs/pulled-1"},
+                         {.cpv = "dev-libs/pulled-2", .deps = {{"PDEPEND", "dev-libs/missing"}}}});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/argfb"})) ==
+          std::vector<std::string>{"new app-misc/argfb-1 <- "});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/puller"})) ==
+          std::vector<std::string>{"new app-misc/puller-1 <- ",
+                                   "new dev-libs/pulled-1 <- app-misc/puller-1 dev-libs/pulled"});
+}
+
+TEST_CASE("an argument no version of which can be merged is unsatisfied, at the chain's end") {
+    const auto system =
+        make_system({}, {{.cpv = "app-misc/chain-1", .deps = {{"RDEPEND", "dev-libs/link"}}},
+                         {.cpv = "dev-libs/link-1", .deps = {{"RDEPEND", "dev-libs/end"}}},
+                         {.cpv = "dev-libs/end-1", .deps = {{"BDEPEND", "dev-libs/missing"}}},
+                         {.cpv = "app-misc/wants-1", .deps = {{"RDEPEND", "dev-libs/testing"}}},
+                         {.cpv = "dev-libs/testing-1", .visible = false},
+                         {.cpv = "app-misc/choice-1",
+                          .deps = {{"RDEPEND", "|| ( dev-libs/missing dev-libs/there )"}}},
+                         {.cpv = "dev-libs/there-1"}});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/chain"})) ==
+          std::vector<std::string>{"unsatisfied dev-libs/end-1 dev-libs/missing"});
+    // Only a masked version matches.
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/wants"})) ==
+          std::vector<std::string>{"unsatisfied app-misc/wants-1 dev-libs/testing"});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/choice"})) ==
+          std::vector<std::string>{"new app-misc/choice-1 <- ",
+                                   "new dev-libs/there-1 <- app-misc/choice-1 dev-libs/there"});
+}
+
+TEST_CASE("an update whose dependency nothing satisfies is held, unless an argument must have it") {
+    const auto system = make_system(
+        {{.cpv = "app-misc/upd-1"}, {.cpv = "app-misc/lastupd-1"}, {.cpv = "app-misc/deepupd-1"}},
+        {{.cpv = "app-misc/upd-1"},
+         {.cpv = "app-misc/upd-2", .deps = {{"RDEPEND", "dev-libs/missing"}}},
+         {.cpv = "app-misc/lastupd-2", .deps = {{"RDEPEND", "dev-libs/missing"}}},
+         {.cpv = "app-misc/deepupd-1"},
+         {.cpv = "app-misc/deepupd-2", .deps = {{"RDEPEND", "dev-libs/link"}}},
+         {.cpv = "dev-libs/link-1", .deps = {{"RDEPEND", "dev-libs/end"}}},
+         {.cpv = "dev-libs/end-1", .deps = {{"RDEPEND", "dev-libs/missing"}}}},
+        {"app-misc/upd", "app-misc/lastupd", "app-misc/deepupd"});
+    const egraph::Targets world{.scope = {}, .roots = true, .deep = true};
+    CHECK(plan(system, egraph::UseRebuilds::none, world) ==
+          std::vector<std::string>{"app-misc/upd-1 held <- app-misc/upd-2 dev-libs/missing",
+                                   "app-misc/lastupd-1 held <- app-misc/lastupd-2 dev-libs/missing",
+                                   "app-misc/deepupd-1 held <- dev-libs/end-1 dev-libs/missing"});
+    // Plain emerge reinstalls the version it has an ebuild of, and must merge the one it has not.
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/upd"})) ==
+          std::vector<std::string>{"app-misc/upd-1 -> app-misc/upd-1",
+                                   "app-misc/upd-1 held <- app-misc/upd-2 dev-libs/missing"});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/lastupd"})) ==
+          std::vector<std::string>{"unsatisfied app-misc/lastupd-2 dev-libs/missing"});
+}
+
+TEST_CASE("an installed package's own missing dependency is left missing") {
+    const auto system =
+        make_system({{.cpv = "app-misc/broken-1", .deps = {{"RDEPEND", "dev-libs/missing"}}}},
+                    {{.cpv = "app-misc/broken-1", .deps = {{"RDEPEND", "dev-libs/missing"}}}},
+                    {"app-misc/broken"});
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               egraph::Targets{.scope = {}, .roots = true, .deep = true})
+              .empty());
+    // Plain emerge rebuilds it, and cannot.
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/broken"})) ==
+          std::vector<std::string>{"unsatisfied app-misc/broken-1 dev-libs/missing"});
+}
+
+TEST_CASE("update_lines ends with the dependencies nothing satisfies") {
+    const auto system =
+        make_system({}, {{.cpv = "app-misc/chain-1", .deps = {{"RDEPEND", "dev-libs/missing"}}}});
+    const auto targets = reinstall({"app-misc/chain"});
+    const auto& [store, evaluated] = system;
+    CHECK(
+        egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, false, false, targets) ==
+        std::vector<std::string>{"app-misc/chain-1\tunsatisfied\tdev-libs/missing"});
+    CHECK(egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, false, true, targets) ==
+          std::vector<std::string>{"\t\tapp-misc/chain-1\tunsatisfied\tdev-libs/missing"});
+}
+
+TEST_CASE("plain emerge refuses an argument with no visible version, installed or not") {
+    const auto system = make_system({{.cpv = "app-misc/gone-1"}}, {{.cpv = "app-misc/other-1"}},
+                                    {"app-misc/gone", "app-misc/nowhere"});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/gone"})) ==
+          std::vector<std::string>{"unsatisfied argument app-misc/gone"});
+    auto world = reinstall({});
+    world.request = {{.set = "selected", .atom = "app-misc/gone"},
+                     {.set = "selected", .atom = "app-misc/nowhere"}};
+    // Asked for a root set, what it has installed stays, and @selected's atoms may match
+    // nothing; @system's may not.
+    CHECK(plan(system, egraph::UseRebuilds::none, world).empty());
+    world.request.front().set = "system";
+    world.request.back().set = "system";
+    CHECK(plan(system, egraph::UseRebuilds::none, world) ==
+          std::vector<std::string>{"unsatisfied argument app-misc/nowhere"});
+    // -u keeps what it has.
+    world.selection = egraph::Selection::update;
+    CHECK(plan(system, egraph::UseRebuilds::none, world).empty());
+}
+
+TEST_CASE("-uD refuses what it reaches and keeps with a run-time dependency nothing satisfies") {
+    const auto system =
+        make_system({{.cpv = "app-misc/broken-1", .deps = {{"RDEPEND", "dev-libs/missing"}}},
+                     {.cpv = "app-misc/builds-1", .deps = {{"BDEPEND", "dev-libs/missing"}}}},
+                    {{.cpv = "app-misc/broken-1", .deps = {{"RDEPEND", "dev-libs/missing"}}},
+                     {.cpv = "app-misc/builds-1", .deps = {{"BDEPEND", "dev-libs/missing"}}}},
+                    {"app-misc/broken", "app-misc/builds"});
+    const egraph::Targets world{.scope = {}, .roots = true, .deep = true};
+    CHECK(plan(system, egraph::UseRebuilds::none, world).empty());
+    // An atom named alone, or every installed package as with @installed.
+    auto named = reinstall({"app-misc/broken"}, true);
+    named.selection = egraph::Selection::update;
+    CHECK(plan(system, egraph::UseRebuilds::none, named) ==
+          std::vector<std::string>{"unsatisfied app-misc/broken-1 dev-libs/missing"});
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               egraph::Targets{.scope = {}, .roots = false, .deep = true}) ==
+          std::vector<std::string>{"unsatisfied app-misc/broken-1 dev-libs/missing"});
+    // What only fails a USE dependency is refused even for the world sets.
+    CHECK(
+        plan(make_system({{.cpv = "dev-libs/lib-1"},
+                          {.cpv = "app-misc/usedep-1", .deps = {{"RDEPEND", "dev-libs/lib[gtk]"}}}},
+                         {}, {"app-misc/usedep"}),
+             egraph::UseRebuilds::none,
+             world) == std::vector<std::string>{"unsatisfied app-misc/usedep-1 dev-libs/lib[gtk]"});
 }

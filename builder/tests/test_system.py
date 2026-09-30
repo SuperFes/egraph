@@ -332,20 +332,28 @@ def test_evaluated_dependencies_agree_with_the_oracle(live_databases, live_evalu
 
 
 def test_evaluated_candidates_agree_with_the_oracle(live_databases, live_evaluated):
+    import portage
+    import update
     from portage import best
     from portage.versions import cpv_getkey
 
     vardb, portdb = live_databases
     installed_cpvs = set(oracle.installed(vardb))
+
+    def invalid(cpv):
+        return update.invalid_reasons(portage.db, "/", cpv, cpv.repo)
+
     for cp in sorted({cpv_getkey(cpv) for cpv in installed_cpvs}):
         candidates = live_evaluated.candidates(cp)
         visible = [c for c in candidates if not c.reasons]
-        assert {c.cpv for c in visible} == set(portdb.xmatch("match-visible", cp)), cp
+        assert {c.cpv for c in visible} == {
+            cpv for cpv in portdb.xmatch("match-visible", cp) if not invalid(cpv)
+        }, cp
         by_slot = {}
         for c in visible:
             by_slot.setdefault(c.slot, []).append(c.cpv)
         best_found = {slot: best(found) for slot, found in by_slot.items()}
-        assert best_found == oracle.best_visible(portdb, cp), cp
+        assert best_found == oracle.best_visible(portdb, cp, invalid), cp
         assert all(c.cpv in installed_cpvs for c in candidates if c.reasons), cp
     rng = random.Random(0)
     for c in rng.sample(live_evaluated.candidates(), SAMPLE):

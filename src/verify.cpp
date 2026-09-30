@@ -184,9 +184,31 @@ bool equal_versions(const PretendMerge& a, const PretendMerge& b) {
     return one && other && vercmp(*one, *other) == 0;
 }
 
+// The atom of "emerge: there are no ebuilds to satisfy "atom"." or of "!!! All ebuilds that
+// could satisfy "atom" have been masked.".
+std::optional<std::string> parse_unsatisfied(std::string_view line) {
+    for (const auto& [before, after] :
+         {std::pair<std::string_view, std::string_view>{
+              "emerge: there are no ebuilds to satisfy \"", "\"."},
+          {"!!! All ebuilds that could satisfy \"", "\" have been masked."}}) {
+        if (line.starts_with(before) && line.ends_with(after) &&
+            line.size() > before.size() + after.size()) {
+            return std::string{
+                line.substr(before.size(), line.size() - before.size() - after.size())};
+        }
+    }
+    return std::nullopt;
+}
+
+template <typename T> void sort_unique(std::vector<T>& values) {
+    std::ranges::sort(values);
+    const auto [first, last] = std::ranges::unique(values);
+    values.erase(first, last);
+}
+
 } // namespace
 
-Pretend parse_pretend(std::string_view output) {
+Pretend parse_pretend(std::string_view output, bool failed) {
     Pretend found;
     while (!output.empty()) {
         const auto newline = std::min(output.find('\n'), output.size());
@@ -195,14 +217,15 @@ Pretend parse_pretend(std::string_view output) {
             found.merges.push_back(std::move(*merge));
         } else if (auto uninstall = parse_uninstall(line)) {
             found.merges.push_back(std::move(*uninstall));
+        } else if (auto atom = parse_unsatisfied(line); atom && failed) {
+            found.unsatisfied.push_back(std::move(*atom));
         } else {
             std::ranges::move(parse_block(line), std::back_inserter(found.blocks));
         }
         output.remove_prefix(std::min(newline + 1, output.size()));
     }
-    std::ranges::sort(found.blocks);
-    const auto [first, last] = std::ranges::unique(found.blocks);
-    found.blocks.erase(first, last);
+    sort_unique(found.blocks);
+    sort_unique(found.unsatisfied);
     return found;
 }
 
@@ -233,13 +256,26 @@ Pretend planned_merges(const Store& store, const Evaluated& evaluated, const Pla
                                        ? evaluated.string(evaluated.candidates.at(holder.index).cpv)
                                        : store.string(store.packages.at(holder.index).cpv)}});
     }
-    std::ranges::sort(found.blocks);
-    const auto [first, last] = std::ranges::unique(found.blocks);
-    found.blocks.erase(first, last);
+    for (const auto& each : plan.unsatisfied) {
+        found.unsatisfied.push_back(each.atom);
+    }
+    sort_unique(found.blocks);
+    sort_unique(found.unsatisfied);
     return found;
 }
 
 std::vector<std::string> merge_differences(const Pretend& our_list, const Pretend& their_list) {
+    if (!their_list.unsatisfied.empty()) {
+        // Both sorted.
+        std::vector<std::string> missed;
+        std::ranges::set_difference(their_list.unsatisfied, our_list.unsatisfied,
+                                    std::back_inserter(missed));
+        std::vector<std::string> lines;
+        for (const auto& atom : missed) {
+            lines.push_back(std::format("{}\temerge\tunsatisfied", atom));
+        }
+        return lines;
+    }
     const auto& ours = our_list.merges;
     const auto& theirs = their_list.merges;
     // Our merges emerge's have not matched yet, as indices into ours.
@@ -293,6 +329,9 @@ std::vector<std::string> merge_differences(const Pretend& our_list, const Preten
     std::ranges::set_difference(their_list.blocks, our_list.blocks, std::back_inserter(only));
     for (const auto& block : only) {
         lines.push_back(std::format("{}\temerge\tblocks {}", block.holder, block.atom));
+    }
+    for (const auto& atom : our_list.unsatisfied) {
+        lines.push_back(std::format("{}\tegraph\tunsatisfied", atom));
     }
     std::ranges::sort(lines);
     return lines;

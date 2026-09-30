@@ -127,6 +127,19 @@ TEST_CASE("orphans end with a count") {
     CHECK(none.str() == "+ Nothing to remove.\n");
 }
 
+TEST_CASE("a verified plan's blocker and refusal differences have no repository") {
+    std::ostringstream differ;
+    egraph::human_verification(differ,
+                               std::vector<std::string>{
+                                   "a/holder-1\tegraph\tblocks a/x",
+                                   "dev-libs/missing\temerge\tunsatisfied",
+                               },
+                               plain);
+    CHECK(differ.str() == "\n! emerge --pretend merges otherwise:\n"
+                          "  a/holder-1        only here (blocks a/x)\n"
+                          "  dev-libs/missing  only in emerge (unsatisfied)\n");
+}
+
 TEST_CASE("a verified plan says emerge agrees, or lists where it does not") {
     std::ostringstream same;
     egraph::human_verification(same, {}, plain);
@@ -387,6 +400,34 @@ TEST_CASE("updates list uninstalls and blocks after the merges") {
                        "emerge refuses a plan with blockers it cannot resolve\n"
                        "\n"
                        "1 upgrade, 1 new, 2 uninstalls, 1 blocker\n");
+}
+
+TEST_CASE("updates end with the dependencies nothing satisfies") {
+    const std::vector<std::string> records{
+        "a/upd-1\tupgrade\ta/upd-2\tgentoo",
+        "dev-libs/end-1\tunsatisfied\tdev-libs/missing",
+        "a/wants-1\tunsatisfied\t>=dev-libs/testing-2",
+    };
+    std::ostringstream out;
+    egraph::human_updates(out, records, plain);
+    CHECK(out.str() == "U a/upd  1 > 2  ::gentoo\n"
+                       "\n"
+                       "Unsatisfied\n"
+                       "! dev-libs/end-1  needs dev-libs/missing\n"
+                       "! a/wants-1       needs >=dev-libs/testing-2\n"
+                       "no visible version matches: emerge refuses the plan\n"
+                       "\n"
+                       "1 upgrade, 2 unsatisfied\n");
+    // With nothing to merge, not "Nothing to update".
+    std::ostringstream alone;
+    egraph::human_updates(alone, std::span(records).subspan(1), plain);
+    CHECK(alone.str() == "\n"
+                         "Unsatisfied\n"
+                         "! dev-libs/end-1  needs dev-libs/missing\n"
+                         "! a/wants-1       needs >=dev-libs/testing-2\n"
+                         "no visible version matches: emerge refuses the plan\n"
+                         "\n"
+                         "2 unsatisfied\n");
 }
 
 TEST_CASE("blockers group by holder and count what they block") {

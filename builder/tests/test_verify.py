@@ -10,7 +10,7 @@ import portage.const
 import pytest
 
 from conftest import write_stores
-from egraph_build.cli import EXIT_BLOCKED
+from egraph_build.cli import EXIT_REFUSED
 from scenarios import SCENARIOS
 
 EGRAPH = os.environ.get("EGRAPH")
@@ -99,9 +99,10 @@ def test_verified_updates_agree_with_emerge(playgrounds, tmp_path, name, mode):
     )
     if expected.success:
         assert result.returncode == 0, result.stderr
-    elif expected.blocked:
-        # Refused alike, for the same blockers, after the same merge list.
-        assert result.returncode == EXIT_BLOCKED, result.stderr
+    elif expected.blocked or expected.unsatisfied:
+        # Refused alike, for the same blockers after the same merge list, or for what nothing
+        # satisfies.
+        assert result.returncode == EXIT_REFUSED, result.stderr
     else:
         assert result.returncode == 1
         assert "emerge --pretend failed:" in result.stderr
@@ -126,6 +127,35 @@ def test_verified_plans_agree_with_emerge(playgrounds, tmp_path, flags, target):
         path, "plan", *flags, "--verify", target, emerge=real_emerge(system, tmp_path)
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "flags, target, status",
+    [
+        ([], "app-misc/chain", EXIT_REFUSED),
+        ([], "app-misc/puller", 0),
+        ([], "app-misc/lastupd", EXIT_REFUSED),
+        (["-u", "-D"], "app-misc/broken", EXIT_REFUSED),
+        (["-u", "-D"], "@world", 0),
+    ],
+)
+def test_verified_refusals_agree_with_emerge(
+    playgrounds, tmp_path, flags, target, status
+):
+    """emerge refuses, for a dependency nothing satisfies, what egraph refuses, and falls back
+    where egraph does."""
+    system = playgrounds("refused")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path, request_all=True)
+    result = egraph(
+        path,
+        "plan",
+        *flags,
+        "--verify",
+        target,
+        emerge=real_emerge(system, tmp_path),
+    )
+    assert result.returncode == status, result.stderr
 
 
 def test_agreement_is_said_for_people(playgrounds, tmp_path):

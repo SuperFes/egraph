@@ -580,7 +580,8 @@ void human_verification(std::ostream& out, std::span<const std::string> records,
     }
     for (const auto& row : rows) {
         const auto key = row.front();
-        const auto colons = key.find("::");
+        // A blocker's holder or an unsatisfied atom has no repository.
+        const auto colons = std::min(key.find("::"), key.size());
         out << "  " << paint_cpv(key.substr(0, colons), paint)
             << paint(key.substr(colons), Tone::repo) << std::string(width - key.size() + 2, ' ');
         const auto what = row.at(1);
@@ -774,20 +775,24 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
         places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
     }
-    // Uninstalls and blocks, taken off: they share no columns with the merges.
+    // Uninstalls, blocks and unsatisfied dependencies, taken off: they share no columns with the
+    // merges.
     std::vector<Fields> uninstalls;
     std::vector<Fields> blocks;
+    std::vector<Fields> unsatisfied;
     for (std::size_t i = rows.size(); i-- > 0;) {
         const auto kind = rows.at(i).size() > 1 ? rows.at(i).at(1) : std::string_view{};
-        if (kind != "uninstall" && kind != "blocks") {
+        if (kind != "uninstall" && kind != "blocks" && kind != "unsatisfied") {
             continue;
         }
-        (kind == "uninstall" ? uninstalls : blocks).push_back(std::move(rows.at(i)));
+        auto& into = kind == "uninstall" ? uninstalls : kind == "blocks" ? blocks : unsatisfied;
+        into.push_back(std::move(rows.at(i)));
         rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
         places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
     }
     std::ranges::reverse(uninstalls);
     std::ranges::reverse(blocks);
+    std::ranges::reverse(unsatisfied);
     const auto is_held = [](const auto& row) { return row.at(1) == "held"; };
     const auto is_new = [](const auto& row) { return row.at(1) == "new"; };
     // Every row shares the columns, so held ones line up under the updates.
@@ -912,9 +917,11 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                        : Tone::use);
     }
     if (counts.at(0) + counts.at(1) + counts.at(2) + counts.at(3) == 0) {
-        out << paint(glyph.good, Tone::good) << ' ' << paint("Nothing to update.", Tone::good)
-            << '\n';
-        if (counts.at(4) == 0) {
+        if (unsatisfied.empty()) {
+            out << paint(glyph.good, Tone::good) << ' ' << paint("Nothing to update.", Tone::good)
+                << '\n';
+        }
+        if (counts.at(4) == 0 && unsatisfied.empty()) {
             return;
         }
     }
@@ -1002,17 +1009,33 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         }
         out << paint("emerge refuses a plan with blockers it cannot resolve", Tone::bad) << '\n';
     }
-    constexpr std::array<std::array<std::string_view, 2>, 7> nouns{{{" upgrade", " upgrades"},
-                                                                    {" downgrade", " downgrades"},
-                                                                    {" rebuild", " rebuilds"},
-                                                                    {" new", " new"},
-                                                                    {" held", " held"},
-                                                                    {" uninstall", " uninstalls"},
-                                                                    {" blocker", " blockers"}}};
-    std::array<std::size_t, 7> all{};
+    if (!unsatisfied.empty()) {
+        std::size_t width = 0;
+        for (const auto& row : unsatisfied) {
+            width = std::max(width, row.at(0).size());
+        }
+        out << '\n' << paint("Unsatisfied", Tone::heading) << '\n';
+        for (const auto& row : unsatisfied) {
+            out << paint(glyph.broken, Tone::bad) << ' ' << paint_cpv(row.at(0), paint)
+                << spaces(row.at(0).size(), width) << "  " << paint("needs", Tone::note) << ' '
+                << paint(row.at(2), Tone::bad) << '\n';
+        }
+        out << paint("no visible version matches: emerge refuses the plan", Tone::bad) << '\n';
+    }
+    constexpr std::array<std::array<std::string_view, 2>, 8> nouns{
+        {{" upgrade", " upgrades"},
+         {" downgrade", " downgrades"},
+         {" rebuild", " rebuilds"},
+         {" new", " new"},
+         {" held", " held"},
+         {" uninstall", " uninstalls"},
+         {" blocker", " blockers"},
+         {" unsatisfied", " unsatisfied"}}};
+    std::array<std::size_t, 8> all{};
     std::ranges::copy(counts, all.begin());
     all.at(5) = uninstalls.size();
     all.at(6) = blocks.size();
+    all.at(7) = unsatisfied.size();
     out << '\n';
     bool first = true;
     for (std::size_t i = 0; i < all.size(); ++i) {
@@ -1020,7 +1043,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             continue;
         }
         out << (first ? "" : paint(", ", Tone::note))
-            << paint(std::to_string(all.at(i)), i == 6 ? Tone::bad : Tone::count)
+            << paint(std::to_string(all.at(i)), i >= 6 ? Tone::bad : Tone::count)
             << paint(nouns.at(i).at(all.at(i) == 1 ? 0 : 1), Tone::note);
         first = false;
     }

@@ -40,6 +40,8 @@ class Updates(NamedTuple):
     blocks: frozenset = frozenset()
     # It fails for those blockers alone.
     blocked: bool = False
+    # The atoms it shows no visible version satisfies, when it fails for them alone.
+    unsatisfied: frozenset = frozenset()
 
 
 def updates(
@@ -61,6 +63,7 @@ def updates(
     from _emerge.create_depgraph_params import create_depgraph_params
     from _emerge.depgraph import _frozen_depgraph_config, backtrack_depgraph
     from _emerge.Package import Package
+    from _emerge.SetArg import SetArg
 
     options = {
         "--pretend": True,
@@ -138,11 +141,34 @@ def updates(
         for blocker in unsolved
         for parent in dynamic._blocker_parents.parent_nodes(blocker)
     )
-    blocked = (
+    conflicts = any(dynamic._package_tracker.slot_conflicts())
+    blocked = not success and bool(blocks) and not conflicts
+    # An installed package plain emerge has no ebuild of, named by a set: a warning for the
+    # root sets, and for the sets nested in @selected, which egraph counts as @selected (a quirk
+    # upstream-notes.md records).
+    lenient = {"selected", "system", "world"} | {
+        name.lstrip("@") for name in root_config.sets["selected"].getNonAtoms()
+    }
+    missing = [
+        atom
+        for (_, atom), details in dynamic._unsatisfied_deps_for_display
+        if not details.get("show_req_use")
+        and not (
+            isinstance(details.get("myparent"), SetArg)
+            and details["myparent"].name in lenient
+            and vardb.match(atom)
+        )
+    ]
+    unsatisfied = frozenset()
+    if (
         not success
-        and bool(blocks)
-        and not any(dynamic._package_tracker.slot_conflicts())
-    )
+        and missing
+        and not blocks
+        and not conflicts
+        and not dynamic._required_use_unsatisfied
+        and not dynamic._needed_use_config_changes
+    ):
+        unsatisfied = frozenset(str(atom) for atom in missing)
     return Updates(
         success,
         replaced,
@@ -154,6 +180,7 @@ def updates(
         uninstalls,
         blocks,
         blocked,
+        unsatisfied,
     )
 
 
@@ -247,6 +274,28 @@ def candidate_matches(trees, eroot, atom, candidates):
         if match_from_list(wanted, [pkg]):
             found.add(f"{candidate.cpv}::{candidate.repo}")
     return found
+
+
+def invalid_reasons(trees, eroot, cpv, repo):
+    """The "invalid: ..." mask reasons depgraph gives the ebuild of cpv in repo."""
+    from _emerge.Package import Package
+
+    root_config = trees[eroot]["root_config"]
+    portdb = trees[eroot]["porttree"].dbapi
+    keys = list(portdb._aux_cache_keys)
+    pkg = Package(
+        built=False,
+        cpv=cpv,
+        installed=False,
+        metadata=zip(keys, portdb.aux_get(cpv, keys, myrepo=repo)),
+        root_config=root_config,
+        type_name="ebuild",
+    )
+    return tuple(
+        f"invalid: {message}"
+        for messages in (pkg.invalid or {}).values()
+        for message in messages
+    )
 
 
 def candidate_deps(trees, eroot, candidate):

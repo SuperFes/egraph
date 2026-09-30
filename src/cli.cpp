@@ -521,10 +521,10 @@ bool running_root(const Invocation& invocation) {
     return invocation.root.lexically_normal() == "/";
 }
 
-// A plan's exit status once shown: blocked when emerge would refuse it and nothing else went
+// A plan's exit status once shown: refused when emerge would refuse it and nothing else went
 // wrong.
 Exit finish(Exit status, const Plan& plan) {
-    return status == Exit::ok && !plan.blocks.empty() ? Exit::blocked : status;
+    return status == Exit::ok && plan.refused() ? Exit::refused : status;
 }
 
 Exit verify(const Invocation& invocation, std::string_view command, const EmergeRequest& request,
@@ -533,9 +533,10 @@ Exit verify(const Invocation& invocation, std::string_view command, const Emerge
     const auto style = output(invocation);
     out << std::flush;
     const auto printed = output_of(emerge_command(invocation, request));
-    // emerge prints the list before refusing it for blockers it cannot resolve.
-    const auto listed = parse_pretend(printed ? *printed : printed.error());
-    if (!printed && listed.blocks.empty()) {
+    // emerge prints the list before refusing it for blockers it cannot resolve, and names what
+    // it cannot satisfy.
+    const auto listed = parse_pretend(printed ? *printed : printed.error(), !printed);
+    if (!printed && listed.blocks.empty() && listed.unsatisfied.empty()) {
         // emerge explains itself at length; its last lines say why.
         constexpr std::size_t shown = 20;
         std::string_view text = printed.error();

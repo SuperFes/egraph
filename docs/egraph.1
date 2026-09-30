@@ -188,6 +188,9 @@ and the blockers it could not resolve, for which it refuses the whole plan (exit
 the running system's root, emerge only resolves a strong blocker
 .RB ( !! atom)
 by a replacement.
+A merge whose dependency nothing satisfies, or an ebuild with invalid metadata, is passed over for
+another version, as emerge backtracks; when what emerge must merge has none left, the plan ends
+with the dependencies no visible version matches, and emerge refuses it too.
 .TP
 .B \-\-dynamic\-deps
 .TP
@@ -396,9 +399,9 @@ found the store differing from a fresh build.
 found emerge merging otherwise.
 .TP
 .B 6
-The plan of
-.BR updates " or " plan
-has blockers emerge cannot resolve, so it would refuse it.
+emerge would refuse the plan of
+.BR updates " or " plan :
+it has blockers emerge cannot resolve, or dependencies nothing satisfies.
 .SH EXAMPLES
 .TP
 .B egraph rdeps dev\-libs/openssl

@@ -348,6 +348,17 @@ one in a merge's own slot is ignored unless strong. What is left, and a blocker 
 merges, is a block, and the plan's exit status says emerge would refuse it. The one place
 emerge looks ahead is `-u`'s greedy slots: an installed slot whose best version and the atom's
 best block each other is left out, so it is uninstalled rather than updated.
+What emerge refuses for dependencies nothing satisfies (roadmap 16e1) follows its backtracking
+over them: a candidate the plan pulled in whose dependency no visible version matches is masked,
+and what pulled it chooses again, down to its next version or, with none, to its own rejection;
+an update's own merge failing holds the update back, its reason followed through the masked
+candidates to the dependency at the chain's end. Only what emerge must merge refuses the plan: an
+argument no version of which is left (plain emerge's with no visible version at all, even
+installed), and under `-uD` a kept package the arguments reach with a run-time dependency nothing
+matches; for the world sets' packages, whose missed updates emerge skips, only one that something
+would match without its USE dependencies. The builder masks an ebuild with invalid metadata as
+depgraph does (`masks.invalid_ebuild`), though the repository's `match-visible` counts it
+visible.
 
 `updates --world` plans `emerge -uD @world` instead (roadmap 12c): the packages depclean keeps
 are in scope, and one outside keeps its version while its dependencies weigh nothing. emerge's

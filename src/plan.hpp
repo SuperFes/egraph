@@ -73,6 +73,15 @@ struct Uninstall {
     Block why;
 };
 
+// A dependency nothing visible satisfies.
+struct Missing {
+    // The package whose dependency it is; none for one of emerge's arguments.
+    std::optional<Member> member;
+    // As the member's dependencies print it, or the argument's atom.
+    std::string atom;
+    auto operator<=>(const Missing&) const = default;
+};
+
 struct Plan {
     // Replacements in the installed packages' order, then new packages by cpv.
     std::vector<Merge> merges;
@@ -86,6 +95,13 @@ struct Plan {
     // The blockers emerge cannot resolve, which make it refuse the plan: each with every package
     // it matches that is in the way, sorted.
     std::vector<Block> blocks;
+    // Dependencies nothing can satisfy, which make emerge refuse the plan: of what it must merge
+    // once every version it could fall back to has failed, each a package's with no visible
+    // version left to match, or an argument plain emerge has no visible version of; sorted.
+    std::vector<Missing> unsatisfied;
+
+    // emerge would refuse the plan.
+    [[nodiscard]] bool refused() const { return !blocks.empty() || !unsatisfied.empty(); }
 };
 
 // What emerge -uD would merge for targets, with store's dependencies (read with or without

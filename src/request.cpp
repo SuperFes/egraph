@@ -23,7 +23,8 @@ bool known_set(std::string_view name) {
 
 using Cps = std::set<std::string, std::less<>>;
 
-// The cps the stores answer for: installed, or with candidates.
+// The cps the stores answer for: installed, with candidates, or evaluated on request (with none
+// visible).
 Cps evaluated_cps(const Store& store, const Evaluated& evaluated) {
     Cps cps;
     for (const auto& pkg : store.packages) {
@@ -31,6 +32,9 @@ Cps evaluated_cps(const Store& store, const Evaluated& evaluated) {
     }
     for (const auto& candidate : evaluated.candidates) {
         cps.emplace(evaluated.string(candidate.cp));
+    }
+    for (const auto id : evaluated.ids_in(evaluated.requested)) {
+        cps.emplace(evaluated.string(id));
     }
     return cps;
 }
@@ -110,6 +114,11 @@ std::optional<std::string> refusal(const Store& store, const Evaluated& evaluate
     }
     if (matches_any(store, evaluated, *atom, false)) {
         return std::format("{}: every ebuild that matches is masked", text);
+    }
+    // The builder keeps no masked ebuild of what is not installed.
+    if (std::ranges::contains(evaluated.ids_in(evaluated.requested), atom->cp,
+                              [&](std::uint32_t id) { return evaluated.string(id); })) {
+        return std::format("{}: nothing visible matches{}", text, hint);
     }
     return std::format("{}: nothing matches{}", text, hint);
 }

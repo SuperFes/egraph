@@ -43,9 +43,14 @@ class Planner {
         }
         if (targets.roots) {
             collect_arguments();
+            lenient_ = std::ranges::all_of(args_, [](const Arg& arg) {
+                return arg.named.set == "selected" || arg.named.set == "system" ||
+                       arg.named.set == "profile";
+            });
             arguments_.assign(store.packages.size(), false);
             alone_.assign(store.packages.size(), false);
             must_.assign(store.packages.size(), false);
+            named_.assign(store.packages.size(), false);
             for (std::uint32_t i = 0; i < args_.size(); ++i) {
                 select(i);
             }
@@ -193,6 +198,12 @@ class Planner {
     // Those an argument must merge: emerge backtracks to another version it matches and
     // rebuilds what binds to it, as it would for a package it must pull in.
     std::vector<bool> must_;
+    // Those an atom named alone, rather than a set, must merge: with no version left, emerge
+    // refuses rather than keep the installed one.
+    std::vector<bool> named_;
+    // Only the world sets are arguments: -uD skips what they reach and keep whose dependency
+    // nothing satisfies, rather than refuse.
+    bool lenient_ = false;
     std::map<std::uint32_t, Forced> forced_;
     // Installed slots greedy slots leave out, blocked by the atom's best version or blocking
     // it: emerge neither updates them nor takes them as arguments.
@@ -201,6 +212,12 @@ class Planner {
     // Arguments (indices into args_) whose best visible match is new in its slot, with that
     // candidate.
     std::vector<std::pair<std::uint32_t, std::uint32_t>> root_pulls_;
+    // Arguments (indices into args_) no version of which could be merged.
+    std::set<std::uint32_t> refused_;
+    // Arguments plain emerge has no visible version of to merge.
+    std::set<std::uint32_t> unmatched_;
+    // Candidates emerge's backtracking masks once a dependency of theirs failed, with it.
+    std::map<std::uint32_t, Reason> backtracked_;
     std::map<std::string, std::vector<std::uint32_t>, std::less<>> by_cp_;
     std::map<std::string, std::optional<Atom>, std::less<>> atoms_;
     // Slot and sub-slot a slot-operator atom is bound to, by the atom's text.
@@ -219,6 +236,8 @@ class Planner {
     // failed dependency needs, given their update once the pass is over.
     std::vector<std::pair<std::uint32_t, std::uint32_t>> wanted_;
     std::map<std::uint32_t, std::uint32_t> needed_;
+    // Dependencies of kept packages that nothing satisfies and that emerge must.
+    std::vector<Reason> missing_;
 
     [[nodiscard]] const Store& store() const { return store_ref_.get(); }
     [[nodiscard]] const Evaluated& evaluated() const { return evaluated_ref_.get(); }
@@ -236,6 +255,8 @@ class Planner {
     [[nodiscard]] bool alone(std::uint32_t id) const { return !alone_.empty() && alone_.at(id); }
 
     [[nodiscard]] bool must(std::uint32_t id) const { return !must_.empty() && must_.at(id); }
+
+    [[nodiscard]] bool named(std::uint32_t id) const { return !named_.empty() && named_.at(id); }
 
     [[nodiscard]] bool argument(std::uint32_t id) const {
         return arguments_.empty() || arguments_.at(id);
@@ -294,6 +315,12 @@ class Planner {
             return;
         }
         if (!best) {
+            // A root set's atom may keep what is installed, and @selected's match nothing.
+            const auto& set = arg.named.set;
+            const bool lenient = arg.matches.empty() ? set == "selected" : !set.empty();
+            if (selection == Selection::reinstall && !lenient) {
+                unmatched_.insert(i);
+            }
             return;
         }
         const auto& candidate = evaluated().candidates.at(*best);
@@ -308,6 +335,7 @@ class Planner {
         // Keeping the installed version would not do what is asked.
         if (selection != Selection::update || !matched) {
             must_.at(*id) = true;
+            named_.at(*id) = named_.at(*id) || arg.named.set.empty();
         }
         if (selection != Selection::update) {
             forced_.insert_or_assign(*id, Forced{.candidate = best, .argument = i});
@@ -801,7 +829,8 @@ class Planner {
         std::optional<Version> best_version;
         for (const auto index : found->second) {
             const auto& candidate = evaluated().candidates.at(index);
-            if (!candidate.visible() || !matches(store(), evaluated(), candidate, wanted)) {
+            if (!candidate.visible() || backtracked_.contains(index) ||
+                !matches(store(), evaluated(), candidate, wanted)) {
                 continue;
             }
             auto version = version_of(evaluated().string(candidate.cpv), wanted.cp);
@@ -981,6 +1010,7 @@ class Planner {
         taken_.clear();
         rebuilt_.clear();
         needed_.clear();
+        missing_.clear();
         std::vector<Work> work;
         for (std::uint32_t id = 0; id < choices_.size(); ++id) {
             if (const auto merged = choices_.at(id).merged()) {
@@ -998,7 +1028,10 @@ class Planner {
                 }
             }
         }
-        for (const auto& [root, candidate] : root_pulls_) {
+        for (auto& [root, candidate] : root_pulls_) {
+            if (backtracked_.contains(candidate) && !fall_back(root, candidate)) {
+                continue;
+            }
             const auto& c = evaluated().candidates.at(candidate);
             if (taken_.contains({std::string(evaluated().string(c.cp)),
                                  std::string(evaluated().string(c.slot))})) {
@@ -1014,6 +1047,7 @@ class Planner {
             }
         }
         std::map<std::uint32_t, std::vector<Reason>> rejected;
+        bool masked = false;
         for (std::size_t w = 0; w < work.size(); ++w) {
             const auto item = work.at(w);
             if (item.root && rejected.contains(*item.root)) {
@@ -1105,12 +1139,22 @@ class Planner {
                         needed_.insert(wanted_.front());
                         continue;
                     }
+                    const Reason failed{.member = item.member, .atom = first_atom(tables, list, i)};
                     if (const auto held = replaced_match(tables, list, i)) {
                         rejected[held->first].push_back(
                             {.member = item.member, .atom = held->second});
+                    } else if (!item.member.candidate && dep_kinds.at(kind) != "DEPEND" &&
+                               dep_kinds.at(kind) != "BDEPEND" &&
+                               (!lenient_ || matched_without_use(failed.atom))) {
+                        // -uD must satisfy what it reaches and keeps, but for what nothing
+                        // matches at all, which it only skips for the world sets' packages.
+                        missing_.push_back(failed);
+                    } else if (pulled(item.member)) {
+                        // emerge masks what it pulled in and chooses again.
+                        masked =
+                            backtracked_.try_emplace(item.member.index, failed).second || masked;
                     } else if (item.root) {
-                        rejected[*item.root].push_back(
-                            {.member = item.member, .atom = first_atom(tables, list, i)});
+                        std::ranges::copy(leaves(failed), std::back_inserter(rejected[*item.root]));
                     }
                 }
             }
@@ -1128,7 +1172,87 @@ class Planner {
         for (const auto& [id, candidate] : needed_) {
             need(id, candidate);
         }
-        return !rejected.empty() || !needed_.empty();
+        return !rejected.empty() || !needed_.empty() || masked;
+    }
+
+    // Moves argument root's pull on from its backtracked candidate to the next best version, new
+    // in its slot; false, the argument refused, when there is none.
+    bool fall_back(std::uint32_t root, std::uint32_t& candidate) {
+        const auto& atom = args_.at(root).atom;
+        const auto next = atom ? best_match(*atom) : std::nullopt;
+        if (next) {
+            const auto& c = evaluated().candidates.at(*next);
+            if (!installed_in({std::string(evaluated().string(c.cp)),
+                               std::string(evaluated().string(c.slot))})) {
+                candidate = *next;
+                return true;
+            }
+        }
+        refused_.insert(root);
+        return false;
+    }
+
+    // Whether an installed package or a visible candidate matches the atom without its USE
+    // dependencies.
+    [[nodiscard]] bool matched_without_use(std::string_view text) const {
+        auto parsed = parse_atom(text);
+        if (!parsed) {
+            return false;
+        }
+        parsed->use.clear();
+        if (std::ranges::any_of(store().packages, [&](const Package& pkg) {
+                return matches(store(), pkg, *parsed);
+            })) {
+            return true;
+        }
+        const auto found = by_cp_.find(parsed->cp);
+        return found != by_cp_.end() && std::ranges::any_of(found->second, [&](std::uint32_t i) {
+                   const auto& candidate = evaluated().candidates.at(i);
+                   return candidate.visible() && matches(store(), evaluated(), candidate, *parsed);
+               });
+    }
+
+    // Whether the member is a candidate this pass pulled in, rather than one a choice merges.
+    [[nodiscard]] bool pulled(const Member& member) const {
+        return member.candidate && std::ranges::any_of(pulled_, [&](const Pulled& each) {
+                   return each.candidate == member.index;
+               });
+    }
+
+    // The reason's dependency, followed through the candidates backtracking masked for it to
+    // the dependencies no visible version matches.
+    [[nodiscard]] std::vector<Reason> leaves(const Reason& reason) {
+        std::vector<Reason> found;
+        std::set<std::uint32_t> seen;
+        collect_leaves(reason, seen, found);
+        std::ranges::sort(found);
+        const auto [first, last] = std::ranges::unique(found);
+        found.erase(first, last);
+        return found;
+    }
+
+    void add_unsatisfied(Plan& plan, const Reason& reason) {
+        for (auto& leaf : leaves(reason)) {
+            plan.unsatisfied.push_back({.member = leaf.member, .atom = std::move(leaf.atom)});
+        }
+    }
+
+    void collect_leaves(const Reason& reason, std::set<std::uint32_t>& seen,
+                        std::vector<Reason>& found) {
+        const auto& wanted = atom(reason.atom);
+        bool followed = false;
+        for (const auto& [candidate, why] : backtracked_) {
+            if (wanted &&
+                matches(store(), evaluated(), evaluated().candidates.at(candidate), *wanted)) {
+                followed = true;
+                if (seen.insert(candidate).second) {
+                    collect_leaves(why, seen, found);
+                }
+            }
+        }
+        if (!followed) {
+            found.push_back(reason);
+        }
     }
 
     static std::string first_atom(const Tables& tables, std::span<const Node> list,
@@ -1142,7 +1266,7 @@ class Planner {
         return {};
     }
 
-    [[nodiscard]] Plan result() const {
+    [[nodiscard]] Plan result() {
         Plan plan;
         for (std::uint32_t id = 0; id < choices_.size(); ++id) {
             if (const auto found = rebuilt_.find(id); found != rebuilt_.end()) {
@@ -1183,7 +1307,12 @@ class Planner {
                 }
                 plan.merges.push_back(std::move(merge));
             }
-            if (choice.at != 0 && !choice.induced) {
+            if (!choice.merged() && named(id)) {
+                // What an argument must merge, with no version left to merge.
+                for (const auto& reason : choice.reasons) {
+                    add_unsatisfied(plan, reason);
+                }
+            } else if (choice.at != 0 && !choice.induced) {
                 plan.held.push_back(
                     {.package = id, .wanted = *choice.wanted, .reasons = choice.reasons});
             }
@@ -1193,6 +1322,24 @@ class Planner {
             return evaluated().string(evaluated().candidates.at(a.candidate).cpv) <
                    evaluated().string(evaluated().candidates.at(b.candidate).cpv);
         });
+        for (const auto& reason : missing_) {
+            add_unsatisfied(plan, reason);
+        }
+        for (const auto root : unmatched_) {
+            plan.unsatisfied.push_back({.member = {}, .atom = args_.at(root).named.atom});
+        }
+        for (const auto root : refused_) {
+            for (const auto& [candidate, why] : backtracked_) {
+                if (const auto& wanted = args_.at(root).atom;
+                    wanted &&
+                    matches(store(), evaluated(), evaluated().candidates.at(candidate), *wanted)) {
+                    add_unsatisfied(plan, why);
+                }
+            }
+        }
+        std::ranges::sort(plan.unsatisfied);
+        const auto [first, last] = std::ranges::unique(plan.unsatisfied);
+        plan.unsatisfied.erase(first, last);
         for (const auto& found : pulled) {
             plan.merges.push_back({.candidate = found.candidate,
                                    .replaces = {},

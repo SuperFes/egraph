@@ -31,8 +31,9 @@ enum class Exit : std::uint8_t {
     drift = 4,
     // --verify: emerge --pretend would merge otherwise.
     differs = 5,
-    // updates and plan: the plan has blockers emerge cannot resolve, so it would refuse it.
-    blocked = 6,
+    // updates and plan: emerge would refuse the plan, for blockers it cannot resolve or
+    // dependencies nothing satisfies.
+    refused = 6,
 };
 
 struct Deps {

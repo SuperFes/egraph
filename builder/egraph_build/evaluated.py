@@ -38,6 +38,7 @@ _CANDIDATE_KEYS = (
     "REQUIRED_USE",
     "RESTRICT",
     "SLOT",
+    "SRC_URI",
     "repository",
 )
 
@@ -453,7 +454,8 @@ def read_update(vardb, cpv, candidates, repositories, ebuild_use):
 
 def read_candidates(portdb, settings, cp, installed_cpvs, match, ebuild_use=None):
     """Every visible version of cp in every repository, with its dependencies matched through
-    match, and each masked one installed.
+    match, and each masked one installed; visible as depgraph sees it, which masks an invalid
+    ebuild that portdb counts as visible.
 
     settings is a config clone of portdb's, which this changes package by package; ebuild_use,
     an EbuildUse, records each installed version it sets.
@@ -481,13 +483,18 @@ def read_candidates(portdb, settings, cp, installed_cpvs, match, ebuild_use=None
                         portdb.aux_get(cpv, list(_CANDIDATE_KEYS), myrepo=repo),
                     )
                 )
-                reasons = ()
+                reasons = tuple(
+                    f"invalid: {message}"
+                    for message in masks.invalid_ebuild(portdb, cpv, metadata)
+                )
+                if reasons and cpv not in installed_cpvs:
+                    continue
                 if cpv not in visible:
                     found_reasons = getmaskingstatus(
                         cpv, settings=settings, portdb=portdb, myrepo=repo
                     )
                     # Whatever portdb found invisible stays masked, worded or not.
-                    reasons = tuple(found_reasons) or ("not visible",)
+                    reasons += tuple(found_reasons) or ("not visible",)
             except KeyError:
                 continue
             settings.setcpv(cpv, mydb=metadata)

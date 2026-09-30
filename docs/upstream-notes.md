@@ -51,3 +51,14 @@ is right.
 - Flags that emerge's `_alnum_sort_key` counts equal (`a07` and `a7`) come out of a set in
   hash order when it shows a package's USE; egraph orders them as text (`test_plan.cpp`, "flags
   sort as emerge's alnum key does").
+- Plain `emerge @selected` warns about an installed package it has no ebuild of when a root set
+  names it, but refuses the plan when a set nested in @selected (a `world_sets` entry) does,
+  though emerge counts that set's atoms as @selected's everywhere else. The store keeps root
+  atoms by root set, nested sets expanded, so egraph warns for both; `update.updates` counts
+  emerge's refusal for a nested set's member as neither a refusal nor a plan (`roots`:
+  `app-misc/set-member` from `@myset`).
+- `portdbapi.xmatch("match-visible")` counts an ebuild with invalid metadata (a conditional on a
+  flag outside IUSE, a string that does not parse) as visible; depgraph masks it (`invalid:`)
+  and emerge falls back past it. The builder follows depgraph (`masks.invalid_ebuild`,
+  `test_invalid_ebuilds_are_masked`, and every scenario's candidates against
+  `update.invalid_reasons`).
