@@ -1,0 +1,20 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  schedule:
+    # Weekly, so that a portage or toolchain change in the stage3 shows up without a push.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+jobs:
+  stage3:
+    runs-on: ubuntu-latest
+    container: gentoo/stage3:latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh .github/ci.sh

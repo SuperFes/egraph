@@ -20,7 +20,7 @@ Update the status column as steps land.
 | 12 | Updates of `@world` | done |
 | 13 | A living app | done |
 | 14 | Plans | done |
-| 15 | A system package | in progress |
+| 15 | A system package | done |
 | 16 | Daily use in place of emerge | planned |
 | 17 | `egraphd`, the service | planned |
 | 18 | Explaining and checking the configuration | planned |
@@ -348,8 +348,12 @@ built from a release tarball, tested against the portage users run rather than o
   portage's Python versions, `tui` as a USE flag, the whole suite in `src_test` (the playground
   tests skip without portage's test keys). Its test run found portage's exported
   PORTAGE_CONFIGROOT reaching the unit tests, which 0.1.1 fixes.
-- 15f: continuous integration on a stock stage3: the whole suite against the installed portage
-  release, so a portage change that breaks the builder shows up before users see it.
+- 15f (done): continuous integration on a stock stage3 (`.github/ci.sh`, run by GitHub Actions
+  on every push and weekly): the whole suite against the portage release the stage3 ships, with
+  that release's test keys from its tag, as a user, dependencies from the official binhost, so a
+  portage change that breaks the builder shows up before users see it. Without the terminal
+  interface, whose Notcurses is ~amd64 only; `screen.cpp` compiles against ::gentoo's 3.0.8 too.
+  First run: gcc 15.3, portage 3.0.82.2, 1,538 passed.
 
 ## 16. Daily use in place of emerge
 

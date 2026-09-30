@@ -54,6 +54,7 @@ PYTHONPATH=/Development/Gentoo/portage/lib pytest builder/tests   # builder agai
 meson setup build-sysportage -Dportage_test_keys=$fork/portage/tests/.gnupg  # installed portage
 meson dist -C build                                   # release tarball, built and tested
 build/egraph-completions fish                         # a completion script, as installed
+docker run --rm -v "$PWD":/src -w /src gentoo/stage3 sh .github/ci.sh   # CI (on a copy: it chowns)
 EGRAPH_SYSTEM_TESTS=1 PYTHONPATH=... pytest builder/tests         # also compare on the live vdb
 ```
 
@@ -138,7 +139,7 @@ needs the heap.
 
 - Naming: `PascalCase` types, `snake_case` functions and variables, both languages.
 - Keep the tree flat: `src/`, `tests/`, `builder/egraph_build/`, `builder/tests/`, `docs/`,
-  `hooks/` (the portage hooks `meson install` puts under `/etc/portage`).
+  `hooks/` (the portage hooks `meson install` puts under `/etc/portage`), `.github/` (CI).
 - Every feature lands as stub, then tests, then implementation; one roadmap step per commit series.
 - A new command or option is documented in `docs/egraph.1` (or `docs/egraph-build.1`);
   `test_man` fails otherwise. Completions follow on their own.
