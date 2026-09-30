@@ -5,6 +5,7 @@ import os
 import subprocess
 
 import pytest
+from portage.versions import cpv_getkey, cpv_getversion, vercmp
 
 from compare import _sonames, possible_mismatches
 from conftest import dynamic_option, portdb, write_stores
@@ -220,6 +221,49 @@ def plan_merges(text):
     return frozenset(merges)
 
 
+def _tied(a, b):
+    if a == b:
+        return True
+    return (
+        bool(a and b)
+        and cpv_getkey(a) == cpv_getkey(b)
+        and vercmp(cpv_getversion(a), cpv_getversion(b)) == 0
+    )
+
+
+def ties(got, expected):
+    """Whether two sets of plan_merges are the same but for the choice among equal versions,
+    which emerge makes in directory order (a stable sort after os.listdir)."""
+    left = list(expected)
+    for merge in got:
+        match = next(
+            (
+                other
+                for other in left
+                if merge[2] == other[2]
+                and all(_tied(a, b) for a, b in zip(merge[:2], other[:2]))
+            ),
+            None,
+        )
+        if match is None:
+            return False
+        left.remove(match)
+    return not left
+
+
+def test_equal_versions_tie():
+    one = frozenset({("dev-libs/v-1.0", "dev-libs/v-1.0", "test_repo")})
+    same = frozenset({("dev-libs/v-1.00", "dev-libs/v-1.00", "test_repo")})
+    assert ties(one, same)
+    assert not ties(one, {("dev-libs/v-1.01", "dev-libs/v-1.01", "test_repo")})
+    assert not ties(one, {("dev-libs/v-1.00", "dev-libs/v-1.00", "overlay")})
+    assert not ties(one, one | same)
+    assert ties({("", "dev-libs/v-1.0", "r")}, {("", "dev-libs/v-1.00", "r")})
+    assert not ties(
+        {("", "dev-libs/v-1.0", "r")}, {("dev-libs/v-1", "dev-libs/v-1.0", "r")}
+    )
+
+
 PLAN_MODES = {
     "u": ({"update": True}, ["-u"]),
     "uD": ({"update": True, "deep": True}, ["-u", "-D"]),
@@ -263,7 +307,7 @@ def test_plans_are_emerges(playgrounds, tmp_path, name, mode):
             assert not system.vardb.match(target)
             continue
         assert result.returncode == 0, (target, result.stderr)
-        if plan_merges(result.stdout) != expected.merges:
+        if not ties(plan_merges(result.stdout), expected.merges):
             differences.add(target)
     assert differences == PLAN_DIFFERENCES.get((name, mode), set())
 

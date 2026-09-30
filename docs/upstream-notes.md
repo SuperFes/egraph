@@ -32,3 +32,7 @@ is right.
   them merges it, or `--nodeps`. `test_removals_let_updates_through` checks every removal
   against emerge on the system without the holders (`bounds`: pylint, stray, and a plugin whose
   rebuild would hold its host while freeing another plugin's update).
+- Among equal versions of a cp (`1.0` and `1.00`), emerge picks in directory order: `cp_list`
+  sorts stably after `os.listdir`, so the pick depends on the filesystem (CI's container and a
+  tmpfs disagree). egraph's does not; `ties` in `test_queries.py` counts equal versions as one
+  choice when comparing plans.
