@@ -508,3 +508,46 @@ def test_masked_is_emerges(live_emerge_config, live_evaluated, dynamic):
     }
     kept = weighed(live_evaluated)
     assert found == {cpv: masked and cpv in kept for cpv, masked in expected.items()}
+
+
+def test_every_repository_required_use_checks_as_portage_does(live_databases):
+    """Each distinct REQUIRED_USE of the live repositories, under sampled USE of its flags."""
+    import portage
+    from portage.dep import get_required_use_flags
+    from portage.eapi import eapi_has_required_use
+
+    import test_required_use
+
+    if not test_required_use.SHADOW:
+        pytest.skip("set EGRAPH_REQUIRED_USE to the shadow binary (meson test does)")
+    _, portdb = live_databases
+    strings = set()
+    for cp in portdb.cp_all():
+        for cpv in portdb.cp_list(cp):
+            try:
+                required, eapi = portdb.aux_get(cpv, ["REQUIRED_USE", "EAPI"])
+            except KeyError:
+                continue
+            if required and eapi_has_required_use(eapi):
+                strings.add((" ".join(required.split()), eapi))
+    rng = random.Random(16)
+    cases = []
+    for required, eapi in sorted(strings):
+        try:
+            flags = sorted(get_required_use_flags(required, eapi))
+        except portage.exception.InvalidDependString:
+            continue
+        for _ in range(16):
+            use = frozenset(flag for flag in flags if rng.random() < 0.5)
+            cases.append((required, use, eapi))
+    assert cases
+    empty_true = portage.eapi.eapi_empty_groups_always_true
+    ours = test_required_use.shadow(
+        (required, use, empty_true(eapi)) for required, use, eapi in cases
+    )
+    wrong = [
+        (case, answer)
+        for case, answer in zip(cases, ours)
+        if answer != test_required_use.portage_answer(*case)
+    ]
+    assert not wrong
