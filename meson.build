@@ -226,9 +226,11 @@ unit_tests = executable(
 # Tests set egraph's options themselves, whatever the user's environment says.
 egraph_variables = ['EGRAPH_STORE', 'EGRAPH_BUILD', 'EGRAPH_LAYOUT', 'EGRAPH_GLYPHS', 'ROOT',
                     'PORTAGE_CONFIGROOT', 'PORTAGE_OVERRIDE_EPREFIX']
+# Empty rather than unset: environment().unset() leaves an inherited variable in place (portage
+# exports PORTAGE_CONFIGROOT to a package's tests), and CLI11 takes an empty one as absent.
 unit_env = environment()
 foreach variable : egraph_variables
-  unit_env.unset(variable)
+  unit_env.set(variable, '')
 endforeach
 test('unit', unit_tests, protocol: 'exitcode', env: unit_env)
 

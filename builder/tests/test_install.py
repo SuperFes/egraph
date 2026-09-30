@@ -1,4 +1,5 @@
-"""What meson install puts where: what a package ships, nothing in the user's own files."""
+"""The build as a package builds it: what meson install puts where, and the tests run in
+portage's environment."""
 
 import os
 import shutil
@@ -59,3 +60,14 @@ def test_install_ships_the_hooks_completions_and_man_pages_but_no_user_file(tmp_
         one(suffix)
     # portage runs only this one file after an emerge, and it belongs to the user.
     assert not any(path.endswith("etc/portage/bin/post_emerge") for path in installed)
+
+
+def test_the_unit_tests_ignore_the_roots_portage_exports():
+    build = Path(EGRAPH).parent
+    result = subprocess.run(
+        ["meson", "test", "-C", str(build), "--no-rebuild", "unit"],
+        capture_output=True,
+        text=True,
+        env=dict(os.environ, PORTAGE_CONFIGROOT="/", ROOT="/", EGRAPH_LAYOUT="human"),
+    )
+    assert result.returncode == 0, result.stdout
