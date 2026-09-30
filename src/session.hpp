@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <functional>
 #include <iosfwd>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -35,6 +36,11 @@ class Session {
     [[nodiscard]] Loaded<Store> installed() EGRAPH_LIFETIMEBOUND;
     // The installed store and the evaluated store built with it, current together.
     [[nodiscard]] Loaded<Stores> stores() EGRAPH_LIFETIMEBOUND;
+    // As stores(), shared with a caller that keeps them past the session's next adopt().
+    [[nodiscard]] std::expected<std::shared_ptr<const Stores>, std::string> shared_stores();
+    // Answers from stores, loaded from used, from now on: what was computed from the old ones,
+    // and every reference this returned, goes.
+    void adopt(std::shared_ptr<const Stores> stores, std::filesystem::path used);
     // What the dependency queries read: with dynamic, the installed store with the evaluated
     // store's dependency trees; without, installed().
     [[nodiscard]] Loaded<Store> dependencies(bool dynamic) EGRAPH_LIFETIMEBOUND;
@@ -61,7 +67,7 @@ class Session {
     std::reference_wrapper<std::ostream> warnings_;
     std::filesystem::path used_;
     std::optional<Store> installed_;
-    std::optional<Stores> stores_;
+    std::shared_ptr<const Stores> stores_;
     std::optional<Store> dynamic_;
     std::array<std::optional<Graph>, 2> graphs_;
     // By build_deps, then dynamic.
@@ -77,6 +83,11 @@ run_builder(const Invocation& invocation, std::string_view mode, const std::file
 // Why a builder run failed, from how it ended; nothing when it succeeded.
 [[nodiscard]] std::optional<std::string>
 builder_error(const Invocation& invocation, const std::expected<int, os::SpawnError>& status);
+
+// Stores a session could answer from without building: the system store while it is current,
+// else the one at store_path(invocation) while it is; used says which, or where to build.
+[[nodiscard]] std::optional<Stores> current_stores(const Invocation& invocation,
+                                                   std::filesystem::path& used);
 
 // Both stores as a session loads them, for a caller that keeps them itself.
 [[nodiscard]] std::expected<Stores, std::string> open_stores(const Invocation& invocation,

@@ -95,7 +95,7 @@ loaded with the evaluated one, so its packages line up with the evaluated store'
 Without a command, egraph is interactive: the TUI when standard input and output are both a
 terminal, the shell otherwise (`printf 'updates\n' | egraph`). In the TUI, `:` opens a prompt
 that takes the same command lines as the shell and answers them from the session the interface
-was opened with; the output is shown in the lines layout as columns, lined up across each run of
+was opened with, which shares its stores with the interface and takes each refresh it makes; the output is shown in the lines layout as columns, lined up across each run of
 rows with the same number of fields, and a row whose field names an installed package opens its
 page. Errors and warnings go to a dialog, and `:quit` (or `:q`) ends the interface.
 
@@ -172,16 +172,30 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   its ebuild would depend on with flags toggled, and whose ebuilds would depend on it, each
   marked with the toggles (`deps` and `rdeps --possible`); what nothing installed satisfies is
   listed but cannot be opened.
-- `c` runs `egraph check` from the list: a waiting view is drawn, then `run()` makes the fresh
-  build (the app itself never spawns anything) and lists the drift between the installed
-  stores, each package's page a key away. The builder's output goes to a log beside the scratch store rather than the terminal the
-  interface owns; if the build fails, a dialog shows its last lines.
+- The stores stay current while the interface is open. Every two seconds without a key
+  (`stale_interval`), `run()` looks at their inputs as a query's freshness check does (a few
+  milliseconds of `lstat`); once they changed, it opens current stores as a session would, in
+  the background: a current system store as it is, else the store at `--store` or the user's
+  after an incremental build. The title shows a spinner meanwhile, then each view is kept where
+  it was: the list's query, filter and selected package, and every open page with its selected
+  row, a package found again by cpv or else by name and slot (so a page follows an upgrade).
+  Unfolded trees fold again. A failed refresh stays in the title and is tried again after a
+  minute (`retry_interval`). None starts while the check view is open, whose build compares with
+  the stores shown, and `--no-refresh` turns it off.
+- Builds run as child processes (`os::start`) that `run()` polls as jobs (`src/job.hpp`) while
+  the screen keeps answering keys; dropping a job stops its build (SIGTERM). The app itself never
+  spawns anything.
+- `c` runs `egraph check` from the list: a waiting view with a spinner is drawn while the fresh
+  build runs, then lists the drift between the installed stores, each package's page a key away;
+  `esc` stops the build. The builder's output goes to a log beside the scratch store rather than
+  the terminal the interface owns; if the build fails, a dialog shows its last lines.
 - `u` in the check view acts on drift. As root it saves the check's own build, kept in its
   scratch files until then: while nothing it was built from has changed, copies are renamed over
   the stores as the builder writes them (installed first, mode 0644, synced); otherwise it runs
-  `egraph rebuild`. Either way it shows the result. Anyone else gets a preview:
-  the check's own fresh build replaces the store in memory only, and the title bar says it is not
-  saved. The user's cache store is left alone either way; it is refreshed on the next query.
+  `egraph rebuild`. Either way it shows the result, and the session answers from it. Anyone else
+  gets a preview: the check's own fresh build replaces the store in memory only, and the title
+  bar says it is not saved. The user's cache store is left alone either way; it is refreshed on
+  the next query.
 - `e` watches the running emerges, from the snapshots portage publishes with
   `FEATURES="observability"` (`src/emerge.hpp`): each emerge's jobs and progress as a bar, and
   its tasks under it with a spinner, kind, phase, elapsed time and, with `FEATURES=cgroup`, CPU

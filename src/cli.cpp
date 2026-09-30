@@ -282,9 +282,10 @@ class ScratchFile {
 // terminal: the job ends with the error, which ends with the output's last lines, or with
 // nothing once the build succeeded.
 Job<std::optional<std::string>> background_build(const Invocation& invocation,
+                                                 std::string_view mode,
                                                  const std::filesystem::path& path) {
     ScratchFile log{std::filesystem::path{scratch_store()}.replace_extension(".log")};
-    auto child = os::start(builder_command(invocation, "--full", path), log.path());
+    auto child = os::start(builder_command(invocation, mode, path), log.path());
     if (!child) {
         return ready(builder_error(invocation, std::unexpected(child.error())));
     }
@@ -322,7 +323,7 @@ Job<tui::CheckResult> background_check(const Invocation& invocation, const Store
     return [files = ScratchStores{scratch_store()}, build = Job<std::optional<std::string>>{},
             &invocation, &stored, &checked, keep]() mutable -> std::optional<tui::CheckResult> {
         if (!build) {
-            build = background_build(invocation, files.path());
+            build = background_build(invocation, "--full", files.path());
         }
         auto ended = build();
         if (!ended) {
@@ -382,27 +383,58 @@ Job<std::expected<Stores, std::string>> save_stores(const Invocation& invocation
                 std::pair{evaluated_store_path(checked->path()), evaluated_store_path(path)}};
             for (const auto& [from, to] : copies) {
                 if (const auto copied = os::replace_with_copy(from, to); !copied) {
-                    return ready(tui::RebuildResult{std::unexpected(
+                    return ready(std::expected<Stores, std::string>{std::unexpected(
                         std::format("{}: {}", to.string(), copied.error().message()))});
                 }
             }
-            return ready(tui::RebuildResult{std::move(*stores)});
+            return ready(std::expected<Stores, std::string>{std::move(*stores)});
         }
     }
-    return [build = background_build(invocation, path),
-            path]() mutable -> std::optional<tui::RebuildResult> {
+    return [build = background_build(invocation, "--full", path),
+            path]() mutable -> std::optional<std::expected<Stores, std::string>> {
         auto ended = build();
         if (!ended) {
             return std::nullopt;
         }
         if (*ended) {
-            return tui::RebuildResult{std::unexpected(std::move(**ended))};
+            return std::expected<Stores, std::string>{std::unexpected(std::move(**ended))};
         }
         return load_stores(path).transform_error([](const StoreError& e) { return e.message; });
     };
 }
 
 namespace {
+
+// Stores loaded from used, which the session answers from as well from now on.
+std::shared_ptr<const Stores> share(Session& session, Stores stores, std::filesystem::path used) {
+    auto shared = std::make_shared<const Stores>(std::move(stores));
+    session.adopt(shared, std::move(used));
+    return shared;
+}
+
+// Brings the stores up to date in the background, as a session opens them: a current system
+// store, or the user's after an incremental build. The session answers from them too.
+Job<tui::RefreshResult> background_refresh(const Invocation& invocation, Session& session) {
+    std::filesystem::path used;
+    if (auto current = current_stores(invocation, used)) {
+        return ready(tui::RefreshResult{share(session, std::move(*current), used)});
+    }
+    return [build = background_build(invocation, "--incremental", used), used,
+            &session]() mutable -> std::optional<tui::RefreshResult> {
+        auto ended = build();
+        if (!ended) {
+            return std::nullopt;
+        }
+        if (*ended) {
+            return tui::RefreshResult{std::unexpected(std::move(**ended))};
+        }
+        auto loaded = load_stores(used);
+        if (!loaded) {
+            return tui::RefreshResult{std::unexpected(std::move(loaded.error().message))};
+        }
+        return share(session, std::move(*loaded), used);
+    };
+}
 
 Exit execute(const Check&, Session&, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
@@ -756,7 +788,7 @@ Exit execute(const Tui&, Session& session, const Invocation& invocation, std::os
     // Warnings would vanish under the interface, so it repeats them.
     std::stringstream warned;
     session.warn_to(warned);
-    const auto stores = session.stores();
+    const auto stores = session.shared_stores();
     session.warn_to(err);
     err << warned.str();
     if (!stores) {
@@ -779,10 +811,20 @@ Exit execute(const Tui&, Session& session, const Invocation& invocation, std::os
     };
     tui::Rebuilder rebuild;
     if (saves) {
-        rebuild = [&invocation, &checked]() {
+        rebuild = [&invocation, &checked, &session]() -> Job<tui::RebuildResult> {
             auto saved = save_stores(invocation, checked);
             checked.reset();
-            return saved;
+            return [saved = std::move(saved), &invocation,
+                    &session]() mutable -> std::optional<tui::RebuildResult> {
+                auto result = saved();
+                if (!result) {
+                    return std::nullopt;
+                }
+                if (!*result) {
+                    return tui::RebuildResult{std::unexpected(std::move(result->error()))};
+                }
+                return share(session, std::move(**result), store_path(invocation));
+            };
         };
     }
     const auto run_dir = emerge::status_dir(invocation.eprefix.value_or(""));
@@ -801,8 +843,15 @@ Exit execute(const Tui&, Session& session, const Invocation& invocation, std::os
         return tui::Answer{
             .exit = result.exit, .out = out.str(), .err = problems.str(), .quit = result.quit};
     };
+    // --no-refresh keeps the stores as opened.
+    tui::Staleness stale;
+    tui::Refresher refresh;
+    if (!invocation.no_refresh) {
+        stale = [](const Stores& shown) { return staleness(shown); };
+        refresh = [&invocation, &session] { return background_refresh(invocation, session); };
+    }
     return tui::open_and_run(
-        Stores{stores->get()}, invocation.dynamic_deps, style(invocation).glyphs,
+        *stores, invocation.dynamic_deps, style(invocation).glyphs,
         {.check = check,
          .rebuild = rebuild,
          .watch = watch,
@@ -812,7 +861,10 @@ Exit execute(const Tui&, Session& session, const Invocation& invocation, std::os
          .merge_list = [&invocation] { return read_merge_list(invocation); },
          .plan = [&invocation](
                      const std::vector<emerge::Pending>& list) { return plan(invocation, list); },
-         .command = command},
+         .command = command,
+         .stale = stale,
+         .refresh = refresh,
+         .now = {}},
         warnings, err);
 }
 

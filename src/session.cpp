@@ -80,6 +80,19 @@ std::optional<std::string> builder_error(const Invocation& invocation,
     return std::nullopt;
 }
 
+std::optional<Stores> current_stores(const Invocation& invocation, std::filesystem::path& used) {
+    const auto path = store_path(invocation);
+    if (!invocation.store) {
+        const auto system = system_store_path(invocation);
+        if (auto loaded = system != path ? fresh<Stores>(system, load_stores) : std::nullopt) {
+            used = system;
+            return loaded;
+        }
+    }
+    used = path;
+    return fresh<Stores>(path, load_stores);
+}
+
 std::expected<Stores, std::string> open_stores(const Invocation& invocation,
                                                std::ostream& warnings) {
     std::filesystem::path used;
@@ -106,14 +119,28 @@ Loaded<Store> Session::installed() {
 }
 
 Loaded<Stores> Session::stores() {
+    return shared_stores().transform(
+        [](const std::shared_ptr<const Stores>& stores) { return std::cref(*stores); });
+}
+
+std::expected<std::shared_ptr<const Stores>, std::string> Session::shared_stores() {
     if (!stores_) {
         auto loaded = open_current<Stores>(invocation_, warnings_.get(), used_, load_stores);
         if (!loaded) {
             return std::unexpected(std::move(loaded.error()));
         }
-        stores_ = std::move(*loaded);
+        stores_ = std::make_shared<const Stores>(std::move(*loaded));
     }
-    return std::cref(*stores_);
+    return stores_;
+}
+
+void Session::adopt(std::shared_ptr<const Stores> stores, std::filesystem::path used) {
+    stores_ = std::move(stores);
+    used_ = std::move(used);
+    installed_.reset();
+    dynamic_.reset();
+    graphs_ = {};
+    depclean_ = {};
 }
 
 Loaded<Store> Session::dependencies(bool dynamic) {

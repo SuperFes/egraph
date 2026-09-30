@@ -17,9 +17,9 @@ Update the status column as steps land.
 | 9 | Evaluated and candidate layers | done |
 | 10 | Output and UX | done |
 | 11 | Build monitor | done |
-| 12 | Updates of `@world` | in progress |
-| 13 | A living app | in progress |
-| 14 | Plans | not started |
+| 12 | Updates of `@world` | done |
+| 13 | A living app | done |
+| 14 | Plans | in progress |
 
 ## 0. Scaffold
 
@@ -235,7 +235,7 @@ an update back, rather than skipping it), it stays, recorded in `upstream-notes.
   one, as `--rebuild-if-new-slot`, updating or pulling in that slot's package (`repository`).
   Equal to `emerge -puD @world` (plain, -N, -U) on every scenario and on the dev box, where the
   23 merges of `-N` are emerge's, the two gentoo-sources rebuilds outside @world gone.
-- 12d: remedies for a held update, as a choice rather than emerge's silent skip. Removing a
+- 12d (done): remedies for a held update, as a choice rather than emerge's silent skip. Removing a
   holder is offered only when it is a leaf: nothing installed depends on it, and only world (or
   nothing) keeps it; then the update goes through, and what else it frees is listed. A holder
   something else needs is named, not offered. Keeping a holder while updating is only possible
@@ -269,13 +269,16 @@ and run-and-done otherwise (`docs/vision.md`).
   linked to package pages. A failed command is a message, not an exit. Off a terminal, bare
   `egraph` is the shell. The interface still keeps its own copy of the stores beside the
   session's until 13d.
-- 13d: the app stays current: inputs checked on each tick, the incremental builder run as a
+- 13d (done): the app stays current: inputs checked on each tick, the incremental builder run as a
   child process watched without blocking, the new stores swapped in keeping the user's place.
   Check and rebuild stop freezing the screen the same way.
   - 13d1 (done): check and rebuild run the builder as a child process (`os::start`) the
     interface polls, with a spinner while it waits; leaving the view, or quitting, stops it.
-  - 13d2: inputs checked on each tick, an incremental refresh in the background, and the new
-    stores shared with the session and swapped in keeping the list, pages and cursors.
+  - 13d2 (done): the stores' inputs looked at every 2 s while idle, a refresh made in the
+    background as a session opens stores (a current system store, else an incremental build),
+    and the new stores shared with the session (`Session::adopt`) and swapped in keeping the
+    list, pages and cursors, a page following its package across an upgrade. The interface no
+    longer keeps its own copy of the stores.
 
 ## 14. Plans
 

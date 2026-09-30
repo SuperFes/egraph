@@ -173,8 +173,13 @@ egraph::tui::Checker checking(std::function<egraph::tui::CheckResult(const egrap
         return egraph::ready(check(stored));
     };
 }
-egraph::tui::Rebuilder rebuilding(std::function<egraph::tui::RebuildResult()> rebuild) {
-    return [rebuild = std::move(rebuild)] { return egraph::ready(rebuild()); };
+egraph::tui::Rebuilder
+rebuilding(std::function<std::expected<egraph::Stores, std::string>()> rebuild) {
+    return [rebuild = std::move(rebuild)] {
+        return egraph::ready(rebuild().transform([](egraph::Stores stores) {
+            return std::make_shared<const egraph::Stores>(std::move(stores));
+        }));
+    };
 }
 
 // A check whose fresh build is the cyclic store, one package differing.
@@ -747,7 +752,8 @@ TEST_CASE("u rebuilds the store where it can be written") {
     egraph::tui::draw(screen, app, ascii);
     CHECK(contains(screen.text(), "Rebuilding the store"));
     app.handle(character(U'u'));
-    app.finish_rebuild(egraph::Stores{.installed = cyclic(), .evaluated = {}});
+    app.finish_rebuild(std::make_shared<const egraph::Stores>(
+        egraph::Stores{.installed = cyclic(), .evaluated = {}}));
     CHECK(app.source() == egraph::tui::Source::saved);
     CHECK(app.dependents(0) == 1);
     egraph::tui::draw(screen, app, ascii);
@@ -1644,4 +1650,159 @@ TEST_CASE("held updates show in the list, and a held package's page offers its r
     CHECK(contains(text, "needed by app-misc/panel-1"));
     CHECK_FALSE(contains(text, "to remove"));
     CHECK(contains(text, "to keep it:"));
+}
+
+namespace {
+
+std::shared_ptr<const egraph::Stores> shared(egraph::test::System system) {
+    return std::make_shared<const egraph::Stores>(egraph::Stores{
+        .installed = std::move(system.store), .evaluated = std::move(system.evaluated)});
+}
+
+// a/app-1 needing dev-libs/lib and x/other, lib at version.
+egraph::test::System app_with_lib(const std::string& version, bool with_new = false) {
+    std::vector<egraph::test::Installed> installed{
+        {.cpv = "a/app-1", .deps = {{"RDEPEND", "dev-libs/lib x/other"}}},
+        {.cpv = "dev-libs/lib-" + version}};
+    if (with_new) {
+        installed.push_back({.cpv = "x/new-1"});
+    }
+    installed.push_back({.cpv = "x/other-1"});
+    std::vector<egraph::test::Available> available;
+    for (const auto& pkg : installed) {
+        available.push_back({.cpv = pkg.cpv});
+    }
+    return egraph::test::make_system(installed, available);
+}
+
+std::string cpv_of(const egraph::tui::App& app, std::uint32_t id) {
+    return std::string{app.store().string(app.store().packages.at(id).cpv)};
+}
+
+// A clock that moves on by stale_interval with each key the screen reads.
+egraph::tui::Clock ticking(const FakeScreen& screen) {
+    return [&screen] {
+        return std::chrono::steady_clock::time_point{} +
+               egraph::tui::stale_interval * static_cast<int>(screen.timeouts.size());
+    };
+}
+
+} // namespace
+
+TEST_CASE("refreshed stores keep the list and pages where they were") {
+    SECTION("the list's cursor stays on its package") {
+        egraph::tui::App app{shared(app_with_lib("1")), false};
+        app.handle(character(U'u'));
+        app.handle(key(KeyKind::down));
+        app.handle(key(KeyKind::down));
+        REQUIRE(cpv_of(app, app.list().shown.at(app.list().cursor.at)) == "x/other-1");
+        app.finish_stale_check("x/new-1 was installed");
+        CHECK(app.refresh_requested());
+        app.finish_refresh(shared(app_with_lib("1", true)));
+        CHECK_FALSE(app.stale());
+        CHECK(app.store().packages.size() == 4);
+        CHECK(app.list().only == egraph::tui::Only::all);
+        CHECK(app.list().cursor.at == 3);
+        CHECK(cpv_of(app, app.list().shown.at(app.list().cursor.at)) == "x/other-1");
+    }
+    SECTION("a page stays open, on the row it was on, across an upgrade") {
+        egraph::tui::App app{shared(app_with_lib("1")), false};
+        app.handle(character(U'u'));
+        app.handle(key(KeyKind::enter));
+        REQUIRE(app.pages().size() == 1);
+        const auto& before = app.pages().back();
+        REQUIRE(before.rows.at(before.cursor.at).type == RowType::link);
+        REQUIRE(cpv_of(app, before.rows.at(before.cursor.at).link.package) == "dev-libs/lib-1");
+        app.handle(key(KeyKind::enter));
+        REQUIRE(app.pages().size() == 2);
+
+        app.finish_refresh(shared(app_with_lib("2")));
+        REQUIRE(app.pages().size() == 2);
+        const auto& page = app.pages().front();
+        CHECK(cpv_of(app, page.package) == "a/app-1");
+        CHECK(page.rows.at(page.cursor.at).type == RowType::link);
+        CHECK(cpv_of(app, page.rows.at(page.cursor.at).link.package) == "dev-libs/lib-2");
+        // The upgraded package's own page follows it to the new version.
+        CHECK(cpv_of(app, app.pages().back().package) == "dev-libs/lib-2");
+    }
+}
+
+TEST_CASE("the stores' inputs are looked at while idle, and refreshed in the background") {
+    egraph::tui::App app{shared(app_with_lib("1")), false};
+    FakeScreen screen{
+        12, 120, {key(KeyKind::tick), key(KeyKind::tick), key(KeyKind::tick), key(KeyKind::tick)}};
+    int looks = 0;
+    int refreshes = 0;
+    std::string refreshing;
+    const egraph::tui::Services services{
+        .stale = [&](const egraph::Stores& stores) -> std::optional<std::string> {
+            CHECK(&stores == app.shared().get());
+            return ++looks == 1 ? std::optional<std::string>{"x/new-1 was installed"}
+                                : std::nullopt;
+        },
+        .refresh = [&]() -> egraph::Job<egraph::tui::RefreshResult> {
+            ++refreshes;
+            return [&, polls = 0]() mutable -> std::optional<egraph::tui::RefreshResult> {
+                if (++polls < 2) {
+                    return std::nullopt;
+                }
+                refreshing = screen.line(0);
+                return shared(app_with_lib("1", true));
+            };
+        },
+        .now = ticking(screen)};
+    egraph::tui::run(screen, app, ascii, services);
+    CHECK(looks >= 2);
+    CHECK(refreshes == 1);
+    CHECK(app.store().packages.size() == 4);
+    CHECK(contains(refreshing, "/ refreshing"));
+    CHECK_FALSE(contains(screen.line(0), "refreshing"));
+    REQUIRE(screen.timeouts.size() >= 2);
+    // Idle, it wakes when the next look is due; refreshing, it polls the build.
+    CHECK(screen.timeouts.at(0) == egraph::tui::stale_interval);
+    CHECK(screen.timeouts.at(1) == egraph::tui::wait_interval);
+}
+
+TEST_CASE("a failed refresh says why and waits before trying again") {
+    egraph::tui::App app{shared(app_with_lib("1")), false};
+    FakeScreen screen{12, 120, {key(KeyKind::tick), key(KeyKind::tick)}};
+    int refreshes = 0;
+    const egraph::tui::Services services{
+        .stale = [](const egraph::Stores&) -> std::optional<std::string> { return "changed"; },
+        .refresh = [&]() -> egraph::Job<egraph::tui::RefreshResult> {
+            ++refreshes;
+            return egraph::ready(egraph::tui::RefreshResult{
+                std::unexpected("egraph-build exited with status 1:\nTraceback")});
+        },
+        .now = ticking(screen)};
+    egraph::tui::run(screen, app, ascii, services);
+    CHECK(refreshes == 1);
+    CHECK(app.store().packages.size() == 3);
+    REQUIRE(app.refresh_error().has_value());
+    INFO(screen.line(0));
+    CHECK(screen.line(0).ends_with(" refresh failed: egraph-build exited with status 1 "));
+    CHECK(std::ranges::find(screen.timeouts, egraph::tui::retry_interval) != screen.timeouts.end());
+}
+
+TEST_CASE("no refresh runs while the check view is open") {
+    egraph::tui::App app{shared(app_with_lib("1")), false};
+    FakeScreen screen{12,
+                      120,
+                      {character(U'c'), key(KeyKind::tick), key(KeyKind::tick), key(KeyKind::tick),
+                       key(KeyKind::escape), key(KeyKind::tick)}};
+    int refreshes = 0;
+    const egraph::tui::Services services{
+        .check = cyclic_check,
+        .stale = [&](const egraph::Stores&) -> std::optional<std::string> {
+            return refreshes == 0 ? std::optional<std::string>{"changed"} : std::nullopt;
+        },
+        .refresh = [&]() -> egraph::Job<egraph::tui::RefreshResult> {
+            ++refreshes;
+            CHECK_FALSE(app.checked().has_value());
+            return egraph::ready(egraph::tui::RefreshResult{shared(app_with_lib("1", true))});
+        },
+        .now = ticking(screen)};
+    egraph::tui::run(screen, app, ascii, services);
+    CHECK(refreshes == 1);
+    CHECK(app.store().packages.size() == 4);
 }

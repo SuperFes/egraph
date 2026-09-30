@@ -201,6 +201,38 @@ def test_tui_previews_a_fresh_build_without_saving_it(system, tmp_path):
     assert str(path) not in builds(system)[-1]
 
 
+def test_tui_refreshes_the_store_when_the_system_changes(system, tmp_path):
+    skip_without_tui()
+    playground, path, builder, _ = system
+    assert query(system).returncode == 0
+    packages = len(installed.build(fresh_vardb(playground)).installed())
+
+    socket = f"egraph-test-{os.getpid()}"
+    command = (
+        f"{EGRAPH} --store {path} --config-root {playground.eroot}"
+        f" --eprefix {playground.eprefix} --builder {builder} tui;"
+        " echo EXIT=$?; sleep 30"
+    )
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "100", "-y", "16", command)
+    try:
+        wait_for(socket, " updates")
+        tmux(socket, "send-keys", "-t", "t", "u")
+        wait_for(socket, f"{packages} of {packages} packages")
+        add_package(playground, "dev-libs/alt-b-1")
+        # No key pressed: the interface notices on its own.
+        wait_for(socket, f"{packages + 1} of {packages + 1} packages", seconds=60)
+        assert builds(system)[-1].startswith("--incremental --store ")
+        # Commands answer from the refreshed store too.
+        tmux(socket, "send-keys", "-t", "t", ":", "orphans", "Enter")
+        assert "dev-libs/alt-b-1" in wait_for(socket, "command  esc back")
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        wait_gone(socket, "command  esc back")
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")
+
+
 def test_tui_watches_running_emerges(playgrounds, tmp_path):
     skip_without_tui()
     path = tmp_path / "installed.egraph"

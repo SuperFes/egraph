@@ -156,9 +156,21 @@ struct Fresh {
 using CheckResult = std::expected<Fresh, std::string>;
 // Builds a fresh store and compares the given installed store with it, which outlives the job.
 using Checker = std::function<Job<CheckResult>(const Store&)>;
-using RebuildResult = std::expected<Stores, std::string>;
+using RebuildResult = std::expected<std::shared_ptr<const Stores>, std::string>;
 // Writes fresh stores over the ones on disk and loads them, or says why it could not.
 using Rebuilder = std::function<Job<RebuildResult>()>;
+
+// Why stores no longer describe the system, or nothing while they do.
+using Staleness = std::function<std::optional<std::string>(const Stores&)>;
+using RefreshResult = std::expected<std::shared_ptr<const Stores>, std::string>;
+// Brings the stores up to date: the job ends with current ones, or why it could not.
+using Refresher = std::function<Job<RefreshResult>()>;
+// The time, which says when to look at the stores' inputs again.
+using Clock = std::function<std::chrono::steady_clock::time_point()>;
+
+// How often the stores' inputs are looked at, and how long a failed refresh waits to try again.
+inline constexpr std::chrono::milliseconds stale_interval{2000};
+inline constexpr std::chrono::milliseconds retry_interval{60000};
 
 // Reads the running emerges' snapshots.
 using Watcher = std::function<std::vector<emerge::Snapshot>()>;
@@ -200,6 +212,11 @@ struct Services {
     MergeListReader merge_list{};
     Planner plan{};
     Commander command{};
+    // Empty where the stores are not to be refreshed.
+    Staleness stale{};
+    Refresher refresh{};
+    // The steady clock when empty.
+    Clock now{};
 };
 
 struct Watched;
@@ -300,6 +317,7 @@ class App {
     // The installed store alone: its own dependencies, every package unmasked, no updates.
     App(const Store& store, const Graph& graph, Update update = Update::preview);
     // Both stores, the dependencies read as emerge reads them with dynamic_deps or without.
+    App(std::shared_ptr<const Stores> stores, bool dynamic_deps, Update update = Update::preview);
     App(Stores stores, bool dynamic_deps, Update update = Update::preview);
 
     void handle(const Key& key);
@@ -368,6 +386,21 @@ class App {
     // A change to steve waiting for run() to make it.
     [[nodiscard]] std::optional<SteveChange> steve_change_requested() const;
     void finish_steve_change(const std::expected<void, std::string>& result);
+    // The stores shown, shared; empty for an app over an installed store alone.
+    [[nodiscard]] std::shared_ptr<const Stores> shared() const;
+    // Whether the stores shown still describe the system: a reason asks for a refresh.
+    void finish_stale_check(std::optional<std::string> reason);
+    // Whether a refresh is asked for, and not yet made.
+    [[nodiscard]] bool stale() const { return stale_.has_value(); }
+    // Whether run() is to make the refresh asked for, in the background: not while the check
+    // view is open, since its build compares with the stores shown.
+    [[nodiscard]] bool refresh_requested() const { return stale_ && !checked_; }
+    // Shows refreshed stores in place of the current ones, each view where it was.
+    void finish_refresh(RefreshResult result);
+    // Why the last refresh failed, until one succeeds.
+    [[nodiscard]] const std::optional<std::string>& refresh_error() const { return refresh_error_; }
+    // Ticks while refreshing, which turn the spinner.
+    [[nodiscard]] std::size_t frame() const { return frame_; }
     // How long run() waits for a key before the view needs drawing again; unset waits for one.
     [[nodiscard]] std::optional<std::chrono::milliseconds> refresh() const;
     // The : prompt's text while the user types a command.
@@ -416,9 +449,8 @@ class App {
   private:
     // Stores the app owns, the one its queries read, and that one's graph.
     struct Loaded {
-        Loaded(Store installed, Evaluated evaluated, bool dynamic_deps);
-        Store installed;
-        Evaluated evaluated;
+        Loaded(std::shared_ptr<const Stores> shared, bool dynamic_deps);
+        std::shared_ptr<const Stores> stores;
         // With dynamic deps; the installed store is read otherwise.
         std::optional<Store> dynamic;
         Graph graph;
@@ -426,7 +458,16 @@ class App {
 
     void index();
     // Shows the stores in place of the current ones, back at the list (or the check view).
-    void adopt(Store installed, Evaluated evaluated, Source source);
+    void adopt(std::shared_ptr<const Stores> stores, Source source);
+    // As adopt, each view kept where it was: its package found again by cpv, or else by name
+    // and slot.
+    void replace(std::shared_ptr<const Stores> stores);
+    // The package in the stores shown that stands for cpv, of cp and slot, from other stores.
+    [[nodiscard]] std::optional<std::uint32_t> find_again(std::string_view cpv, std::string_view cp,
+                                                          std::string_view slot) const;
+    // The first installed package a command's output fields name.
+    [[nodiscard]] std::optional<std::uint32_t>
+    link_of(const std::vector<std::string>& fields) const;
     void own(std::unique_ptr<const Loaded> loaded);
     void filter();
     void recompute();
@@ -475,6 +516,9 @@ class App {
     std::optional<std::string> prompt_;
     std::optional<std::string> command_;
     std::optional<Output> output_;
+    std::optional<std::string> stale_;
+    std::optional<std::string> refresh_error_;
+    std::size_t frame_ = 0;
     std::size_t height_ = 1;
     bool done_ = false;
 };
@@ -527,17 +571,37 @@ void draw_hints(S& screen, unsigned row, unsigned width,
     put_spans(screen, row, 0, spans, width);
 }
 
-// The trail, and on the right a warning while a fresh build is shown without being saved.
+// The trail, and on the right a refresh under way or failed, and a warning while a fresh build
+// is shown without being saved.
 template <class S>
-void draw_title(S& screen, const App& app, unsigned width, const std::vector<Span>& trail) {
+void draw_title(S& screen, const App& app, unsigned width, const std::vector<Span>& trail,
+                const Glyphs& glyph) {
     screen.fill_row(0, {.fg = palette::text, .bg = palette::crust});
     put_spans(screen, 0, 0, trail, width, palette::crust);
-    if (app.source() == Source::preview) {
-        const std::string badge = " preview, not saved ";
-        if (const auto used = columns(badge); used < width) {
-            put_spans(screen, 0, width - static_cast<unsigned>(used),
-                      {{badge, {.fg = palette::crust, .bg = palette::mauve, .bold = true}}}, width);
+    std::vector<Span> badges;
+    if (app.refresh_requested()) {
+        badges.push_back({std::format(" {} refreshing ", spinner_frame(app.frame(), glyph)),
+                          {.fg = palette::overlay, .bg = palette::crust}});
+    } else if (const auto& error = app.refresh_error()) {
+        // The first line; the builder's own output follows it.
+        auto first = error->substr(0, error->find('\n'));
+        if (first.ends_with(':')) {
+            first.pop_back();
         }
+        auto pen = tone_pen(Tone::bad);
+        pen.bg = palette::crust;
+        badges.push_back({std::format(" refresh failed: {} ", first), pen});
+    }
+    if (app.source() == Source::preview) {
+        badges.push_back(
+            {" preview, not saved ", {.fg = palette::crust, .bg = palette::mauve, .bold = true}});
+    }
+    std::size_t used = 0;
+    for (const auto& badge : badges) {
+        used += columns(badge.text);
+    }
+    if (used > 0 && used < width) {
+        put_spans(screen, 0, width - static_cast<unsigned>(used), badges, width);
     }
 }
 
@@ -653,7 +717,7 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
         title.push_back(
             {std::format("  {} depclean would refuse to run", glyph.broken), tone_pen(Tone::bad)});
     }
-    draw_title(screen, app, size.cols, title);
+    draw_title(screen, app, size.cols, title, glyph);
 
     std::vector<Span> search{{std::format(" {} ", glyph.search), tone_pen(Tone::heading)}};
     if (list.searching || !list.query.empty()) {
@@ -749,7 +813,7 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
         trail.push_back({std::string{parts.name},
                          &opened == &page ? tone_pen(Tone::name) : tone_pen(Tone::category)});
     }
-    draw_title(screen, app, size.cols, trail);
+    draw_title(screen, app, size.cols, trail, glyph);
     auto heading = cpv_spans(store.string(store.packages.at(page.package).cpv));
     heading.insert(heading.begin(), {std::format(" {} ", glyph.package), tone_pen(Tone::heading)});
     put_spans(screen, 1, 0, heading, size.cols);
@@ -939,7 +1003,8 @@ template <class S> void draw_check(S& screen, App& app, const Glyphs& glyph, Siz
                {{std::format(" {} egraph ", glyph.package),
                  {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
                 {std::format(" {} ", glyph.trail), tone_pen(Tone::note)},
-                {"check", tone_pen(Tone::name)}});
+                {"check", tone_pen(Tone::name)}},
+               glyph);
     const unsigned first = 3;
     const unsigned height = size.rows - first - 1;
     app.set_height(height);
@@ -1197,7 +1262,8 @@ template <class S> void draw_watch(S& screen, App& app, const Glyphs& glyph, Siz
                {{std::format(" {} egraph ", glyph.package),
                  {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
                 {std::format(" {} ", glyph.trail), tone_pen(Tone::note)},
-                {"emerge", tone_pen(Tone::name)}});
+                {"emerge", tone_pen(Tone::name)}},
+               glyph);
     const unsigned first = 2;
     // The pressure panel sits above the hints, a blank line above it, where there is room.
     const bool panel = size.rows >= first + pressure_rows + 7;
@@ -1285,7 +1351,8 @@ template <class S> void draw_output(S& screen, App& app, const Glyphs& glyph, Si
                  {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
                 {std::format(" :{}  ", output.command),
                  {.fg = palette::text, .bg = std::nullopt, .bold = true}},
-                {std::format("{} lines", output.rows.size()), tone_pen(Tone::count)}});
+                {std::format("{} lines", output.rows.size()), tone_pen(Tone::count)}},
+               glyph);
     const unsigned first = 2;
     const unsigned height = size.rows - first - 1;
     app.set_height(height);
@@ -1400,12 +1467,31 @@ Polled poll(std::optional<Job<T>>& job, bool requested, const Start& start, cons
 }
 
 // Runs until the user quits or input ends, making the fresh build a check asks for, or the
-// rebuild, in the background once the waiting view is on screen.
+// rebuild, in the background once the waiting view is on screen; and looking at the stores'
+// inputs every stale_interval, refreshing them in the background once they changed.
 template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Services& services) {
+    const auto now = [&services] {
+        return services.now ? services.now() : std::chrono::steady_clock::now();
+    };
+    const bool watches = services.stale && services.refresh && app.shared();
+    auto next_check = now() + stale_interval;
     std::optional<Job<CheckResult>> check;
     std::optional<Job<RebuildResult>> rebuild;
+    std::optional<Job<RefreshResult>> refresh;
     draw(screen, app, glyph);
     while (!app.done()) {
+        const auto refreshed = poll(
+            refresh, app.refresh_requested(), [&] { return services.refresh(); },
+            [&](RefreshResult result) {
+                app.finish_refresh(std::move(result));
+                next_check = now() + (app.refresh_error() ? retry_interval : stale_interval);
+            });
+        bool found_stale = false;
+        if (watches && !app.stale() && now() >= next_check) {
+            next_check = now() + stale_interval;
+            app.finish_stale_check(services.stale(*app.shared()));
+            found_stale = app.stale();
+        }
         const auto checked = poll(
             check, app.check_requested(),
             [&] {
@@ -1422,7 +1508,8 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
                                               std::unexpected(std::string{"no way to rebuild"})});
             },
             [&](RebuildResult result) { app.finish_rebuild(std::move(result)); });
-        if (checked == Polled::finished || rebuilt == Polled::finished) {
+        if (checked == Polled::finished || rebuilt == Polled::finished ||
+            refreshed == Polled::finished || found_stale) {
             // Drawn below before any key is read.
         } else if (const auto change = app.steve_change_requested()) {
             app.finish_steve_change(services.set_steve
@@ -1443,7 +1530,14 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
             app.finish_plan(services.plan ? services.plan(*list)
                                           : std::unexpected(std::string{"no way to plan"}));
         } else {
-            app.handle(screen.read(app.refresh()));
+            auto timeout = app.refresh();
+            if (watches && !app.stale()) {
+                const auto due =
+                    std::max(std::chrono::ceil<std::chrono::milliseconds>(next_check - now()),
+                             std::chrono::milliseconds{0});
+                timeout = timeout ? std::min(*timeout, due) : due;
+            }
+            app.handle(screen.read(timeout));
         }
         if (!app.done()) {
             draw(screen, app, glyph);
@@ -1453,8 +1547,8 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
 
 // Opens the terminal and runs the interface over the stores, first showing any warnings from
 // opening them; errors go to err.
-[[nodiscard]] Exit open_and_run(Stores stores, bool dynamic_deps, GlyphSet glyphs,
-                                const Services& services, std::span<const std::string> warnings,
-                                std::ostream& err);
+[[nodiscard]] Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps,
+                                GlyphSet glyphs, const Services& services,
+                                std::span<const std::string> warnings, std::ostream& err);
 
 } // namespace egraph::tui

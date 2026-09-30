@@ -511,12 +511,12 @@ bool paired(const Store& installed, const Evaluated& evaluated) {
 
 } // namespace
 
-App::Loaded::Loaded(Store installed_store, Evaluated evaluated_store, bool dynamic_deps)
-    : installed(std::move(installed_store)), evaluated(std::move(evaluated_store)),
-      dynamic(dynamic_deps && paired(installed, evaluated)
-                  ? std::optional<Store>{with_dynamic_deps(installed, evaluated)}
+App::Loaded::Loaded(std::shared_ptr<const Stores> shared, bool dynamic_deps)
+    : stores(std::move(shared)),
+      dynamic(dynamic_deps && paired(stores->installed, stores->evaluated)
+                  ? std::optional<Store>{with_dynamic_deps(stores->installed, stores->evaluated)}
                   : std::nullopt),
-      graph(build_graph(dynamic ? *dynamic : installed)) {}
+      graph(build_graph(dynamic ? *dynamic : stores->installed)) {}
 
 App::App(const Store& store, const Graph& graph, Update update)
     : store_(store), installed_(store), evaluated_(no_evaluated()), graph_(graph), update_(update) {
@@ -525,10 +525,13 @@ App::App(const Store& store, const Graph& graph, Update update)
     filter();
 }
 
-App::App(Stores stores, bool dynamic_deps, Update update) : App(no_store(), no_graph(), update) {
+App::App(Stores stores, bool dynamic_deps, Update update)
+    : App(std::make_shared<const Stores>(std::move(stores)), dynamic_deps, update) {}
+
+App::App(std::shared_ptr<const Stores> stores, bool dynamic_deps, Update update)
+    : App(no_store(), no_graph(), update) {
     dynamic_deps_ = dynamic_deps;
-    own(std::make_unique<const Loaded>(std::move(stores.installed), std::move(stores.evaluated),
-                                       dynamic_deps));
+    own(std::make_unique<const Loaded>(std::move(stores), dynamic_deps));
     index();
     recompute();
     // What there is to do first, when the evaluated store says.
@@ -539,9 +542,9 @@ App::App(Stores stores, bool dynamic_deps, Update update) : App(no_store(), no_g
 }
 
 void App::own(std::unique_ptr<const Loaded> loaded) {
-    store_ = loaded->dynamic ? *loaded->dynamic : loaded->installed;
-    installed_ = loaded->installed;
-    evaluated_ = loaded->evaluated;
+    store_ = loaded->dynamic ? *loaded->dynamic : loaded->stores->installed;
+    installed_ = loaded->stores->installed;
+    evaluated_ = loaded->stores->evaluated;
     graph_ = loaded->graph;
     owned_ = std::move(loaded);
 }
@@ -619,13 +622,150 @@ void App::index() {
     }
 }
 
-void App::adopt(Store installed, Evaluated evaluated, Source source) {
-    own(std::make_unique<const Loaded>(std::move(installed), std::move(evaluated), dynamic_deps_));
+void App::adopt(std::shared_ptr<const Stores> stores, Source source) {
+    own(std::make_unique<const Loaded>(std::move(stores), dynamic_deps_));
     source_ = source;
+    // They were built after any refresh asked for.
+    stale_.reset();
     pages_.clear();
     index();
     recompute();
     filter();
+}
+
+std::shared_ptr<const Stores> App::shared() const {
+    return owned_ ? owned_->stores : nullptr;
+}
+
+void App::finish_stale_check(std::optional<std::string> reason) {
+    stale_ = std::move(reason);
+}
+
+void App::finish_refresh(RefreshResult result) {
+    stale_.reset();
+    if (!result) {
+        refresh_error_ = std::move(result.error());
+        return;
+    }
+    refresh_error_.reset();
+    replace(std::move(*result));
+}
+
+std::optional<std::uint32_t> App::find_again(std::string_view cpv, std::string_view cp,
+                                             std::string_view slot) const {
+    if (const auto same = find(cpv)) {
+        return same;
+    }
+    const auto& store = this->store();
+    std::optional<std::uint32_t> named;
+    for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
+        const auto& pkg = store.packages.at(id);
+        if (store.string(pkg.cp) != cp) {
+            continue;
+        }
+        if (store.string(pkg.slot) == slot) {
+            return id;
+        }
+        named = named.value_or(id);
+    }
+    return named;
+}
+
+void App::replace(std::shared_ptr<const Stores> stores) {
+    // Where each view is, by names that outlast the old stores.
+    struct Place {
+        std::string cpv;
+        std::string cp;
+        std::string slot;
+    };
+    const auto place_of = [this](std::uint32_t id) {
+        const auto& pkg = store().packages.at(id);
+        return Place{.cpv = std::string{store().string(pkg.cpv)},
+                     .cp = std::string{store().string(pkg.cp)},
+                     .slot = std::string{store().string(pkg.slot)}};
+    };
+    struct Opened {
+        Place package;
+        Cursor cursor;
+        // The selected row, when it names a package.
+        std::optional<Place> row;
+        RowType type = RowType::note;
+        std::size_t depth = 0;
+        bool reverse = false;
+    };
+    const auto list_cursor = list_.cursor;
+    const auto listed = list_cursor.at < list_.shown.size()
+                            ? std::optional{place_of(list_.shown.at(list_cursor.at))}
+                            : std::nullopt;
+    std::vector<Opened> opened;
+    for (const auto& page : pages_) {
+        Opened entry{.package = place_of(page.package), .cursor = page.cursor, .row = std::nullopt};
+        if (page.cursor.at < page.rows.size()) {
+            const auto& row = page.rows.at(page.cursor.at);
+            entry.type = row.type;
+            entry.depth = row.depth;
+            entry.reverse = row.reverse;
+            if (selectable(row)) {
+                entry.row = place_of(row.link.package);
+            }
+        }
+        opened.push_back(std::move(entry));
+    }
+
+    own(std::make_unique<const Loaded>(std::move(stores), dynamic_deps_));
+    index();
+    recompute();
+    filter();
+
+    // The same distance from the top of the view as before.
+    const auto restore = [](Cursor& cursor, const Cursor& was, std::size_t at) {
+        cursor.at = at;
+        cursor.top = at - std::min(at, was.at - was.top);
+    };
+    const auto found = [&](const std::optional<Place>& place) -> std::optional<std::uint32_t> {
+        return place ? find_again(place->cpv, place->cp, place->slot) : std::nullopt;
+    };
+    if (!list_.shown.empty()) {
+        const auto id = found(listed);
+        const auto at = id ? std::ranges::find(list_.shown, *id) : list_.shown.end();
+        restore(list_.cursor, list_cursor,
+                at != list_.shown.end() ? static_cast<std::size_t>(at - list_.shown.begin())
+                                        : std::min(list_cursor.at, list_.shown.size() - 1));
+    }
+    pages_.clear();
+    for (const auto& entry : opened) {
+        const auto id = found(entry.package);
+        if (!id) {
+            continue;
+        }
+        open(*id);
+        auto& page = pages_.back();
+        const auto row = found(entry.row);
+        const auto same = std::ranges::find_if(page.rows, [&](const Row& candidate) {
+            return row && selectable(candidate) && candidate.type == entry.type &&
+                   candidate.depth == entry.depth && candidate.reverse == entry.reverse &&
+                   candidate.link.package == *row;
+        });
+        if (same != page.rows.end()) {
+            restore(page.cursor, entry.cursor, static_cast<std::size_t>(same - page.rows.begin()));
+        } else if (!row && !page.rows.empty()) {
+            restore(page.cursor, entry.cursor, std::min(entry.cursor.at, page.rows.size() - 1));
+        }
+    }
+    if (output_) {
+        for (std::size_t i = 0; i < output_->rows.size(); ++i) {
+            output_->links.at(i) = link_of(output_->rows.at(i));
+        }
+    }
+}
+
+std::optional<std::uint32_t> App::link_of(const std::vector<std::string>& fields) const {
+    for (const auto& field : fields) {
+        if (const auto id = find(field)) {
+            return id;
+        }
+    }
+    return std::nullopt;
 }
 
 void App::recompute() {
@@ -699,6 +839,9 @@ void App::handle(const Key& key) {
                          checked_->stage == Checked::Stage::rebuilding)) {
             ++checked_->frame;
         }
+        if (refresh_requested()) {
+            ++frame_;
+        }
     } else if (dialog_) {
         dialog_.reset();
     } else if (prompt_) {
@@ -759,15 +902,11 @@ void App::finish_command(const Answer& answer) {
     Output output{.command = std::move(command), .rows = {}, .links = {}, .cursor = {}};
     for (const auto& line : nonempty_lines(answer.out)) {
         std::vector<std::string> fields;
-        std::optional<std::uint32_t> link;
         for (const auto field : std::views::split(std::string_view{line}, '\t')) {
             fields.emplace_back(std::string_view{field});
-            if (!link) {
-                link = find(fields.back());
-            }
         }
+        output.links.push_back(link_of(fields));
         output.rows.push_back(std::move(fields));
-        output.links.push_back(link);
     }
     pages_.clear();
     output_ = std::move(output);
@@ -849,7 +988,7 @@ void App::finish_rebuild(RebuildResult result) {
     checked_->stage = Checked::Stage::rebuilt;
     checked_->cursor = {};
     checked_->drift.clear();
-    adopt(std::move(result->installed), std::move(result->evaluated), Source::saved);
+    adopt(std::move(*result), Source::saved);
 }
 
 bool App::watch_requested() const {
@@ -980,7 +1119,7 @@ void App::handle_steve(const Key& key) {
 }
 
 std::optional<std::chrono::milliseconds> App::refresh() const {
-    if (check_requested() || rebuild_requested()) {
+    if (check_requested() || rebuild_requested() || refresh_requested()) {
         return wait_interval;
     }
     if (watched_ && pages_.empty()) {
@@ -1076,7 +1215,7 @@ void App::handle_check(const Key& key) {
             checked.drift.clear();
             checked.stage = Checked::Stage::rebuilt;
             checked.cursor = {};
-            adopt(std::move(fresh.installed), std::move(fresh.evaluated), Source::preview);
+            adopt(std::make_shared<const Stores>(std::move(fresh)), Source::preview);
         }
     } else if (key.kind == KeyKind::enter || key.kind == KeyKind::right || is(key, U'l')) {
         if (checked.cursor.at < checked.drift.size()) {
@@ -1611,8 +1750,9 @@ DriftSign drift_sign(char sign) {
     }
 }
 
-Exit open_and_run(Stores stores, bool dynamic_deps, GlyphSet glyphs, const Services& services,
-                  std::span<const std::string> warnings, std::ostream& err) {
+Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps, GlyphSet glyphs,
+                  const Services& services, std::span<const std::string> warnings,
+                  std::ostream& err) {
 #if EGRAPH_HAVE_TUI
     auto screen = Screen::open();
     if (!screen) {

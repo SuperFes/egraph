@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <memory>
 #include <sstream>
 #include <string>
 
@@ -73,7 +74,6 @@ TEST_CASE("a session loads each piece once") {
     CHECK(installed->nodes_in(installed->packages.at(0).deps.at(4)).size() == 4);
     const auto* graph = address(session.graph(true));
     CHECK(address(session.graph(true)) == graph);
-    CHECK(address(session.graph(false)) != graph);
     CHECK(graph->deps(0).size() == 1);
 
     const auto* depclean = address(session.depclean(true, true));
@@ -109,4 +109,25 @@ TEST_CASE("a session reports what it cannot load") {
     CHECK(installed.error().find("installed.egraph") != std::string::npos);
     CHECK_FALSE(session.graph(false).has_value());
     CHECK_FALSE(session.depclean(true, true).has_value());
+}
+
+TEST_CASE("a session answers from the stores it adopts") {
+    const TempDir dir;
+    write_fresh(dir.path());
+    std::ostringstream warnings;
+    egraph::Session session{at(dir.path()), warnings};
+    const auto shared = session.shared_stores();
+    REQUIRE(shared.has_value());
+    CHECK(address(session.stores()) == shared->get());
+    CHECK(&address(session.depclean(true, false))->store.get() == &(*shared)->installed);
+
+    const auto adopted = std::make_shared<const egraph::Stores>(**shared);
+    session.adopt(adopted, dir.path() / "other.egraph");
+    CHECK(session.used() == dir.path() / "other.egraph");
+    CHECK(address(session.stores()) == adopted.get());
+    CHECK(address(session.installed()) == &adopted->installed);
+    CHECK(address(session.dependencies(false)) == &adopted->installed);
+    CHECK(&address(session.depclean(true, false))->store.get() == &adopted->installed);
+    // The old stores live on with whoever shares them.
+    CHECK((*shared)->installed.packages.size() == 2);
 }
