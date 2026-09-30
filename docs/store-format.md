@@ -109,7 +109,7 @@ The installed packages as emerge sees them against the repositories: their depen
 store it was built against, named after it (`installed.egraph` → `installed.evaluated.egraph`:
 the last extension replaced by `.evaluated.egraph`), and is written by the same builder run.
 
-It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 6.
+It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 7.
 Package ids are the installed store's, so an evaluated store is current only while the installed
 store beside it has the build start recorded in its meta, and its own inputs stat the same.
 
@@ -192,6 +192,11 @@ Blockers name nothing.
 6. Errors: list of `(kind, message)` string ids, as in the package record.
 7. The five node lists, as in the package record: the ebuild's dependency strings reduced under
    its USE, with matches naming installed package ids. Empty for a masked candidate.
+8. REQUIRED_USE: list of string ids, its tokens in order as `check_required_use` splits the
+   string. Empty for a masked candidate and where its EAPI has no REQUIRED_USE; a visible
+   candidate's are valid for its EAPI and IUSE, or depgraph would have masked it.
+9. Empty groups: 1 when its EAPI holds an empty group satisfied (`empty_groups_always_true`,
+   EAPI 6 and older), else 0; 0 for a masked candidate.
 
 Inputs are the installed store's configuration and profile inputs, the user's visibility and USE
 configuration (`package.accept_keywords`, `package.mask`, `package.unmask`, `package.license`,

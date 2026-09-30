@@ -99,9 +99,9 @@ def test_verified_updates_agree_with_emerge(playgrounds, tmp_path, name, mode):
     )
     if expected.success:
         assert result.returncode == 0, result.stderr
-    elif expected.blocked or expected.unsatisfied:
-        # Refused alike, for the same blockers after the same merge list, or for what nothing
-        # satisfies.
+    elif expected.blocked or expected.unsatisfied or expected.unmet:
+        # Refused alike, for the same blockers after the same merge list, for what nothing
+        # satisfies, or for REQUIRED_USE unmet.
         assert result.returncode == EXIT_REFUSED, result.stderr
     else:
         assert result.returncode == 1
@@ -154,6 +154,38 @@ def test_verified_refusals_agree_with_emerge(
         "--verify",
         target,
         emerge=real_emerge(system, tmp_path),
+    )
+    assert result.returncode == status, result.stderr
+
+
+@pytest.mark.parametrize(
+    "flags, target, status",
+    [
+        ([], "app-misc/req", EXIT_REFUSED),
+        ([], "app-misc/reqok", 0),
+        ([], "app-misc/reqdep", EXIT_REFUSED),
+        ([], "app-misc/reqchoice", EXIT_REFUSED),
+        ([], "app-misc/reqcond", EXIT_REFUSED),
+        ([], "app-misc/reqold", 0),
+        ([], "app-misc/fb", EXIT_REFUSED),
+        ([], "app-misc/rev", 0),
+        ([], "app-misc/kinds", 0),
+        ([], "app-misc/kinds2", EXIT_REFUSED),
+        ([], "app-misc/pd", 0),
+        (["-u"], "dev-libs/held", EXIT_REFUSED),
+        (["-u", "-D"], "@world", EXIT_REFUSED),
+    ],
+)
+def test_verified_required_use_agrees_with_emerge(
+    playgrounds, tmp_path, flags, target, status
+):
+    """emerge refuses, for REQUIRED_USE unmet, the version egraph refuses, wherever it selects
+    one."""
+    system = playgrounds("required")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path, request_all=True)
+    result = egraph(
+        path, "plan", *flags, "--verify", target, emerge=real_emerge(system, tmp_path)
     )
     assert result.returncode == status, result.stderr
 

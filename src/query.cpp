@@ -425,9 +425,10 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
             }
         }
     }
-    // Uninstalls, blocks and unsatisfied dependencies, after everything else.
+    // Uninstalls, blocks, unsatisfied dependencies and unmet REQUIRED_USE, after everything else.
     std::vector<std::string> trailing_rows;
-    trailing_rows.reserve(plan.uninstalls.size() + plan.blocks.size() + plan.unsatisfied.size());
+    trailing_rows.reserve(plan.uninstalls.size() + plan.blocks.size() + plan.unsatisfied.size() +
+                          plan.unmet.size());
     const auto block_fields = [&](const Block& block) {
         return std::format("{}\t{}\t{}", member(block.holder), block.atom, member(block.blocked));
     };
@@ -442,6 +443,18 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
     for (const auto& each : plan.unsatisfied) {
         trailing_rows.push_back(
             std::format("{}\tunsatisfied\t{}", each.member ? member(*each.member) : "", each.atom));
+    }
+    for (const auto index : plan.unmet) {
+        const auto& candidate = evaluated.candidates.at(index);
+        std::string whole;
+        for (const auto id : evaluated.ids_in(candidate.required_use)) {
+            whole += std::format("{}{}", whole.empty() ? "" : " ", evaluated.string(id));
+        }
+        auto unmet = required_use_of(evaluated, candidate).unsatisfied;
+        trailing_rows.push_back(
+            std::format("{}\trequired-use\t{}\t{}\t{}\t{}", evaluated.string(candidate.cpv),
+                        evaluated.string(candidate.repo), use_display(evaluated, candidate), unmet,
+                        unmet == whole ? std::string{} : whole));
     }
     std::vector<std::string> lines;
     if (table) {

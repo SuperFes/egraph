@@ -191,6 +191,10 @@ by a replacement.
 A merge whose dependency nothing satisfies, or an ebuild with invalid metadata, is passed over for
 another version, as emerge backtracks; when what emerge must merge has none left, the plan ends
 with the dependencies no visible version matches, and emerge refuses it too.
+So it does a version emerge would select whose REQUIRED_USE its USE leaves unsatisfied, even one
+it then passes over: the plan ends with the constraints left unmet, which a
+.I package.use
+change must meet.
 .TP
 .B \-\-dynamic\-deps
 .TP
@@ -401,7 +405,8 @@ found emerge merging otherwise.
 .B 6
 emerge would refuse the plan of
 .BR updates " or " plan :
-it has blockers emerge cannot resolve, or dependencies nothing satisfies.
+it has blockers emerge cannot resolve, dependencies nothing satisfies, or REQUIRED_USE its USE
+leaves unsatisfied.
 .SH EXAMPLES
 .TP
 .B egraph rdeps dev\-libs/openssl

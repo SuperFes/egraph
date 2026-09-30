@@ -119,6 +119,8 @@ TEST_CASE("the sample evaluated store decodes") {
     CHECK(visible.visible());
     CHECK(evaluated->ids_in(visible.use).size() == 1);
     CHECK(std::ranges::equal(evaluated->ids_in(visible.forced), std::array{8U}));
+    CHECK(std::ranges::equal(evaluated->ids_in(visible.required_use), std::array{8U}));
+    CHECK_FALSE(visible.empty_groups_true);
     const auto& masked = evaluated->candidates.at(1);
     CHECK_FALSE(masked.visible());
     CHECK(evaluated->string(evaluated->ids_in(masked.reasons).front()) == "~amd64 keyword");
@@ -127,6 +129,8 @@ TEST_CASE("the sample evaluated store decodes") {
     }
     const auto& b2 = evaluated->candidates.back();
     CHECK(evaluated->pairs_in(b2.errors).empty());
+    CHECK(evaluated->ids_in(b2.required_use).empty());
+    CHECK(b2.empty_groups_true);
     const auto depend = evaluated->nodes_in(b2.deps.at(1));
     REQUIRE(depend.size() == 1);
     CHECK(evaluated->string(depend.front().atom) == "app-misc/a");

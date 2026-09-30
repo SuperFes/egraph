@@ -430,6 +430,26 @@ TEST_CASE("updates end with the dependencies nothing satisfies") {
                          "2 unsatisfied\n");
 }
 
+TEST_CASE("updates end with the REQUIRED_USE their USE leaves unmet") {
+    const std::vector<std::string> records{
+        "a/req-1\tnew\ta/req-1\tgentoo\tUSE=\"-a -b\"\t",
+        "a/req-1\trequired-use\tgentoo\tUSE=\"-a -b\"\t^^ ( a b )\t",
+        "a/cond-1\trequired-use\tgentoo\t\tx? ( || ( a b ) )\tx? ( || ( a b ) ) !x? ( b )",
+    };
+    std::ostringstream out;
+    egraph::human_updates(out, std::span(records).subspan(1), plain);
+    CHECK(out.str() == "\n"
+                       "Unmet REQUIRED_USE\n"
+                       "! a/req-1::gentoo  USE=\"-a -b\"\n"
+                       "    exactly-one-of ( a b )\n"
+                       "! a/cond-1::gentoo\n"
+                       "    x? ( any-of ( a b ) )\n"
+                       "    of x? ( any-of ( a b ) ) !x? ( b )\n"
+                       "its USE leaves REQUIRED_USE unsatisfied: emerge refuses the plan\n"
+                       "\n"
+                       "2 unmet\n");
+}
+
 TEST_CASE("blockers group by holder and count what they block") {
     const std::vector<std::string> records{
         "a/b-1\tRDEPEND\t!!x/gone\t",

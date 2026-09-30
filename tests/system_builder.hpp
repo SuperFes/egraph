@@ -47,6 +47,9 @@ struct Available {
     std::string iuse = {};
     std::string use = {};
     std::string forced = {};
+    // Space-separated tokens.
+    std::string required_use = {};
+    bool empty_groups_true = false;
 };
 
 struct System {
@@ -289,6 +292,13 @@ inline System make_system(const std::vector<Installed>& installed, std::vector<A
             evaluated.ids.push_back(evaluated_intern("package.mask"));
         } else {
             candidate.deps = detail::trees(ebuild.deps, evaluated, evaluated_intern, match);
+            candidate.required_use = {.first = static_cast<std::uint32_t>(evaluated.ids.size()),
+                                      .count = 0};
+            for (const auto& token : detail::tokens(ebuild.required_use)) {
+                evaluated.ids.push_back(evaluated_intern(token));
+                ++candidate.required_use.count;
+            }
+            candidate.empty_groups_true = ebuild.empty_groups_true;
         }
         evaluated.candidates.push_back(candidate);
     }

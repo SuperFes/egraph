@@ -9,6 +9,8 @@
 #include <iterator>
 #include <map>
 #include <optional>
+#include <string_view>
+#include <tuple>
 #include <utility>
 
 namespace egraph {
@@ -210,10 +212,19 @@ template <typename T> void sort_unique(std::vector<T>& values) {
 
 Pretend parse_pretend(std::string_view output, bool failed) {
     Pretend found;
+    // The line after an unmet requirements message: "- cpv::repo USE=...".
+    bool unmet_next = false;
     while (!output.empty()) {
         const auto newline = std::min(output.find('\n'), output.size());
         const auto line = output.substr(0, newline);
-        if (auto merge = parse_merge(line)) {
+        const bool unmet_line = std::exchange(unmet_next, false);
+        if (unmet_line && failed && line.starts_with("- ")) {
+            const auto key = line.substr(2);
+            found.unmet.emplace_back(key.substr(0, std::min(key.find(' '), key.size())));
+        } else if (line.starts_with("!!! The ebuild selected to satisfy \"") &&
+                   line.ends_with("\" has unmet requirements.")) {
+            unmet_next = true;
+        } else if (auto merge = parse_merge(line)) {
             found.merges.push_back(std::move(*merge));
         } else if (auto uninstall = parse_uninstall(line)) {
             found.merges.push_back(std::move(*uninstall));
@@ -226,6 +237,7 @@ Pretend parse_pretend(std::string_view output, bool failed) {
     }
     sort_unique(found.blocks);
     sort_unique(found.unsatisfied);
+    sort_unique(found.unmet);
     return found;
 }
 
@@ -259,21 +271,32 @@ Pretend planned_merges(const Store& store, const Evaluated& evaluated, const Pla
     for (const auto& each : plan.unsatisfied) {
         found.unsatisfied.push_back(each.atom);
     }
+    for (const auto index : plan.unmet) {
+        const auto& candidate = evaluated.candidates.at(index);
+        found.unmet.push_back(std::format("{}::{}", evaluated.string(candidate.cpv),
+                                          evaluated.string(candidate.repo)));
+    }
     sort_unique(found.blocks);
     sort_unique(found.unsatisfied);
+    sort_unique(found.unmet);
     return found;
 }
 
 std::vector<std::string> merge_differences(const Pretend& our_list, const Pretend& their_list) {
-    if (!their_list.unsatisfied.empty()) {
+    if (!their_list.unsatisfied.empty() || !their_list.unmet.empty()) {
         // Both sorted.
-        std::vector<std::string> missed;
-        std::ranges::set_difference(their_list.unsatisfied, our_list.unsatisfied,
-                                    std::back_inserter(missed));
         std::vector<std::string> lines;
-        for (const auto& atom : missed) {
-            lines.push_back(std::format("{}\temerge\tunsatisfied", atom));
+        for (const auto& [theirs, ours, kind] :
+             {std::tuple{&their_list.unsatisfied, &our_list.unsatisfied,
+                         std::string_view{"unsatisfied"}},
+              std::tuple{&their_list.unmet, &our_list.unmet, std::string_view{"required-use"}}}) {
+            std::vector<std::string> missed;
+            std::ranges::set_difference(*theirs, *ours, std::back_inserter(missed));
+            for (const auto& key : missed) {
+                lines.push_back(std::format("{}\temerge\t{}", key, kind));
+            }
         }
+        std::ranges::sort(lines);
         return lines;
     }
     const auto& ours = our_list.merges;
@@ -332,6 +355,9 @@ std::vector<std::string> merge_differences(const Pretend& our_list, const Preten
     }
     for (const auto& atom : our_list.unsatisfied) {
         lines.push_back(std::format("{}\tegraph\tunsatisfied", atom));
+    }
+    for (const auto& key : our_list.unmet) {
+        lines.push_back(std::format("{}\tegraph\trequired-use", key));
     }
     std::ranges::sort(lines);
     return lines;

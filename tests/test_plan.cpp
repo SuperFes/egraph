@@ -62,6 +62,10 @@ std::vector<std::string> plan(const egraph::test::System& system,
                                     each.member ? member(system, *each.member) : "argument",
                                     each.atom));
     }
+    for (const auto each : found.unmet) {
+        lines.push_back(
+            std::format("unmet {}", evaluated.string(evaluated.candidates.at(each).cpv)));
+    }
     return lines;
 }
 
@@ -1176,4 +1180,119 @@ TEST_CASE("-uD refuses what it reaches and keeps with a run-time dependency noth
                          {}, {"app-misc/usedep"}),
              egraph::UseRebuilds::none,
              world) == std::vector<std::string>{"unsatisfied app-misc/usedep-1 dev-libs/lib[gtk]"});
+}
+
+TEST_CASE("a merge whose REQUIRED_USE its USE leaves unsatisfied is refused") {
+    const auto system = make_system(
+        {{.cpv = "app-misc/requpd-1"}},
+        {{.cpv = "app-misc/req-1", .iuse = "a b", .required_use = "^^ ( a b )"},
+         {.cpv = "app-misc/reqok-1", .iuse = "a b", .use = "a", .required_use = "^^ ( a b )"},
+         {.cpv = "app-misc/requpd-1", .iuse = "a"},
+         {.cpv = "app-misc/requpd-2", .iuse = "a", .required_use = "a"},
+         {.cpv = "app-misc/reqdep-1", .deps = {{"RDEPEND", "app-misc/req"}}},
+         {.cpv = "app-misc/reqchoice-1",
+          .deps = {{"RDEPEND", "|| ( app-misc/req app-misc/reqok )"}}}},
+        {"app-misc/requpd"});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/req"})) ==
+          std::vector<std::string>{"new app-misc/req-1 <- ", "unmet app-misc/req-1"});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/reqok"})) ==
+          std::vector<std::string>{"new app-misc/reqok-1 <- "});
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               egraph::Targets{.scope = {}, .roots = true, .deep = true}) ==
+          std::vector<std::string>{"app-misc/requpd-1 -> app-misc/requpd-2",
+                                   "unmet app-misc/requpd-2"});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/reqdep"})) ==
+          std::vector<std::string>{"new app-misc/req-1 <- app-misc/reqdep-1 app-misc/req",
+                                   "new app-misc/reqdep-1 <- ", "unmet app-misc/req-1"});
+    // It chooses among a ||'s alternatives regardless.
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/reqchoice"})) ==
+          std::vector<std::string>{"new app-misc/req-1 <- app-misc/reqchoice-1 app-misc/req",
+                                   "new app-misc/reqchoice-1 <- ", "unmet app-misc/req-1"});
+    const auto& [store, evaluated] = system;
+    CHECK(egraph::plan_updates(store, evaluated, egraph::UseRebuilds::none,
+                               reinstall({"app-misc/req"}))
+              .refused());
+}
+
+TEST_CASE("REQUIRED_USE is weighed wherever emerge selects a version, before its dependencies") {
+    const auto system = make_system(
+        {{.cpv = "dev-libs/held-1"},
+         {.cpv = "app-misc/holder-1", .deps = {{"RDEPEND", "<dev-libs/held-2"}}}},
+        {{.cpv = "dev-libs/held-1", .iuse = "a"},
+         {.cpv = "dev-libs/held-2", .iuse = "a", .required_use = "a"},
+         {.cpv = "app-misc/holder-1", .deps = {{"RDEPEND", "<dev-libs/held-2"}}},
+         {.cpv = "app-misc/fb-1"},
+         {.cpv = "app-misc/fb-2",
+          .deps = {{"RDEPEND", "dev-libs/missing"}},
+          .iuse = "a",
+          .required_use = "a"},
+         {.cpv = "dev-libs/badreq-1", .iuse = "a", .required_use = "a"},
+         {.cpv = "app-misc/rev-1"},
+         {.cpv = "app-misc/rev-2", .deps = {{"RDEPEND", "dev-libs/badreq dev-libs/missing"}}},
+         {.cpv = "app-misc/kinds-1"},
+         {.cpv = "app-misc/kinds-2",
+          .deps = {{"RDEPEND", "dev-libs/missing"}, {"DEPEND", "dev-libs/badreq"}}},
+         {.cpv = "app-misc/kinds2-1"},
+         {.cpv = "app-misc/kinds2-2",
+          .deps = {{"RDEPEND", "dev-libs/badreq"}, {"DEPEND", "dev-libs/missing"}}},
+         {.cpv = "app-misc/pd-1"},
+         {.cpv = "app-misc/pd-2",
+          .deps = {{"RDEPEND", "dev-libs/missing"}, {"PDEPEND", "dev-libs/badreq"}}},
+         {.cpv = "app-misc/late-1"},
+         {.cpv = "app-misc/late-2",
+          .deps = {{"RDEPEND", "dev-libs/missing || ( dev-libs/badreq )"}}}},
+        {"app-misc/holder", "dev-libs/held"});
+    // An update its dependents hold back.
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               egraph::Targets{.scope = {}, .roots = true, .deep = true}) ==
+          std::vector<std::string>{"dev-libs/held-1 held <- app-misc/holder-1 <dev-libs/held-2",
+                                   "unmet dev-libs/held-2"});
+    // Reached only through an atom that rejects it, emerge never selects it.
+    auto alone = reinstall({"=app-misc/holder-1"}, true);
+    alone.selection = egraph::Selection::update;
+    CHECK(plan(system, egraph::UseRebuilds::none, alone) ==
+          std::vector<std::string>{"dev-libs/held-1 held <- app-misc/holder-1 <dev-libs/held-2"});
+    // A version given up for its own missing dependency.
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/fb"})) ==
+          std::vector<std::string>{"new app-misc/fb-1 <- ", "unmet app-misc/fb-2"});
+    // What it would pull in only counts when emerge gets to it: a dependency nothing satisfies
+    // comes first within its string, and RDEPEND, IDEPEND, PDEPEND, DEPEND, BDEPEND in turn,
+    // with || groups last.
+    for (const auto* name : {"app-misc/rev", "app-misc/kinds", "app-misc/pd", "app-misc/late"}) {
+        CHECK(plan(system, egraph::UseRebuilds::none, reinstall({name})) ==
+              std::vector<std::string>{std::format("new {}-1 <- ", name)});
+    }
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/kinds2"})) ==
+          std::vector<std::string>{"new app-misc/kinds2-1 <- ", "unmet dev-libs/badreq-1"});
+}
+
+TEST_CASE("required_use_of reduces a candidate's REQUIRED_USE under its USE") {
+    const auto system = make_system({}, {{.cpv = "app-misc/cond-1",
+                                          .iuse = "x a b c",
+                                          .use = "x",
+                                          .required_use = "x? ( || ( a b ) ) c? ( a ) !x? ( b )"},
+                                         {.cpv = "app-misc/old-1",
+                                          .iuse = "a",
+                                          .required_use = "|| ( )",
+                                          .empty_groups_true = true}});
+    const auto& evaluated = system.evaluated;
+    const auto cond = egraph::required_use_of(evaluated, evaluated.candidates.at(0));
+    CHECK_FALSE(cond.satisfied);
+    CHECK(cond.unsatisfied == "x? ( || ( a b ) )");
+    CHECK(egraph::required_use_of(evaluated, evaluated.candidates.at(1)).satisfied);
+}
+
+TEST_CASE("update_lines ends with the REQUIRED_USE left unmet, and all of it when only part is") {
+    const auto system = make_system({}, {{.cpv = "app-misc/cond-1",
+                                          .iuse = "x a b",
+                                          .use = "x",
+                                          .required_use = "x? ( || ( a b ) ) !x? ( b )"}});
+    const auto targets = reinstall({"app-misc/cond"});
+    const auto& [store, evaluated] = system;
+    CHECK(
+        egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, false, false, targets) ==
+        std::vector<std::string>{
+            "app-misc/cond-1\tnew\tapp-misc/cond-1\ttest_repo\tUSE=\"x -a -b\"\tapp-misc/cond",
+            "app-misc/cond-1\trequired-use\ttest_repo\tUSE=\"x -a -b\"\tx? ( || ( a b ) )"
+            "\tx? ( || ( a b ) ) !x? ( b )"});
 }

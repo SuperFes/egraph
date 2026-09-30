@@ -2,6 +2,7 @@
 
 #include "evaluated.hpp"
 #include "query.hpp"
+#include "required_use.hpp"
 #include "store.hpp"
 
 #include <cstdint>
@@ -99,10 +100,21 @@ struct Plan {
     // once every version it could fall back to has failed, each a package's with no visible
     // version left to match, or an argument plain emerge has no visible version of; sorted.
     std::vector<Missing> unsatisfied;
+    // Indices into Evaluated::candidates, sorted: versions whose REQUIRED_USE their USE leaves
+    // unsatisfied, which make emerge refuse the plan. emerge checks a version as it selects it,
+    // before its dependencies, and then backtracks no more: so every version a pass merged or
+    // pulled in counts, even one given up later, but for what a pull would add after a
+    // dependency nothing satisfies stops emerge first (see plan_updates).
+    std::vector<std::uint32_t> unmet;
 
     // emerge would refuse the plan.
-    [[nodiscard]] bool refused() const { return !blocks.empty() || !unsatisfied.empty(); }
+    [[nodiscard]] bool refused() const {
+        return !blocks.empty() || !unsatisfied.empty() || !unmet.empty();
+    }
 };
+
+// The candidate's REQUIRED_USE weighed under its USE.
+[[nodiscard]] RequiredUse required_use_of(const Evaluated& evaluated, const Candidate& candidate);
 
 // What emerge -uD would merge for targets, with store's dependencies (read with or without
 // dynamic deps) for the installed packages and the candidates' own for what it merges:
@@ -129,6 +141,11 @@ struct Plan {
 // its atom matches and rebuilds what binds to it, as plain emerge does; an atom named alone
 // under -uD keeps its installed version instead. Outside targets.reach, a rebuild takes the best
 // version in its slot, for a run-time binding only.
+// A version counts as selected, for Plan::unmet, when a pass merges it or pulls it in, but for
+// a pull from dependencies emerge never reaches: those of a kind at or after the first (in
+// emerge's order RDEPEND, IDEPEND, PDEPEND, DEPEND, BDEPEND) with an atom nothing satisfies, and
+// any || group's once one does. Across packages emerge's order is not followed, so this may
+// count a version emerge never gets to.
 // Then its blockers are weighed as emerge validates them (weigh_blockers), and -u's greedy
 // slots leave out an installed slot whose best version and the atom's best block each other.
 [[nodiscard]] Plan plan_updates(const Store& store, const Evaluated& evaluated,

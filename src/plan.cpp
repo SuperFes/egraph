@@ -6,6 +6,7 @@
 #include "version.hpp"
 
 #include <algorithm>
+#include <array>
 #include <format>
 #include <functional>
 #include <map>
@@ -30,6 +31,13 @@ using SlotKey = std::pair<std::string, std::string>;
 
 std::optional<Version> version_of(std::string_view cpv, std::string_view cp) {
     return parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
+}
+
+// Where the dependency kind comes in emerge's walk of a package's dependencies.
+std::size_t emerge_rank(std::size_t kind) {
+    constexpr std::array<std::string_view, 5> order{"RDEPEND", "IDEPEND", "PDEPEND", "DEPEND",
+                                                    "BDEPEND"};
+    return static_cast<std::size_t>(std::ranges::find(order, dep_kinds.at(kind)) - order.begin());
 }
 
 class Planner {
@@ -218,6 +226,8 @@ class Planner {
     std::set<std::uint32_t> unmatched_;
     // Candidates emerge's backtracking masks once a dependency of theirs failed, with it.
     std::map<std::uint32_t, Reason> backtracked_;
+    // Candidates emerge would have selected in some pass, and so checked their REQUIRED_USE.
+    std::set<std::uint32_t> selected_;
     std::map<std::string, std::vector<std::uint32_t>, std::less<>> by_cp_;
     std::map<std::string, std::optional<Atom>, std::less<>> atoms_;
     // Slot and sub-slot a slot-operator atom is bound to, by the atom's text.
@@ -1003,6 +1013,44 @@ class Planner {
         return std::nullopt;
     }
 
+    // Selects each of unselected that an atom of the member's dependencies matches: every kind
+    // of a candidate's, only the run-time ones of an installed package, whose build-time ones
+    // emerge passes over.
+    void
+    select_matched(const Tables& tables, const Member& member,
+                   std::map<std::string, std::vector<std::uint32_t>, std::less<>>& unselected) {
+        for (std::size_t kind = 0; kind < dep_kinds.size() && !unselected.empty(); ++kind) {
+            if (!member.candidate &&
+                (dep_kinds.at(kind) == "DEPEND" || dep_kinds.at(kind) == "BDEPEND")) {
+                continue;
+            }
+            for (const auto& node : nodes(member, kind)) {
+                if (node.type != NodeType::atom) {
+                    continue;
+                }
+                const auto& wanted = atom(tables.string(node.atom));
+                if (!wanted) {
+                    continue;
+                }
+                const auto found = unselected.find(wanted->cp);
+                if (found == unselected.end()) {
+                    continue;
+                }
+                std::erase_if(found->second, [&](std::uint32_t candidate) {
+                    if (!matches(store(), evaluated(), evaluated().candidates.at(candidate),
+                                 *wanted)) {
+                        return false;
+                    }
+                    selected_.insert(candidate);
+                    return true;
+                });
+                if (found->second.empty()) {
+                    unselected.erase(found);
+                }
+            }
+        }
+    }
+
     // One pass over the current choices: false once none of them moved.
     bool settle() {
         pulled_.clear();
@@ -1012,9 +1060,19 @@ class Planner {
         needed_.clear();
         missing_.clear();
         std::vector<Work> work;
+        // Merged updates emerge selects only through an atom that matches them: an argument's,
+        // or a dependency's of what it traverses. By cp.
+        std::map<std::string, std::vector<std::uint32_t>, std::less<>> unselected;
         for (std::uint32_t id = 0; id < choices_.size(); ++id) {
             if (const auto merged = choices_.at(id).merged()) {
                 place(*merged);
+                if (argument(id)) {
+                    selected_.insert(*merged);
+                } else {
+                    unselected[std::string(
+                                   evaluated().string(evaluated().candidates.at(*merged).cp))]
+                        .push_back(*merged);
+                }
                 work.push_back({.member = {.candidate = true, .index = *merged}, .root = id});
             }
         }
@@ -1038,6 +1096,7 @@ class Planner {
                 continue;
             }
             place(candidate);
+            selected_.insert(candidate);
             pulled_.push_back({.candidate = candidate, .by = {}, .named_by = root, .root = {}});
             work.push_back({.member = {.candidate = true, .index = candidate}, .root = {}});
         }
@@ -1074,6 +1133,7 @@ class Planner {
                             Rebuilt{.candidate = *own,
                                     .why = {.member = {.candidate = true, .index = first.merged},
                                             .atom = first.atom}});
+                        selected_.insert(*own);
                         work.push_back(
                             {.member = {.candidate = true, .index = *own}, .root = first.replaced});
                     } else {
@@ -1091,6 +1151,7 @@ class Planner {
                         rebuilt_.emplace(item.member.index,
                                          Rebuilt{.candidate = found.own,
                                                  .why = {.member = *child, .atom = found.bound}});
+                        selected_.insert(found.own);
                         work.push_back({.member = {.candidate = true, .index = found.own},
                                         .root = child->candidate ? found.installed : std::nullopt});
                         continue;
@@ -1098,7 +1159,15 @@ class Planner {
                 }
             }
             const auto& tables = this->tables(item.member);
+            if (item.member.candidate || (deep() && reached(item.member.index))) {
+                select_matched(tables, item.member, unselected);
+            }
+            // What emerge would reach of what this member pulls: (rank, in a ||, candidate), and
+            // the first rank with an atom nothing satisfies.
+            std::vector<std::tuple<std::size_t, bool, std::uint32_t>> reached_pulls;
+            std::optional<std::size_t> stopped;
             for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+                const auto rank = emerge_rank(kind);
                 const auto list = nodes(item.member, kind);
                 const auto ok = satisfied_nodes(tables, list);
                 for (std::size_t i = 0; i < list.size(); ++i) {
@@ -1121,8 +1190,10 @@ class Planner {
                     }
                     std::vector<std::pair<std::uint32_t, std::string>> pulls;
                     wanted_.clear();
+                    const bool disjunctive = element(list, i).type == NodeType::any_of;
                     if (pull(tables, list, i, pulls)) {
                         for (auto& [candidate, text] : pulls) {
+                            reached_pulls.emplace_back(rank, disjunctive, candidate);
                             pulled_.push_back(
                                 {.candidate = candidate,
                                  .by = Reason{.member = item.member, .atom = std::move(text)},
@@ -1143,9 +1214,11 @@ class Planner {
                     if (const auto held = replaced_match(tables, list, i)) {
                         rejected[held->first].push_back(
                             {.member = item.member, .atom = held->second});
-                    } else if (!item.member.candidate && dep_kinds.at(kind) != "DEPEND" &&
-                               dep_kinds.at(kind) != "BDEPEND" &&
-                               (!lenient_ || matched_without_use(failed.atom))) {
+                        continue;
+                    }
+                    if (!item.member.candidate && dep_kinds.at(kind) != "DEPEND" &&
+                        dep_kinds.at(kind) != "BDEPEND" &&
+                        (!lenient_ || matched_without_use(failed.atom))) {
                         // -uD must satisfy what it reaches and keeps, but for what nothing
                         // matches at all, which it only skips for the world sets' packages.
                         missing_.push_back(failed);
@@ -1155,7 +1228,17 @@ class Planner {
                             backtracked_.try_emplace(item.member.index, failed).second || masked;
                     } else if (item.root) {
                         std::ranges::copy(leaves(failed), std::back_inserter(rejected[*item.root]));
+                    } else {
+                        continue;
                     }
+                    if (!disjunctive) {
+                        stopped = std::min(stopped.value_or(rank), rank);
+                    }
+                }
+            }
+            for (const auto& [rank, disjunctive, candidate] : reached_pulls) {
+                if (!stopped || (!disjunctive && rank < *stopped)) {
+                    selected_.insert(candidate);
                 }
             }
         }
@@ -1340,6 +1423,11 @@ class Planner {
         std::ranges::sort(plan.unsatisfied);
         const auto [first, last] = std::ranges::unique(plan.unsatisfied);
         plan.unsatisfied.erase(first, last);
+        for (const auto candidate : selected_) {
+            if (!required_use_of(evaluated(), evaluated().candidates.at(candidate)).satisfied) {
+                plan.unmet.push_back(candidate);
+            }
+        }
         for (const auto& found : pulled) {
             plan.merges.push_back({.candidate = found.candidate,
                                    .replaces = {},
@@ -1483,6 +1571,18 @@ void order_merges(const Store& store, const Evaluated& evaluated, Plan& plan) {
 }
 
 } // namespace
+
+RequiredUse required_use_of(const Evaluated& evaluated, const Candidate& candidate) {
+    std::vector<std::string_view> tokens;
+    for (const auto id : evaluated.ids_in(candidate.required_use)) {
+        tokens.push_back(evaluated.string(id));
+    }
+    std::set<std::string_view> enabled;
+    for (const auto id : evaluated.ids_in(candidate.use)) {
+        enabled.insert(evaluated.string(id));
+    }
+    return check_required_use(tokens, enabled, candidate.empty_groups_true);
+}
 
 Plan plan_updates(const Store& store, const Evaluated& evaluated, UseRebuilds rebuilds,
                   const Targets& targets) {

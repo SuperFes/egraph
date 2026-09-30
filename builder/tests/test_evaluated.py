@@ -313,6 +313,25 @@ def test_candidate_forced_flags_are_the_profiles(playgrounds):
     assert fresh.forced == ("fixed", "python_targets_py3_12", "stuck")
 
 
+def test_candidate_required_use_is_the_ebuilds(playgrounds):
+    system = playgrounds("required")
+    layer, _ = evaluated.rebuild(
+        system.vardb,
+        portdb(system),
+        None,
+        None,
+        requested={"app-misc/req", "app-misc/reqold", "app-misc/reqdep"},
+    )
+    (req,) = layer.candidates("app-misc/req")
+    assert req.required_use == ("^^", "(", "a", "b", ")")
+    assert not req.empty_groups_true
+    (old,) = layer.candidates("app-misc/reqold")
+    assert old.required_use == ("||", "(", ")")
+    assert old.empty_groups_true
+    (plain,) = layer.candidates("app-misc/reqdep")
+    assert plain.required_use == ()
+
+
 def test_use_expand_is_the_configurations(playgrounds):
     layer = build(playgrounds("pulls"))
     assert {"python_targets", "video_cards"} <= set(layer.use_expand())

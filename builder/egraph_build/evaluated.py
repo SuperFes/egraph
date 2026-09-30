@@ -12,6 +12,7 @@ import json
 from typing import NamedTuple
 
 from portage.dep import Atom, use_reduce
+from portage.eapi import _get_eapi_attrs
 from portage.exception import InvalidAtom, InvalidDependString
 from portage.versions import cpv_getkey
 
@@ -115,6 +116,11 @@ class Candidate(NamedTuple):
     # One node tuple per kind, as in installed.Package, reduced under use; matches name
     # installed cpvs. Empty lists for a masked candidate.
     deps: tuple = NO_DEPS
+    # REQUIRED_USE's tokens as check_required_use splits them; empty for a masked candidate or
+    # where its EAPI has none.
+    required_use: tuple = ()
+    # Its EAPI's empty_groups_always_true; False for a masked candidate.
+    empty_groups_true: bool = False
 
 
 def _cpv(pkg):
@@ -504,11 +510,16 @@ def read_candidates(portdb, settings, cp, installed_cpvs, match, ebuild_use=None
                 ebuild_use.record(cpv, repo, iuse, settings)
             slot, _, sub_slot = metadata["SLOT"].partition("/")
             use = tuple(sorted(settings["PORTAGE_USE"].split()))
-            deps, errors = NO_DEPS, ()
+            deps, errors, required_use, empty_groups_true = NO_DEPS, (), (), False
             if not reasons:
+                attrs = _get_eapi_attrs(metadata["EAPI"])
+                empty_groups_true = attrs.empty_groups_always_true
                 deps, errors = installed.dependency_trees(
                     metadata, frozenset(use), metadata["EAPI"], match
                 )
+                # An invalid REQUIRED_USE, or one its EAPI lacks, masks it.
+                if attrs.required_use:
+                    required_use = tuple(metadata["REQUIRED_USE"].split())
             found.append(
                 Candidate(
                     cp=cp,
@@ -530,6 +541,8 @@ def read_candidates(portdb, settings, cp, installed_cpvs, match, ebuild_use=None
                     reasons=reasons,
                     errors=tuple(errors),
                     deps=deps,
+                    required_use=required_use,
+                    empty_groups_true=empty_groups_true,
                 )
             )
     return found
@@ -759,11 +772,13 @@ def to_json(layer):
             "reasons": list(c.reasons),
             "errors": [list(error) for error in c.errors],
             "deps": installed.deps_json(c.deps),
+            "required_use": list(c.required_use),
+            "empty_groups_true": c.empty_groups_true,
         }
         for c in layer.candidates()
     ]
     document = {
-        "format": 6,
+        "format": 7,
         "packages": packages,
         "candidates": candidates,
         "repository_cps": list(layer.repository_cps()),

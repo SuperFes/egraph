@@ -1,4 +1,5 @@
 #include "human.hpp"
+#include "required_use.hpp"
 
 #include "version.hpp"
 
@@ -775,17 +776,22 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
         places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
     }
-    // Uninstalls, blocks and unsatisfied dependencies, taken off: they share no columns with the
-    // merges.
+    // Uninstalls, blocks, unsatisfied dependencies and unmet REQUIRED_USE, taken off: they share
+    // no columns with the merges.
     std::vector<Fields> uninstalls;
     std::vector<Fields> blocks;
     std::vector<Fields> unsatisfied;
+    std::vector<Fields> unmet;
     for (std::size_t i = rows.size(); i-- > 0;) {
         const auto kind = rows.at(i).size() > 1 ? rows.at(i).at(1) : std::string_view{};
-        if (kind != "uninstall" && kind != "blocks" && kind != "unsatisfied") {
+        if (kind != "uninstall" && kind != "blocks" && kind != "unsatisfied" &&
+            kind != "required-use") {
             continue;
         }
-        auto& into = kind == "uninstall" ? uninstalls : kind == "blocks" ? blocks : unsatisfied;
+        auto& into = kind == "uninstall"     ? uninstalls
+                     : kind == "blocks"      ? blocks
+                     : kind == "unsatisfied" ? unsatisfied
+                                             : unmet;
         into.push_back(std::move(rows.at(i)));
         rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
         places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
@@ -793,6 +799,8 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     std::ranges::reverse(uninstalls);
     std::ranges::reverse(blocks);
     std::ranges::reverse(unsatisfied);
+    std::ranges::reverse(unmet);
+    const bool refusals = !unsatisfied.empty() || !unmet.empty();
     const auto is_held = [](const auto& row) { return row.at(1) == "held"; };
     const auto is_new = [](const auto& row) { return row.at(1) == "new"; };
     // Every row shares the columns, so held ones line up under the updates.
@@ -917,11 +925,11 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                        : Tone::use);
     }
     if (counts.at(0) + counts.at(1) + counts.at(2) + counts.at(3) == 0) {
-        if (unsatisfied.empty()) {
+        if (!refusals) {
             out << paint(glyph.good, Tone::good) << ' ' << paint("Nothing to update.", Tone::good)
                 << '\n';
         }
-        if (counts.at(4) == 0 && unsatisfied.empty()) {
+        if (counts.at(4) == 0 && !refusals) {
             return;
         }
     }
@@ -1022,7 +1030,24 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         }
         out << paint("no visible version matches: emerge refuses the plan", Tone::bad) << '\n';
     }
-    constexpr std::array<std::array<std::string_view, 2>, 8> nouns{
+    if (!unmet.empty()) {
+        out << '\n' << paint("Unmet REQUIRED_USE", Tone::heading) << '\n';
+        for (const auto& row : unmet) {
+            out << paint(glyph.broken, Tone::bad) << ' ' << paint_cpv(row.at(0), paint)
+                << paint(std::format("::{}", row.at(2)), Tone::repo);
+            if (!row.at(3).empty()) {
+                out << "  " << paint(row.at(3), Tone::use);
+            }
+            out << "\n    " << paint(human_readable_required_use(row.at(4)), Tone::bad) << '\n';
+            if (row.size() > 5 && !row.at(5).empty()) {
+                out << "    " << paint("of", Tone::note) << ' '
+                    << paint(human_readable_required_use(row.at(5)), Tone::note) << '\n';
+            }
+        }
+        out << paint("its USE leaves REQUIRED_USE unsatisfied: emerge refuses the plan", Tone::bad)
+            << '\n';
+    }
+    constexpr std::array<std::array<std::string_view, 2>, 9> nouns{
         {{" upgrade", " upgrades"},
          {" downgrade", " downgrades"},
          {" rebuild", " rebuilds"},
@@ -1030,12 +1055,14 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
          {" held", " held"},
          {" uninstall", " uninstalls"},
          {" blocker", " blockers"},
-         {" unsatisfied", " unsatisfied"}}};
-    std::array<std::size_t, 8> all{};
+         {" unsatisfied", " unsatisfied"},
+         {" unmet", " unmet"}}};
+    std::array<std::size_t, 9> all{};
     std::ranges::copy(counts, all.begin());
     all.at(5) = uninstalls.size();
     all.at(6) = blocks.size();
     all.at(7) = unsatisfied.size();
+    all.at(8) = unmet.size();
     out << '\n';
     bool first = true;
     for (std::size_t i = 0; i < all.size(); ++i) {

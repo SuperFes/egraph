@@ -1030,4 +1030,74 @@ SCENARIOS = {
             "app-misc/deepupd-1": {"EAPI": "8"},
         },
     },
+    "required": {
+        # REQUIRED_USE its USE leaves unsatisfied refuses an update, which the targets leave to
+        # plans.
+        "held": True,
+        "world": ["app-misc/requpd", "app-misc/holder", "dev-libs/held"],
+        "ebuilds": {
+            "app-misc/req-1": {
+                "EAPI": "8",
+                "IUSE": "a b",
+                "REQUIRED_USE": "^^ ( a b )",
+            },
+            "app-misc/reqok-1": {
+                "EAPI": "8",
+                "IUSE": "+a b",
+                "REQUIRED_USE": "^^ ( a b )",
+            },
+            "app-misc/requpd-1": {"EAPI": "8", "IUSE": "a"},
+            "app-misc/requpd-2": {"EAPI": "8", "IUSE": "a", "REQUIRED_USE": "a"},
+            "app-misc/reqdep-1": {"EAPI": "8", "RDEPEND": "app-misc/req"},
+            "app-misc/reqchoice-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( app-misc/req app-misc/reqok )",
+            },
+            "app-misc/reqcond-1": {
+                "EAPI": "8",
+                "IUSE": "+x a b c",
+                "REQUIRED_USE": "x? ( || ( a b ) ) c? ( a ) !x? ( b )",
+            },
+            "app-misc/reqold-1": {"EAPI": "6", "IUSE": "a", "REQUIRED_USE": "|| ( )"},
+            "dev-libs/held-1": {"EAPI": "8", "IUSE": "a"},
+            "dev-libs/held-2": {"EAPI": "8", "IUSE": "a", "REQUIRED_USE": "a"},
+            "app-misc/holder-1": {"EAPI": "8", "RDEPEND": "<dev-libs/held-2"},
+            "app-misc/fb-1": {"EAPI": "8"},
+            "app-misc/fb-2": {
+                "EAPI": "8",
+                "IUSE": "a",
+                "REQUIRED_USE": "a",
+                "RDEPEND": "dev-libs/missing",
+            },
+            "dev-libs/badreq-1": {"EAPI": "8", "IUSE": "a", "REQUIRED_USE": "a"},
+            "app-misc/rev-1": {"EAPI": "8"},
+            "app-misc/rev-2": {
+                "EAPI": "8",
+                "RDEPEND": "dev-libs/badreq dev-libs/missing",
+            },
+            "app-misc/kinds-1": {"EAPI": "8"},
+            "app-misc/kinds-2": {
+                "EAPI": "8",
+                "RDEPEND": "dev-libs/missing",
+                "DEPEND": "dev-libs/badreq",
+            },
+            "app-misc/kinds2-1": {"EAPI": "8"},
+            "app-misc/kinds2-2": {
+                "EAPI": "8",
+                "RDEPEND": "dev-libs/badreq",
+                "DEPEND": "dev-libs/missing",
+            },
+            "app-misc/pd-1": {"EAPI": "8"},
+            "app-misc/pd-2": {
+                "EAPI": "8",
+                "RDEPEND": "dev-libs/missing",
+                "PDEPEND": "dev-libs/badreq",
+            },
+        },
+        "installed": {
+            "app-misc/requpd-1": {"EAPI": "8", "IUSE": "a"},
+            "dev-libs/held-1": {"EAPI": "8", "IUSE": "a"},
+            "app-misc/holder-1": {"EAPI": "8", "RDEPEND": "<dev-libs/held-2"},
+        },
+    },
 }

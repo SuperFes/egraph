@@ -240,6 +240,7 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string(out, evaluated, candidate.cpv);
         out << ",\"deps\":";
         write_deps(out, evaluated, candidate.deps);
+        out << ",\"empty_groups_true\":" << (candidate.empty_groups_true ? "true" : "false");
         out << ",\"errors\":";
         write_pairs(out, evaluated, candidate.errors);
         out << ",\"forced\":";
@@ -250,6 +251,8 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string_list(out, evaluated, candidate.reasons);
         out << ",\"repo\":";
         write_string(out, evaluated, candidate.repo);
+        out << ",\"required_use\":";
+        write_string_list(out, evaluated, candidate.required_use);
         out << ",\"slot\":";
         write_string(out, evaluated, candidate.slot);
         out << ",\"sub_slot\":";
@@ -258,7 +261,7 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string_list(out, evaluated, candidate.use);
         out << '}';
     }
-    out << R"(],"format":6,"packages":[)";
+    out << R"(],"format":7,"packages":[)";
     first = true;
     for (const auto& pkg : evaluated.packages) {
         out << (first ? "{\"cpv\":" : ",{\"cpv\":");

@@ -142,7 +142,10 @@ struct RemedyInputs {
 // Last, "cpv<TAB>uninstall<TAB>holder<TAB>atom<TAB>blocked" for each installed package the plan
 // uninstalls, with the blocker that needs it, then "holder<TAB>blocks<TAB>atom<TAB>blocked" for
 // each blocker emerge cannot resolve, then "cpv<TAB>unsatisfied<TAB>atom" for each dependency
-// nothing satisfies, the cpv empty for an argument; in the table led by two empty fields too.
+// nothing satisfies, the cpv empty for an argument, then
+// "cpv<TAB>required-use<TAB>repo<TAB>USE<TAB>unsatisfied<TAB>complete" for each version whose
+// REQUIRED_USE its USE leaves unsatisfied: the constraints left, and the whole REQUIRED_USE when
+// they are only part of it (else empty); in the table led by two empty fields too.
 [[nodiscard]] std::vector<std::string>
 update_lines(const Store& store, const Evaluated& evaluated, UseRebuilds rebuilds,
              bool held = false, bool table = false, const Targets& targets = {},

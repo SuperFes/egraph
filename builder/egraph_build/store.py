@@ -33,7 +33,7 @@ INPUT_FILE, INPUT_DIRECTORY, INPUT_SYMLINK, INPUT_MISSING = range(4)
 DEFAULT_PATH = "var/cache/egraph/installed.egraph"
 
 EVALUATED_MAGIC = b"EGRAPHEV"
-EVALUATED_FORMAT_VERSION = 6
+EVALUATED_FORMAT_VERSION = 7
 (
     SECTION_DEPENDENCIES,
     SECTION_CANDIDATES,
@@ -296,6 +296,8 @@ def encode_evaluated(layer, meta, inputs=()):
             w.varint(strings(key))
             w.varint(strings(message))
         _write_trees(w, c.deps, strings, index)
+        w.ids([strings(token) for token in c.required_use])
+        w.varint(int(c.empty_groups_true))
     sections[SECTION_CANDIDATES] = w.out
 
     for section, cps in (
@@ -565,7 +567,11 @@ def decode_evaluated(data):
         lists = [tuple(strings[i] for i in r.ids(nstrings)) for _ in range(4)]
         errors = tuple((s(), s()) for _ in range(r.count()))
         deps = _read_trees(r, s, count, cpvs)
-        candidates.append(Candidate(*fields, *lists, errors, deps))
+        required_use = tuple(strings[i] for i in r.ids(nstrings))
+        empty_groups_true = bool(r.varint(2))
+        candidates.append(
+            Candidate(*fields, *lists, errors, deps, required_use, empty_groups_true)
+        )
     r.done()
 
     listed = []

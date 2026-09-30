@@ -42,6 +42,8 @@ class Updates(NamedTuple):
     blocked: bool = False
     # The atoms it shows no visible version satisfies, when it fails for them alone.
     unsatisfied: frozenset = frozenset()
+    # "cpv::repo" of the versions it shows REQUIRED_USE unmet for.
+    unmet: frozenset = frozenset()
 
 
 def updates(
@@ -169,6 +171,11 @@ def updates(
         and not dynamic._needed_use_config_changes
     ):
         unsatisfied = frozenset(str(atom) for atom in missing)
+    unmet = frozenset(
+        f"{details['show_req_use'].cpv}::{details['show_req_use'].repo}"
+        for _, details in dynamic._unsatisfied_deps_for_display
+        if details.get("show_req_use")
+    )
     return Updates(
         success,
         replaced,
@@ -181,6 +188,7 @@ def updates(
         blocks,
         blocked,
         unsatisfied,
+        unmet,
     )
 
 

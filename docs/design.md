@@ -359,6 +359,19 @@ matches; for the world sets' packages, whose missed updates emerge skips, only o
 would match without its USE dependencies. The builder masks an ebuild with invalid metadata as
 depgraph does (`masks.invalid_ebuild`), though the repository's `match-visible` counts it
 visible.
+REQUIRED_USE (roadmap 16e2) is checked where depgraph checks it: as it selects an ebuild, before
+that ebuild's dependencies, and a failure refuses the plan with no backtracking and no say in `||`
+choices. So every version a pass merges or pulls in counts, even one later given up, with two
+limits that follow emerge's walk. An update is selected only through an atom that matches it (an
+argument's, or a dependency's of a candidate or of a kept package within `-D`'s reach), not when
+the atom reaching its package rejects it. And a pull counts only when emerge gets to it before a
+dependency nothing satisfies stops it: depgraph walks RDEPEND, IDEPEND, PDEPEND, DEPEND, BDEPEND
+in turn, an unsatisfied atom first within each (`_minimize_children`), and `||` groups after the
+rest. Across packages egraph does not follow emerge's order, so it may refuse for a version emerge
+never gets to. The check is portage's `check_required_use` ported (`src/required_use.cpp`,
+portage's tree and its re-parenting in an arena), on the tokens the builder stores and the USE
+the candidate has, and `test_required_use.py` holds it to portage's over generated strings and
+every string in the live repositories.
 
 `updates --world` plans `emerge -uD @world` instead (roadmap 12c): the packages depclean keeps
 are in scope, and one outside keeps its version while its dependencies weigh nothing. emerge's

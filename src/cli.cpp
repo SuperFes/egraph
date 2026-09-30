@@ -536,7 +536,7 @@ Exit verify(const Invocation& invocation, std::string_view command, const Emerge
     // emerge prints the list before refusing it for blockers it cannot resolve, and names what
     // it cannot satisfy.
     const auto listed = parse_pretend(printed ? *printed : printed.error(), !printed);
-    if (!printed && listed.blocks.empty() && listed.unsatisfied.empty()) {
+    if (!printed && listed.blocks.empty() && listed.unsatisfied.empty() && listed.unmet.empty()) {
         // emerge explains itself at length; its last lines say why.
         constexpr std::size_t shown = 20;
         std::string_view text = printed.error();

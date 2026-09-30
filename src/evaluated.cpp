@@ -102,6 +102,8 @@ std::optional<StoreError> read_candidates(std::span<const std::byte> section, Ev
         for (auto& deps : candidate.deps) {
             deps = read_nodes(r, evaluated, strings, packages);
         }
+        candidate.required_use = read_ids(r, evaluated.ids, strings, "string");
+        candidate.empty_groups_true = r.index(2, "empty groups") == 1;
         evaluated.candidates.push_back(candidate);
     }
     r.finish();
