@@ -363,6 +363,57 @@ TEST_CASE("broken groups by package and counts") {
     CHECK(none.str() == "+ Every dependency is satisfied.\n");
 }
 
+TEST_CASE("updates list uninstalls and blocks after the merges") {
+    const std::vector<std::string> records{
+        "a/user-1\tupgrade\ta/user-2\tgentoo",
+        "a/new-1\tnew\ta/new-1\tgentoo",
+        "a/old-1\tuninstall\ta/new-1\t!a/old\ta/old-1",
+        "a/holder-1\tuninstall\ta/holder-1\t!a/new\ta/new-1",
+        "a/new-1\tblocks\t!!a/kept\ta/kept-1",
+    };
+    std::ostringstream out;
+    egraph::human_updates(out, records, plain);
+    CHECK(out.str() == "U a/user  1 > 2  ::gentoo\n"
+                       "\n"
+                       "New\n"
+                       "N a/new   1      ::gentoo\n"
+                       "\n"
+                       "Uninstalled\n"
+                       "- a/old-1     blocked by a/new-1 !a/old\n"
+                       "- a/holder-1  blocks a/new-1 !a/new\n"
+                       "\n"
+                       "Blocked\n"
+                       "! a/new-1 !!a/kept  blocks a/kept-1\n"
+                       "emerge refuses a plan with blockers it cannot resolve\n"
+                       "\n"
+                       "1 upgrade, 1 new, 2 uninstalls, 1 blocker\n");
+}
+
+TEST_CASE("blockers group by holder and count what they block") {
+    const std::vector<std::string> records{
+        "a/b-1\tRDEPEND\t!!x/gone\t",
+        "a/b-1\tRDEPEND\t!x/old\tx/old-1",
+        "c/d-2\tDEPEND\t!x/tool\tx/tool-1",
+    };
+    std::ostringstream out;
+    egraph::human_blockers(out, records, true, plain);
+    CHECK(out.str() == "* a/b-1\n"
+                       "  R  !!x/gone  blocks nothing installed\n"
+                       "  R  !x/old  blocks x/old-1\n"
+                       "\n"
+                       "* c/d-2\n"
+                       "  D  !x/tool  blocks x/tool-1\n"
+                       "\n"
+                       "2 installed packages blocked\n" +
+                           legend);
+    std::ostringstream none;
+    egraph::human_blockers(none, {}, false, plain);
+    CHECK(none.str() == "+ No installed package blocks another.\n");
+    std::ostringstream named;
+    egraph::human_blockers(named, {}, true, plain);
+    CHECK(named.str() == "+ None of them holds a blocker or is blocked.\n");
+}
+
 TEST_CASE("broken lists replaced build-time dependencies apart, and not as breakage") {
     const std::vector<std::string> replaced{
         "a/long-name-1\tBDEPEND\t>=x/automake-1.18:1.18\tx/automake-1.19",

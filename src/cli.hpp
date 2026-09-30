@@ -31,6 +31,8 @@ enum class Exit : std::uint8_t {
     drift = 4,
     // --verify: emerge --pretend would merge otherwise.
     differs = 5,
+    // updates and plan: the plan has blockers emerge cannot resolve, so it would refuse it.
+    blocked = 6,
 };
 
 struct Deps {
@@ -69,6 +71,11 @@ struct Soname {
 
 struct Broken {
     static constexpr std::string_view name = "broken";
+};
+
+struct Blockers {
+    static constexpr std::string_view name = "blockers";
+    std::vector<std::string> packages;
 };
 
 struct Orphans {
@@ -155,9 +162,9 @@ struct Affected {
     std::string request = "-";
 };
 
-using Command =
-    std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Orphans, Updates,
-                 PlanCommand, Export, Stats, Rebuild, Refresh, Check, Tui, Shell, Affected>;
+using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Blockers,
+                             Orphans, Updates, PlanCommand, Export, Stats, Rebuild, Refresh, Check,
+                             Tui, Shell, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

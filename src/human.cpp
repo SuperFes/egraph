@@ -774,6 +774,20 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
         places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
     }
+    // Uninstalls and blocks, taken off: they share no columns with the merges.
+    std::vector<Fields> uninstalls;
+    std::vector<Fields> blocks;
+    for (std::size_t i = rows.size(); i-- > 0;) {
+        const auto kind = rows.at(i).size() > 1 ? rows.at(i).at(1) : std::string_view{};
+        if (kind != "uninstall" && kind != "blocks") {
+            continue;
+        }
+        (kind == "uninstall" ? uninstalls : blocks).push_back(std::move(rows.at(i)));
+        rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
+        places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
+    }
+    std::ranges::reverse(uninstalls);
+    std::ranges::reverse(blocks);
     const auto is_held = [](const auto& row) { return row.at(1) == "held"; };
     const auto is_new = [](const auto& row) { return row.at(1) == "new"; };
     // Every row shares the columns, so held ones line up under the updates.
@@ -954,20 +968,60 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             }
         }
     }
-    constexpr std::array<std::array<std::string_view, 2>, 5> nouns{{{" upgrade", " upgrades"},
+    // A package, then a blocker's atom.
+    const auto put_blocker = [&](std::string_view cpv, std::string_view atom) {
+        out << paint_cpv(cpv, paint) << ' ' << paint(atom, Tone::bad);
+    };
+    if (!uninstalls.empty()) {
+        std::size_t width = 0;
+        for (const auto& row : uninstalls) {
+            width = std::max(width, row.at(0).size());
+        }
+        out << '\n' << paint("Uninstalled", Tone::heading) << '\n';
+        for (const auto& row : uninstalls) {
+            out << paint(glyph.orphan, Tone::bad) << ' ' << paint_cpv(row.at(0), paint)
+                << spaces(row.at(0).size(), width) << "  ";
+            // Blocked by a merge, or blocking one itself.
+            if (row.at(2) == row.at(0)) {
+                out << paint("blocks", Tone::note) << ' ';
+                put_blocker(row.at(4), row.at(3));
+            } else {
+                out << paint("blocked by", Tone::note) << ' ';
+                put_blocker(row.at(2), row.at(3));
+            }
+            out << '\n';
+        }
+    }
+    if (!blocks.empty()) {
+        out << '\n' << paint("Blocked", Tone::heading) << '\n';
+        for (const auto& row : blocks) {
+            out << paint(glyph.broken, Tone::bad) << ' ';
+            put_blocker(row.at(0), row.at(2));
+            out << "  " << paint("blocks", Tone::note) << ' ' << paint_cpv(row.at(3), paint)
+                << '\n';
+        }
+        out << paint("emerge refuses a plan with blockers it cannot resolve", Tone::bad) << '\n';
+    }
+    constexpr std::array<std::array<std::string_view, 2>, 7> nouns{{{" upgrade", " upgrades"},
                                                                     {" downgrade", " downgrades"},
                                                                     {" rebuild", " rebuilds"},
                                                                     {" new", " new"},
-                                                                    {" held", " held"}}};
+                                                                    {" held", " held"},
+                                                                    {" uninstall", " uninstalls"},
+                                                                    {" blocker", " blockers"}}};
+    std::array<std::size_t, 7> all{};
+    std::ranges::copy(counts, all.begin());
+    all.at(5) = uninstalls.size();
+    all.at(6) = blocks.size();
     out << '\n';
     bool first = true;
-    for (std::size_t i = 0; i < counts.size(); ++i) {
-        if (counts.at(i) == 0) {
+    for (std::size_t i = 0; i < all.size(); ++i) {
+        if (all.at(i) == 0) {
             continue;
         }
         out << (first ? "" : paint(", ", Tone::note))
-            << paint(std::to_string(counts.at(i)), Tone::count)
-            << paint(nouns.at(i).at(counts.at(i) == 1 ? 0 : 1), Tone::note);
+            << paint(std::to_string(all.at(i)), i == 6 ? Tone::bad : Tone::count)
+            << paint(nouns.at(i).at(all.at(i) == 1 ? 0 : 1), Tone::note);
         first = false;
     }
     out << '\n';
@@ -1084,6 +1138,45 @@ void human_update_tree(std::ostream& out, std::span<const std::string> table,
         first = false;
     }
     out << '\n';
+}
+
+void human_blockers(std::ostream& out, std::span<const std::string> records, bool named,
+                    const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto& glyph = theme.glyph();
+    const auto rows = split_all(records);
+    if (rows.empty()) {
+        out << paint(glyph.good, Tone::good) << ' '
+            << paint(named ? "None of them holds a blocker or is blocked."
+                           : "No installed package blocks another.",
+                     Tone::good)
+            << '\n';
+        return;
+    }
+    std::size_t blocking = 0;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const auto& row = rows.at(i);
+        if (i == 0 || rows.at(i - 1).at(0) != row.at(0)) {
+            out << (i == 0 ? "" : "\n") << paint(glyph.package, Tone::note) << ' '
+                << paint_cpv(row.at(0), paint) << '\n';
+        }
+        out << "  " << kind_letter(row.at(1), paint) << "  " << paint(row.at(2), Tone::bad);
+        if (row.at(3).empty()) {
+            out << "  " << paint("blocks nothing installed", Tone::note);
+        } else {
+            out << "  " << paint("blocks", Tone::note) << ' ' << paint_cpv(row.at(3), paint);
+            ++blocking;
+        }
+        out << '\n';
+    }
+    if (blocking > 0) {
+        out << '\n'
+            << paint(std::to_string(blocking), Tone::count)
+            << paint(blocking == 1 ? " installed package blocked" : " installed packages blocked",
+                     Tone::note)
+            << '\n';
+    }
+    human_legend(out, theme);
 }
 
 void human_broken(std::ostream& out, std::span<const std::string> broken,

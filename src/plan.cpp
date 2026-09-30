@@ -1,10 +1,12 @@
 #include "plan.hpp"
 
 #include "atom.hpp"
+#include "blockers.hpp"
 #include "graph.hpp"
 #include "version.hpp"
 
 #include <algorithm>
+#include <format>
 #include <functional>
 #include <map>
 #include <optional>
@@ -49,7 +51,8 @@ class Planner {
             }
         }
         for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
-            if (!in_scope(id) || (targets.deep ? !reached(id) : !argument(id))) {
+            if (!in_scope(id) || (targets.deep ? !reached(id) : !argument(id)) ||
+                dropped_.contains(id)) {
                 continue;
             }
             auto wanted = pending_update(evaluated, id, rebuilds);
@@ -191,6 +194,9 @@ class Planner {
     // rebuilds what binds to it, as it would for a package it must pull in.
     std::vector<bool> must_;
     std::map<std::uint32_t, Forced> forced_;
+    // Installed slots greedy slots leave out, blocked by the atom's best version or blocking
+    // it: emerge neither updates them nor takes them as arguments.
+    std::set<std::uint32_t> dropped_;
     std::map<std::uint32_t, NewSlot> new_slots_;
     // Arguments (indices into args_) whose best visible match is new in its slot, with that
     // candidate.
@@ -268,6 +274,10 @@ class Planner {
         if (selection == Selection::update) {
             // Every installed slot the atom matches, as emerge's greedy slots.
             for (const auto id : arg.matches) {
+                if (best && greedy_blocked(id, *best)) {
+                    dropped_.insert(id);
+                    continue;
+                }
                 arguments_.at(id) = true;
                 alone_.at(id) = alone_.at(id) || arg.named.set.empty();
                 // With no visible version to move to, only an update the atom accepts.
@@ -311,6 +321,49 @@ class Planner {
         const bool keep = matched && installed && to && vercmp(*installed, *to) >= 0;
         forced_.insert_or_assign(*id,
                                  Forced{.candidate = keep ? std::nullopt : best, .argument = i});
+    }
+
+    // Whether emerge's greedy slots leave the installed package's slot out for best, the atom's
+    // best version in another slot: the best version in its slot, older than best, and best
+    // block each other.
+    [[nodiscard]] bool greedy_blocked(std::uint32_t id, std::uint32_t best) {
+        const auto& pkg = store().packages.at(id);
+        const auto& top = evaluated().candidates.at(best);
+        const auto cp = store().string(pkg.cp);
+        if (evaluated().string(top.slot) == store().string(pkg.slot)) {
+            return false;
+        }
+        const auto& slot_atom = atom(std::format("{}:{}", cp, store().string(pkg.slot)));
+        const auto greedy = slot_atom ? best_match(*slot_atom) : std::nullopt;
+        if (!greedy) {
+            return false;
+        }
+        const auto from =
+            version_of(evaluated().string(evaluated().candidates.at(*greedy).cpv), cp);
+        const auto to = version_of(evaluated().string(top.cpv), cp);
+        if (!from || !to || vercmp(*from, *to) >= 0) {
+            return false;
+        }
+        return blocks(best, *greedy) || blocks(*greedy, best);
+    }
+
+    // Whether a blocker among the candidate's dependencies matches the other candidate.
+    bool blocks(std::uint32_t candidate, std::uint32_t other) {
+        const Member member{.candidate = true, .index = candidate};
+        for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+            for (const auto& node : nodes(member, kind)) {
+                if (node.type != NodeType::weak_blocker && node.type != NodeType::strong_blocker) {
+                    continue;
+                }
+                const auto text = evaluated().string(node.atom);
+                const auto& blocked = atom(text.substr(text.find_first_not_of('!')));
+                if (blocked &&
+                    matches(store(), evaluated(), evaluated().candidates.at(other), *blocked)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // The update of an installed package an argument decides, from its pending one.
@@ -1287,6 +1340,7 @@ void order_merges(const Store& store, const Evaluated& evaluated, Plan& plan) {
 Plan plan_updates(const Store& store, const Evaluated& evaluated, UseRebuilds rebuilds,
                   const Targets& targets) {
     auto plan = Planner(store, evaluated, rebuilds, targets).run();
+    weigh_blockers(store, evaluated, targets, plan);
     order_merges(store, evaluated, plan);
     return plan;
 }

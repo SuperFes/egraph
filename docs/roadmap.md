@@ -408,7 +408,15 @@ use, egraph schedules the merges itself.
   rebuilds outside the reach only for a merge that breaks a binding within it, and drops the
   merge otherwise. On the dev box, `updates`, alone and with `-D`, `--world` and `-N`, agrees
   with emerge, up to 47 merges.
-- 16d: blockers, weak and strong, as a query and weighed by the plan (formerly step 17).
+- 16d (done): blockers, weak and strong, as a query and weighed by the plan (formerly step 17).
+  `blockers [PACKAGE...]` lists the installed packages' blockers with what each blocks, equal to
+  portage's matching on every scenario. The plan weighs them as emerge's `_validate_blockers`
+  does once its graph is complete: an uninstall where nothing in the completed graph needs the
+  blocked package (or the installed holder), a block otherwise, and between two merges; strong
+  blockers only resolved by a replacement on the running root. `-u`'s greedy slots leave out a
+  slot the best version blocks. Uninstalls and blocks follow the merges in `updates` and `plan`,
+  a block makes the exit status 6, and `--verify` compares both. Two scenarios, `blockers` and
+  `blocked`, give 60 requests emerge resolves with uninstalls and 106 it refuses, all equal.
 - 16e: what makes emerge refuse: REQUIRED_USE and invalid metadata on candidates; a needed USE
   change explained as autounmask would, the `package.use` line offered and written only on yes.
 - 16f: actions: `update`, `install` (`--oneshot`, or the targets selected), `remove` (through

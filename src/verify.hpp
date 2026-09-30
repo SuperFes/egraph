@@ -41,19 +41,37 @@ struct PretendMerge {
     auto operator<=>(const PretendMerge&) const = default;
 };
 
-// The merges emerge --pretend --verbose --color=n printed, in its order; everything else it
-// printed (blockers, messages) passed over.
-[[nodiscard]] std::vector<PretendMerge> parse_pretend(std::string_view output);
+// A blocker emerge cannot resolve, once per package holding it.
+struct PretendBlock {
+    // Without its "!"s, as emerge shows it.
+    std::string atom;
+    std::string holder;
+    auto operator<=>(const PretendBlock&) const = default;
+};
 
-// What plan merges, in the same terms; only a new package has its USE.
-[[nodiscard]] std::vector<PretendMerge> planned_merges(const Evaluated& evaluated,
-                                                       const Plan& plan);
+// A merge list: the merges and uninstalls, and the blockers emerge cannot resolve.
+struct Pretend {
+    std::vector<PretendMerge> merges;
+    std::vector<PretendBlock> blocks;
+    bool operator==(const Pretend&) const = default;
+};
+
+// What emerge --pretend --verbose --color=n printed: its merges in its order, each uninstall as
+// one of kind uninstall; and the blockers it could not resolve, sorted. Everything else it
+// printed (resolved blockers, messages) passed over.
+[[nodiscard]] Pretend parse_pretend(std::string_view output);
+
+// What plan merges and uninstalls, and its blocks, in the same terms; only a new package has
+// its USE.
+[[nodiscard]] Pretend planned_merges(const Store& store, const Evaluated& evaluated,
+                                     const Plan& plan);
 
 // Where ours and emerge's merge lists differ, by cpv then repo, a line each:
 // "cpv::repo<TAB>egraph<TAB>kind" merged by egraph only, "cpv::repo<TAB>emerge<TAB>kind" by emerge
 // only, "cpv::repo<TAB>kind<TAB>ours<TAB>emerge's", and for a package both merge new,
-// "cpv::repo<TAB>use<TAB>ours<TAB>emerge's".
-[[nodiscard]] std::vector<std::string> merge_differences(const std::vector<PretendMerge>& ours,
-                                                         const std::vector<PretendMerge>& theirs);
+// "cpv::repo<TAB>use<TAB>ours<TAB>emerge's". A blocker only one side cannot resolve is
+// "holder<TAB>egraph<TAB>blocks atom" or "holder<TAB>emerge<TAB>blocks atom".
+[[nodiscard]] std::vector<std::string> merge_differences(const Pretend& ours,
+                                                         const Pretend& theirs);
 
 } // namespace egraph

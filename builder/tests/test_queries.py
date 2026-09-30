@@ -10,6 +10,7 @@ from portage.versions import cpv_getkey, cpv_getversion, vercmp
 from compare import _sonames, possible_mismatches
 from conftest import dynamic_option, portdb, write_stores
 from egraph_build import oracle, roots
+from egraph_build.cli import EXIT_BLOCKED
 from egraph_build.model import Edge
 from scenarios import SCENARIOS
 
@@ -27,8 +28,9 @@ def egraph(path, *args, check=True, env=None):
         text=True,
         env=None if env is None else {**os.environ, **env},
     )
+    # A plan emerge would refuse for its blockers is still a plan.
     if check:
-        assert result.returncode == 0, result.stderr
+        assert result.returncode in (0, EXIT_BLOCKED), result.stderr
     return result
 
 
@@ -112,6 +114,38 @@ def test_possible_dependencies_name_their_flags(playgrounds, tmp_path):
     assert result.returncode == 2
 
 
+BLOCKER_KINDS = ("uninstall", "blocks")
+
+
+def merge_lines(text):
+    """updates or plan output without its uninstalls and blocks."""
+    return [
+        line for line in text.splitlines() if line.split("\t")[1] not in BLOCKER_KINDS
+    ]
+
+
+def blocker_rows(text):
+    """(uninstalled cpvs, {(atom without its "!"s, holder cpv)}) from updates or plan output,
+    as update.updates has them."""
+    uninstalls, blocks = set(), set()
+    for line in text.splitlines():
+        fields = line.split("\t")
+        if fields[1] == "uninstall":
+            uninstalls.add(fields[0])
+        elif fields[1] == "blocks":
+            blocks.add((fields[2].lstrip("!"), fields[0]))
+    return frozenset(uninstalls), frozenset(blocks)
+
+
+def blockers_agree(rows, expected):
+    """Whether blocker_rows are emerge's: the same blocks, and the same uninstalls unless it
+    refuses the plan, when it lists none."""
+    uninstalls, blocks = rows
+    return blocks == expected.blocks and (
+        expected.blocked or uninstalls == expected.uninstalls
+    )
+
+
 def parse_updates(text):
     """{installed cpv: (kind, update.Replacement)} from updates output, slot-operator rebuilds
     aside."""
@@ -119,7 +153,7 @@ def parse_updates(text):
     from update import Replacement
 
     found = {}
-    for line in text.splitlines():
+    for line in merge_lines(text):
         cpv, kind, target, repo, *flags = line.split("\t")
         if kind == "new" or len(flags) > 1:
             continue
@@ -135,7 +169,7 @@ def parse_updates(text):
 def new_use(text):
     """{new cpv: its USE} from updates or plan output."""
     found = {}
-    for line in text.splitlines():
+    for line in merge_lines(text):
         cpv, kind, *fields = line.split("\t")
         if kind == "new":
             found[cpv] = fields[2] if len(fields) > 2 else ""
@@ -144,7 +178,7 @@ def new_use(text):
 
 def merged(text):
     """What updates output merges, as update.updates' replaced, rebuilt and new."""
-    lines = [line.split("\t") for line in text.splitlines()]
+    lines = [line.split("\t") for line in merge_lines(text)]
     replaced = {
         cpv: replacement for cpv, (_, replacement) in parse_updates(text).items()
     }
@@ -185,7 +219,7 @@ def test_updates_are_emerges(
         target=target,
         dynamic_deps=dynamic_deps,
     )
-    if not expected.success:
+    if not expected.success and not expected.blocked:
         pytest.skip(f"emerge cannot resolve {target} here")
     _, path = system
     world = ["--world"] if target == "@world" else []
@@ -195,7 +229,10 @@ def test_updates_are_emerges(
         *world,
         *(["-D"] if deep else []),
     ]
-    output = egraph(path, "updates", *options).stdout
+    result = egraph(path, "updates", *options, check=False)
+    assert result.returncode == (EXIT_BLOCKED if expected.blocked else 0), result.stderr
+    output = result.stdout
+    assert blockers_agree(blocker_rows(output), expected)
     assert merged(output) == (expected.replaced, expected.rebuilt, expected.new)
     assert new_use(output) == expected.use
     for cpv, (kind, replacement) in parse_updates(output).items():
@@ -226,7 +263,7 @@ def plan_requests(name):
 def plan_merges(text):
     """(installed cpv it replaces or "", cpv, repo) for each merge in plan output."""
     merges = set()
-    for line in text.splitlines():
+    for line in merge_lines(text):
         cpv, kind, target, repo, *_ = line.split("\t")
         merges.add(("" if kind == "new" else cpv, target, repo))
     return frozenset(merges)
@@ -300,11 +337,15 @@ def test_plans_are_emerges(playgrounds, tmp_path, name, mode):
             system.trees, system.eroot, target=[target], **options
         )
         result = egraph(path, "plan", *flags, target, check=False)
-        if not expected.success:
+        if not expected.success and not expected.blocked:
             continue
-        assert result.returncode == 0, (target, result.stderr)
+        assert result.returncode == (EXIT_BLOCKED if expected.blocked else 0), (
+            target,
+            result.stderr,
+        )
         if not ties(plan_merges(result.stdout), expected.merges):
             differences.add(target)
+        assert blockers_agree(blocker_rows(result.stdout), expected), target
         use = new_use(result.stdout)
         for cpv in use.keys() & expected.use.keys():
             assert use[cpv] == expected.use[cpv], (target, cpv)
@@ -447,9 +488,11 @@ def test_update_tree_follows_why(scenario, system, dynamic_deps):
     (the installed package, or the one a merge replaces)."""
     _, path = system
     options = dynamic_option(dynamic_deps)
+    # The merges, without the uninstalls and blocks after them.
     table = [
         line.split("\t")
         for line in egraph(path, "updates", "-t", *options).stdout.splitlines()
+        if not line.startswith("\t")
     ]
     tree = [
         line.split("\t")
@@ -581,6 +624,21 @@ def test_broken(scenario, system, dynamic_deps):
     expected = sorted("\t".join(item) for item in oracle.broken(vardb, ebuilds))
     found = egraph(path, "broken", *dynamic_option(dynamic_deps)).stdout
     assert found.splitlines() == expected
+
+
+def test_blockers(scenario, system, dynamic_deps):
+    """Without packages, the blockers that match something installed; of a package, those it
+    holds and those holding it back."""
+    vardb, path = system
+    ebuilds = portdb(scenario) if dynamic_deps else None
+    found = oracle.blockers(vardb, ebuilds)
+    option = dynamic_option(dynamic_deps)
+    output = egraph(path, "blockers", *option).stdout
+    assert output.splitlines() == sorted("\t".join(item) for item in found if item[3])
+    for cpv in oracle.installed(vardb):
+        output = egraph(path, "blockers", *option, f"={cpv}").stdout
+        expected = {item for item in found if item[0] == cpv or item[3] == cpv}
+        assert output.splitlines() == sorted("\t".join(item) for item in expected), cpv
 
 
 def test_stats(system):

@@ -57,6 +57,22 @@ struct HeldBack {
     std::vector<Reason> reasons;
 };
 
+// A blocker between two packages of what a plan leaves installed.
+struct Block {
+    // The package whose dependencies hold the blocker, and one it matches.
+    Member holder;
+    // As the holder's dependencies print it, "!" or "!!" first.
+    std::string atom;
+    Member blocked;
+    auto operator<=>(const Block&) const = default;
+};
+
+// An installed package emerge uninstalls to resolve a blocker between it and a merge.
+struct Uninstall {
+    std::uint32_t package = 0;
+    Block why;
+};
+
 struct Plan {
     // Replacements in the installed packages' order, then new packages by cpv.
     std::vector<Merge> merges;
@@ -65,6 +81,11 @@ struct Plan {
     std::vector<std::uint32_t> order;
     // In the installed packages' order.
     std::vector<HeldBack> held;
+    // In the installed packages' order, each for the first blocker found to need it.
+    std::vector<Uninstall> uninstalls;
+    // The blockers emerge cannot resolve, which make it refuse the plan: each with every package
+    // it matches that is in the way, sorted.
+    std::vector<Block> blocks;
 };
 
 // What emerge -uD would merge for targets, with store's dependencies (read with or without
@@ -92,7 +113,8 @@ struct Plan {
 // its atom matches and rebuilds what binds to it, as plain emerge does; an atom named alone
 // under -uD keeps its installed version instead. Outside targets.reach, a rebuild takes the best
 // version in its slot, for a run-time binding only.
-// Blockers are not weighed.
+// Then its blockers are weighed as emerge validates them (weigh_blockers), and -u's greedy
+// slots leave out an installed slot whose best version and the atom's best block each other.
 [[nodiscard]] Plan plan_updates(const Store& store, const Evaluated& evaluated,
                                 UseRebuilds rebuilds, const Targets& targets = {});
 

@@ -44,6 +44,7 @@ meson install -C build --destdir /tmp/root           # also /etc/portage hooks (
 build/egraph orphans                                  # works in place; store in ~/.cache/egraph
 printf 'updates -N\norphans\n' | build/egraph shell      # many commands, one session
 build/egraph updates -D --verify                      # the plan beside emerge --pretend's
+build/egraph blockers                                 # installed packages blocking others
 build/egraph                                          # interactive: TUI on a terminal, : for commands
 meson test -C build --print-errorlogs                 # Catch2 + pytest
 meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false ...  # plus the fork options

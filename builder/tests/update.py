@@ -34,6 +34,12 @@ class Updates(NamedTuple):
     merges: frozenset = frozenset()
     # New cpv -> the USE emerge --verbose shows for it.
     use: dict = None
+    # The installed cpvs uninstalled for blockers, when it succeeds.
+    uninstalls: frozenset = frozenset()
+    # (atom without its "!"s, holder cpv) for each blocker it cannot resolve.
+    blocks: frozenset = frozenset()
+    # It fails for those blockers alone.
+    blocked: bool = False
 
 
 def updates(
@@ -111,13 +117,31 @@ def updates(
         replaced[str(old)] = Replacement(
             pkg.cpv, pkg.repo, None if flags is None else frozenset(flags)
         )
+    tasks = depgraph.altlist() if success else ()
     order = tuple(
         pkg.cpv
-        for pkg in (depgraph.altlist() if success else ())
+        for pkg in tasks
         if isinstance(pkg, Package)
         and not pkg.installed
         and pkg.root == eroot
         and pkg.operation == "merge"
+    )
+    uninstalls = frozenset(
+        str(pkg.cpv)
+        for pkg in tasks
+        if isinstance(pkg, Package) and pkg.operation == "uninstall"
+    )
+    dynamic = depgraph._dynamic_config
+    unsolved = dynamic._unsatisfied_blockers_for_display or ()
+    blocks = frozenset(
+        (str(blocker.atom).lstrip("!"), str(parent.cpv))
+        for blocker in unsolved
+        for parent in dynamic._blocker_parents.parent_nodes(blocker)
+    )
+    blocked = (
+        not success
+        and bool(blocks)
+        and not any(dynamic._package_tracker.slot_conflicts())
     )
     return Updates(
         success,
@@ -127,6 +151,9 @@ def updates(
         order,
         frozenset(merges),
         use,
+        uninstalls,
+        blocks,
+        blocked,
     )
 
 

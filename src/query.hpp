@@ -102,6 +102,9 @@ struct Targets {
     std::vector<bool> reach = {};
     std::vector<Argument> request = {};
     Selection selection = Selection::update;
+    // The plan is for the running system's root, where emerge never uninstalls a package a
+    // strong blocker matches: only a replacement resolves one.
+    bool running_root = true;
 };
 
 // "@set atom", or the atom alone.
@@ -136,9 +139,17 @@ struct RemedyInputs {
 // installed packages depending on that one space-separated, then a "@set atom" field per root
 // atom selecting it; "cpv<TAB>remove<TAB>frees" when removing the holders lets it through, with
 // the held cpvs that frees besides, space-separated; "cpv<TAB>nodeps" when only holders reject it.
+// Last, "cpv<TAB>uninstall<TAB>holder<TAB>atom<TAB>blocked" for each installed package the plan
+// uninstalls, with the blocker that needs it, then "holder<TAB>blocks<TAB>atom<TAB>blocked" for
+// each blocker emerge cannot resolve; in the table led by two empty fields too.
 [[nodiscard]] std::vector<std::string>
 update_lines(const Store& store, const Evaluated& evaluated, UseRebuilds rebuilds,
              bool held = false, bool table = false, const Targets& targets = {},
+             const std::optional<RemedyInputs>& remedies = std::nullopt);
+// As above, for plan, plan_updates' for rebuilds and targets.
+[[nodiscard]] std::vector<std::string>
+update_lines(const Store& store, const Evaluated& evaluated, const Plan& plan, UseRebuilds rebuilds,
+             bool held, bool table, const Targets& targets,
              const std::optional<RemedyInputs>& remedies = std::nullopt);
 
 // Where each merge of the plan comes from, in merge order: "place<TAB>@set<TAB>cpv<TAB>...", its

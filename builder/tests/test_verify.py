@@ -10,6 +10,7 @@ import portage.const
 import pytest
 
 from conftest import write_stores
+from egraph_build.cli import EXIT_BLOCKED
 from scenarios import SCENARIOS
 
 EGRAPH = os.environ.get("EGRAPH")
@@ -98,6 +99,9 @@ def test_verified_updates_agree_with_emerge(playgrounds, tmp_path, name, mode):
     )
     if expected.success:
         assert result.returncode == 0, result.stderr
+    elif expected.blocked:
+        # Refused alike, for the same blockers, after the same merge list.
+        assert result.returncode == EXIT_BLOCKED, result.stderr
     else:
         assert result.returncode == 1
         assert "emerge --pretend failed:" in result.stderr

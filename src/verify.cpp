@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <format>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <utility>
@@ -65,6 +66,63 @@ std::string use_groups(std::string_view text) {
         equals = close;
     }
     return groups;
+}
+
+// The package an uninstall line shows, "[uninstall     ] cpv:slot::repo".
+std::optional<PretendMerge> parse_uninstall(std::string_view line) {
+    constexpr std::string_view type = "[uninstall ";
+    const auto close = line.find("] ");
+    if (!line.starts_with(type) || close == std::string_view::npos) {
+        return std::nullopt;
+    }
+    auto package = line.substr(close + 2);
+    package = package.substr(0, std::min(package.find(' '), package.size()));
+    const auto separator = package.find("::");
+    if (separator == std::string_view::npos) {
+        return std::nullopt;
+    }
+    return PretendMerge{.cpv =
+                            std::string{package.substr(0, std::min(package.find(':'), separator))},
+                        .repo = std::string{package.substr(separator + 2)},
+                        .kind = "uninstall",
+                        .use = ""};
+}
+
+// The blocker an unresolved blocker's line shows, once per holder:
+// "[blocks B      ] atom ("atom" is soft blocking cpv, cpv)", or "(is hard blocking cpv)".
+std::vector<PretendBlock> parse_block(std::string_view line) {
+    constexpr std::string_view type = "[blocks B";
+    const auto close = line.find("] ");
+    if (!line.starts_with(type) || close == std::string_view::npos) {
+        return {};
+    }
+    auto rest = line.substr(close + 2);
+    const auto open = rest.find(" (");
+    if (open == std::string_view::npos || !rest.ends_with(')')) {
+        return {};
+    }
+    auto atom = rest.substr(0, open);
+    auto note = rest.substr(open + 2, rest.size() - open - 3);
+    if (note.starts_with('"')) {
+        const auto quote = note.find('"', 1);
+        if (quote == std::string_view::npos) {
+            return {};
+        }
+        atom = note.substr(1, quote - 1);
+        note.remove_prefix(quote + 2);
+    }
+    const auto blocking = note.find("blocking ");
+    if (!note.starts_with("is ") || blocking == std::string_view::npos) {
+        return {};
+    }
+    std::vector<PretendBlock> blocks;
+    for (auto holders = note.substr(blocking + 9); !holders.empty();) {
+        const auto comma = std::min(holders.find(", "), holders.size());
+        blocks.push_back(
+            {.atom = std::string{atom}, .holder = std::string{holders.substr(0, comma)}});
+        holders.remove_prefix(std::min(comma + 2, holders.size()));
+    }
+    return blocks;
 }
 
 // The merge a list line shows, "[ebuild  NS    ] cpv:slot::repo [old] USE=... size".
@@ -128,34 +186,62 @@ bool equal_versions(const PretendMerge& a, const PretendMerge& b) {
 
 } // namespace
 
-std::vector<PretendMerge> parse_pretend(std::string_view output) {
-    std::vector<PretendMerge> merges;
+Pretend parse_pretend(std::string_view output) {
+    Pretend found;
     while (!output.empty()) {
         const auto newline = std::min(output.find('\n'), output.size());
-        if (auto merge = parse_merge(output.substr(0, newline))) {
-            merges.push_back(std::move(*merge));
+        const auto line = output.substr(0, newline);
+        if (auto merge = parse_merge(line)) {
+            found.merges.push_back(std::move(*merge));
+        } else if (auto uninstall = parse_uninstall(line)) {
+            found.merges.push_back(std::move(*uninstall));
+        } else {
+            std::ranges::move(parse_block(line), std::back_inserter(found.blocks));
         }
         output.remove_prefix(std::min(newline + 1, output.size()));
     }
-    return merges;
+    std::ranges::sort(found.blocks);
+    const auto [first, last] = std::ranges::unique(found.blocks);
+    found.blocks.erase(first, last);
+    return found;
 }
 
-std::vector<PretendMerge> planned_merges(const Evaluated& evaluated, const Plan& plan) {
-    std::vector<PretendMerge> merges;
-    merges.reserve(plan.merges.size());
+Pretend planned_merges(const Store& store, const Evaluated& evaluated, const Plan& plan) {
+    Pretend found;
+    found.merges.reserve(plan.merges.size() + plan.uninstalls.size());
     for (const auto& merge : plan.merges) {
         const auto& candidate = evaluated.candidates.at(merge.candidate);
-        merges.push_back(PretendMerge{
+        found.merges.push_back(PretendMerge{
             .cpv = std::string{evaluated.string(candidate.cpv)},
             .repo = std::string{evaluated.string(candidate.repo)},
             .kind = std::string{merge.replaces ? kind_text(merge.kind) : "new"},
             .use = merge.replaces ? std::string{} : use_display(evaluated, candidate)});
     }
-    return merges;
+    for (const auto& each : plan.uninstalls) {
+        const auto& pkg = store.packages.at(each.package);
+        found.merges.push_back(PretendMerge{.cpv = std::string{store.string(pkg.cpv)},
+                                            .repo = std::string{store.string(pkg.repo)},
+                                            .kind = "uninstall",
+                                            .use = ""});
+    }
+    for (const auto& block : plan.blocks) {
+        const auto& holder = block.holder;
+        const auto atom = std::string_view{block.atom};
+        found.blocks.push_back(
+            {.atom = std::string{atom.substr(std::min(atom.find_first_not_of('!'), atom.size()))},
+             .holder = std::string{holder.candidate
+                                       ? evaluated.string(evaluated.candidates.at(holder.index).cpv)
+                                       : store.string(store.packages.at(holder.index).cpv)}});
+    }
+    std::ranges::sort(found.blocks);
+    const auto [first, last] = std::ranges::unique(found.blocks);
+    found.blocks.erase(first, last);
+    return found;
 }
 
-std::vector<std::string> merge_differences(const std::vector<PretendMerge>& ours,
-                                           const std::vector<PretendMerge>& theirs) {
+std::vector<std::string> merge_differences(const Pretend& our_list, const Pretend& their_list) {
+    const auto& ours = our_list.merges;
+    const auto& theirs = their_list.merges;
     // Our merges emerge's have not matched yet, as indices into ours.
     std::map<std::pair<std::string, std::string>, std::size_t> left;
     for (std::size_t i = 0; i < ours.size(); ++i) {
@@ -196,6 +282,17 @@ std::vector<std::string> merge_differences(const std::vector<PretendMerge>& ours
     for (const auto& [key, index] : left) {
         lines.push_back(
             std::format("{}::{}\tegraph\t{}", key.first, key.second, ours.at(index).kind));
+    }
+    // Both sorted.
+    std::vector<PretendBlock> only;
+    std::ranges::set_difference(our_list.blocks, their_list.blocks, std::back_inserter(only));
+    for (const auto& block : only) {
+        lines.push_back(std::format("{}\tegraph\tblocks {}", block.holder, block.atom));
+    }
+    only.clear();
+    std::ranges::set_difference(their_list.blocks, our_list.blocks, std::back_inserter(only));
+    for (const auto& block : only) {
+        lines.push_back(std::format("{}\temerge\tblocks {}", block.holder, block.atom));
     }
     std::ranges::sort(lines);
     return lines;

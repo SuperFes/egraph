@@ -335,7 +335,19 @@ A kept dependent whose slot-operator binding (`:0/3=`) a merge in another slot o
 breaks is rebuilt from a visible ebuild of its version (roadmap 14c), and that ebuild's
 dependencies join the plan like a merge's; with no such ebuild the binding holds the merge back
 like a bound, so it falls back to a version in the bound sub-slot. The line names the merge the
-rebuild is for. Blockers are not weighed.
+rebuild is for.
+Blockers are weighed once the plan settles, as emerge's `_validate_blockers` weighs them after
+its graph is complete (`blockers.cpp`, roadmap 16d): emerge does not backtrack over a blocker,
+it uninstalls a package or refuses the plan. An installed package's run-time blockers and a
+merge's of every kind count. A merge's blocker on a package staying installed uninstalls that
+package, and an installed package's blocker on a merge uninstalls the holder, unless the
+package is in emerge's completed graph (reached from the root sets, the arguments or a merge, an
+atom taking the best version left, a `||` its first alternative left satisfied) or, on the
+running root, the blocker is strong. A blocker on a version a merge replaces needs nothing, and
+one in a merge's own slot is ignored unless strong. What is left, and a blocker between two
+merges, is a block, and the plan's exit status says emerge would refuse it. The one place
+emerge looks ahead is `-u`'s greedy slots: an installed slot whose best version and the atom's
+best block each other is left out, so it is uninstalled rather than updated.
 
 `updates --world` plans `emerge -uD @world` instead (roadmap 12c): the packages depclean keeps
 are in scope, and one outside keeps its version while its dependencies weigh nothing. emerge's

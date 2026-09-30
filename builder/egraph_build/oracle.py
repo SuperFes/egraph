@@ -198,6 +198,26 @@ def broken(vardb, portdb=None):
     return frozenset(found)
 
 
+def blockers(vardb, portdb=None):
+    """(holder, kind, blocker, blocked) for each blocker left in an installed package's reduced
+    dependencies, at any depth, and each installed package vardb matches its atom to; blocked
+    is "" when it matches nothing."""
+    found = set()
+    for cpv in installed(vardb):
+        for kind in DEP_KINDS:
+            try:
+                atoms = dep_atoms(vardb, cpv, kind, portdb)
+            except (InvalidAtom, InvalidDependString):
+                continue
+            for atom, _ in atoms:
+                if not atom.blocker:
+                    continue
+                blocked = vardb.match(Atom(str(atom).lstrip("!")))
+                for other in blocked or [""]:
+                    found.add((cpv, kind, str(atom), str(other)))
+    return frozenset(found)
+
+
 # The repository side: what emerge sees of an installed package through its ebuild, and of the
 # versions its repositories offer. Each takes the ebuild repositories' portdbapi beside the vardb.
 

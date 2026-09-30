@@ -181,6 +181,11 @@ void human_orphans(std::ostream& out, std::span<const std::string> records, cons
 void human_broken(std::ostream& out, std::span<const std::string> broken,
                   std::span<const std::string> replaced, const Theme& theme);
 
+// blockers records, one block per holder: each blocker with its kind and what it blocks. named
+// says packages were given, so a blocker that blocks nothing may be among them.
+void human_blockers(std::ostream& out, std::span<const std::string> records, bool named,
+                    const Theme& theme);
+
 void human_soname(std::ostream& out, std::span<const std::string> records, std::string_view soname,
                   bool providers, const Theme& theme);
 

@@ -61,13 +61,21 @@ Dependency resolution took 0.03 s (backtrack: 4/20).
 [binary  N     ] app-misc/built-1-2::test_repo  0 KiB
 [ebuild  N F   ] app-misc/fetch-1::test_repo to /mnt/gentoo/ USE="x" 0 KiB
 [blocks b      ] app-misc/old ("app-misc/old" is soft blocking app-misc/new-1)
-[uninstall     ] app-misc/gone-1::test_repo
+[uninstall     ] app-misc/gone-1::test_repo 
+[uninstall     ] dev-libs/s-1:1::test_repo 
+[blocks B      ] app-misc/kept ("app-misc/kept" is hard blocking app-misc/b-1, app-misc/a-1)
+[blocks B      ] <dev-libs/lib-2[x] (is soft blocking app-misc/app-2)
 
 Total: 10 packages (5 upgrades, 4 new, 1 in new slot), Size of downloads: 0 KiB
   (app-misc/host-2:0/0::test_repo, ebuild scheduled for merge) USE="" conflicts with
 )x";
+    const auto found = egraph::parse_pretend(output);
+    CHECK(found.blocks == std::vector<egraph::PretendBlock>{
+                              {.atom = "<dev-libs/lib-2[x]", .holder = "app-misc/app-2"},
+                              {.atom = "app-misc/kept", .holder = "app-misc/a-1"},
+                              {.atom = "app-misc/kept", .holder = "app-misc/b-1"}});
     CHECK(
-        egraph::parse_pretend(output) ==
+        found.merges ==
         std::vector<PretendMerge>{
             {.cpv = "dev-lang/py-3.14.1", .repo = "test_repo", .kind = "new", .use = ""},
             {.cpv = "dev-libs/chain-1", .repo = "test_repo", .kind = "new", .use = ""},
@@ -89,15 +97,17 @@ Total: 10 packages (5 upgrades, 4 new, 1 in new slot), Size of downloads: 0 KiB
             {.cpv = "app-misc/testing-1", .repo = "test_repo", .kind = "new", .use = ""},
             {.cpv = "app-misc/built-1-2", .repo = "test_repo", .kind = "new", .use = ""},
             {.cpv = "app-misc/fetch-1", .repo = "test_repo", .kind = "new", .use = R"x(USE="x")x"},
+            {.cpv = "app-misc/gone-1", .repo = "test_repo", .kind = "uninstall", .use = ""},
+            {.cpv = "dev-libs/s-1", .repo = "test_repo", .kind = "uninstall", .use = ""},
         });
 }
 
 TEST_CASE("nothing to merge is an empty list") {
     CHECK(egraph::parse_pretend("\nThese are the packages that would be merged, in order:\n\n"
                                 "Calculating dependencies ... done!\n\n"
-                                "Total: 0 packages, Size of downloads: 0 KiB\n")
-              .empty());
-    CHECK(egraph::parse_pretend("").empty());
+                                "Total: 0 packages, Size of downloads: 0 KiB\n") ==
+          egraph::Pretend{});
+    CHECK(egraph::parse_pretend("") == egraph::Pretend{});
 }
 
 TEST_CASE("the plan's merges in emerge's terms, a new package with its USE") {
@@ -110,7 +120,7 @@ TEST_CASE("the plan's merges in emerge's terms, a new package with its USE") {
          {.cpv = "dev-libs/fresh-1", .iuse = "doc test", .use = "doc"}});
     const auto plan =
         egraph::plan_updates(system.store, system.evaluated, egraph::UseRebuilds::none);
-    CHECK(egraph::planned_merges(system.evaluated, plan) ==
+    CHECK(egraph::planned_merges(system.store, system.evaluated, plan).merges ==
           std::vector<PretendMerge>{
               {.cpv = "app-misc/masked-1", .repo = "test_repo", .kind = "downgrade", .use = ""},
               {.cpv = "app-misc/up-2", .repo = "other", .kind = "upgrade", .use = ""},
@@ -129,7 +139,9 @@ TEST_CASE("the same merge lists in any order do not differ") {
         {.cpv = "dev-libs/b-1", .repo = "r", .kind = "new", .use = R"(USE="x")"},
         // emerge shows a replacement's USE, which egraph does not compare.
         {.cpv = "app-misc/a-2", .repo = "r", .kind = "upgrade", .use = R"(USE="doc*")"}};
-    CHECK(egraph::merge_differences(ours, theirs).empty());
+    CHECK(
+        egraph::merge_differences({.merges = ours, .blocks = {}}, {.merges = theirs, .blocks = {}})
+            .empty());
 }
 
 TEST_CASE("merge lists differ in cpvs, repositories, kinds and new packages' USE") {
@@ -143,7 +155,8 @@ TEST_CASE("merge lists differ in cpvs, repositories, kinds and new packages' USE
         {.cpv = "app-misc/kind-1", .repo = "r", .kind = "new", .use = ""},
         {.cpv = "app-misc/repo-2", .repo = "r", .kind = "upgrade", .use = ""},
         {.cpv = "app-misc/only-theirs-3", .repo = "r", .kind = "downgrade", .use = ""}};
-    CHECK(egraph::merge_differences(ours, theirs) ==
+    CHECK(egraph::merge_differences({.merges = ours, .blocks = {}},
+                                    {.merges = theirs, .blocks = {}}) ==
           std::vector<std::string>{
               "app-misc/kind-1::r\tkind\trebuild\tnew",
               "app-misc/only-ours-1::r\tegraph\tnew",
@@ -159,8 +172,48 @@ TEST_CASE("equal versions spelled otherwise are the same merge, as emerge picks 
         {.cpv = "dev-libs/v-1.0", .repo = "r", .kind = "new", .use = ""}};
     const std::vector<PretendMerge> theirs = {
         {.cpv = "dev-libs/v-1.00", .repo = "r", .kind = "new", .use = ""}};
-    CHECK(egraph::merge_differences(ours, theirs).empty());
+    CHECK(
+        egraph::merge_differences({.merges = ours, .blocks = {}}, {.merges = theirs, .blocks = {}})
+            .empty());
     const std::vector<PretendMerge> other_repo = {
         {.cpv = "dev-libs/v-1.00", .repo = "overlay", .kind = "new", .use = ""}};
-    CHECK(egraph::merge_differences(ours, other_repo).size() == 2);
+    CHECK(egraph::merge_differences({.merges = ours, .blocks = {}},
+                                    {.merges = other_repo, .blocks = {}})
+              .size() == 2);
+}
+
+TEST_CASE("the plan's uninstalls and blocks in emerge's terms") {
+    const auto system =
+        make_system({{.cpv = "app-misc/old-1"},
+                     {.cpv = "app-misc/user-1", .deps = {{"RDEPEND", "app-misc/old"}}}},
+                    {{.cpv = "app-misc/new-1", .deps = {{"RDEPEND", "!!app-misc/old"}}},
+                     {.cpv = "app-misc/user-1", .deps = {{"RDEPEND", "app-misc/old"}}},
+                     {.cpv = "app-misc/user-2", .deps = {{"RDEPEND", "app-misc/new"}}}},
+                    {"app-misc/user"});
+    egraph::Targets world{.scope = {}, .roots = true, .deep = false};
+    auto found = egraph::planned_merges(
+        system.store, system.evaluated,
+        egraph::plan_updates(system.store, system.evaluated, egraph::UseRebuilds::none, world));
+    CHECK(found.blocks ==
+          std::vector<egraph::PretendBlock>{{.atom = "app-misc/old", .holder = "app-misc/new-1"}});
+    world.running_root = false;
+    found = egraph::planned_merges(
+        system.store, system.evaluated,
+        egraph::plan_updates(system.store, system.evaluated, egraph::UseRebuilds::none, world));
+    CHECK(found.blocks.empty());
+    CHECK(
+        found.merges.back() ==
+        PretendMerge{.cpv = "app-misc/old-1", .repo = "test_repo", .kind = "uninstall", .use = ""});
+}
+
+TEST_CASE("blockers only one side cannot resolve differ") {
+    const egraph::Pretend ours{
+        .merges = {},
+        .blocks = {{.atom = "a/x", .holder = "a/both-1"}, {.atom = "a/y", .holder = "a/ours-1"}}};
+    const egraph::Pretend theirs{
+        .merges = {},
+        .blocks = {{.atom = "a/x", .holder = "a/both-1"}, {.atom = "a/z", .holder = "a/theirs-1"}}};
+    CHECK(
+        egraph::merge_differences(ours, theirs) ==
+        std::vector<std::string>{"a/ours-1\tegraph\tblocks a/y", "a/theirs-1\temerge\tblocks a/z"});
 }

@@ -167,7 +167,7 @@ TEST_CASE("updates and plan can be verified against emerge, the one in PATH by d
 
 TEST_CASE("dependency queries take emerge's --dynamic-deps, on by default") {
     for (const auto* command :
-         {"deps a/b", "rdeps a/b", "why a/b", "orphans", "broken", "affected"}) {
+         {"deps a/b", "rdeps a/b", "why a/b", "orphans", "broken", "blockers", "affected"}) {
         CHECK(parse(command).dynamic_deps);
         CHECK_FALSE(parse(std::string{command} + " --dynamic-deps n").dynamic_deps);
         CHECK(parse(std::string{command} + " --dynamic-deps y").dynamic_deps);

@@ -44,6 +44,10 @@ is right.
   sorts stably after `os.listdir`, so the pick depends on the filesystem (CI's container and a
   tmpfs disagree). egraph's does not; `ties` in `test_queries.py` and `--verify` count equal
   versions as one choice when comparing plans.
+- Blockers of packages in EAPI 0 and 1, which predate strong blockers, get extra checks in
+  emerge before it uninstalls what they block (never the only installed match of a run-time
+  dependency, never a @system package). egraph does not model them and weighs these as later
+  EAPIs' weak blockers; no installed package on the dev box is older than EAPI 7.
 - Flags that emerge's `_alnum_sort_key` counts equal (`a07` and `a7`) come out of a set in
   hash order when it shows a package's USE; egraph orders them as text (`test_plan.cpp`, "flags
   sort as emerge's alnum key does").

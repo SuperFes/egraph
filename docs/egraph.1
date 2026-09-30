@@ -159,6 +159,16 @@ The packages providing it instead.
 Installed dependencies that nothing installed satisfies.
 .TP
 .B \-\-dynamic\-deps
+.SS blockers \fR[\fIpackage\fR ...]
+Blockers
+.RB ( ! atom
+and
+.BR !! atom)
+in the installed packages' dependencies, each with the installed packages it blocks: of the
+packages given, every blocker they hold and every blocker holding them back; without packages,
+the blockers that block something installed.
+.TP
+.B \-\-dynamic\-deps
 .SS orphans
 The installed packages
 .B emerge \-\-depclean
@@ -173,7 +183,11 @@ The installed packages
 would replace or rebuild, and the new packages it would pull in, each with the USE it would be
 built with as
 .B emerge \-v
-shows it.
+shows it. Then the installed packages it would uninstall for a blocker between them and a merge,
+and the blockers it could not resolve, for which it refuses the whole plan (exit status 6). On
+the running system's root, emerge only resolves a strong blocker
+.RB ( !! atom)
+by a replacement.
 .TP
 .B \-\-dynamic\-deps
 .TP
@@ -212,9 +226,9 @@ Also run
 .B emerge \-\-pretend
 on the same request, under the same roots and without
 .BR EMERGE_DEFAULT_OPTS ,
-and show where its merge list differs: a package only one of them merges, a different kind of
-merge, or a new package's USE. The differences go to standard error in the lines layout, and
-make the exit status 5.
+and show where its merge list differs: a package only one of them merges or uninstalls, a
+different kind of merge, a new package's USE, or a blocker only one of them cannot resolve. The
+differences go to standard error in the lines layout, and make the exit status 5.
 .SS plan \fItarget\fR...
 What
 .B emerge \-\-pretend
@@ -380,6 +394,11 @@ found the store differing from a fresh build.
 .B 5
 .B \-\-verify
 found emerge merging otherwise.
+.TP
+.B 6
+The plan of
+.BR updates " or " plan
+has blockers emerge cannot resolve, so it would refuse it.
 .SH EXAMPLES
 .TP
 .B egraph rdeps dev\-libs/openssl

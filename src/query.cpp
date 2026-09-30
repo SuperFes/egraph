@@ -323,7 +323,14 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
                                       UseRebuilds rebuilds, bool held, bool table,
                                       const Targets& targets,
                                       const std::optional<RemedyInputs>& remedies) {
-    const auto plan = plan_updates(store, evaluated, rebuilds, targets);
+    return update_lines(store, evaluated, plan_updates(store, evaluated, rebuilds, targets),
+                        rebuilds, held, table, targets, remedies);
+}
+
+std::vector<std::string> update_lines(const Store& store, const Evaluated& evaluated,
+                                      const Plan& plan, UseRebuilds rebuilds, bool held, bool table,
+                                      const Targets& targets,
+                                      const std::optional<RemedyInputs>& remedies) {
     const auto target_fields = [&evaluated](std::uint32_t target) {
         const auto& candidate = evaluated.candidates.at(target);
         return std::format("{}\t{}", evaluated.string(candidate.cpv),
@@ -418,6 +425,20 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
             }
         }
     }
+    // Uninstalls, then blocks, after everything else.
+    std::vector<std::string> blocker_rows;
+    blocker_rows.reserve(plan.uninstalls.size() + plan.blocks.size());
+    const auto block_fields = [&](const Block& block) {
+        return std::format("{}\t{}\t{}", member(block.holder), block.atom, member(block.blocked));
+    };
+    for (const auto& each : plan.uninstalls) {
+        blocker_rows.push_back(
+            std::format("{}\tuninstall\t{}", package(each.package), block_fields(each.why)));
+    }
+    for (const auto& each : plan.blocks) {
+        blocker_rows.push_back(std::format("{}\tblocks\t{}\t{}", member(each.holder), each.atom,
+                                           member(each.blocked)));
+    }
     std::vector<std::string> lines;
     if (table) {
         std::vector<std::size_t> place(plan.merges.size());
@@ -437,6 +458,9 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
                 lines.push_back(std::format("\t\t{}", line));
             }
         }
+        for (const auto& line : blocker_rows) {
+            lines.push_back(std::format("\t\t{}", line));
+        }
         return lines;
     }
     std::vector<std::optional<std::string>> replaced(store.packages.size());
@@ -455,6 +479,7 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
         std::ranges::move(held_lines.at(id), std::back_inserter(lines));
     }
     std::ranges::move(added, std::back_inserter(lines));
+    std::ranges::move(blocker_rows, std::back_inserter(lines));
     return lines;
 }
 

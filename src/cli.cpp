@@ -3,6 +3,7 @@
 #include "affected.hpp"
 
 #include "atom.hpp"
+#include "blockers.hpp"
 #include "build_info.hpp"
 #include "check.hpp"
 #include "depclean.hpp"
@@ -515,12 +516,26 @@ Exit fail(std::ostream& err, std::string_view message) {
 }
 
 // Holds plan to what emerge --pretend merges for request, and shows where they differ.
+// Whether the plan is for the running system: emerge treats strong blockers differently there.
+bool running_root(const Invocation& invocation) {
+    return invocation.root.lexically_normal() == "/";
+}
+
+// A plan's exit status once shown: blocked when emerge would refuse it and nothing else went
+// wrong.
+Exit finish(Exit status, const Plan& plan) {
+    return status == Exit::ok && !plan.blocks.empty() ? Exit::blocked : status;
+}
+
 Exit verify(const Invocation& invocation, std::string_view command, const EmergeRequest& request,
-            const Evaluated& evaluated, const Plan& plan, std::ostream& out, std::ostream& err) {
+            const Store& store, const Evaluated& evaluated, const Plan& plan, std::ostream& out,
+            std::ostream& err) {
     const auto style = output(invocation);
     out << std::flush;
     const auto printed = output_of(emerge_command(invocation, request));
-    if (!printed) {
+    // emerge prints the list before refusing it for blockers it cannot resolve.
+    const auto listed = parse_pretend(printed ? *printed : printed.error());
+    if (!printed && listed.blocks.empty()) {
         // emerge explains itself at length; its last lines say why.
         constexpr std::size_t shown = 20;
         std::string_view text = printed.error();
@@ -536,8 +551,7 @@ Exit verify(const Invocation& invocation, std::string_view command, const Emerge
             << text.substr(start == 0 ? 0 : start + 1) << '\n';
         return Exit::failure;
     }
-    const auto differences =
-        merge_differences(planned_merges(evaluated, plan), parse_pretend(*printed));
+    const auto differences = merge_differences(planned_merges(store, evaluated, plan), listed);
     if (style.human) {
         human_verification(out, differences, style.theme);
     } else if (!differences.empty()) {
@@ -681,6 +695,26 @@ Exit execute(const Broken&, Session& session, const Invocation& invocation, std:
     return Exit::ok;
 }
 
+Exit execute(const Blockers& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    const auto loaded = session.dependencies(invocation.dynamic_deps);
+    if (!loaded) {
+        return fail(err, loaded.error());
+    }
+    const Store& store = *loaded;
+    const auto ids = resolve_all(store, command.packages, err);
+    if (!ids) {
+        return Exit::failure;
+    }
+    const auto lines = blocker_lines(store, *ids);
+    if (const auto style = output(invocation); style.human) {
+        human_blockers(out, lines, !ids->empty(), style.theme);
+    } else {
+        write_lines(out, lines);
+    }
+    return Exit::ok;
+}
+
 Exit execute(const Orphans& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     const auto depclean = session.depclean(command.build_deps, invocation.dynamic_deps);
@@ -730,29 +764,29 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
     if (depclean && !*depclean) {
         return fail(err, depclean->error());
     }
-    const auto targets = command.world ? Targets{.scope = (*depclean)->get().kept.packages,
-                                                 .roots = true,
-                                                 .deep = command.deep}
-                                       : Targets{.scope = {}, .roots = false, .deep = command.deep};
+    auto targets = command.world ? Targets{.scope = (*depclean)->get().kept.packages,
+                                           .roots = true,
+                                           .deep = command.deep}
+                                 : Targets{.scope = {}, .roots = false, .deep = command.deep};
+    targets.running_root = running_root(invocation);
+    const auto plan = plan_updates(*store, evaluated, command.rebuilds, targets);
     const auto verified = [&] {
-        if (!command.verify) {
-            return Exit::ok;
-        }
         const EmergeRequest request{.targets = {command.world ? "@world" : "@installed"},
                                     .update = true,
                                     .deep = command.deep,
                                     .rebuilds = command.rebuilds,
                                     .dynamic_deps = invocation.dynamic_deps};
-        return verify(invocation, Updates::name, request, evaluated,
-                      plan_updates(*store, evaluated, command.rebuilds, targets), out, err);
+        return finish(command.verify ? verify(invocation, Updates::name, request, *store, evaluated,
+                                              plan, out, err)
+                                     : Exit::ok,
+                      plan);
     };
     if (command.tree) {
-        const auto tree = update_tree_lines(*store, evaluated, (*depclean)->get().kept,
-                                            command.rebuilds, targets);
+        const auto tree = update_tree_lines(*store, evaluated, (*depclean)->get().kept, plan);
         if (const auto style = output(invocation); style.human) {
             human_update_tree(
-                out, update_lines(*store, evaluated, command.rebuilds, false, true, targets), tree,
-                style.theme);
+                out, update_lines(*store, evaluated, plan, command.rebuilds, false, true, targets),
+                tree, style.theme);
         } else {
             write_lines(out, tree);
         }
@@ -774,7 +808,7 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
             };
         }
     }
-    const auto lines = update_lines(*store, evaluated, command.rebuilds, command.held,
+    const auto lines = update_lines(*store, evaluated, plan, command.rebuilds, command.held,
                                     command.table, targets, remedies);
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme, command.table);
@@ -847,6 +881,7 @@ Exit execute(const PlanCommand& command, Session& session, const Invocation& inv
                            : command.noreplace ? Selection::noreplace
                                                : Selection::reinstall;
     Targets targets{.scope = {}, .roots = false, .deep = command.deep, .selection = selection};
+    targets.running_root = running_root(invocation);
     if (request->installed) {
         if (!request->arguments.empty() || selection != Selection::update) {
             err << "egraph: plan: @installed is only planned alone and with -u\n";
@@ -866,15 +901,16 @@ Exit execute(const PlanCommand& command, Session& session, const Invocation& inv
         targets.roots = true;
         targets.request = request->arguments;
     }
+    const auto plan = plan_updates(*store, evaluated, command.rebuilds, targets);
     const auto lines =
-        update_lines(*store, evaluated, command.rebuilds, false, command.table, targets);
+        update_lines(*store, evaluated, plan, command.rebuilds, false, command.table, targets);
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme, command.table);
     } else {
         write_lines(out, lines);
     }
     if (!command.verify) {
-        return Exit::ok;
+        return finish(Exit::ok, plan);
     }
     const EmergeRequest emerge_request{.targets = command.targets,
                                        .update = command.update,
@@ -882,8 +918,9 @@ Exit execute(const PlanCommand& command, Session& session, const Invocation& inv
                                        .noreplace = command.noreplace,
                                        .rebuilds = command.rebuilds,
                                        .dynamic_deps = invocation.dynamic_deps};
-    return verify(invocation, PlanCommand::name, emerge_request, evaluated,
-                  plan_updates(*store, evaluated, command.rebuilds, targets), out, err);
+    return finish(
+        verify(invocation, PlanCommand::name, emerge_request, *store, evaluated, plan, out, err),
+        plan);
 }
 
 Exit execute(const Why& command, Session& session, const Invocation& invocation, std::ostream& out,
@@ -1209,6 +1246,12 @@ void configure(CLI::App& app, Invocation& invocation) {
         "List the packages providing it instead");
     add_dynamic_deps(
         add_command<Broken>(app, invocation, "Installed dependencies nothing installed satisfies"));
+    CLI::App* blockers_cmd = add_dynamic_deps(
+        add_command<Blockers>(app, invocation, "Blockers between installed packages"));
+    add_field(blockers_cmd, invocation, "packages", &Blockers::packages,
+              "Installed cpvs, or cps for every installed version; without them, the blockers "
+              "that match something installed")
+        ->type_name("PACKAGE");
     CLI::App* orphans_cmd = add_dynamic_deps(
         add_command<Orphans>(app, invocation, "Installed packages emerge --depclean would remove"));
     add_field(orphans_cmd, invocation, "--with-bdeps", &Orphans::build_deps,
