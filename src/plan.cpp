@@ -8,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -206,6 +207,8 @@ class Planner {
     std::map<SlotKey, bool> taken_;
     // Slot-operator rebuilds by installed package.
     std::map<std::uint32_t, Rebuilt> rebuilt_;
+    // Installed packages a merge replaces that breaks a binding within -uD's reach.
+    std::set<std::uint32_t> triggers_;
     // Installed packages a pull found in the way, with the candidate it wanted; and those a
     // failed dependency needs, given their update once the pass is over.
     std::vector<std::pair<std::uint32_t, std::uint32_t>> wanted_;
@@ -436,6 +439,15 @@ class Planner {
             }
         }
         return found;
+    }
+
+    // Whether -uD rebuilds the installed package for its broken bindings: within the reach, or
+    // once each merge breaking one breaks a binding within the reach too. emerge's slot-operator
+    // backtracking starts only from what the arguments reach, and otherwise drops the merge.
+    [[nodiscard]] bool triggered(std::uint32_t id, std::span<const Broken> broken) const {
+        return reached(id) || std::ranges::all_of(broken, [this](const Broken& each) {
+                   return triggers_.contains(each.replaced);
+               });
     }
 
     // The move to a newer slot of the first slot-operator atom of the installed package, outside
@@ -923,6 +935,16 @@ class Planner {
                 work.push_back({.member = {.candidate = true, .index = *merged}, .root = id});
             }
         }
+        triggers_.clear();
+        if (deep() && !targets_ref_.get().reach.empty()) {
+            for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
+                if (kept(id) && in_scope(id) && reached(id)) {
+                    for (const auto& each : broken_bindings(id)) {
+                        triggers_.insert(each.replaced);
+                    }
+                }
+            }
+        }
         for (const auto& [root, candidate] : root_pulls_) {
             const auto& c = evaluated().candidates.at(candidate);
             if (taken_.contains({std::string(evaluated().string(c.cp)),
@@ -949,13 +971,14 @@ class Planner {
                 // rebuilds nothing installed: the binding holds the merge back.
                 if (const auto broken = broken_bindings(item.member.index); !broken.empty()) {
                     // Plain emerge rebuilds them for what it is asked to merge.
-                    const bool rebuilds =
-                        (deep() && std::ranges::none_of(broken,
-                                                        [this](const Broken& each) {
-                                                            return alone(each.replaced);
-                                                        })) ||
-                        std::ranges::any_of(
-                            broken, [this](const Broken& each) { return must(each.replaced); });
+                    const bool rebuilds = (deep() && triggered(item.member.index, broken) &&
+                                           std::ranges::none_of(broken,
+                                                                [this](const Broken& each) {
+                                                                    return alone(each.replaced);
+                                                                })) ||
+                                          std::ranges::any_of(broken, [this](const Broken& each) {
+                                              return must(each.replaced);
+                                          });
                     if (const auto own =
                             rebuilds ? rebuild_target(item.member.index) : std::nullopt) {
                         const auto& first = broken.front();

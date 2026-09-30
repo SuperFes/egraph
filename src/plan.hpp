@@ -76,8 +76,8 @@ struct Plan {
 //   version that matches, new in its slot, the first alternative of a || that can be satisfied
 //   so. A merge whose own dependencies cannot be satisfied falls back in turn;
 // - a kept dependent bound by a slot operator to a sub-slot a merge replaces: rebuilt from a
-//   visible ebuild of its version, whose dependencies the plan then satisfies; with none, the
-//   binding holds the merge back like any bound;
+//   visible ebuild of its version, whose dependencies the plan then satisfies; with none, or
+//   outside targets.reach, the binding holds the merge back like any bound;
 // - a merge's dependency that only a newer version of an installed package without an update of
 //   its own satisfies: that package replaced with the best visible match, rejected in turn with
 //   the merge that needed it.

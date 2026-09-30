@@ -988,6 +988,35 @@ TEST_CASE("-uD with a reach updates only it, and what lies outside it only weigh
                                    "new dev-libs/new-1 <- app-misc/arg-2 dev-libs/new"});
 }
 
+TEST_CASE("-uD rebuilds outside its reach only for a merge that breaks a binding within it") {
+    // Neither rdep nor other is the argument's, and the argument's own binding goes with its
+    // update, so emerge's slot-operator backtracking never starts and lib's update is dropped.
+    const auto system =
+        make_system({{.cpv = "dev-libs/lib-1", .slot = "0", .sub_slot = "1"},
+                     {.cpv = "app-misc/moving-1", .deps = {{"RDEPEND", "dev-libs/lib:0/1="}}},
+                     {.cpv = "app-misc/rdep-1", .deps = {{"RDEPEND", "dev-libs/lib:0/1="}}},
+                     {.cpv = "app-misc/other-1", .deps = {{"RDEPEND", "dev-libs/lib:0/1="}}}},
+                    {{.cpv = "dev-libs/lib-1", .slot = "0", .sub_slot = "1"},
+                     {.cpv = "dev-libs/lib-2", .slot = "0", .sub_slot = "2"},
+                     {.cpv = "app-misc/moving-1", .deps = {{"RDEPEND", "dev-libs/lib:="}}},
+                     {.cpv = "app-misc/moving-2", .deps = {{"RDEPEND", "dev-libs/lib:="}}},
+                     {.cpv = "app-misc/rdep-1", .deps = {{"RDEPEND", "dev-libs/lib:="}}},
+                     {.cpv = "app-misc/other-1", .deps = {{"RDEPEND", "dev-libs/lib:="}}}});
+    auto targets = request({"app-misc/moving"}, egraph::Selection::update, true);
+    targets.reach = {true, true, false, false};
+    CHECK(plan(system, egraph::UseRebuilds::none, targets) ==
+          std::vector<std::string>{"app-misc/moving-1 -> app-misc/moving-2",
+                                   "dev-libs/lib-1 held <- app-misc/rdep-1 dev-libs/lib:0/1=; "
+                                   "app-misc/other-1 dev-libs/lib:0/1="});
+    // rdep within the reach is rebuilt, and other with it.
+    targets.reach = {true, true, true, false};
+    CHECK(plan(system, egraph::UseRebuilds::none, targets) ==
+          std::vector<std::string>{
+              "dev-libs/lib-1 -> dev-libs/lib-2", "app-misc/moving-1 -> app-misc/moving-2",
+              "app-misc/rdep-1 -> app-misc/rdep-1 for dev-libs/lib-2 dev-libs/lib:0/1=",
+              "app-misc/other-1 -> app-misc/other-1 for dev-libs/lib-2 dev-libs/lib:0/1="});
+}
+
 TEST_CASE("outside --deep's reach, a rebuild takes the best version, for run-time bindings only") {
     const auto system =
         make_system({{.cpv = "dev-libs/lib-1", .slot = "0", .sub_slot = "1"},

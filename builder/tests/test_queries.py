@@ -282,17 +282,6 @@ PLAN_MODES = {
     "n": ({"update": False, "noreplace": True}, ["-n"]),
 }
 
-# emerge --deep with these atoms reaches a package whose update needs slot-operator rebuilds
-# outside the arguments' reach, and its backtracking drops the lot.
-PLAN_DIFFERENCES = {
-    ("slotops", "uD"): {
-        "app-misc/moving",
-        "=app-misc/moving-2",
-        "app-misc/star",
-        "=app-misc/star-1",
-    },
-}
-
 
 @pytest.mark.parametrize("mode", sorted(PLAN_MODES))
 @pytest.mark.parametrize("name", sorted(SCENARIOS))
@@ -319,7 +308,7 @@ def test_plans_are_emerges(playgrounds, tmp_path, name, mode):
         use = new_use(result.stdout)
         for cpv in use.keys() & expected.use.keys():
             assert use[cpv] == expected.use[cpv], (target, cpv)
-    assert differences == PLAN_DIFFERENCES.get((name, mode), set())
+    assert not differences
 
 
 def removals(text):
