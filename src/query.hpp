@@ -16,6 +16,8 @@
 
 namespace egraph {
 
+struct Plan;
+
 // "parent<TAB>kind<TAB>atom<TAB>child", with "<TAB>any-of" appended for an alternative inside a
 // || group.
 [[nodiscard]] std::string edge_line(const Store& store, const Edge& edge);
@@ -117,6 +119,10 @@ update_lines(const Store& store, const Evaluated& evaluated, UseRebuilds rebuild
                                                          const Evaluated& evaluated,
                                                          const Kept& kept, UseRebuilds rebuilds,
                                                          bool world = false);
+// As above, for a plan already made.
+[[nodiscard]] std::vector<std::string> update_tree_lines(const Store& store,
+                                                         const Evaluated& evaluated,
+                                                         const Kept& kept, const Plan& plan);
 
 // Consumers (or providers) of a soname: one "cpv<TAB>multilib category" line each, sorted.
 [[nodiscard]] std::vector<std::string> soname_users(const Store& store, std::string_view soname,

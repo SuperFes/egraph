@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -134,7 +135,24 @@ bool selectable(const Row& row) {
     return row.type == RowType::link || row.type == RowType::path;
 }
 
-// Moves over a page, landing only on packages; headings above the first stay in view.
+// Moves over rows, landing only on those at stops (ascending); rows above the first stay in view.
+void move_among(Cursor& cursor, const std::vector<std::size_t>& stops, const Key& key,
+                std::size_t height) {
+    if (stops.empty()) {
+        return;
+    }
+    const auto current = std::ranges::lower_bound(stops, cursor.at);
+    Cursor among{.at = static_cast<std::size_t>(current - stops.begin()), .top = 0};
+    among.at = std::min(among.at, stops.size() - 1);
+    move(among, stops.size(), key, height);
+    cursor.at = stops.at(among.at);
+    keep_visible(cursor, height);
+    if (among.at == 0) {
+        cursor.top = 0;
+    }
+}
+
+// Moves over a page, landing only on packages.
 void move_on_page(App::Page& page, const Key& key, std::size_t height) {
     std::vector<std::size_t> stops;
     for (std::size_t i = 0; i < page.rows.size(); ++i) {
@@ -142,18 +160,12 @@ void move_on_page(App::Page& page, const Key& key, std::size_t height) {
             stops.push_back(i);
         }
     }
-    if (stops.empty()) {
-        return;
-    }
-    const auto current = std::ranges::lower_bound(stops, page.cursor.at);
-    Cursor among{.at = static_cast<std::size_t>(current - stops.begin()), .top = 0};
-    among.at = std::min(among.at, stops.size() - 1);
-    move(among, stops.size(), key, height);
-    page.cursor.at = stops.at(among.at);
-    keep_visible(page.cursor, height);
-    if (among.at == 0) {
-        page.cursor.top = 0;
-    }
+    move_among(page.cursor, stops, key, height);
+}
+
+std::string_view member_cpv(const Store& store, const Evaluated& evaluated, const Member& member) {
+    return member.candidate ? evaluated.string(evaluated.candidates.at(member.index).cpv)
+                            : store.string(store.packages.at(member.index).cpv);
 }
 
 Row text_row(RowType type, std::string text) {
@@ -462,6 +474,63 @@ void thread(std::vector<Row>& rows) {
     thread_tree(rows, [](const Row& row) { return selectable(row) ? row.depth : 0; });
 }
 
+std::vector<PlanRow> plan_rows(const Store& store, const Evaluated& evaluated, const Kept& kept,
+                               const Plan& plan) {
+    std::vector<std::vector<std::string>> chains;
+    // Each merge by the cpv its chain ends in, which names it wherever it appears.
+    std::map<std::string, std::uint32_t, std::less<>> merges;
+    // One line per place in the merge order, led by the place.
+    const auto lines = update_tree_lines(store, evaluated, kept, plan);
+    for (std::size_t place = 0; place < lines.size(); ++place) {
+        std::vector<std::string> fields;
+        for (const auto field :
+             std::views::split(std::string_view{lines.at(place)}, '\t') | std::views::drop(1)) {
+            fields.emplace_back(std::string_view{field});
+        }
+        merges.emplace(fields.back(), plan.order.at(place));
+        chains.push_back(std::move(fields));
+    }
+    struct Node {
+        std::string label;
+        std::vector<std::size_t> children;
+    };
+    // Node 0 holds the sets; children keep the order the merges first reach them in.
+    std::vector<Node> nodes(1);
+    for (const auto& chain : chains) {
+        std::size_t at = 0;
+        for (const auto& label : chain) {
+            const auto& children = nodes.at(at).children;
+            const auto found = std::ranges::find_if(
+                children, [&](std::size_t child) { return nodes.at(child).label == label; });
+            if (found != children.end()) {
+                at = *found;
+                continue;
+            }
+            nodes.push_back({.label = label, .children = {}});
+            nodes.at(at).children.push_back(nodes.size() - 1);
+            at = nodes.size() - 1;
+        }
+    }
+    std::vector<PlanRow> rows;
+    const auto walk = [&](this const auto& self, std::size_t index, std::size_t depth) -> void {
+        for (const auto child : nodes.at(index).children) {
+            const auto& label = nodes.at(child).label;
+            const auto merge = merges.find(label);
+            rows.push_back({.label = label,
+                            .merge = depth > 0 && merge != merges.end()
+                                         ? std::optional{merge->second}
+                                         : std::nullopt,
+                            .depth = depth,
+                            .last = false,
+                            .rails = {}});
+            self(child, depth + 1);
+        }
+    };
+    walk(0, 0);
+    thread_tree(rows, [](const PlanRow& row) { return row.depth; });
+    return rows;
+}
+
 std::vector<Link> links(const Store& store, const Graph& graph, std::uint32_t package,
                         bool reverse) {
     std::vector<Link> found;
@@ -608,11 +677,8 @@ void App::index() {
             updates_.at(*merge.replaces) =
                 PendingUpdate{.kind = merge.kind, .target = merge.candidate, .flags = merge.flags};
             if (const auto& why = merge.rebuilt_for) {
-                const auto member =
-                    why->member.candidate
-                        ? evaluated().string(evaluated().candidates.at(why->member.index).cpv)
-                        : store.string(store.packages.at(why->member.index).cpv);
-                rebuilt_for_.at(*merge.replaces) = std::format("{} {}", member, why->atom);
+                rebuilt_for_.at(*merge.replaces) =
+                    std::format("{} {}", member_cpv(store, evaluated(), why->member), why->atom);
             }
         }
         remedies_ = egraph::remedies(store, evaluated(), graph, plan_, shown_rebuilds, {});
@@ -694,6 +760,10 @@ void App::replace(std::shared_ptr<const Stores> stores) {
         bool reverse = false;
     };
     const auto list_cursor = list_.cursor;
+    const auto plan_cursor = planned_ ? planned_->cursor : Cursor{};
+    const auto plan_label = planned_ && plan_cursor.at < planned_->rows.size()
+                                ? std::optional{planned_->rows.at(plan_cursor.at).label}
+                                : std::nullopt;
     const auto listed = list_cursor.at < list_.shown.size()
                             ? std::optional{place_of(list_.shown.at(list_cursor.at))}
                             : std::nullopt;
@@ -731,6 +801,24 @@ void App::replace(std::shared_ptr<const Stores> stores) {
         restore(list_.cursor, list_cursor,
                 at != list_.shown.end() ? static_cast<std::size_t>(at - list_.shown.begin())
                                         : std::min(list_cursor.at, list_.shown.size() - 1));
+    }
+    if (planned_) {
+        auto& planned = open_plan(plan_label);
+        const auto& rows = planned.rows;
+        if (!rows.empty()) {
+            auto at = planned.cursor.at;
+            // What it was on is gone: the package at or above the same place.
+            if (rows.at(at).label != plan_label) {
+                at = std::min(plan_cursor.at, rows.size() - 1);
+                while (at > 0 && rows.at(at).depth == 0) {
+                    --at;
+                }
+                if (rows.at(at).depth == 0) {
+                    at = planned.cursor.at;
+                }
+            }
+            restore(planned.cursor, plan_cursor, at);
+        }
     }
     pages_.clear();
     for (const auto& entry : opened) {
@@ -846,8 +934,8 @@ void App::handle(const Key& key) {
         dialog_.reset();
     } else if (prompt_) {
         handle_prompt(*prompt_, key);
-    } else if (is(key, U':') &&
-               !(list_.searching && pages_.empty() && !output_ && !checked_ && !watched_)) {
+    } else if (is(key, U':') && !(list_.searching && pages_.empty() && !output_ && !checked_ &&
+                                  !watched_ && !planned_)) {
         prompt_.emplace();
     } else if (!pages_.empty()) {
         handle_page(key);
@@ -861,6 +949,8 @@ void App::handle(const Key& key) {
         handle_check(key);
     } else if (watched_) {
         handle_watch(key);
+    } else if (planned_) {
+        handle_plan(key);
     } else {
         handle_list(key);
     }
@@ -1272,6 +1362,8 @@ void App::handle_list(const Key& key) {
         checked_.emplace();
     } else if (is(key, U'e')) {
         watched_.emplace();
+    } else if (is(key, U'p') && has_evaluated()) {
+        open_plan();
     } else if (is(key, U'b')) {
         build_deps_ = !build_deps_;
         recompute();
@@ -1285,6 +1377,71 @@ void App::handle_list(const Key& key) {
         }
     } else if (is_move(key)) {
         move(list_.cursor, list_.shown.size(), key, height_);
+    }
+}
+
+Planned& App::open_plan(std::optional<std::string> selected) {
+    Planned planned{.rows = plan_rows(store(), evaluated(), kept_, plan_),
+                    .places = std::vector<std::size_t>(plan_.merges.size(), 0),
+                    .cursor = {}};
+    for (std::size_t place = 0; place < plan_.order.size(); ++place) {
+        planned.places.at(plan_.order.at(place)) = place + 1;
+    }
+    const auto& rows = planned.rows;
+    auto at = std::ranges::find_if(
+        rows, [&](const PlanRow& row) { return row.depth > 0 && row.label == selected; });
+    if (at == rows.end()) {
+        at = std::ranges::find_if(rows, [](const PlanRow& row) { return row.depth > 0; });
+    }
+    planned.cursor.at = at == rows.end() ? 0 : static_cast<std::size_t>(at - rows.begin());
+    keep_visible(planned.cursor, height_);
+    if (planned.cursor.at < height_) {
+        planned.cursor.top = 0;
+    }
+    return planned_.emplace(std::move(planned));
+}
+
+void App::handle_plan(const Key& key) {
+    if (!planned_) {
+        return;
+    }
+    auto& planned = *planned_;
+    if (is(key, U'q') || is(key, U'Q')) {
+        done_ = true;
+    } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace ||
+               key.kind == KeyKind::left || is(key, U'h')) {
+        planned_.reset();
+    } else if (key.kind == KeyKind::enter || key.kind == KeyKind::right || is(key, U'l')) {
+        if (planned.cursor.at >= planned.rows.size()) {
+            return;
+        }
+        const auto& row = planned.rows.at(planned.cursor.at);
+        if (row.depth == 0) {
+            return;
+        }
+        if (const auto id = find(row.label)) {
+            open(*id);
+            return;
+        }
+        std::vector<std::string> lines;
+        if (row.merge) {
+            if (const auto& by = plan_.merges.at(*row.merge).pulled_by) {
+                lines.push_back(std::format("The plan pulls it in for {}'s {}.",
+                                            member_cpv(store(), evaluated(), by->member),
+                                            by->atom));
+            }
+        }
+        show({.error = false,
+              .title = std::format("{} is not installed", row.label),
+              .lines = std::move(lines)});
+    } else if (is_move(key)) {
+        std::vector<std::size_t> stops;
+        for (std::size_t i = 0; i < planned.rows.size(); ++i) {
+            if (planned.rows.at(i).depth > 0) {
+                stops.push_back(i);
+            }
+        }
+        move_among(planned.cursor, stops, key, height_);
     }
 }
 

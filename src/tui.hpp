@@ -306,6 +306,30 @@ struct Dialog {
     std::vector<std::string> lines;
 };
 
+// A line of the plan view: a root set at depth 0, then the packages down the chain from it to
+// each merge, as updates --tree draws them.
+struct PlanRow {
+    // The set ("@selected", empty for merges nothing keeps), or a package's cpv.
+    std::string label;
+    // Index into Plan::merges, for a merge; the packages between merges are installed ones.
+    std::optional<std::uint32_t> merge;
+    std::size_t depth = 0;
+    bool last = false;
+    std::vector<bool> rails;
+};
+
+// The plan as a tree under each root set, chains as update_tree_lines finds them with kept.
+[[nodiscard]] std::vector<PlanRow> plan_rows(const Store& store, const Evaluated& evaluated,
+                                             const Kept& kept, const Plan& plan);
+
+// The plan view: its rows, each merge's place in the merge order (from 1), and the cursor over
+// the packages.
+struct Planned {
+    std::vector<PlanRow> rows;
+    std::vector<std::size_t> places;
+    Cursor cursor;
+};
+
 // Which packages the list shows, before the search.
 enum class Only : std::uint8_t { all, orphans, broken, updates };
 
@@ -375,6 +399,8 @@ class App {
     void finish_rebuild(RebuildResult result);
     // Open from the list, under any pages opened from it.
     [[nodiscard]] const std::optional<Watched>& watched() const { return watched_; }
+    // Open from the list, under any pages opened from it.
+    [[nodiscard]] const std::optional<Planned>& planned() const { return planned_; }
     // Whether the emerge view is showing and due to read the snapshots, which run() then does.
     [[nodiscard]] bool watch_requested() const;
     void finish_watch(std::vector<emerge::Snapshot> snapshots, const pressure::Sample& sample = {},
@@ -479,6 +505,9 @@ class App {
     void handle_check(const Key& key);
     void handle_watch(const Key& key);
     void handle_steve(const Key& key);
+    void handle_plan(const Key& key);
+    // The plan view over the current plan, on the row labelled selected where there is one.
+    Planned& open_plan(std::optional<std::string> selected = std::nullopt);
     void handle_prompt(std::string& text, const Key& key);
     void handle_output(Output& output, const Key& key);
     // The package with this cpv, if the store has it.
@@ -511,6 +540,7 @@ class App {
     List list_;
     std::optional<Checked> checked_;
     std::optional<Watched> watched_;
+    std::optional<Planned> planned_;
     std::vector<Page> pages_;
     std::optional<Dialog> dialog_;
     std::optional<std::string> prompt_;
@@ -776,6 +806,7 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
             {"!", list.only == Only::broken ? "all" : "broken"}};
         if (app.has_evaluated()) {
             hints.emplace_back("u", list.only == Only::updates ? "all" : "updates");
+            hints.emplace_back("p", "plan");
         }
         hints.insert(hints.end(), {{"b", app.build_deps() ? "run time only" : "build deps"},
                                    {"c", "check"},
@@ -1071,6 +1102,106 @@ template <class S> void draw_check(S& screen, App& app, const Glyphs& glyph, Siz
         hints.insert(hints.begin(), {{glyph.move, "move"},
                                      {glyph.enter, "open"},
                                      {"u", app.update() == Update::save ? "rebuild" : "preview"}});
+    }
+    draw_hints(screen, size.rows - 1, size.cols, hints);
+}
+
+// A merge in the plan view, as updates --tree draws it: its kind, name, version and any it moves
+// to, repository, place, and the places of the merges it waits for.
+inline std::vector<Span> merge_spans(const App& app, const Planned& planned, std::uint32_t index,
+                                     const Glyphs& glyph) {
+    const auto& merge = app.plan().merges.at(index);
+    const auto& evaluated = app.evaluated();
+    const auto& target = evaluated.candidates.at(merge.candidate);
+    const auto to = split_cpv(evaluated.string(target.cpv));
+    const auto from =
+        merge.replaces ? split_cpv(app.store().string(app.store().packages.at(*merge.replaces).cpv))
+                       : to;
+    std::vector<Span> spans;
+    if (merge.replaces) {
+        spans.push_back(update_glyph(
+            {.kind = merge.kind, .target = merge.candidate, .flags = merge.flags}, glyph));
+    } else {
+        spans.push_back({std::string{glyph.added}, tone_pen(Tone::good)});
+    }
+    spans.push_back({" ", {}});
+    spans.push_back({std::format("{}/", from.category), tone_pen(Tone::category)});
+    spans.push_back({std::string{from.name}, tone_pen(Tone::name)});
+    spans.push_back({std::format("  {}", from.version), tone_pen(Tone::version)});
+    if (from.version != to.version) {
+        spans.push_back({std::format(" {} ", glyph.instead), tone_pen(Tone::note)});
+        spans.push_back({std::string{to.version},
+                         tone_pen(merge.kind == UpdateKind::downgrade ? Tone::bad : Tone::good)});
+    }
+    spans.push_back({std::format("  ::{}", evaluated.string(target.repo)), tone_pen(Tone::repo)});
+    spans.push_back({std::format("  {}", planned.places.at(index)), tone_pen(Tone::count)});
+    if (!merge.waits.empty()) {
+        std::string waits;
+        for (const auto wait : merge.waits) {
+            waits += std::format("{}{}", waits.empty() ? "" : " ", planned.places.at(wait));
+        }
+        spans.push_back({std::format("  {} ", glyph.waiting), tone_pen(Tone::note)});
+        spans.push_back({std::move(waits), tone_pen(Tone::count)});
+    }
+    return spans;
+}
+
+template <class S> void draw_plan(S& screen, App& app, const Glyphs& glyph, Size size) {
+    const auto& open = app.planned();
+    if (!open) {
+        return;
+    }
+    const auto& planned = *open;
+    draw_title(screen, app, size.cols,
+               {{std::format(" {} egraph ", glyph.package),
+                 {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
+                {std::format(" {} ", glyph.trail), tone_pen(Tone::note)},
+                {"plan", tone_pen(Tone::name)},
+                {std::format("  {} merges", app.plan().merges.size()), tone_pen(Tone::count)}},
+               glyph);
+    const unsigned first = 2;
+    const unsigned height = size.rows - first - 1;
+    app.set_height(height);
+    for (unsigned line = 0; line < height; ++line) {
+        const auto index = planned.cursor.top + line;
+        if (index >= planned.rows.size()) {
+            break;
+        }
+        const auto& row = planned.rows.at(index);
+        const unsigned at = first + line;
+        if (row.depth == 0) {
+            put_spans(
+                screen, at, 3,
+                {row.label.empty()
+                     ? Span{std::format("{} nothing keeps", glyph.orphan), tone_pen(Tone::bad)}
+                     : Span{std::format("{} {}", set_glyph(row.label, glyph), row.label),
+                            tone_pen(Tone::root)}},
+                size.cols);
+            continue;
+        }
+        const bool selected = index == planned.cursor.at;
+        const auto bg = selected ? std::optional<Color>{palette::surface} : std::nullopt;
+        if (selected) {
+            screen.fill_row(at, {.fg = std::nullopt, .bg = palette::surface});
+        }
+        std::string tree;
+        for (const bool rail : row.rails) {
+            tree += rail ? glyph.rail : "  ";
+        }
+        tree += std::format("{} ", row.last ? glyph.branch : glyph.tee);
+        std::vector<Span> spans{marker(selected, glyph), {std::move(tree), tone_pen(Tone::note)}};
+        std::ranges::move(row.merge ? merge_spans(app, planned, *row.merge, glyph)
+                                    : cpv_spans(row.label),
+                          std::back_inserter(spans));
+        put_spans(screen, at, 0, spans, size.cols, bg);
+    }
+    if (planned.rows.empty()) {
+        put_spans(screen, first, 5, {{"nothing to merge", tone_pen(Tone::note)}}, size.cols);
+    }
+    std::vector<std::pair<std::string_view, std::string_view>> hints{
+        {"esc", "back"}, {"q", "quit"}, {":", "command"}};
+    if (!planned.rows.empty()) {
+        hints.insert(hints.begin(), {{glyph.move, "move"}, {glyph.enter, "open"}});
     }
     draw_hints(screen, size.rows - 1, size.cols, hints);
 }
@@ -1431,6 +1562,8 @@ template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
             draw_check(screen, app, glyph, size);
         } else if (app.watched()) {
             draw_watch(screen, app, glyph, size);
+        } else if (app.planned()) {
+            draw_plan(screen, app, glyph, size);
         } else {
             draw_list(screen, app, glyph, size);
         }

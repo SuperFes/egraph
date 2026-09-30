@@ -119,6 +119,13 @@ def test_tui_lists_and_shows_pending_updates(playgrounds, tmp_path):
         tmux(socket, "send-keys", "-t", "t", "Enter")
         screen = wait_for(socket, "upgrade to dev-libs/lib-2.1  ::test_repo")
         assert "Update" in screen
+        # Sent apart, so that they are not read as one Alt key.
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        wait_for(socket, "1 updates")
+        tmux(socket, "send-keys", "-t", "t", "p")
+        screen = wait_for(socket, " merges")
+        assert "dev-libs/lib  2 " in screen
+        assert "2.1  ::test_repo" in screen
         tmux(socket, "send-keys", "-t", "t", "q")
         wait_for(socket, "EXIT=0")
     finally:

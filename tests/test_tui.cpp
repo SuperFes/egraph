@@ -1806,3 +1806,160 @@ TEST_CASE("no refresh runs while the check view is open") {
     CHECK(refreshes == 1);
     CHECK(app.store().packages.size() == 4);
 }
+
+namespace {
+
+// top needs glibmm, whose next version pulls in mm-common and through it chain; only world keeps
+// top, and nothing keeps loose, installed at loose_version.
+egraph::test::System glibmm_system(const std::string& loose_version = "1") {
+    return egraph::test::make_system(
+        {{.cpv = "app-misc/glibmm-1"},
+         {.cpv = "app-misc/loose-" + loose_version},
+         {.cpv = "app-misc/top-1", .deps = {{"RDEPEND", "app-misc/glibmm"}}}},
+        {{.cpv = "app-misc/glibmm-1"},
+         {.cpv = "app-misc/glibmm-2", .deps = {{"BDEPEND", "dev-cpp/mm-common"}}},
+         {.cpv = "app-misc/loose-1"},
+         {.cpv = "app-misc/loose-2"},
+         {.cpv = "app-misc/top-1", .deps = {{"RDEPEND", "app-misc/glibmm"}}},
+         {.cpv = "dev-cpp/mm-common-1", .deps = {{"RDEPEND", "dev-libs/chain"}}},
+         {.cpv = "dev-libs/chain-1"}},
+        {"app-misc/top"});
+}
+
+// Each row as its depth, label, and the merge's candidate cpv where it is one.
+std::vector<std::string> described(const egraph::tui::App& app) {
+    std::vector<std::string> out;
+    for (const auto& row : app.planned()->rows) {
+        auto line = std::format("{} {}", row.depth, row.label);
+        if (row.merge) {
+            const auto& evaluated = app.evaluated();
+            line += std::format(
+                " -> {}",
+                evaluated.string(
+                    evaluated.candidates.at(app.plan().merges.at(*row.merge).candidate).cpv));
+        }
+        out.push_back(std::move(line));
+    }
+    return out;
+}
+
+std::string selected_label(const egraph::tui::App& app) {
+    const auto& planned = *app.planned();
+    return planned.rows.at(planned.cursor.at).label;
+}
+
+} // namespace
+
+TEST_CASE("p shows the plan as a tree under each root set") {
+    egraph::tui::App app{shared(glibmm_system()), true};
+    FakeScreen screen{16, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(15), "p plan"));
+    app.handle(character(U'p'));
+    REQUIRE(app.planned().has_value());
+    CHECK(described(app) == std::vector<std::string>{
+                                "0 ",
+                                "1 app-misc/loose-1 -> app-misc/loose-2",
+                                "0 @selected",
+                                "1 app-misc/top-1",
+                                "2 app-misc/glibmm-1 -> app-misc/glibmm-2",
+                                "3 dev-cpp/mm-common-1 -> dev-cpp/mm-common-1",
+                                "4 dev-libs/chain-1 -> dev-libs/chain-1",
+                            });
+    CHECK(selected_label(app) == "app-misc/loose-1");
+    egraph::tui::draw(screen, app, ascii);
+    const auto text = screen.text();
+    INFO(text);
+    CHECK(contains(screen.line(0), "plan  4 merges"));
+    CHECK(contains(text, "\n   - nothing keeps"));
+    CHECK(contains(text, "\n > `- U app-misc/loose  1 > 2  ::test_repo  1     "));
+    CHECK(contains(text, "\n   @ @selected"));
+    CHECK(contains(text, "\n   `- app-misc/top-1"));
+    CHECK(contains(text, "\n     `- U app-misc/glibmm  1 > 2  ::test_repo  4  w 3"));
+    CHECK(contains(text, "\n       `- N dev-cpp/mm-common  1  ::test_repo  3  w 2"));
+    CHECK(contains(text, "\n         `- N dev-libs/chain  1  ::test_repo  2"));
+    CHECK(contains(screen.line(15), "esc back"));
+}
+
+TEST_CASE("the plan view moves over packages and opens the installed ones") {
+    egraph::tui::App app{shared(glibmm_system()), true};
+    app.handle(character(U'p'));
+    // Past the set to its first package.
+    app.handle(key(KeyKind::down));
+    CHECK(selected_label(app) == "app-misc/top-1");
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    CHECK(cpv_of(app, app.pages().back().package) == "app-misc/top-1");
+    app.handle(key(KeyKind::escape));
+    CHECK(app.pages().empty());
+    REQUIRE(app.planned().has_value());
+
+    // A replacement opens the page of what it replaces.
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    CHECK(cpv_of(app, app.pages().back().package) == "app-misc/glibmm-1");
+    app.handle(key(KeyKind::escape));
+
+    // A new package has no page, only what pulls it in.
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    CHECK(app.pages().empty());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "dev-cpp/mm-common-1 is not installed");
+    CHECK(app.dialog()->lines ==
+          std::vector<std::string>{"The plan pulls it in for app-misc/glibmm-2's "
+                                   "dev-cpp/mm-common."});
+    app.handle(key(KeyKind::escape));
+
+    app.handle(key(KeyKind::home));
+    CHECK(selected_label(app) == "app-misc/loose-1");
+    app.handle(key(KeyKind::end));
+    CHECK(selected_label(app) == "dev-libs/chain-1");
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.planned().has_value());
+    CHECK_FALSE(app.done());
+    app.handle(character(U'p'));
+    app.handle(character(U'q'));
+    CHECK(app.done());
+}
+
+TEST_CASE("the plan view says when nothing is to merge, and needs the evaluated store") {
+    egraph::tui::App app{shared(app_with_lib("1")), false};
+    app.handle(character(U'p'));
+    REQUIRE(app.planned().has_value());
+    CHECK(app.planned()->rows.empty());
+    FakeScreen screen{10, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "nothing to merge"));
+
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App bare{store, graph};
+    bare.handle(character(U'p'));
+    CHECK_FALSE(bare.planned().has_value());
+}
+
+TEST_CASE("refreshed stores keep the plan view on its package") {
+    egraph::tui::App app{shared(glibmm_system()), true};
+    app.handle(character(U'p'));
+    app.handle(key(KeyKind::down));
+    REQUIRE(selected_label(app) == "app-misc/top-1");
+    app.finish_refresh(shared(glibmm_system("2")));
+    REQUIRE(app.planned().has_value());
+    CHECK(app.planned()->rows.size() == 5);
+    CHECK(selected_label(app) == "app-misc/top-1");
+
+    // What it was on is gone: the same place, on a package.
+    app.handle(key(KeyKind::end));
+    app.finish_refresh(shared(egraph::test::make_system(
+        {{.cpv = "app-misc/glibmm-1"},
+         {.cpv = "app-misc/top-1", .deps = {{"RDEPEND", "app-misc/glibmm"}}}},
+        {{.cpv = "app-misc/glibmm-1"},
+         {.cpv = "app-misc/glibmm-2"},
+         {.cpv = "app-misc/top-1", .deps = {{"RDEPEND", "app-misc/glibmm"}}}},
+        {"app-misc/top"})));
+    REQUIRE(app.planned().has_value());
+    CHECK(app.planned()->rows.size() == 3);
+    CHECK(selected_label(app) == "app-misc/glibmm-1");
+}

@@ -19,7 +19,7 @@ Update the status column as steps land.
 | 11 | Build monitor | done |
 | 12 | Updates of `@world` | done |
 | 13 | A living app | done |
-| 14 | Plans | in progress |
+| 14 | Plans | done |
 
 ## 0. Scaffold
 
@@ -314,4 +314,6 @@ Blockers stay out of scope until a comparison needs them.
   the waits listed are `pending.py`'s, on every scenario.
 - 14d2 (done): the plan as a tree, `updates --tree`: each merge under its root set, down `why`'s
   chain for a replaced or rebuilt package and the pulling chain for a new one, merges with their
-  place and waits. Held to `why` on every scenario. A view in the living app is still to come.
+  place and waits. Held to `why` on every scenario.
+- 14e (done): the tree as a view in the living app (`p` from the list), its installed packages
+  opening their pages, kept on its package across a refresh.

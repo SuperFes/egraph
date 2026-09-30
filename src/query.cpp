@@ -337,9 +337,14 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
 
 std::vector<std::string> update_tree_lines(const Store& store, const Evaluated& evaluated,
                                            const Kept& kept, UseRebuilds rebuilds, bool world) {
-    const auto plan =
+    return update_tree_lines(
+        store, evaluated, kept,
         plan_updates(store, evaluated, rebuilds,
-                     world ? Targets{.scope = kept.packages, .roots = true} : Targets{});
+                     world ? Targets{.scope = kept.packages, .roots = true} : Targets{}));
+}
+
+std::vector<std::string> update_tree_lines(const Store& store, const Evaluated& evaluated,
+                                           const Kept& kept, const Plan& plan) {
     std::map<std::uint32_t, std::uint32_t> by_candidate;
     for (std::uint32_t i = 0; i < plan.merges.size(); ++i) {
         by_candidate.emplace(plan.merges.at(i).candidate, i);

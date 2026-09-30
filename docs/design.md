@@ -172,13 +172,18 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   its ebuild would depend on with flags toggled, and whose ebuilds would depend on it, each
   marked with the toggles (`deps` and `rdeps --possible`); what nothing installed satisfies is
   listed but cannot be opened.
+- `p` shows the plan as `updates --tree` draws it: each merge under its root set, down the chain
+  that keeps what it replaces (or what pulls a new package in), with its place in the merge order
+  and the places it waits for. Installed packages open their pages; a new one says what pulls it
+  in.
 - The stores stay current while the interface is open. Every two seconds without a key
   (`stale_interval`), `run()` looks at their inputs as a query's freshness check does (a few
   milliseconds of `lstat`); once they changed, it opens current stores as a session would, in
   the background: a current system store as it is, else the store at `--store` or the user's
   after an incremental build. The title shows a spinner meanwhile, then each view is kept where
   it was: the list's query, filter and selected package, and every open page with its selected
-  row, a package found again by cpv or else by name and slot (so a page follows an upgrade).
+  row, the plan view on its package, a package found again by cpv or else by name and slot (so a
+  page follows an upgrade).
   Unfolded trees fold again. A failed refresh stays in the title and is tried again after a
   minute (`retry_interval`). None starts while the check view is open, whose build compares with
   the stores shown, and `--no-refresh` turns it off.
