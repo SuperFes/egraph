@@ -36,3 +36,6 @@ is right.
   sorts stably after `os.listdir`, so the pick depends on the filesystem (CI's container and a
   tmpfs disagree). egraph's does not; `ties` in `test_queries.py` counts equal versions as one
   choice when comparing plans.
+- Flags that emerge's `_alnum_sort_key` counts equal (`a07` and `a7`) come out of a set in
+  hash order when it shows a package's USE; egraph orders them as text (`test_plan.cpp`, "flags
+  sort as emerge's alnum key does").

@@ -753,6 +753,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         }
     }
     bool flags = false;
+    bool fixed = false;
     // The package, its version and where it goes, its repository, and any flags.
     const auto put_row = [&](std::size_t index, std::string_view mark, Tone tone) {
         const auto& row = rows.at(index);
@@ -793,8 +794,8 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                 << paint(by.substr(std::min(cut + 1, by.size())), Tone::note);
         };
         if (row.at(1) == "new") {
-            if (row.size() > 4) {
-                put_why(row.at(4));
+            if (row.size() > 5) {
+                put_why(row.at(5));
             }
         } else if (row.at(1) == "rebuild" && row.size() > 5) {
             put_why(row.at(5));
@@ -807,6 +808,30 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             }
         }
         out << '\n';
+        // A new package's USE on a line of its own: VARIABLE="flag -flag (fixed)" groups.
+        if (row.at(1) == "new" && row.size() > 4 && !row.at(4).empty()) {
+            out << std::string(place_width == 0 ? 3 : place_width + 4, ' ');
+            for (const auto token : std::views::split(row.at(4), ' ')) {
+                std::string_view flag{token};
+                if (const auto open = flag.find("=\""); open != std::string_view::npos) {
+                    out << ' ' << paint(flag.substr(0, open + 2), Tone::note);
+                    flag.remove_prefix(open + 2);
+                } else {
+                    out << ' ';
+                }
+                const bool close = flag.ends_with('"');
+                if (close) {
+                    flag.remove_suffix(1);
+                }
+                fixed = fixed || flag.starts_with('(');
+                const bool off = flag.starts_with('-') || flag.starts_with("(-");
+                out << paint(flag, off ? Tone::note : Tone::use);
+                if (close) {
+                    out << paint("\"", Tone::note);
+                }
+            }
+            out << '\n';
+        }
     };
     // up, down, rebuild, new, held
     std::array<std::size_t, 5> counts{};
@@ -909,9 +934,12 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         first = false;
     }
     out << '\n';
-    if (flags) {
-        out << '\n'
-            << paint("flag* changed  flag% new in IUSE  (-flag%) gone from it", Tone::note) << '\n';
+    if (flags || fixed) {
+        std::string legend = flags ? "flag* changed  flag% new in IUSE  (-flag%) gone from it" : "";
+        if (fixed) {
+            legend += std::format("{}(flag) set by the profile", legend.empty() ? "" : "  ");
+        }
+        out << '\n' << paint(legend, Tone::note) << '\n';
     }
 }
 

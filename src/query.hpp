@@ -59,6 +59,15 @@ struct PendingUpdate {
 [[nodiscard]] std::optional<PendingUpdate>
 pending_update(const Evaluated& evaluated, std::uint32_t package, UseRebuilds rebuilds);
 
+// Whether flag a sorts before b under emerge's _alnum_sort_key: runs of digits compare as
+// numbers, the rest as text; flags equal under it compare as text.
+[[nodiscard]] bool alnum_less(std::string_view a, std::string_view b);
+
+// The USE a candidate would be merged with as emerge shows a new package's: USE="..." and one
+// group per USE_EXPAND variable not hidden, each its enabled flags then its disabled ones in
+// alnum order, those the profile fixes in parentheses. Empty without flags to show.
+[[nodiscard]] std::string use_display(const Evaluated& evaluated, const Candidate& candidate);
+
 // Indices into Evaluated::candidates that the package's wanted update falls back to when its
 // target is rejected: the other visible versions in the target's slot, newer than the installed
 // one for an upgrade, best first and of one version the target's repository first. None for a

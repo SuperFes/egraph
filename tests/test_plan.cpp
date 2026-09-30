@@ -526,9 +526,9 @@ TEST_CASE("the table lists merges in order, each with the places it waits for") 
     CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none, true,
                                true) ==
           std::vector<std::string>{
-              "1\t\tdev-libs/chain-1\tnew\tdev-libs/chain-1\ttest_repo\tdev-cpp/mm-common-1 "
+              "1\t\tdev-libs/chain-1\tnew\tdev-libs/chain-1\ttest_repo\t\tdev-cpp/mm-common-1 "
               "dev-libs/chain",
-              "2\t1\tdev-cpp/mm-common-1\tnew\tdev-cpp/mm-common-1\ttest_repo\tapp-misc/glibmm-2 "
+              "2\t1\tdev-cpp/mm-common-1\tnew\tdev-cpp/mm-common-1\ttest_repo\t\tapp-misc/glibmm-2 "
               "dev-cpp/mm-common",
               "3\t2\tapp-misc/glibmm-1\tupgrade\tapp-misc/glibmm-2\ttest_repo",
               "\t\tapp-misc/host-1\theld\tapp-misc/host-2\ttest_repo\t\tapp-misc/holder-1 "
@@ -720,7 +720,7 @@ TEST_CASE("a root atom's best version in a slot nothing occupies is pulled in") 
     CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none, false,
                                false, {.scope = {}, .roots = true}) ==
           std::vector<std::string>{
-              "dev-lang/lang-2\tnew\tdev-lang/lang-2\ttest_repo\t@selected dev-lang/lang"});
+              "dev-lang/lang-2\tnew\tdev-lang/lang-2\ttest_repo\t\t@selected dev-lang/lang"});
 }
 
 namespace {
@@ -833,7 +833,63 @@ TEST_CASE("a new package a request names is listed with its argument") {
     CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none, false,
                                false, request({"app-misc/fresh"})) ==
           std::vector<std::string>{
-              "app-misc/fresh-1\tnew\tapp-misc/fresh-1\ttest_repo\tapp-misc/fresh"});
+              "app-misc/fresh-1\tnew\tapp-misc/fresh-1\ttest_repo\t\tapp-misc/fresh"});
+}
+
+namespace {
+
+egraph::test::System flagged_system() {
+    auto system = make_system(
+        {}, {{.cpv = "dev-libs/fresh-1",
+              .iuse = "on off a10 a9 fixed stuck python_targets_py3_13 python_targets_py3_12 "
+                      "python_targets_py3_11 video_cards_intel",
+              .use = "on a10 a9 fixed python_targets_py3_13 python_targets_py3_12 "
+                     "video_cards_intel elibc_glibc",
+              .forced = "fixed python_targets_py3_12 stuck"}});
+    egraph::test::set_use_expand(system, {"python_targets", "video_cards"}, {"video_cards"});
+    return system;
+}
+
+} // namespace
+
+TEST_CASE("a new package's USE is emerge's: groups, forced flags in parentheses, alnum order") {
+    const auto system = flagged_system();
+    CHECK(egraph::use_display(system.evaluated, system.evaluated.candidates.front()) ==
+          R"x(USE="a9 a10 (fixed) on -off (-stuck)" PYTHON_TARGETS="(py3_12) py3_13 -py3_11")x");
+}
+
+TEST_CASE("a package without IUSE shows no USE") {
+    const auto system = make_system({}, {{.cpv = "app-misc/fresh-1", .use = "elibc_glibc"}});
+    CHECK(egraph::use_display(system.evaluated, system.evaluated.candidates.front()).empty());
+}
+
+TEST_CASE("a group of hidden flags alone shows nothing") {
+    auto system = make_system(
+        {}, {{.cpv = "app-misc/fresh-1", .iuse = "video_cards_intel", .use = "video_cards_intel"}});
+    egraph::test::set_use_expand(system, {"video_cards"}, {"video_cards"});
+    CHECK(egraph::use_display(system.evaluated, system.evaluated.candidates.front()).empty());
+}
+
+TEST_CASE("a new package's line carries its USE before why it comes in") {
+    const auto system = flagged_system();
+    CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none, false,
+                               false, request({"dev-libs/fresh"})) ==
+          std::vector<std::string>{
+              "dev-libs/fresh-1\tnew\tdev-libs/fresh-1\ttest_repo\t"
+              R"x(USE="a9 a10 (fixed) on -off (-stuck)" PYTHON_TARGETS="(py3_12) py3_13 -py3_11")x"
+              "\tdev-libs/fresh"});
+}
+
+TEST_CASE("flags sort as emerge's alnum key does: digit runs as numbers") {
+    CHECK(egraph::alnum_less("a9", "a10"));
+    CHECK_FALSE(egraph::alnum_less("a10", "a9"));
+    CHECK(egraph::alnum_less("a", "a1"));
+    CHECK(egraph::alnum_less("a1", "ab"));
+    CHECK(egraph::alnum_less("1b", "a"));
+    CHECK(egraph::alnum_less("py3_9", "py3_10"));
+    CHECK(egraph::alnum_less("x99999999999999999999", "x100000000000000000000"));
+    CHECK(egraph::alnum_less("a07", "a7"));
+    CHECK_FALSE(egraph::alnum_less("a7", "a07"));
 }
 
 TEST_CASE("plain emerge falls back to another version it matches when the best is rejected") {

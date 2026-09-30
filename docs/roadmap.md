@@ -392,7 +392,11 @@ use, egraph schedules the merges itself.
     later build until `egraph rebuild`, or until installed, since configuration edits make full
     builds too often to drop it at. Every scenario's requests are now compared with every cp
     evaluated, with no difference from emerge.
-  - 16b3: a new package's USE shown.
+  - 16b3 (done): a new package's USE shown as `emerge -v` shows it: a group per USE_EXPAND
+    variable not hidden, enabled flags then disabled ones in emerge's alnum order, and those the
+    profile forces or masks in parentheses (the evaluated store keeps both, format 6). In
+    `updates` and `plan` lines, on its own line in human output, and in the living app's plan.
+    Equal to emerge's own `_display_use` for every new package of every compared plan.
 - 16c: `--verify`: the same request through `emerge -p`, the merge lists diffed (versions, USE,
   new packages); every difference fixed or recorded in `upstream-notes.md`.
 - 16d: blockers, weak and strong, as a query and weighed by the plan (formerly step 17).

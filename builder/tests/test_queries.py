@@ -132,6 +132,16 @@ def parse_updates(text):
     return found
 
 
+def new_use(text):
+    """{new cpv: its USE} from updates or plan output."""
+    found = {}
+    for line in text.splitlines():
+        cpv, kind, *fields = line.split("\t")
+        if kind == "new":
+            found[cpv] = fields[2] if len(fields) > 2 else ""
+    return found
+
+
 def merged(text):
     """What updates output merges, as update.updates' replaced, rebuilt and new."""
     lines = [line.split("\t") for line in text.splitlines()]
@@ -187,6 +197,7 @@ def test_updates_are_emerges(
     ]
     output = egraph(path, "updates", *options).stdout
     assert merged(output) == (expected.replaced, expected.rebuilt, expected.new)
+    assert new_use(output) == expected.use
     for cpv, (kind, replacement) in parse_updates(output).items():
         order = vercmp(cpv_getversion(replacement.cpv), cpv_getversion(cpv))
         assert kind == (
@@ -305,6 +316,9 @@ def test_plans_are_emerges(playgrounds, tmp_path, name, mode):
         assert result.returncode == 0, (target, result.stderr)
         if not ties(plan_merges(result.stdout), expected.merges):
             differences.add(target)
+        use = new_use(result.stdout)
+        for cpv in use.keys() & expected.use.keys():
+            assert use[cpv] == expected.use[cpv], (target, cpv)
     assert differences == PLAN_DIFFERENCES.get((name, mode), set())
 
 
@@ -459,7 +473,7 @@ def test_update_tree_follows_why(scenario, system, dynamic_deps):
         chain = fields[2:]
         assert chain[-1] == row[2]
         if row[3] == "new":
-            puller = row[6].split(" ")[0]
+            puller = row[7].split(" ")[0]
             if len(chain) > 1:
                 assert chain[-2] in (puller, replaced.get(puller)), row
             continue

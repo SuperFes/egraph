@@ -43,6 +43,10 @@ struct Available {
     std::string sub_slot = {};
     bool visible = true;
     std::string repo = "test_repo";
+    // Space-separated flags: its IUSE, those of it enabled, and those the profile fixes.
+    std::string iuse = {};
+    std::string use = {};
+    std::string forced = {};
 };
 
 struct System {
@@ -172,6 +176,21 @@ inline void add_repository_cps(System& system, const std::vector<std::string>& c
     evaluated.ids.insert(evaluated.ids.end(), ids.begin(), ids.end());
 }
 
+// Sets USE_EXPAND's and USE_EXPAND_HIDDEN's variables, lowercased and sorted.
+inline void set_use_expand(System& system, const std::vector<std::string>& expand,
+                           const std::vector<std::string>& hidden) {
+    auto& evaluated = system.evaluated;
+    detail::Interner intern(evaluated);
+    for (auto [names, range] : {std::pair{&expand, &evaluated.use_expand},
+                                std::pair{&hidden, &evaluated.use_expand_hidden}}) {
+        *range = {.first = static_cast<std::uint32_t>(evaluated.ids.size()),
+                  .count = static_cast<std::uint32_t>(names->size())};
+        for (const auto& name : *names) {
+            evaluated.ids.push_back(intern(name));
+        }
+    }
+}
+
 inline System make_system(const std::vector<Installed>& installed, std::vector<Available> available,
                           const std::vector<std::string>& world = {},
                           const std::vector<std::string>& system_set = {}) {
@@ -237,6 +256,19 @@ inline System make_system(const std::vector<Installed>& installed, std::vector<A
         candidate.slot = evaluated_intern(ebuild.slot);
         candidate.sub_slot =
             evaluated_intern(ebuild.sub_slot.empty() ? ebuild.slot : ebuild.sub_slot);
+        const auto flags = [&](std::string_view text) {
+            auto words = detail::tokens(text);
+            std::ranges::sort(words);
+            const Range range{.first = static_cast<std::uint32_t>(evaluated.ids.size()),
+                              .count = static_cast<std::uint32_t>(words.size())};
+            for (const auto& word : words) {
+                evaluated.ids.push_back(evaluated_intern(word));
+            }
+            return range;
+        };
+        candidate.iuse = flags(ebuild.iuse);
+        candidate.use = flags(ebuild.use);
+        candidate.forced = flags(ebuild.forced);
         if (!ebuild.visible) {
             candidate.reasons = {.first = static_cast<std::uint32_t>(evaluated.ids.size()),
                                  .count = 1};

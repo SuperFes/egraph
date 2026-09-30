@@ -4,6 +4,8 @@
 each installed package with within its slot. Test code, so it may reach into _emerge.
 """
 
+import re
+import types
 from typing import NamedTuple
 
 import portage
@@ -30,6 +32,8 @@ class Updates(NamedTuple):
     order: tuple = ()
     # (installed cpv it replaces or "", cpv, repo) for every merge.
     merges: frozenset = frozenset()
+    # New cpv -> the USE emerge --verbose shows for it.
+    use: dict = None
 
 
 def updates(
@@ -86,7 +90,7 @@ def updates(
         _emerge.emergelog._disable = disabled
 
     reinstall = depgraph._dynamic_config._reinstall_nodes
-    replaced, rebuilt, new, merges = {}, set(), set(), set()
+    replaced, rebuilt, new, merges, use = {}, set(), set(), set(), {}
     for pkg in depgraph._dynamic_config.digraph:
         if not isinstance(pkg, Package) or pkg.installed or pkg.onlydeps:
             continue
@@ -96,6 +100,7 @@ def updates(
         merges.add((str(installed[0]) if installed else "", str(pkg.cpv), pkg.repo))
         if not installed:
             new.add(pkg.cpv)
+            use[str(pkg.cpv)] = use_string(depgraph, pkg)
             continue
         (old,) = installed
         flags = reinstall.get(pkg)
@@ -115,8 +120,31 @@ def updates(
         and pkg.operation == "merge"
     )
     return Updates(
-        success, replaced, frozenset(rebuilt), frozenset(new), order, frozenset(merges)
+        success,
+        replaced,
+        frozenset(rebuilt),
+        frozenset(new),
+        order,
+        frozenset(merges),
+        use,
     )
+
+
+def use_string(depgraph, pkg):
+    """The USE emerge --verbose shows for pkg as a new package, uncoloured."""
+    from _emerge.resolver.output import Display
+
+    display = Display.__new__(Display)
+    display.conf = types.SimpleNamespace(
+        print_use_string=True,
+        alphabetical=False,
+        all_flags=False,
+        pkg_use_enabled=depgraph._pkg_use_enabled,
+        reinstall_nodes={},
+    )
+    display.verboseadd = ""
+    display._display_use(pkg, types.SimpleNamespace(previous_pkg=None))
+    return re.sub(r"\x1b\[[0-9;]*m", "", display.verboseadd).strip()
 
 
 def equiv_visible(trees, eroot):

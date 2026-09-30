@@ -1821,7 +1821,7 @@ egraph::test::System glibmm_system(const std::string& loose_version = "1") {
          {.cpv = "app-misc/loose-1"},
          {.cpv = "app-misc/loose-2"},
          {.cpv = "app-misc/top-1", .deps = {{"RDEPEND", "app-misc/glibmm"}}},
-         {.cpv = "dev-cpp/mm-common-1", .deps = {{"RDEPEND", "dev-libs/chain"}}},
+         {.cpv = "dev-cpp/mm-common-1", .deps = {{"RDEPEND", "dev-libs/chain"}}, .iuse = "doc"},
          {.cpv = "dev-libs/chain-1"}},
         {"app-misc/top"});
 }
@@ -1901,15 +1901,16 @@ TEST_CASE("the plan view moves over packages and opens the installed ones") {
     CHECK(cpv_of(app, app.pages().back().package) == "app-misc/glibmm-1");
     app.handle(key(KeyKind::escape));
 
-    // A new package has no page, only what pulls it in.
+    // A new package has no page, only what pulls it in and its USE.
     app.handle(key(KeyKind::down));
     app.handle(key(KeyKind::enter));
     CHECK(app.pages().empty());
     REQUIRE(app.dialog().has_value());
     CHECK(app.dialog()->title == "dev-cpp/mm-common-1 is not installed");
-    CHECK(app.dialog()->lines ==
-          std::vector<std::string>{"The plan pulls it in for app-misc/glibmm-2's "
-                                   "dev-cpp/mm-common."});
+    CHECK(
+        app.dialog()->lines ==
+        std::vector<std::string>{"The plan pulls it in for app-misc/glibmm-2's dev-cpp/mm-common.",
+                                 "It would be built with USE=\"-doc\"."});
     app.handle(key(KeyKind::escape));
 
     app.handle(key(KeyKind::home));

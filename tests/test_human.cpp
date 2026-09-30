@@ -199,28 +199,27 @@ TEST_CASE("a held update's holders say what keeps them, and its remedies follow 
             "x/own-1\theld\tx/own-2\tgentoo\t\tx/own-2 x/missing",
         },
         plain);
-    CHECK(out.str() ==
-          "+ Nothing to update.\n"
-          "\nHeld back\n"
-          "H a/rgb  1  > 2   ::gentoo\n"
-          "    a/skin-1  <a/rgb-2\n"
-          "      nothing depends on it; only @selected keeps it\n"
-          "    to remove it: emerge --deselect a/skin\n"
-          "                  emerge -C =a/skin-1\n"
-          "                  emerge -1 =a/rgb-2\n"
-          "                  which also frees a/effects-1, a/map-1\n"
-          "    to keep it:   emerge -1 --nodeps =a/rgb-2\n"
-          "                  which a later emerge -uD undoes\n"
-          "H x/clc  22 > 23  ::gentoo\n"
-          "    x/mesa-1  =x/clc-22*\n"
-          "      needed by a/kwin-1, a/qemu-1, a/gtk-4 and 1 more; kept by @system\n"
-          "    x/pop-1   =x/clc-22*\n"
-          "      nothing depends on it or keeps it\n"
-          "    to keep them: emerge -1 --nodeps =x/clc-23\n"
-          "                  which a later emerge -uD undoes\n"
-          "H x/own  1  > 2   ::gentoo\n"
-          "    x/own-2  x/missing\n"
-          "\n3 held\n");
+    CHECK(out.str() == "+ Nothing to update.\n"
+                       "\nHeld back\n"
+                       "H a/rgb  1  > 2   ::gentoo\n"
+                       "    a/skin-1  <a/rgb-2\n"
+                       "      nothing depends on it; only @selected keeps it\n"
+                       "    to remove it: emerge --deselect a/skin\n"
+                       "                  emerge -C =a/skin-1\n"
+                       "                  emerge -1 =a/rgb-2\n"
+                       "                  which also frees a/effects-1, a/map-1\n"
+                       "    to keep it:   emerge -1 --nodeps =a/rgb-2\n"
+                       "                  which a later emerge -uD undoes\n"
+                       "H x/clc  22 > 23  ::gentoo\n"
+                       "    x/mesa-1  =x/clc-22*\n"
+                       "      needed by a/kwin-1, a/qemu-1, a/gtk-4 and 1 more; kept by @system\n"
+                       "    x/pop-1   =x/clc-22*\n"
+                       "      nothing depends on it or keeps it\n"
+                       "    to keep them: emerge -1 --nodeps =x/clc-23\n"
+                       "                  which a later emerge -uD undoes\n"
+                       "H x/own  1  > 2   ::gentoo\n"
+                       "    x/own-2  x/missing\n"
+                       "\n3 held\n");
 }
 
 TEST_CASE("new packages come under their own heading, with what pulls them in") {
@@ -228,7 +227,7 @@ TEST_CASE("new packages come under their own heading, with what pulls them in") 
     egraph::human_updates(out,
                           std::vector<std::string>{
                               "dev-cpp/glibmm-2.66\tupgrade\tdev-cpp/glibmm-2.66-r1\tgentoo",
-                              "dev-cpp/mm-common-1.0.8\tnew\tdev-cpp/mm-common-1.0.8\tgentoo\t"
+                              "dev-cpp/mm-common-1.0.8\tnew\tdev-cpp/mm-common-1.0.8\tgentoo\t\t"
                               "dev-cpp/glibmm-2.66-r1 dev-cpp/mm-common",
                           },
                           plain);
@@ -237,6 +236,26 @@ TEST_CASE("new packages come under their own heading, with what pulls them in") 
                        "N dev-cpp/mm-common  1.0.8            ::gentoo  "
                        "dev-cpp/glibmm-2.66-r1 dev-cpp/mm-common\n"
                        "\n1 upgrade, 1 new\n");
+}
+
+TEST_CASE("a new package's USE follows it on a line of its own") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{
+                              "x/fresh-1\tnew\tx/fresh-1\tgentoo\t"
+                              R"x(USE="a9 (fixed) -off (-stuck)" PYTHON_TARGETS="py3_13")x"
+                              "\ta/grown-1 x/fresh",
+                              "x/bare-1\tnew\tx/bare-1\tgentoo\tUSE=\"-doc\"",
+                          },
+                          plain);
+    CHECK(out.str() == "\nNew\n"
+                       "N x/fresh  1  ::gentoo  a/grown-1 x/fresh\n"
+                       R"x(    USE="a9 (fixed) -off (-stuck)" PYTHON_TARGETS="py3_13")x"
+                       "\n"
+                       "N x/bare   1  ::gentoo\n"
+                       "    USE=\"-doc\"\n"
+                       "\n2 new\n"
+                       "\n(flag) set by the profile\n");
 }
 
 TEST_CASE("a slot-operator rebuild says which merge it is for") {
@@ -256,10 +275,10 @@ TEST_CASE("the table numbers merges in order, with what each waits for") {
     std::ostringstream out;
     egraph::human_updates(out,
                           std::vector<std::string>{
-                              "1\t\tdev-libs/chain-1\tnew\tdev-libs/chain-1\tgentoo\tdev-cpp/"
+                              "1\t\tdev-libs/chain-1\tnew\tdev-libs/chain-1\tgentoo\t\tdev-cpp/"
                               "mm-common-1 dev-libs/chain",
-                              "2\t1\tdev-cpp/mm-common-1\tnew\tdev-cpp/mm-common-1\tgentoo\ta/"
-                              "glibmm-2 dev-cpp/mm-common",
+                              "2\t1\tdev-cpp/mm-common-1\tnew\tdev-cpp/mm-common-1\tgentoo\t"
+                              "USE=\"doc\"\ta/glibmm-2 dev-cpp/mm-common",
                               "3\t2\ta/glibmm-1\tupgrade\ta/glibmm-2\tgentoo",
                               "\t\ta/host-1\theld\ta/host-2\tgentoo\t\ta/holder-1 <a/host-2",
                           },
@@ -267,6 +286,7 @@ TEST_CASE("the table numbers merges in order, with what each waits for") {
     CHECK(out.str() ==
           "1 N dev-libs/chain     1      ::gentoo       dev-cpp/mm-common-1 dev-libs/chain\n"
           "2 N dev-cpp/mm-common  1      ::gentoo  w 1  a/glibmm-2 dev-cpp/mm-common\n"
+          "      USE=\"doc\"\n"
           "3 U a/glibmm           1 > 2  ::gentoo  w 2\n"
           "\nHeld back\n"
           "  H a/host             1 > 2  ::gentoo\n"
@@ -277,8 +297,8 @@ TEST_CASE("the table numbers merges in order, with what each waits for") {
 TEST_CASE("the update tree hangs each merge from its root") {
     const std::vector<std::string> table{
         "1\t\ta/loose-1\tupgrade\ta/loose-2\tgentoo",
-        "2\t\tx/chain-1\tnew\tx/chain-1\tgentoo\tx/mm-1 x/chain",
-        "3\t2\tx/mm-1\tnew\tx/mm-1\tgentoo\ta/glibmm-2 x/mm",
+        "2\t\tx/chain-1\tnew\tx/chain-1\tgentoo\t\tx/mm-1 x/chain",
+        "3\t2\tx/mm-1\tnew\tx/mm-1\tgentoo\tUSE=\"doc\"\ta/glibmm-2 x/mm",
         "4\t3\ta/glibmm-1\tupgrade\ta/glibmm-2\tgentoo",
     };
     const std::vector<std::string> tree{

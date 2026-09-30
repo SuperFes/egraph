@@ -1436,6 +1436,11 @@ void App::handle_plan(const Key& key) {
                     named->set.empty() ? named->atom
                                        : std::format("@{}'s {}", named->set, named->atom)));
             }
+            if (const auto use =
+                    use_display(evaluated(), evaluated().candidates.at(merge.candidate));
+                !use.empty()) {
+                lines.push_back(std::format("It would be built with {}.", use));
+            }
         }
         show({.error = false,
               .title = std::format("{} is not installed", row.label),

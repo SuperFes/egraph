@@ -164,6 +164,114 @@ std::optional<PendingUpdate> pending_update(const Evaluated& evaluated, std::uin
 
 namespace {
 
+bool is_digit(char c) {
+    return c >= '0' && c <= '9';
+}
+
+// The run of digits, or of anything else, that text starts with.
+std::string_view run(std::string_view text, bool digits) {
+    const auto end = std::ranges::find_if(text, [digits](char c) { return is_digit(c) != digits; });
+    return text.substr(0, static_cast<std::size_t>(end - text.begin()));
+}
+
+// Digit runs by value, however long.
+int compare_numbers(std::string_view a, std::string_view b) {
+    a.remove_prefix(std::min(a.find_first_not_of('0'), a.size()));
+    b.remove_prefix(std::min(b.find_first_not_of('0'), b.size()));
+    if (a.size() != b.size()) {
+        return a.size() < b.size() ? -1 : 1;
+    }
+    return a.compare(b);
+}
+
+} // namespace
+
+bool alnum_less(std::string_view a, std::string_view b) {
+    // The key alternates text and digit runs, starting with a text run that may be empty.
+    const auto whole_a = a;
+    const auto whole_b = b;
+    for (bool digits = false;; digits = !digits) {
+        if (a.empty() || b.empty()) {
+            if (!a.empty() || !b.empty()) {
+                return a.empty();
+            }
+            break;
+        }
+        const auto run_a = run(a, digits);
+        const auto run_b = run(b, digits);
+        const int order = digits ? compare_numbers(run_a, run_b) : run_a.compare(run_b);
+        if (order != 0) {
+            return order < 0;
+        }
+        a.remove_prefix(run_a.size());
+        b.remove_prefix(run_b.size());
+    }
+    return whole_a < whole_b;
+}
+
+std::string use_display(const Evaluated& evaluated, const Candidate& candidate) {
+    const auto strings = [&evaluated](Range range) {
+        std::vector<std::string_view> found;
+        for (const auto id : evaluated.ids_in(range)) {
+            found.push_back(evaluated.string(id));
+        }
+        return found;
+    };
+    const auto use = strings(candidate.use);
+    const auto forced = strings(candidate.forced);
+    const auto expand = strings(evaluated.use_expand);
+    const auto hidden = strings(evaluated.use_expand_hidden);
+    struct Flag {
+        std::string_view name;
+        bool enabled = false;
+        bool forced = false;
+    };
+    // Groups by variable, "" for USE.
+    std::map<std::string_view, std::vector<Flag>> groups;
+    for (const auto flag : strings(candidate.iuse)) {
+        std::string_view group;
+        auto name = flag;
+        for (const auto variable : expand) {
+            if (flag.size() > variable.size() + 1 && flag.starts_with(variable) &&
+                flag.at(variable.size()) == '_') {
+                group = variable;
+                name = flag.substr(variable.size() + 1);
+                break;
+            }
+        }
+        groups[group].push_back({.name = name,
+                                 .enabled = std::ranges::binary_search(use, flag),
+                                 .forced = std::ranges::binary_search(forced, flag)});
+    }
+    std::string shown;
+    for (auto& [group, flags] : groups) {
+        if (std::ranges::binary_search(hidden, group)) {
+            continue;
+        }
+        std::ranges::sort(flags, [](const Flag& a, const Flag& b) {
+            if (a.enabled != b.enabled) {
+                return a.enabled;
+            }
+            return alnum_less(a.name, b.name);
+        });
+        std::string variable = group.empty() ? "USE" : std::string{group};
+        std::ranges::transform(variable, variable.begin(), [](char c) {
+            return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c;
+        });
+        shown += std::format("{}{}=\"", shown.empty() ? "" : " ", variable);
+        for (std::size_t i = 0; i < flags.size(); ++i) {
+            const auto& flag = flags.at(i);
+            const auto text = std::format("{}{}", flag.enabled ? "" : "-", flag.name);
+            shown += std::format("{}{}", i == 0 ? "" : " ",
+                                 flag.forced ? std::format("({})", text) : text);
+        }
+        shown += '"';
+    }
+    return shown;
+}
+
+namespace {
+
 std::optional<Version> version_of(std::string_view cp, std::string_view cpv) {
     return parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
 }
@@ -241,10 +349,18 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
         } else {
             const auto cpv = evaluated.string(evaluated.candidates.at(merge.candidate).cpv);
             auto line = std::format("{}\tnew\t{}", cpv, target_fields(merge.candidate));
+            std::string why;
             if (const auto& by = merge.pulled_by) {
-                line += std::format("\t{} {}", member(by->member), by->atom);
+                why = std::format("{} {}", member(by->member), by->atom);
             } else if (merge.named_by) {
-                line += std::format("\t{}", argument_text(*merge.named_by));
+                why = argument_text(*merge.named_by);
+            }
+            const auto use = use_display(evaluated, evaluated.candidates.at(merge.candidate));
+            if (!use.empty() || !why.empty()) {
+                line += std::format("\t{}", use);
+            }
+            if (!why.empty()) {
+                line += std::format("\t{}", why);
             }
             merge_lines.push_back(std::move(line));
         }
