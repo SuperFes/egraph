@@ -33,10 +33,14 @@ INPUT_FILE, INPUT_DIRECTORY, INPUT_SYMLINK, INPUT_MISSING = range(4)
 DEFAULT_PATH = "var/cache/egraph/installed.egraph"
 
 EVALUATED_MAGIC = b"EGRAPHEV"
-EVALUATED_FORMAT_VERSION = 5
-SECTION_DEPENDENCIES, SECTION_CANDIDATES, SECTION_REPOSITORY, SECTION_REQUESTED = range(
-    4, 8
-)
+EVALUATED_FORMAT_VERSION = 6
+(
+    SECTION_DEPENDENCIES,
+    SECTION_CANDIDATES,
+    SECTION_REPOSITORY,
+    SECTION_REQUESTED,
+    SECTION_USE_EXPAND,
+) = range(4, 9)
 EVALUATED_SECTIONS = (
     SECTION_META,
     SECTION_INPUTS,
@@ -45,6 +49,7 @@ EVALUATED_SECTIONS = (
     SECTION_CANDIDATES,
     SECTION_REPOSITORY,
     SECTION_REQUESTED,
+    SECTION_USE_EXPAND,
 )
 
 _HEADER = struct.Struct("<8sII")
@@ -284,7 +289,7 @@ def encode_evaluated(layer, meta, inputs=()):
     for c in candidates:
         for value in (c.cp, c.cpv, c.repo, c.slot, c.sub_slot):
             w.varint(strings(value))
-        for values in (c.use, c.iuse, c.reasons):
+        for values in (c.use, c.iuse, c.forced, c.reasons):
             w.ids([strings(value) for value in values])
         w.varint(len(c.errors))
         for key, message in c.errors:
@@ -300,6 +305,11 @@ def encode_evaluated(layer, meta, inputs=()):
         w = _Writer()
         w.ids([strings(cp) for cp in cps])
         sections[section] = w.out
+
+    w = _Writer()
+    for names in (layer.use_expand(), layer.use_expand_hidden()):
+        w.ids([strings(name) for name in names])
+    sections[SECTION_USE_EXPAND] = w.out
 
     sections[SECTION_STRINGS] = _write_strings(strings)
     return _frame(
@@ -552,20 +562,23 @@ def decode_evaluated(data):
     candidates = []
     for _ in range(r.count()):
         fields = [s() for _ in range(5)]
-        lists = [tuple(strings[i] for i in r.ids(nstrings)) for _ in range(3)]
+        lists = [tuple(strings[i] for i in r.ids(nstrings)) for _ in range(4)]
         errors = tuple((s(), s()) for _ in range(r.count()))
         deps = _read_trees(r, s, count, cpvs)
         candidates.append(Candidate(*fields, *lists, errors, deps))
     r.done()
 
-    cp_lists = []
+    listed = []
     for section, name in (
         (SECTION_REPOSITORY, "repository"),
         (SECTION_REQUESTED, "requested"),
     ):
         r = _Reader(sections[section], name)
-        cp_lists.append(tuple(strings[i] for i in r.ids(nstrings)))
+        listed.append(tuple(strings[i] for i in r.ids(nstrings)))
         r.done()
+    r = _Reader(sections[SECTION_USE_EXPAND], "use_expand")
+    listed.extend(tuple(strings[i] for i in r.ids(nstrings)) for _ in range(2))
+    r.done()
 
     packages = []
     for cpv, source, eapi, errors, deps, possible, weighed in raw:
@@ -594,7 +607,7 @@ def decode_evaluated(data):
                 rebuild,
             )
         )
-    return meta, inputs, EvaluatedLayer(packages, candidates, *cp_lists)
+    return meta, inputs, EvaluatedLayer(packages, candidates, *listed)
 
 
 def write(path, data):

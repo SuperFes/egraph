@@ -118,6 +118,7 @@ TEST_CASE("the sample evaluated store decodes") {
     CHECK(evaluated->string(visible.cpv) == "app-misc/a-1");
     CHECK(visible.visible());
     CHECK(evaluated->ids_in(visible.use).size() == 1);
+    CHECK(std::ranges::equal(evaluated->ids_in(visible.forced), std::array{8U}));
     const auto& masked = evaluated->candidates.at(1);
     CHECK_FALSE(masked.visible());
     CHECK(evaluated->string(evaluated->ids_in(masked.reasons).front()) == "~amd64 keyword");
@@ -141,6 +142,9 @@ TEST_CASE("the sample evaluated store decodes") {
     CHECK(strings(evaluated->repository_cps) ==
           std::vector<std::string_view>{"app-misc/a", "dev-libs/b"});
     CHECK(strings(evaluated->requested) == std::vector<std::string_view>{"dev-libs/gone"});
+    CHECK(strings(evaluated->use_expand) ==
+          std::vector<std::string_view>{"python_targets", "video_cards"});
+    CHECK(strings(evaluated->use_expand_hidden) == std::vector<std::string_view>{"video_cards"});
 }
 
 TEST_CASE("every evaluated truncation is rejected") {
@@ -224,7 +228,8 @@ TEST_CASE("evaluated records are checked") {
 
     // Two dependency records, so package 2 does not exist.
     Bytes bad_candidate_match;
-    bad_candidate_match.varint(1).varints({5, 1, 7, 6, 6}).list({}).list({}).list({}).varint(0);
+    bad_candidate_match.varint(1).varints({5, 1, 7, 6, 6}).list({}).list({}).list({}).list({});
+    bad_candidate_match.varint(0);
     bad_candidate_match.varints({0, 0, 0, 0, 1}).varints({0, 0, 4}).list({2});
     CHECK_THAT(rejection(evaluated_with_section(5, bad_candidate_match)),
                Catch::Matchers::StartsWith("candidates: package 2 out of range 2"));
@@ -240,6 +245,10 @@ TEST_CASE("evaluated records are checked") {
                Catch::Matchers::StartsWith("repository: cps out of order"));
     CHECK_THAT(rejection(evaluated_with_section(7, Bytes{}.list({14, 14}))),
                Catch::Matchers::StartsWith("requested: cps out of order"));
+    CHECK_THAT(rejection(evaluated_with_section(8, Bytes{}.list({99}).list({}))),
+               Catch::Matchers::StartsWith("use_expand: string 99 out of range"));
+    CHECK_THAT(rejection(evaluated_with_section(8, Bytes{}.list({}))),
+               Catch::Matchers::StartsWith("use_expand: "));
 }
 
 TEST_CASE("an evaluated store loads only beside its installed store") {

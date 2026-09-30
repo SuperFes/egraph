@@ -109,7 +109,7 @@ The installed packages as emerge sees them against the repositories: their depen
 store it was built against, named after it (`installed.egraph` → `installed.evaluated.egraph`:
 the last extension replaced by `.evaluated.egraph`), and is written by the same builder run.
 
-It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 5.
+It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 6.
 Package ids are the installed store's, so an evaluated store is current only while the installed
 store beside it has the build start recorded in its meta, and its own inputs stat the same.
 
@@ -122,8 +122,10 @@ store beside it has the build start recorded in its meta, and its own inputs sta
 | 5 | Candidates | count, then the records below, sorted by cp, cpv and repo |
 | 6 | Repository | list of string ids: every cp with an ebuild in a repository, sorted |
 | 7 | Requested | list of string ids: the cps evaluated on request beside those the installed packages reach, sorted |
+| 8 | USE_EXPAND | two lists of string ids: the variables of `USE_EXPAND`, then of `USE_EXPAND_HIDDEN`, lowercased, sorted |
 
-All seven sections are required.
+All eight sections are required. Section 8 is how emerge groups a package's flags for display:
+one group per `USE_EXPAND` variable but the hidden ones, its flags named without the prefix.
 
 A dependency record is how emerge reads the package's dependencies by default, and how it
 weighs the package against its repositories under `--update`:
@@ -183,10 +185,12 @@ Blockers name nothing.
 1. String ids: cp, cpv, repo, slot, sub-slot.
 2. USE: list of string ids, the flags the ebuild would be built with now, within its IUSE.
 3. IUSE: list of string ids, without `+` and `-` defaults.
-4. Reasons: list of string ids, why the version is masked as portage words them (`package.mask`,
+4. Forced: list of string ids, the flags of its IUSE the profile masks or forces on it, which
+   emerge shows in parentheses.
+5. Reasons: list of string ids, why the version is masked as portage words them (`package.mask`,
    `~amd64 keyword`, `EULA license(s)`); empty when it is visible.
-5. Errors: list of `(kind, message)` string ids, as in the package record.
-6. The five node lists, as in the package record: the ebuild's dependency strings reduced under
+6. Errors: list of `(kind, message)` string ids, as in the package record.
+7. The five node lists, as in the package record: the ebuild's dependency strings reduced under
    its USE, with matches naming installed package ids. Empty for a masked candidate.
 
 Inputs are the installed store's configuration and profile inputs, the user's visibility and USE

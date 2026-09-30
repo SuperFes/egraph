@@ -105,6 +105,8 @@ class Candidate(NamedTuple):
     use: tuple
     # Without + and - defaults.
     iuse: tuple
+    # Of its IUSE, the flags the profile masks or forces.
+    forced: tuple
     # Why it is masked, as portage words it; empty when it is visible.
     reasons: tuple
     # (kind, message) for every dependency string portage could not parse.
@@ -123,11 +125,21 @@ def _candidate_key(candidate):
 
 
 class EvaluatedLayer:
-    def __init__(self, packages, candidates, repository_cps=(), requested=()):
+    def __init__(
+        self,
+        packages,
+        candidates,
+        repository_cps=(),
+        requested=(),
+        use_expand=(),
+        use_expand_hidden=(),
+    ):
         self._packages = {pkg.cpv: pkg for pkg in sorted(packages, key=_cpv)}
         self._candidates = tuple(sorted(candidates, key=_candidate_key))
         self._repository_cps = tuple(sorted(repository_cps))
         self._requested = tuple(sorted(requested))
+        self._use_expand = tuple(sorted(set(use_expand)))
+        self._use_expand_hidden = tuple(sorted(set(use_expand_hidden)))
 
     def __iter__(self):
         return iter(self._packages.values())
@@ -152,6 +164,14 @@ class EvaluatedLayer:
     def requested(self):
         """The cps evaluated on request, beside those the installed packages reach; sorted."""
         return self._requested
+
+    def use_expand(self):
+        """USE_EXPAND's variables, lowercased and sorted, as emerge groups flags by them."""
+        return self._use_expand
+
+    def use_expand_hidden(self):
+        """USE_EXPAND_HIDDEN's variables, lowercased and sorted: groups emerge leaves out."""
+        return self._use_expand_hidden
 
     def candidates(self, cp=None):
         """Candidates sorted by cp, cpv and repo; only cp's when given."""
@@ -491,6 +511,15 @@ def read_candidates(portdb, settings, cp, installed_cpvs, match, ebuild_use=None
                     sub_slot=sub_slot or slot,
                     use=use,
                     iuse=tuple(sorted(iuse)),
+                    forced=tuple(
+                        sorted(
+                            iuse
+                            & (
+                                frozenset(settings.usemask)
+                                | frozenset(settings.useforce)
+                            )
+                        )
+                    ),
                     reasons=reasons,
                     errors=tuple(errors),
                     deps=deps,
@@ -672,6 +701,8 @@ def rebuild(vardb, portdb, previous, cps, carry=None, match=None, requested=()):
             [c for found in by_cp.values() for c in found],
             repository_cps,
             requested,
+            portdb.settings.get("USE_EXPAND", "").lower().split(),
+            portdb.settings.get("USE_EXPAND_HIDDEN", "").lower().split(),
         ),
         frozenset(read),
     )
@@ -717,6 +748,7 @@ def to_json(layer):
             "sub_slot": c.sub_slot,
             "use": list(c.use),
             "iuse": list(c.iuse),
+            "forced": list(c.forced),
             "reasons": list(c.reasons),
             "errors": [list(error) for error in c.errors],
             "deps": installed.deps_json(c.deps),
@@ -724,10 +756,12 @@ def to_json(layer):
         for c in layer.candidates()
     ]
     document = {
-        "format": 5,
+        "format": 6,
         "packages": packages,
         "candidates": candidates,
         "repository_cps": list(layer.repository_cps()),
         "requested": list(layer.requested()),
+        "use_expand": list(layer.use_expand()),
+        "use_expand_hidden": list(layer.use_expand_hidden()),
     }
     return json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"

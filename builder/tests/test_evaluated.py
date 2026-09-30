@@ -265,6 +265,19 @@ def test_every_repository_has_its_candidates(repository):
 def test_candidate_flags(repository):
     (flags,) = repository.candidates("app-misc/flags")
     assert (flags.use, flags.iuse) == (("new",), ("new", "old"))
+    assert flags.forced == ()
+
+
+def test_candidate_forced_flags_are_the_profiles(playgrounds):
+    (fresh,) = build(playgrounds("pulls")).candidates("dev-libs/fresh")
+    assert fresh.forced == ("fixed", "python_targets_py3_12", "stuck")
+
+
+def test_use_expand_is_the_configurations(playgrounds):
+    layer = build(playgrounds("pulls"))
+    assert {"python_targets", "video_cards"} <= set(layer.use_expand())
+    assert "video_cards" in layer.use_expand_hidden()
+    assert "python_targets" not in layer.use_expand_hidden()
 
 
 def layer_possible(layer, cpv):

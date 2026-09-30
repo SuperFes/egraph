@@ -21,7 +21,8 @@ constexpr std::uint32_t section_dependencies = 4;
 constexpr std::uint32_t section_candidates = 5;
 constexpr std::uint32_t section_repository = 6;
 constexpr std::uint32_t section_requested = 7;
-constexpr std::size_t section_count = 7;
+constexpr std::uint32_t section_use_expand = 8;
+constexpr std::size_t section_count = 8;
 constexpr std::uint32_t source_count = 3;
 
 std::optional<StoreError> read_meta(std::span<const std::byte> section, Evaluated& evaluated) {
@@ -93,7 +94,8 @@ std::optional<StoreError> read_candidates(std::span<const std::byte> section, Ev
                             &candidate.sub_slot}) {
             *field = r.index(strings, "string");
         }
-        for (auto* flags : {&candidate.use, &candidate.iuse, &candidate.reasons}) {
+        for (auto* flags :
+             {&candidate.use, &candidate.iuse, &candidate.forced, &candidate.reasons}) {
             *flags = read_ids(r, evaluated.ids, strings, "string");
         }
         candidate.errors = read_pairs(r, evaluated.pairs, strings);
@@ -119,6 +121,16 @@ std::optional<StoreError> read_cps(std::span<const std::byte> section, std::stri
             r.fail("cps out of order");
         }
     }
+    r.finish();
+    return r.error();
+}
+
+std::optional<StoreError> read_use_expand(std::span<const std::byte> section,
+                                          Evaluated& evaluated) {
+    Reader r(section, "use_expand");
+    const auto strings = size32(evaluated.strings.size());
+    evaluated.use_expand = read_ids(r, evaluated.ids, strings, "string");
+    evaluated.use_expand_hidden = read_ids(r, evaluated.ids, strings, "string");
     r.finish();
     return r.error();
 }
@@ -162,6 +174,9 @@ std::expected<Evaluated, StoreError> decode_evaluated(std::span<const std::byte>
     }
     if (auto error =
             read_cps(section(section_requested), "requested", evaluated, evaluated.requested)) {
+        return std::unexpected(*error);
+    }
+    if (auto error = read_use_expand(section(section_use_expand), evaluated)) {
         return std::unexpected(*error);
     }
     return evaluated;

@@ -230,9 +230,10 @@ inline std::vector<std::byte> fresh_sample() {
 //   a-1 is masked only without dynamic deps.
 //   b-1 from the vdb, with no dependencies, masked and not visible, and replaced by b-2 under
 //   emerge -u.
-// Candidates of app-misc/a: a-1, visible, USE and IUSE "flag"; a-2, masked by keyword; of
-// dev-libs/b: b-2, visible, with DEPEND app-misc/a matching a-1.
-// The repositories hold app-misc/a and dev-libs/b; dev-libs/gone was evaluated on request.
+// Candidates of app-misc/a: a-1, visible, USE and IUSE "flag", which the profile forces; a-2,
+// masked by keyword; of dev-libs/b: b-2, visible, with DEPEND app-misc/a matching a-1. The
+// repositories hold app-misc/a and dev-libs/b; dev-libs/gone was evaluated on request. USE_EXPAND
+// is PYTHON_TARGETS and VIDEO_CARDS, the latter hidden.
 inline constexpr std::initializer_list<std::string_view> evaluated_strings{"",
                                                                            "app-misc/a-1",
                                                                            "dev-libs/b-1",
@@ -251,7 +252,9 @@ inline constexpr std::initializer_list<std::string_view> evaluated_strings{"",
                                                                            "-minimal",
                                                                            "flag*",
                                                                            "-new%",
-                                                                           "dev-libs/b-2"};
+                                                                           "dev-libs/b-2",
+                                                                           "python_targets",
+                                                                           "video_cards"};
 
 inline std::vector<Section> evaluated_sections() {
     Bytes meta;
@@ -285,12 +288,13 @@ inline std::vector<Section> evaluated_sections() {
 
     Bytes candidates;
     candidates.varint(3);
-    // cp, cpv, repo, slot, sub-slot, USE, IUSE, reasons, errors, then the five node lists.
-    candidates.varints({5, 1, 7, 6, 6}).list({8}).list({8}).list({}).varint(0);
+    // cp, cpv, repo, slot, sub-slot, USE, IUSE, forced, reasons, errors, then the five node
+    // lists.
+    candidates.varints({5, 1, 7, 6, 6}).list({8}).list({8}).list({8}).list({}).varint(0);
     candidates.varints({0, 0, 0, 0, 0});
-    candidates.varints({5, 9, 7, 6, 6}).list({}).list({8}).list({10}).varint(0);
+    candidates.varints({5, 9, 7, 6, 6}).list({}).list({8}).list({}).list({10}).varint(0);
     candidates.varints({0, 0, 0, 0, 0});
-    candidates.varints({13, 18, 7, 6, 6}).list({}).list({}).list({}).varint(0);
+    candidates.varints({13, 18, 7, 6, 6}).list({}).list({}).list({}).list({}).varint(0);
     candidates.varint(0).varint(1).varints({0, 0, 5}).list({0}).varints({0, 0, 0});
 
     return {{.id = 1, .bytes = meta.bytes()},
@@ -299,7 +303,8 @@ inline std::vector<Section> evaluated_sections() {
             {.id = 4, .bytes = dependencies.bytes()},
             {.id = 5, .bytes = candidates.bytes()},
             {.id = 6, .bytes = Bytes{}.list({5, 13}).bytes()},
-            {.id = 7, .bytes = Bytes{}.list({14}).bytes()}};
+            {.id = 7, .bytes = Bytes{}.list({14}).bytes()},
+            {.id = 8, .bytes = Bytes{}.list({19, 20}).list({20}).bytes()}};
 }
 
 inline std::vector<std::byte> assemble_evaluated(const std::vector<Section>& sections) {

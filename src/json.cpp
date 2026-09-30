@@ -242,6 +242,8 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_deps(out, evaluated, candidate.deps);
         out << ",\"errors\":";
         write_pairs(out, evaluated, candidate.errors);
+        out << ",\"forced\":";
+        write_string_list(out, evaluated, candidate.forced);
         out << ",\"iuse\":";
         write_string_list(out, evaluated, candidate.iuse);
         out << ",\"reasons\":";
@@ -256,7 +258,7 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string_list(out, evaluated, candidate.use);
         out << '}';
     }
-    out << R"(],"format":5,"packages":[)";
+    out << R"(],"format":6,"packages":[)";
     first = true;
     for (const auto& pkg : evaluated.packages) {
         out << (first ? "{\"cpv\":" : ",{\"cpv\":");
@@ -306,6 +308,10 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
     write_string_list(out, evaluated, evaluated.repository_cps);
     out << ",\"requested\":";
     write_string_list(out, evaluated, evaluated.requested);
+    out << ",\"use_expand\":";
+    write_string_list(out, evaluated, evaluated.use_expand);
+    out << ",\"use_expand_hidden\":";
+    write_string_list(out, evaluated, evaluated.use_expand_hidden);
     out << "}\n";
 }
 

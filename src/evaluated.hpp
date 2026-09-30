@@ -13,7 +13,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t evaluated_format_version = 5;
+inline constexpr std::uint32_t evaluated_format_version = 6;
 
 // Where an installed package's dependency strings came from under --dynamic-deps=y.
 enum class DepSource : std::uint8_t { ebuild, vdb, moved };
@@ -70,10 +70,11 @@ struct Candidate {
     std::uint32_t repo = 0;
     std::uint32_t slot = 0;
     std::uint32_t sub_slot = 0;
-    // String ids in Evaluated::ids: the flags it would be built with now, its IUSE, and why it
-    // is masked.
+    // String ids in Evaluated::ids: the flags it would be built with now, its IUSE, those of its
+    // IUSE the profile masks or forces, and why it is masked.
     Range use;
     Range iuse;
+    Range forced;
     Range reasons;
     // In Evaluated::pairs: dependency strings portage could not parse.
     Range errors;
@@ -104,6 +105,9 @@ struct Evaluated : Tables {
     // on request beside those the installed packages reach.
     Range repository_cps;
     Range requested;
+    // String ids, sorted: USE_EXPAND's variables lowercased, and USE_EXPAND_HIDDEN's.
+    Range use_expand;
+    Range use_expand_hidden;
 
     [[nodiscard]] std::span<const Possible> possible_in(Range range) const EGRAPH_LIFETIMEBOUND {
         return std::span{possible}.subspan(range.first, range.count);

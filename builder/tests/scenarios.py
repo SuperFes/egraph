@@ -633,7 +633,16 @@ SCENARIOS = {
             "dev-lang/py-3.13.1": {"EAPI": "8", "SLOT": "3.13"},
             "dev-lang/py-3.14.1": {"EAPI": "8", "SLOT": "3.14"},
             "app-misc/grown-1": {"EAPI": "8", "RDEPEND": "dev-libs/fresh"},
-            "dev-libs/fresh-1": {"EAPI": "8"},
+            "dev-libs/fresh-1": {
+                "EAPI": "8",
+                "IUSE": " ".join(
+                    (
+                        "+on off +a10 +a9 +fixed stuck",
+                        "python_targets_py3_13 python_targets_py3_12",
+                        "python_targets_py3_11 video_cards_intel",
+                    )
+                ),
+            },
             "app-misc/host-1": {"EAPI": "8"},
             "app-misc/host-2": {"EAPI": "8"},
             "app-misc/holder-1": {"EAPI": "8", "RDEPEND": "<app-misc/host-2"},
@@ -660,6 +669,23 @@ SCENARIOS = {
             "app-misc/holder-1": {"EAPI": "8", "RDEPEND": "<app-misc/host-2"},
             "app-misc/plugin-1": {"EAPI": "8", "RDEPEND": "app-misc/host"},
             "app-misc/flagged-1": {"EAPI": "8", "IUSE": "+extra", "USE": "extra"},
+        },
+        # A new package's USE as emerge shows it: a group per USE_EXPAND variable but the
+        # hidden ones, flags the profile forces or masks in parentheses.
+        "user_config": {
+            "make.conf": [
+                'USE_EXPAND="PYTHON_TARGETS VIDEO_CARDS"',
+                'USE_EXPAND_HIDDEN="VIDEO_CARDS"',
+                'PYTHON_TARGETS="py3_13"',
+                'VIDEO_CARDS="intel"',
+            ],
+        },
+        "profile": {
+            "package.use.force": (
+                "dev-libs/fresh fixed",
+                "dev-libs/fresh python_targets_py3_12",
+            ),
+            "package.use.mask": ("dev-libs/fresh stuck",),
         },
     },
     # Slot-operator rebuilds: dependents bound to a sub-slot an update replaces, through RDEPEND,
