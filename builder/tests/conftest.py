@@ -35,11 +35,22 @@ def playground_arguments(name):
     return arguments
 
 
-def make_playground(name):
-    """A scenario's playground, with the package moves ResolverPlayground cannot write itself."""
+def make_playground(name, removed=(), deselected=()):
+    """A scenario's playground, with the package moves ResolverPlayground cannot write itself;
+    without the installed cpvs removed and the world atoms deselected."""
     from portage.tests.resolver.ResolverPlayground import ResolverPlayground
 
-    playground = ResolverPlayground(**playground_arguments(name))
+    arguments = playground_arguments(name)
+    arguments["installed"] = {
+        cpv: metadata
+        for cpv, metadata in arguments["installed"].items()
+        if cpv.split("::")[0] not in removed
+    }
+    if "world" in arguments:
+        arguments["world"] = [
+            atom for atom in arguments["world"] if atom not in deselected
+        ]
+    playground = ResolverPlayground(**arguments)
     updates = SCENARIOS[name].get("updates", {})
     if updates:
         portdb = playground.trees[playground.eroot]["porttree"].dbapi

@@ -4,8 +4,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <format>
 #include <map>
+#include <optional>
 #include <ostream>
 #include <ranges>
 #include <vector>
@@ -559,6 +561,96 @@ void human_orphans(std::ostream& out, std::span<const std::string> records, cons
         << '\n';
 }
 
+namespace {
+
+// A holder's dependents and root atoms, from its remedy line, as a sentence.
+std::string holder_note(const Fields& fields) {
+    std::vector<std::string_view> dependents;
+    if (!fields.empty() && !fields.front().empty()) {
+        for (const auto part : std::views::split(fields.front(), ' ')) {
+            dependents.emplace_back(part);
+        }
+    }
+    std::vector<std::string_view> sets;
+    bool selected = false;
+    for (std::size_t i = 1; i < fields.size(); ++i) {
+        const auto set = fields.at(i).substr(0, fields.at(i).find(' '));
+        if (set == "@selected") {
+            selected = true;
+        } else if (!std::ranges::contains(sets, set)) {
+            sets.push_back(set);
+        }
+    }
+    std::string note;
+    if (!dependents.empty()) {
+        constexpr std::size_t shown = 3;
+        note = "needed by ";
+        for (std::size_t i = 0; i < std::min(shown, dependents.size()); ++i) {
+            note += std::format("{}{}", i == 0 ? "" : ", ", dependents.at(i));
+        }
+        if (dependents.size() > shown) {
+            note += std::format(" and {} more", dependents.size() - shown);
+        }
+    }
+    if (!sets.empty()) {
+        note += note.empty() ? "kept by " : "; kept by ";
+        for (std::size_t i = 0; i < sets.size(); ++i) {
+            note += std::format("{}{}", i == 0 ? "" : ", ", sets.at(i));
+        }
+    }
+    if (note.empty()) {
+        note = selected ? "nothing depends on it; only @selected keeps it"
+                        : "nothing depends on it or keeps it";
+    }
+    return note;
+}
+
+// The commands past a held update: removing its holders when that lets it through, then
+// merging it without its dependencies.
+void put_remedies(std::ostream& out, std::string_view indent, const Fields& row,
+                  const std::map<std::string_view, Fields, std::less<>>& holders,
+                  std::optional<std::string_view> frees, bool nodeps, const Painter& paint) {
+    const auto target = std::format("={}", row.at(2));
+    const auto them = holders.size() == 1 ? "it" : "them";
+    const auto remove_label = std::format("to remove {}:", them);
+    const auto keep_label = std::format("to keep {}:", them);
+    const auto width = std::max(remove_label.size(), keep_label.size()) + 1;
+    const auto put = [&](std::string_view label, std::string_view text, Tone tone) {
+        out << indent << "    " << paint(label, Tone::heading) << spaces(label.size(), width)
+            << paint(text, tone) << '\n';
+    };
+    if (frees) {
+        std::string deselect;
+        std::string unmerge;
+        for (const auto& [holder, fields] : holders) {
+            unmerge += std::format(" ={}", holder);
+            for (std::size_t i = 1; i < fields.size(); ++i) {
+                deselect += std::format(" {}", fields.at(i).substr(fields.at(i).find(' ') + 1));
+            }
+        }
+        std::string_view label = remove_label;
+        if (!deselect.empty()) {
+            put(label, "emerge --deselect" + deselect, Tone::use);
+            label = {};
+        }
+        put(label, "emerge -C" + unmerge, Tone::use);
+        put({}, "emerge -1 " + target, Tone::use);
+        if (!frees->empty()) {
+            std::string freed;
+            for (const auto cpv : std::views::split(*frees, ' ')) {
+                freed += std::format("{}{}", freed.empty() ? "" : ", ", std::string_view{cpv});
+            }
+            put({}, "which also frees " + freed, Tone::good);
+        }
+    }
+    if (nodeps) {
+        put(keep_label, "emerge -1 --nodeps " + target, Tone::use);
+        put({}, "which a later emerge -uD undoes", Tone::bad);
+    }
+}
+
+} // namespace
+
 void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme,
                    bool table) {
     const auto& paint = theme.paint;
@@ -579,6 +671,31 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                     std::max(waits_width, glyph.waiting.size() + 1 + places.at(i).second.size());
             }
         }
+    }
+    // Remedies, taken off by the held cpv they follow.
+    struct Remedies {
+        // Holder cpv, then its dependents and each "@set atom" selecting it.
+        std::map<std::string_view, Fields, std::less<>> holders;
+        std::optional<std::string_view> frees;
+        bool nodeps = false;
+    };
+    std::map<std::string_view, Remedies, std::less<>> remedies;
+    for (std::size_t i = rows.size(); i-- > 0;) {
+        const auto& row = rows.at(i);
+        const auto kind = row.size() > 1 ? row.at(1) : std::string_view{};
+        if (kind != "holder" && kind != "remove" && kind != "nodeps") {
+            continue;
+        }
+        auto& found = remedies[row.at(0)];
+        if (kind == "holder") {
+            found.holders.emplace(row.at(2), Fields(row.begin() + 3, row.end()));
+        } else if (kind == "remove") {
+            found.frees = row.at(2);
+        } else {
+            found.nodeps = true;
+        }
+        rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
+        places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
     }
     const auto is_held = [](const auto& row) { return row.at(1) == "held"; };
     const auto is_new = [](const auto& row) { return row.at(1) == "new"; };
@@ -707,11 +824,13 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                 holder_width =
                     std::max(holder_width, row.at(i).substr(0, row.at(i).find(' ')).size());
             }
+            const auto indent = std::string(place_width == 0 ? 0 : place_width + 1, ' ');
+            const auto found = remedies.find(row.at(0));
             for (std::size_t i = 5; i < row.size(); ++i) {
                 const auto field = row.at(i);
                 const auto holder = field.substr(0, field.find(' '));
-                out << spaces(0, place_width == 0 ? 0 : place_width + 1) << "    "
-                    << paint(holder, Tone::version) << spaces(holder.size(), holder_width);
+                out << indent << "    " << paint(holder, Tone::version)
+                    << spaces(holder.size(), holder_width);
                 if (holder.size() < field.size()) {
                     for (const auto atom :
                          std::views::split(field.substr(holder.size() + 1), ' ')) {
@@ -719,6 +838,17 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                     }
                 }
                 out << '\n';
+                if (found != remedies.end()) {
+                    if (const auto info = found->second.holders.find(holder);
+                        info != found->second.holders.end()) {
+                        out << indent << "      " << paint(holder_note(info->second), Tone::note)
+                            << '\n';
+                    }
+                }
+            }
+            if (found != remedies.end()) {
+                put_remedies(out, indent, row, found->second.holders, found->second.frees,
+                             found->second.nodeps, paint);
             }
         }
     }

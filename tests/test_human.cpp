@@ -183,6 +183,46 @@ TEST_CASE("held updates come once each, their holders under them") {
                         "\n1 held\n");
 }
 
+TEST_CASE("a held update's holders say what keeps them, and its remedies follow as commands") {
+    std::ostringstream out;
+    egraph::human_updates(
+        out,
+        std::vector<std::string>{
+            "a/rgb-1\theld\ta/rgb-2\tgentoo\t\ta/skin-1 <a/rgb-2",
+            "a/rgb-1\tholder\ta/skin-1\t\t@selected a/skin",
+            "a/rgb-1\tremove\ta/effects-1 a/map-1",
+            "a/rgb-1\tnodeps",
+            "x/clc-22\theld\tx/clc-23\tgentoo\t\tx/mesa-1 =x/clc-22*\tx/pop-1 =x/clc-22*",
+            "x/clc-22\tholder\tx/mesa-1\ta/kwin-1 a/qemu-1 a/gtk-4 a/sdl-2\t@system x/mesa",
+            "x/clc-22\tholder\tx/pop-1\t",
+            "x/clc-22\tnodeps",
+            "x/own-1\theld\tx/own-2\tgentoo\t\tx/own-2 x/missing",
+        },
+        plain);
+    CHECK(out.str() ==
+          "+ Nothing to update.\n"
+          "\nHeld back\n"
+          "H a/rgb  1  > 2   ::gentoo\n"
+          "    a/skin-1  <a/rgb-2\n"
+          "      nothing depends on it; only @selected keeps it\n"
+          "    to remove it: emerge --deselect a/skin\n"
+          "                  emerge -C =a/skin-1\n"
+          "                  emerge -1 =a/rgb-2\n"
+          "                  which also frees a/effects-1, a/map-1\n"
+          "    to keep it:   emerge -1 --nodeps =a/rgb-2\n"
+          "                  which a later emerge -uD undoes\n"
+          "H x/clc  22 > 23  ::gentoo\n"
+          "    x/mesa-1  =x/clc-22*\n"
+          "      needed by a/kwin-1, a/qemu-1, a/gtk-4 and 1 more; kept by @system\n"
+          "    x/pop-1   =x/clc-22*\n"
+          "      nothing depends on it or keeps it\n"
+          "    to keep them:   emerge -1 --nodeps =x/clc-23\n"
+          "                    which a later emerge -uD undoes\n"
+          "H x/own  1  > 2   ::gentoo\n"
+          "    x/own-2  x/missing\n"
+          "\n3 held\n");
+}
+
 TEST_CASE("new packages come under their own heading, with what pulls them in") {
     std::ostringstream out;
     egraph::human_updates(out,

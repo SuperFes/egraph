@@ -43,6 +43,8 @@ class Session {
     // dynamic, so that its packages line up with the evaluated store's masks.
     struct Depclean {
         std::reference_wrapper<const Store> store;
+        // What kept was computed with.
+        KeepOptions options;
         Kept kept;
     };
     [[nodiscard]] Loaded<Depclean> depclean(bool build_deps, bool dynamic) EGRAPH_LIFETIMEBOUND;

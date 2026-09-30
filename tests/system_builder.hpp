@@ -19,6 +19,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace egraph::test {
@@ -152,22 +153,23 @@ inline Version version_of(std::string_view cpv) {
 
 // Installed packages' dependencies are their evaluated ones too. An installed package's target
 // is the best visible candidate in its slot, when that is newer, or any other when no visible
-// candidate has its version. World holds @selected's atoms.
+// candidate has its version. World holds @selected's atoms, system @system's.
 inline System make_system(const std::vector<Installed>& installed, std::vector<Available> available,
-                          const std::vector<std::string>& world = {}) {
+                          const std::vector<std::string>& world = {},
+                          const std::vector<std::string>& system_set = {}) {
     System system;
     auto& store = system.store;
     auto& evaluated = system.evaluated;
-    detail::Interner store_strings(store);
-    detail::Interner evaluated_strings(evaluated);
+    detail::Interner store_intern(store);
+    detail::Interner evaluated_intern(evaluated);
     for (const auto& pkg : installed) {
         Package record;
-        record.cpv = store_strings(pkg.cpv);
-        record.cp = store_strings(detail::cp_of(pkg.cpv));
-        record.slot = store_strings(pkg.slot);
-        record.sub_slot = store_strings(pkg.sub_slot.empty() ? pkg.slot : pkg.sub_slot);
-        record.repo = store_strings("test_repo");
-        record.eapi = store_strings("8");
+        record.cpv = store_intern(pkg.cpv);
+        record.cp = store_intern(detail::cp_of(pkg.cpv));
+        record.slot = store_intern(pkg.slot);
+        record.sub_slot = store_intern(pkg.sub_slot.empty() ? pkg.slot : pkg.sub_slot);
+        record.repo = store_intern("test_repo");
+        record.eapi = store_intern("8");
         record.iuse_effective = true;
         store.packages.push_back(record);
     }
@@ -185,13 +187,19 @@ inline System make_system(const std::vector<Installed>& installed, std::vector<A
         return ids;
     };
     for (std::size_t i = 0; i < installed.size(); ++i) {
-        store.packages.at(i).deps =
-            detail::trees(installed.at(i).deps, store, store_strings, match);
+        store.packages.at(i).deps = detail::trees(installed.at(i).deps, store, store_intern, match);
     }
+    std::vector<std::pair<std::string_view, std::string_view>> roots;
     for (const auto& atom : world) {
+        roots.emplace_back("selected", atom);
+    }
+    for (const auto& atom : system_set) {
+        roots.emplace_back("system", atom);
+    }
+    for (const auto& [set, atom] : roots) {
         const auto ids = match(atom);
-        store.roots.push_back({.set = store_strings("selected"),
-                               .atom = store_strings(atom),
+        store.roots.push_back({.set = store_intern(set),
+                               .atom = store_intern(atom),
                                .matches = {.first = static_cast<std::uint32_t>(store.ids.size()),
                                            .count = static_cast<std::uint32_t>(ids.size())}});
         store.ids.insert(store.ids.end(), ids.begin(), ids.end());
@@ -205,28 +213,28 @@ inline System make_system(const std::vector<Installed>& installed, std::vector<A
     });
     for (const auto& ebuild : available) {
         Candidate candidate;
-        candidate.cp = evaluated_strings(detail::cp_of(ebuild.cpv));
-        candidate.cpv = evaluated_strings(ebuild.cpv);
-        candidate.repo = evaluated_strings(ebuild.repo);
-        candidate.slot = evaluated_strings(ebuild.slot);
+        candidate.cp = evaluated_intern(detail::cp_of(ebuild.cpv));
+        candidate.cpv = evaluated_intern(ebuild.cpv);
+        candidate.repo = evaluated_intern(ebuild.repo);
+        candidate.slot = evaluated_intern(ebuild.slot);
         candidate.sub_slot =
-            evaluated_strings(ebuild.sub_slot.empty() ? ebuild.slot : ebuild.sub_slot);
+            evaluated_intern(ebuild.sub_slot.empty() ? ebuild.slot : ebuild.sub_slot);
         if (!ebuild.visible) {
             candidate.reasons = {.first = static_cast<std::uint32_t>(evaluated.ids.size()),
                                  .count = 1};
-            evaluated.ids.push_back(evaluated_strings("package.mask"));
+            evaluated.ids.push_back(evaluated_intern("package.mask"));
         } else {
-            candidate.deps = detail::trees(ebuild.deps, evaluated, evaluated_strings, match);
+            candidate.deps = detail::trees(ebuild.deps, evaluated, evaluated_intern, match);
         }
         evaluated.candidates.push_back(candidate);
     }
 
     for (const auto& pkg : installed) {
         Dependencies record;
-        record.cpv = evaluated_strings(pkg.cpv);
+        record.cpv = evaluated_intern(pkg.cpv);
         record.source = DepSource::ebuild;
-        record.eapi = evaluated_strings("8");
-        record.deps = detail::trees(pkg.deps, evaluated, evaluated_strings, match);
+        record.eapi = evaluated_intern("8");
+        record.deps = detail::trees(pkg.deps, evaluated, evaluated_intern, match);
         const auto cp = detail::cp_of(pkg.cpv);
         const auto own = detail::version_of(pkg.cpv);
         record.visible = std::ranges::any_of(available, [&](const Available& ebuild) {

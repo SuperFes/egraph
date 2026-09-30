@@ -10,6 +10,7 @@ from compare import _sonames, possible_mismatches
 from conftest import dynamic_option, portdb, write_stores
 from egraph_build import oracle, roots
 from egraph_build.model import Edge
+from scenarios import SCENARIOS
 
 EGRAPH = os.environ.get("EGRAPH")
 
@@ -182,6 +183,99 @@ def test_updates_are_emerges(
         assert kind == (
             "upgrade" if order > 0 else "downgrade" if order < 0 else "rebuild"
         )
+
+
+def removals(text):
+    """{held cpv: (wanted cpv, holder cpvs, world atoms, freed cpvs)} for each held update in
+    updates --held output that removing its holders lets through, and {held cpv: wanted cpv}
+    for every held one."""
+    wanted, holders, found = {}, {}, {}
+    for line in text.splitlines():
+        cpv, kind, *fields = line.split("\t")
+        if kind == "held":
+            wanted[cpv] = fields[0]
+        elif kind == "holder":
+            holders.setdefault(cpv, []).append(fields)
+        elif kind == "remove":
+            found[cpv] = (
+                wanted[cpv],
+                {holder[0] for holder in holders[cpv]},
+                {
+                    root.split(" ", 1)[1]
+                    for holder in holders[cpv]
+                    for root in holder[2:]
+                    if root.startswith("@selected ")
+                },
+                fields[0].split(),
+            )
+    return found, wanted
+
+
+@pytest.mark.parametrize("name", sorted(SCENARIOS))
+@pytest.mark.parametrize("target", ["@installed", "@world"])
+@pytest.mark.parametrize("option, newuse", [(None, False), ("--newuse", True)])
+def test_removals_let_updates_through(
+    name, target, option, newuse, playgrounds, tmp_path
+):
+    """Each removal updates --held offers is emerge's: without the holders, and with their
+    world atoms deselected, emerge -puD merges the held update (named, in case nothing keeps
+    it any more) and every other one the removal frees, wherever emerge can resolve that
+    system at all."""
+    import update
+    from conftest import make_playground
+
+    path = tmp_path / "installed.egraph"
+    write_stores(playgrounds(name), path)
+    world = ["--world"] if target == "@world" else []
+    output = egraph(path, "updates", "--held", *filter(None, [option]), *world).stdout
+    found, wanted = removals(output)
+    for held, (target_cpv, holders, atoms, frees) in found.items():
+        playground = make_playground(name, removed=holders, deselected=atoms)
+        try:
+            resolves = update.updates(
+                playground.trees, playground.eroot, newuse, deep=True, target=target
+            ).success
+            expected = update.updates(
+                playground.trees,
+                playground.eroot,
+                newuse,
+                deep=True,
+                target=[target, f"={target_cpv}"],
+            )
+        finally:
+            playground.cleanup()
+        if not resolves:
+            continue
+        assert expected.success, held
+        for cpv in [held, *frees]:
+            assert expected.replaced[cpv].cpv == wanted[cpv], (held, cpv)
+
+
+def test_a_leaf_holder_is_offered_for_removal(playgrounds, tmp_path):
+    """A holder only world keeps, one nothing keeps, and one whose rebuild would hold the
+    update, freeing another, can go for it (test_removals_let_updates_through asks emerge).
+    """
+    path = tmp_path / "installed.egraph"
+    write_stores(playgrounds("bounds"), path)
+    lines = egraph(path, "updates", "--held").stdout.splitlines()
+    held = ("dev-libs/astroid-4.0.4", "dev-libs/lone-1", "app-misc/rgb-1_rc3")
+    remedies = [
+        line
+        for line in lines
+        if line.split("\t")[0] in held
+        and line.split("\t")[1] in ("holder", "remove", "nodeps")
+    ]
+    assert remedies == [
+        "app-misc/rgb-1_rc3\tholder\tapp-misc/skin-1\t\t@selected app-misc/skin",
+        "app-misc/rgb-1_rc3\tremove\tapp-misc/effects-1",
+        "app-misc/rgb-1_rc3\tnodeps",
+        "dev-libs/astroid-4.0.4\tholder\tapp-misc/pylint-1\t\t@selected app-misc/pylint",
+        "dev-libs/astroid-4.0.4\tremove\t",
+        "dev-libs/astroid-4.0.4\tnodeps",
+        "dev-libs/lone-1\tholder\tapp-misc/stray-1\t",
+        "dev-libs/lone-1\tremove\t",
+        "dev-libs/lone-1\tnodeps",
+    ]
 
 
 def test_update_order_is_valid(scenario, system, dynamic_deps):

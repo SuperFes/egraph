@@ -311,7 +311,8 @@ SCENARIOS = {
     # Installed dependents whose atoms reject an update's target: a version bound with a lower
     # version to fall back to, one without, a glob, a sub-slot pinned and one under a slot
     # operator, a USE dependency against a --newuse rebuild, a bound inside ||, a bound only the
-    # installed build had, and a bound held by a package nothing in world needs.
+    # installed build had, a bound held by a package nothing in world needs, and a bound in the
+    # ebuild a slot-operator rebuild would use, which also holds another dependent's update.
     "bounds": {
         # Installed dependents hold updates back, which the builder's targets leave to queries.
         "bounded": True,
@@ -324,6 +325,8 @@ SCENARIOS = {
             "app-misc/keyring",
             "app-misc/either",
             "app-misc/dynamic",
+            "app-misc/skin",
+            "app-misc/effects",
         ],
         "ebuilds": {
             "app-misc/pylint-1": {"EAPI": "8", "RDEPEND": "<dev-libs/astroid-4.1"},
@@ -358,6 +361,14 @@ SCENARIOS = {
             "app-misc/stray-1": {"EAPI": "8", "RDEPEND": "<dev-libs/lone-2"},
             "dev-libs/lone-1": {"EAPI": "8"},
             "dev-libs/lone-2": {"EAPI": "8"},
+            "app-misc/skin-1": {
+                "EAPI": "8",
+                "RDEPEND": "<app-misc/rgb-1 app-misc/rgb:=",
+            },
+            "app-misc/effects-1": {"EAPI": "8", "RDEPEND": "app-misc/rgb:="},
+            "app-misc/effects-2": {"EAPI": "8", "RDEPEND": ">=app-misc/rgb-1:="},
+            "app-misc/rgb-1_rc3": {"EAPI": "8", "SLOT": "0/rc3"},
+            "app-misc/rgb-1": {"EAPI": "8", "SLOT": "0/1"},
         },
         "installed": {
             "app-misc/pylint-1": {"EAPI": "8", "RDEPEND": "<dev-libs/astroid-4.1"},
@@ -381,6 +392,12 @@ SCENARIOS = {
             "dev-libs/dyn-1": {"EAPI": "8"},
             "app-misc/stray-1": {"EAPI": "8", "RDEPEND": "<dev-libs/lone-2"},
             "dev-libs/lone-1": {"EAPI": "8"},
+            "app-misc/skin-1": {
+                "EAPI": "8",
+                "RDEPEND": "<app-misc/rgb-1 app-misc/rgb:0/rc3=",
+            },
+            "app-misc/effects-1": {"EAPI": "8", "RDEPEND": "app-misc/rgb:0/rc3="},
+            "app-misc/rgb-1_rc3": {"EAPI": "8", "SLOT": "0/rc3"},
         },
     },
     # Dependencies behind flags the installed build left off: nested, negated, inside and around

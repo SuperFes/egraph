@@ -241,8 +241,15 @@ an update back, rather than skipping it), it stays, recorded in `upstream-notes.
   nothing) keeps it; then the update goes through, and what else it frees is listed. A holder
   something else needs is named, not offered. Keeping a holder while updating is only possible
   through `--nodeps`, which later `-uD` runs undo, so it is shown with that warning. egraph prints
-  the commands (`--deselect`, `-C`, the update); it does not run emerge. `updates --held` and a
-  held-updates view in the TUI.
+  the commands (`--deselect`, `-C`, the update); it does not run emerge.
+  - 12d1 (done): `updates --held` (`remedy.cpp`): each holder with its dependents and root
+    atoms, a rebuild's ebuild standing for its installed package; the removal checked by
+    planning again without the holders (under `--world`, in the scope depclean keeps then),
+    with the held updates it frees. Every removal is emerge's on the system without the
+    holders, on every scenario. On the dev box, removing openrgb-plugin-skin (world only) lets
+    openrgb 1.0 through and frees the two plugins it held; the other six of the 9 held
+    updates have holders something else needs.
+  - 12d2: a held-updates view in the TUI.
 - What the targets' own dependencies pull in (new packages and slots, and updates that need a
   held one) and slot-operator rebuilds moved to step 14.
 

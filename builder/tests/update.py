@@ -39,7 +39,8 @@ def updates(
     target="@installed",
     dynamic_deps=True,
 ):
-    """What emerge -pu target (with -N or -U, and -D) replaces, rebuilds and adds."""
+    """What emerge -pu target (with -N or -U, and -D) replaces, rebuilds and adds. target may
+    be several arguments."""
     import _emerge.emergelog
     from _emerge.actions import expand_set_arguments
     from _emerge.create_depgraph_params import create_depgraph_params
@@ -67,7 +68,8 @@ def updates(
     try:
         params = create_depgraph_params(options, None)
         frozen = _frozen_depgraph_config(settings, trees, options, params, None)
-        atoms, _ = expand_set_arguments([target], None, root_config)
+        arguments = [target] if isinstance(target, str) else list(target)
+        atoms, _ = expand_set_arguments(arguments, None, root_config)
         success, depgraph, _ = backtrack_depgraph(
             settings, trees, options, params, None, atoms, None, frozen_config=frozen
         )

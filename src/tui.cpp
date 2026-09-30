@@ -520,7 +520,7 @@ void App::adopt(Store installed, Evaluated evaluated, Source source) {
 }
 
 void App::recompute() {
-    kept_ = keep(store(), {.build_deps = build_deps_, .masking = masking_});
+    kept_ = keep(store(), {.build_deps = build_deps_, .masking = masking_, .removed = {}});
     root_of_.assign(store().packages.size(), std::nullopt);
     for (const auto& pull : kept_.roots) {
         auto& root = root_of_.at(pull.child);

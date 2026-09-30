@@ -23,6 +23,8 @@ struct KeepOptions {
     bool build_deps = true;
     // Per installed package, from the evaluated store; empty takes every package as unmasked.
     std::vector<Masking> masking;
+    // Per installed package, whether to take it as gone; empty for none.
+    std::vector<bool> removed;
 };
 
 // A root atom keeping the installed package it selects.

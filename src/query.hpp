@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <iosfwd>
 #include <optional>
 #include <span>
@@ -73,6 +74,16 @@ struct Targets {
     bool roots = false;
 };
 
+// The packages in scope once the removed ones are gone, as depclean would keep them then.
+using Rescope = std::function<std::vector<bool>(const std::vector<bool>& removed)>;
+
+// What update_lines needs to add a held update's remedies.
+struct RemedyInputs {
+    // Over the store the plan reads.
+    std::reference_wrapper<const Graph> graph;
+    Rescope rescope;
+};
+
 // What emerge -uD would merge (plan_updates), as "cpv<TAB>kind<TAB>target cpv<TAB>repo": kind
 // upgrade, downgrade, or rebuild when the installed package is masked and the target has its
 // version. With rebuilds, each USE rebuild too, kind rebuild with "<TAB>flags" appended, the flags
@@ -85,11 +96,16 @@ struct Targets {
 // in. A slot-operator rebuild is kind rebuild with empty flags, then "<TAB>merge atom": the merge
 // that breaks its binding and the bound atom. With table, the merges in merge order instead, each
 // line led by "place<TAB>waits<TAB>", its place from 1 and the places it waits for,
-// space-separated; held lines follow, led by two empty fields.
-[[nodiscard]] std::vector<std::string> update_lines(const Store& store, const Evaluated& evaluated,
-                                                    UseRebuilds rebuilds, bool held = false,
-                                                    bool table = false,
-                                                    const Targets& targets = {});
+// space-separated; held lines follow, led by two empty fields. With remedies, each held line is
+// followed by its remedies (remedy.hpp), each led by the held cpv as well:
+// "cpv<TAB>holder<TAB>holder cpv<TAB>dependents" for each installed package rejecting it, the
+// installed packages depending on that one space-separated, then a "@set atom" field per root
+// atom selecting it; "cpv<TAB>remove<TAB>frees" when removing the holders lets it through, with
+// the held cpvs that frees besides, space-separated; "cpv<TAB>nodeps" when only holders reject it.
+[[nodiscard]] std::vector<std::string>
+update_lines(const Store& store, const Evaluated& evaluated, UseRebuilds rebuilds,
+             bool held = false, bool table = false, const Targets& targets = {},
+             const std::optional<RemedyInputs>& remedies = std::nullopt);
 
 // Where each merge of the plan comes from, in merge order: "place<TAB>@set<TAB>cpv<TAB>...", its
 // place as update_lines' table numbers it, then the root set and the chain of installed packages

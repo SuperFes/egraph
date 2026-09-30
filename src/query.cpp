@@ -1,6 +1,7 @@
 #include "query.hpp"
 
 #include "plan.hpp"
+#include "remedy.hpp"
 
 #include "atom.hpp"
 #include "version.hpp"
@@ -207,7 +208,8 @@ std::vector<std::uint32_t> fallbacks(const Evaluated& evaluated, std::uint32_t p
 
 std::vector<std::string> update_lines(const Store& store, const Evaluated& evaluated,
                                       UseRebuilds rebuilds, bool held, bool table,
-                                      const Targets& targets) {
+                                      const Targets& targets,
+                                      const std::optional<RemedyInputs>& remedies) {
     const auto plan = plan_updates(store, evaluated, rebuilds, targets);
     const auto target_fields = [&evaluated](std::uint32_t target) {
         const auto& candidate = evaluated.candidates.at(target);
@@ -240,12 +242,20 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
             merge_lines.push_back(std::move(line));
         }
     }
-    std::vector<std::optional<std::string>> held_lines(store.packages.size());
+    const auto package = [&store](std::uint32_t id) {
+        return store.string(store.packages.at(id).cpv);
+    };
+    // Per package, its held line and any remedies.
+    std::vector<std::vector<std::string>> held_lines(store.packages.size());
     if (held) {
-        for (const auto& back : plan.held) {
-            auto line =
-                std::format("{}\theld\t{}\t{}", store.string(store.packages.at(back.package).cpv),
-                            target_fields(back.wanted.target), back.wanted.flags);
+        const auto found = remedies ? egraph::remedies(store, evaluated, remedies->graph, plan,
+                                                       rebuilds, targets, remedies->rescope)
+                                    : std::vector<Remedy>{};
+        for (std::size_t index = 0; index < plan.held.size(); ++index) {
+            const auto& back = plan.held.at(index);
+            const auto cpv = package(back.package);
+            auto line = std::format("{}\theld\t{}\t{}", cpv, target_fields(back.wanted.target),
+                                    back.wanted.flags);
             // Reasons are sorted by member, then atom.
             for (std::size_t i = 0; i < back.reasons.size(); ++i) {
                 const auto& reason = back.reasons.at(i);
@@ -254,7 +264,35 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
                 }
                 line += std::format(" {}", reason.atom);
             }
-            held_lines.at(back.package) = std::move(line);
+            auto& group = held_lines.at(back.package);
+            group.push_back(std::move(line));
+            if (index < found.size()) {
+                const auto& remedy = found.at(index);
+                for (const auto& holder : remedy.holders) {
+                    line = std::format("{}\tholder\t{}\t", cpv, package(holder.package));
+                    for (std::size_t i = 0; i < holder.dependents.size(); ++i) {
+                        line += std::format("{}{}", i == 0 ? "" : " ",
+                                            package(holder.dependents.at(i)));
+                    }
+                    for (const auto root : holder.roots) {
+                        const auto& atom = store.roots.at(root);
+                        line += std::format("\t@{} {}", store.string(atom.set),
+                                            store.string(atom.atom));
+                    }
+                    group.push_back(std::move(line));
+                }
+                if (remedy.removable) {
+                    line = std::format("{}\tremove\t", cpv);
+                    for (std::size_t i = 0; i < remedy.frees.size(); ++i) {
+                        line += std::format("{}{}", i == 0 ? "" : " ",
+                                            package(plan.held.at(remedy.frees.at(i)).package));
+                    }
+                    group.push_back(std::move(line));
+                }
+                if (remedy.nodeps) {
+                    group.push_back(std::format("{}\tnodeps", cpv));
+                }
+            }
         }
     }
     std::vector<std::string> lines;
@@ -271,9 +309,9 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
             }
             lines.push_back(std::format("{}\t{}\t{}", i + 1, waits, merge_lines.at(merge)));
         }
-        for (auto& line : held_lines) {
-            if (line) {
-                lines.push_back(std::format("\t\t{}", *line));
+        for (const auto& group : held_lines) {
+            for (const auto& line : group) {
+                lines.push_back(std::format("\t\t{}", line));
             }
         }
         return lines;
@@ -288,11 +326,10 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
         }
     }
     for (std::size_t id = 0; id < store.packages.size(); ++id) {
-        for (auto* line : {&replaced.at(id), &held_lines.at(id)}) {
-            if (*line) {
-                lines.push_back(std::move(**line));
-            }
+        if (auto& line = replaced.at(id)) {
+            lines.push_back(std::move(*line));
         }
+        std::ranges::move(held_lines.at(id), std::back_inserter(lines));
     }
     std::ranges::move(added, std::back_inserter(lines));
     return lines;

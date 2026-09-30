@@ -58,7 +58,9 @@ class Depclean {
         versions_.reserve(store.packages.size());
         for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
             const auto& pkg = store.packages.at(id);
-            by_cp_[store.string(pkg.cp)].push_back(id);
+            if (!gone(id)) {
+                by_cp_[store.string(pkg.cp)].push_back(id);
+            }
             const auto cpv = store.string(pkg.cpv);
             const auto cp = store.string(pkg.cp);
             versions_.push_back(
@@ -118,6 +120,10 @@ class Depclean {
         return best;
     }
 
+    bool gone(std::uint32_t pkg) const {
+        return !options_.removed.empty() && options_.removed.at(pkg);
+    }
+
     const Masking& masking(std::uint32_t pkg) const {
         static constexpr Masking unmasked;
         return options_.masking.empty() ? unmasked : options_.masking.at(pkg);
@@ -130,9 +136,22 @@ class Depclean {
         return !found.masked || found.visible;
     }
 
+    // select_present over the ids not removed.
+    std::optional<std::uint32_t> select(std::span<const std::uint32_t> ids) const {
+        if (!options_.removed.empty()) {
+            std::vector<std::uint32_t> left;
+            std::ranges::copy_if(ids, std::back_inserter(left),
+                                 [this](std::uint32_t id) { return !gone(id); });
+            if (left.size() != ids.size()) {
+                return select_present(left);
+            }
+        }
+        return select_present(ids);
+    }
+
     // _select_pkg_from_installed: of several matches, the unmasked ones, and of those the
     // visible ones, when there are any; then the highest.
-    std::optional<std::uint32_t> select(std::span<const std::uint32_t> ids) const {
+    std::optional<std::uint32_t> select_present(std::span<const std::uint32_t> ids) const {
         if (ids.size() < 2 || options_.masking.empty()) {
             return highest(ids);
         }

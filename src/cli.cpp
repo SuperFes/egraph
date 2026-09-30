@@ -630,8 +630,24 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
         }
         return Exit::ok;
     }
-    const auto lines =
-        update_lines(*store, evaluated, command.rebuilds, command.held, command.table, targets);
+    std::optional<RemedyInputs> remedies;
+    if (command.held) {
+        const auto graph = session.graph(invocation.dynamic_deps);
+        if (!graph) {
+            return fail(err, graph.error());
+        }
+        remedies = RemedyInputs{.graph = *graph, .rescope = {}};
+        if (command.world) {
+            const auto& found = (*depclean)->get();
+            remedies->rescope = [&found](const std::vector<bool>& removed) {
+                auto options = found.options;
+                options.removed = removed;
+                return keep(found.store, options).packages;
+            };
+        }
+    }
+    const auto lines = update_lines(*store, evaluated, command.rebuilds, command.held,
+                                    command.table, targets, remedies);
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme, command.table);
     } else {
@@ -952,7 +968,8 @@ void configure(CLI::App& app, Invocation& invocation) {
         app, invocation, "Installed packages emerge -uD would replace or rebuild"));
     updates_cmd->add_flag_callback(
         "--held", [&invocation] { std::get<Updates>(invocation.command).held = true; },
-        "Also the updates installed dependents hold back, and which of their atoms do");
+        "Also the updates installed dependents hold back, which of their atoms do, and the "
+        "remedies");
     updates_cmd->add_flag_callback(
         "-t,--table", [&invocation] { std::get<Updates>(invocation.command).table = true; },
         "In merge order, each with the places of the merges it waits for");

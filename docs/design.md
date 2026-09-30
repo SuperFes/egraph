@@ -288,6 +288,17 @@ package it would take away is rejected, or else the target that (through what it
 needs it, and the choice moves down a version; the plan repeats until nothing moves. A held
 rebuild for USE stays put. `--held` adds each held update once, with the members and atoms that
 hold it; the human layout lists them under a "Held back" heading and new packages under "New".
+Each held update also gets its remedies (`remedy.cpp`, roadmap 12d). Its holders are the
+installed packages among what rejects it, a rebuild's ebuild standing for the installed package
+it rebuilds; each is listed with the installed packages depending on it and the root atoms
+selecting it. When every holder is a leaf (nothing else installed depends on it, and no root set
+but @selected keeps it), the plan is made again without them, in the scope depclean would keep
+then (under `--world`), with the held package in scope so its own dependencies still weigh.
+If that plan lets the update through, removing them is offered (`--deselect`, `-C`, then the
+update with `-1`), with the other held updates it frees. When only holders reject it, `emerge -1
+--nodeps` is offered too, with the warning that a later `-uD` undoes it. egraph prints the
+commands; it never runs emerge. `test_removals_let_updates_through` asks emerge on each scenario
+without the holders.
 A kept dependent whose slot-operator binding (`:0/3=`) a merge in another slot or sub-slot
 breaks is rebuilt from a visible ebuild of its version (roadmap 14c), and that ebuild's
 dependencies join the plan like a merge's; with no such ebuild the binding holds the merge back

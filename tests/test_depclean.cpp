@@ -1,5 +1,6 @@
 #include "depclean.hpp"
 #include "store_writer.hpp"
+#include "system_builder.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -94,7 +95,7 @@ std::vector<std::byte> three(std::string_view cp, std::string_view third,
 std::vector<std::uint32_t> orphaned(const egraph::Store& store,
                                     std::vector<egraph::Masking> masking) {
     return egraph::orphans(
-        egraph::keep(store, {.build_deps = true, .masking = std::move(masking)}));
+        egraph::keep(store, {.build_deps = true, .masking = std::move(masking), .removed = {}}));
 }
 
 } // namespace
@@ -133,4 +134,18 @@ TEST_CASE("an atom selects an unmasked installed match, then a visible one") {
           std::vector<std::uint32_t>{2});
     // Both masked: the highest.
     CHECK(orphaned(store, {unmasked, masked, masked}) == std::vector<std::uint32_t>{1});
+}
+
+TEST_CASE("a removed package is kept by nothing, nor what only it kept") {
+    // Its root atom matches another slot, which it then selects.
+    const auto system = egraph::test::make_system(
+        {{.cpv = "app-misc/pylint-1", .deps = {{"RDEPEND", "dev-libs/astroid"}}},
+         {.cpv = "dev-libs/astroid-1"},
+         {.cpv = "dev-lang/py-3.13", .slot = "3.13"},
+         {.cpv = "dev-lang/py-3.14", .slot = "3.14"}},
+        {}, {"app-misc/pylint", "dev-lang/py"});
+    CHECK(egraph::keep(system.store, {}).packages == std::vector<bool>{true, true, false, true});
+    CHECK(egraph::keep(system.store,
+                       {.build_deps = true, .masking = {}, .removed = {true, false, false, true}})
+              .packages == std::vector<bool>{false, false, true, false});
 }
