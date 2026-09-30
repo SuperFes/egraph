@@ -8,15 +8,30 @@ egraph evaluates the installed packages once, stores the result as a single file
 by checking the package database on every load, and answers from the stored graph.
 
 ```sh
+egraph                               # the interactive app on a terminal, a line shell off one
 egraph rdeps dev-libs/openssl        # what depends on it, and through which atom
 egraph why net-misc/networkmanager   # path from @world / @system to the package
 egraph soname libssl.so.3            # installed consumers of a soname
 egraph broken                        # installed deps nothing installed satisfies
+egraph orphans                       # what depclean would remove
+egraph updates -N --tree             # what emerge -uDN would merge, under what keeps it
 egraph export --dot app-misc/foo     # neighborhood as graphviz
 egraph rebuild | egraph check        # rebuild the store, or diff it against a fresh build
 ```
 
-Status: scaffold; every command is a stub. See `docs/roadmap.md` and `TODO.md`.
+Every answer is held to portage's own on generated systems and on a live one. See
+`docs/roadmap.md` for what is done and what comes next.
+
+## Building
+
+```sh
+meson setup build && meson compile -C build && meson test -C build
+meson install -C build
+```
+
+It needs a C++23 compiler, meson, CLI11, nlohmann_json, Catch2, Python 3.9 or later and portage;
+Notcurses for the interactive app (`-Dtui`). `-Dportage_hooks` installs the portage hooks that
+keep the system store current.
 
 ## Layout
 
@@ -26,4 +41,4 @@ Status: scaffold; every command is a stub. See `docs/roadmap.md` and `TODO.md`.
 
 ## License
 
-GPL-2, matching portage, which the builder imports.
+GPL-2 (`COPYING`), matching portage, which the builder imports.

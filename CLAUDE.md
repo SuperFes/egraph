@@ -37,26 +37,28 @@ layer; port its semantics, then extend them (see roadmap).
 Keep this section in sync with reality.
 
 ```sh
-meson setup build && meson compile -C build          # egraph, and build/egraph-build beside it
+fork=/Development/Gentoo/portage/lib                  # the development builds name the fork:
+meson setup build -Dportage_lib=$fork -Dportage_test_keys=$fork/portage/tests/.gnupg
+meson compile -C build                                # egraph, and build/egraph-build beside it
 meson install -C build --destdir /tmp/root           # also /etc/portage hooks (-Dportage_hooks)
 build/egraph orphans                                  # works in place; store in ~/.cache/egraph
 printf 'updates -N\norphans\n' | build/egraph shell      # many commands, one session
 build/egraph                                          # interactive: TUI on a terminal, : for commands
 meson test -C build --print-errorlogs                 # Catch2 + pytest
-meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false && meson test -C build-san
-meson setup build-notui -Dtui=disabled && meson test -C build-notui   # without Notcurses
+meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false ...  # plus the fork options
+meson setup build-notui -Dtui=disabled ...            # without Notcurses, plus the fork options
 clang-tidy -p build src/*.cpp                         # safety checks, config in .clang-tidy
 clang-format -i src/*.cpp src/*.hpp tests/*.cpp tests/*.hpp
 black builder
 PYTHONPATH=/Development/Gentoo/portage/lib pytest builder/tests   # builder against the fork
-meson setup build-sysportage -Dportage_lib= && meson test -C build-sysportage  # installed portage
+meson setup build-sysportage -Dportage_test_keys=$fork/portage/tests/.gnupg  # installed portage
+meson dist -C build                                   # release tarball, built and tested
 EGRAPH_SYSTEM_TESTS=1 PYTHONPATH=... pytest builder/tests         # also compare on the live vdb
 ```
 
-`meson test` puts the `portage_lib` option (default: the fork) on PYTHONPATH. The playground
-tests need test GPG keys, which only a checkout has; `portage_test_keys` (default: the fork's)
-lends them to an installed portage, so `-Dportage_lib=` runs the full suite against the system
-portage the installed builder imports.
+`meson test` puts the `portage_lib` option on PYTHONPATH; its default, empty, is the installed
+portage, as a package builds. The playground tests need test GPG keys, which only a checkout has;
+`portage_test_keys` lends them to an installed portage, and without them those tests skip.
 
 Toolchain on this machine: clang 23, gcc 16, meson 1.12, Catch2 3.15, CLI11 2.7, nlohmann_json
 3.12, Python 3.14, Notcurses 3.0.17 (the optional `tui` feature).
