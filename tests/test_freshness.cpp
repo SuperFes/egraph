@@ -7,10 +7,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <thread>
 
 namespace fs = std::filesystem;
 using Catch::Matchers::ContainsSubstring;
@@ -121,6 +123,37 @@ TEST_CASE("a process's output can go to a log instead of our terminal") {
     CHECK(read_text(log) == "out\nerr\n");
     const auto unwritable = egraph::os::run({"true"}, dir.path() / "missing" / "log");
     REQUIRE_FALSE(unwritable.has_value());
+}
+
+TEST_CASE("a process runs beside us until it is polled to its end") {
+    auto child = egraph::os::start({"sh", "-c", "exit 3"});
+    REQUIRE(child.has_value());
+    std::optional<std::expected<int, egraph::os::SpawnError>> ended;
+    while (!(ended = child->poll())) {
+        std::this_thread::sleep_for(std::chrono::milliseconds{5});
+    }
+    CHECK(*ended == 3);
+    CHECK(child->poll() == 3);
+    CHECK(child->wait() == 3);
+
+    auto moved = egraph::os::start({"sh", "-c", "exit 4"});
+    REQUIRE(moved.has_value());
+    auto owner = std::move(*moved);
+    CHECK(owner.wait() == 4);
+
+    const auto missing = egraph::os::start({"/nonexistent/egraph-build"});
+    REQUIRE_FALSE(missing.has_value());
+    CHECK(missing.error().message == "/nonexistent/egraph-build: No such file or directory");
+}
+
+TEST_CASE("a process still running is stopped when dropped") {
+    const auto began = std::chrono::steady_clock::now();
+    {
+        auto child = egraph::os::start({"sleep", "30"});
+        REQUIRE(child.has_value());
+        CHECK_FALSE(child->poll().has_value());
+    }
+    CHECK(std::chrono::steady_clock::now() - began < std::chrono::seconds{10});
 }
 
 TEST_CASE("a file is replaced by a copy in one step") {

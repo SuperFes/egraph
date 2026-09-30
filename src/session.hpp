@@ -7,6 +7,7 @@
 #include "depclean.hpp"
 #include "evaluated.hpp"
 #include "graph.hpp"
+#include "os.hpp"
 #include "store.hpp"
 
 #include <array>
@@ -72,6 +73,10 @@ class Session {
 [[nodiscard]] std::optional<std::string>
 run_builder(const Invocation& invocation, std::string_view mode, const std::filesystem::path& path,
             const std::optional<std::filesystem::path>& log = std::nullopt);
+
+// Why a builder run failed, from how it ended; nothing when it succeeded.
+[[nodiscard]] std::optional<std::string>
+builder_error(const Invocation& invocation, const std::expected<int, os::SpawnError>& status);
 
 // Both stores as a session loads them, for a caller that keeps them itself.
 [[nodiscard]] std::expected<Stores, std::string> open_stores(const Invocation& invocation,

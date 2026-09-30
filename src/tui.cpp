@@ -695,6 +695,10 @@ void App::handle(const Key& key) {
         if (watched_ && pages_.empty()) {
             watched_->due = true;
         }
+        if (checked_ && (checked_->stage == Checked::Stage::checking ||
+                         checked_->stage == Checked::Stage::rebuilding)) {
+            ++checked_->frame;
+        }
     } else if (dialog_) {
         dialog_.reset();
     } else if (prompt_) {
@@ -830,7 +834,7 @@ void App::finish_check(CheckResult result) {
     }
 }
 
-void App::finish_rebuild(std::expected<Stores, std::string> result) {
+void App::finish_rebuild(RebuildResult result) {
     if (!checked_) {
         return;
     }
@@ -976,6 +980,9 @@ void App::handle_steve(const Key& key) {
 }
 
 std::optional<std::chrono::milliseconds> App::refresh() const {
+    if (check_requested() || rebuild_requested()) {
+        return wait_interval;
+    }
     if (watched_ && pages_.empty()) {
         return watch_interval;
     }
@@ -1042,16 +1049,19 @@ std::optional<std::uint32_t> App::find(std::string_view cpv) const {
 }
 
 void App::handle_check(const Key& key) {
-    if (!checked_ || checked_->stage == Checked::Stage::checking ||
-        checked_->stage == Checked::Stage::rebuilding) {
+    if (!checked_) {
         return;
     }
     auto& checked = *checked_;
+    const bool waiting = check_requested() || rebuild_requested();
     if (is(key, U'q') || is(key, U'Q')) {
         done_ = true;
     } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace ||
                key.kind == KeyKind::left || is(key, U'h')) {
+        // Leaving stops a build still running.
         checked_.reset();
+    } else if (waiting) {
+        return;
     } else if (is(key, U'r')) {
         checked = {};
     } else if (is(key, U'u')) {

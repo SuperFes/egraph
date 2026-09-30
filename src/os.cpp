@@ -2,6 +2,7 @@
 
 #include <cerrno>
 #include <clocale>
+#include <csignal>
 #include <cstdlib>
 #include <fcntl.h>
 #include <format>
@@ -12,6 +13,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <utility>
 
 // posix_spawn hands the child our environment.
 extern "C" {
@@ -103,6 +105,11 @@ std::expected<FileStatus, std::error_code> lstat(const std::filesystem::path& pa
 
 std::expected<int, SpawnError> run(const std::vector<std::string>& argv,
                                    const std::optional<std::filesystem::path>& log) {
+    return start(argv, log).and_then([](Child child) { return child.wait(); });
+}
+
+std::expected<Child, SpawnError> start(const std::vector<std::string>& argv,
+                                       const std::optional<std::filesystem::path>& log) {
     if (argv.empty()) {
         return std::unexpected(SpawnError{"nothing to run"});
     }
@@ -130,21 +137,75 @@ std::expected<int, SpawnError> run(const std::vector<std::string>& argv,
         return std::unexpected(SpawnError{std::format(
             "{}: {}", args.front(), std::error_code(error, std::generic_category()).message())});
     }
+    return Child{pid, args.front()};
+}
+
+Child::Child(int pid, std::string name) : pid_{pid}, name_{std::move(name)} {}
+
+Child::Child(Child&& other) noexcept
+    : pid_{std::exchange(other.pid_, -1)}, name_{std::move(other.name_)},
+      ended_{std::move(other.ended_)} {}
+
+Child& Child::operator=(Child&& other) noexcept {
+    if (this != &other) {
+        stop();
+        pid_ = std::exchange(other.pid_, -1);
+        name_ = std::move(other.name_);
+        ended_ = std::move(other.ended_);
+    }
+    return *this;
+}
+
+Child::~Child() {
+    stop();
+}
+
+void Child::stop() noexcept {
+    if (pid_ < 0 || ended_) {
+        return;
+    }
+    ::kill(pid_, SIGTERM);
+    while (::waitpid(pid_, nullptr, 0) < 0 && errno == EINTR) {
+    }
+    pid_ = -1;
+}
+
+std::optional<std::expected<int, SpawnError>> Child::poll() {
+    return ended_ ? ended_ : reap(false);
+}
+
+std::expected<int, SpawnError> Child::wait() {
+    if (!ended_) {
+        (void)reap(true);
+    }
+    return ended_.value_or(std::unexpected(SpawnError{"no process"}));
+}
+
+std::optional<std::expected<int, SpawnError>> Child::reap(bool block) {
+    if (pid_ < 0) {
+        return std::nullopt;
+    }
     int status = 0;
-    while (::waitpid(pid, &status, 0) < 0) {
+    pid_t reaped = 0;
+    while ((reaped = ::waitpid(pid_, &status, block ? 0 : WNOHANG)) < 0) {
         if (errno != EINTR) {
-            return std::unexpected(SpawnError{std::format(
+            ended_ = std::unexpected(SpawnError{std::format(
                 "waitpid: {}", std::error_code(errno, std::generic_category()).message())});
+            return ended_;
         }
     }
+    if (reaped == 0) {
+        return std::nullopt;
+    }
     if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
+        ended_ = WEXITSTATUS(status);
+    } else if (WIFSIGNALED(status)) {
+        ended_ = std::unexpected(
+            SpawnError{std::format("{}: killed by signal {}", name_, WTERMSIG(status))});
+    } else {
+        ended_ = std::unexpected(SpawnError{std::format("{}: stopped", name_)});
     }
-    if (WIFSIGNALED(status)) {
-        return std::unexpected(
-            SpawnError{std::format("{}: killed by signal {}", args.front(), WTERMSIG(status))});
-    }
-    return std::unexpected(SpawnError{std::format("{}: stopped", args.front())});
+    return ended_;
 }
 
 bool can_create(const std::filesystem::path& path) {

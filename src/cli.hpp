@@ -2,6 +2,7 @@
 
 #include "evaluated.hpp"
 #include "human.hpp"
+#include "job.hpp"
 #include "query.hpp"
 
 #include <cstdint>
@@ -209,8 +210,8 @@ class ScratchStores {
 };
 
 // Saves the stores at store_path(invocation) and loads them: copies of a check's when nothing
-// they were built from has changed since, else a full build's.
-[[nodiscard]] std::expected<Stores, std::string>
+// they were built from has changed since, else a full build's, made in the background.
+[[nodiscard]] Job<std::expected<Stores, std::string>>
 save_stores(const Invocation& invocation, const std::optional<ScratchStores>& checked);
 
 // The egraph-build command to run.

@@ -2,6 +2,9 @@
 
 // Filesystem fixtures shared by the tests.
 
+#include "job.hpp"
+
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <format>
@@ -11,10 +14,21 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
 namespace egraph::test {
+
+// The job's result, polled for until it has one.
+template <class T> T finish(Job<T> job) {
+    for (;;) {
+        if (auto result = job()) {
+            return std::move(*result);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{5});
+    }
+}
 
 class TempDir {
   public:

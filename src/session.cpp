@@ -64,7 +64,11 @@ std::expected<Loaded, std::string> open_current(const Invocation& invocation, st
 std::optional<std::string> run_builder(const Invocation& invocation, std::string_view mode,
                                        const std::filesystem::path& path,
                                        const std::optional<std::filesystem::path>& log) {
-    const auto status = os::run(builder_command(invocation, mode, path), log);
+    return builder_error(invocation, os::run(builder_command(invocation, mode, path), log));
+}
+
+std::optional<std::string> builder_error(const Invocation& invocation,
+                                         const std::expected<int, os::SpawnError>& status) {
     if (!status) {
         return std::format("cannot build the store: {} (install egraph-build, or name it with "
                            "--builder or EGRAPH_BUILD)",

@@ -176,7 +176,7 @@ TEST_CASE("saving copies a check's stores that are still fresh") {
     // A builder that would fail, so only the copies can succeed.
     const auto invocation = command(store, fake_builder(dir.path(), only_b(3), 1), egraph::Tui{});
     const std::optional checked{checked_stores(dir.path(), fresh_sample())};
-    const auto saved = egraph::save_stores(invocation, checked);
+    const auto saved = egraph::test::finish(egraph::save_stores(invocation, checked));
     REQUIRE(saved.has_value());
     CHECK(saved->installed.packages.size() == 2);
     CHECK_FALSE(std::filesystem::exists(dir.path() / "args"));
@@ -198,7 +198,7 @@ TEST_CASE("saving builds afresh without a check, or when its stores went stale")
             checked_stores(dir.path(), egraph::test::assemble(egraph::test::sample_sections())));
     }
     SECTION("no check") {}
-    const auto saved = egraph::save_stores(invocation, checked);
+    const auto saved = egraph::test::finish(egraph::save_stores(invocation, checked));
     REQUIRE(saved.has_value());
     CHECK(saved->installed.packages.size() == 2);
     CHECK(read_text(dir.path() / "args") ==
@@ -210,7 +210,7 @@ TEST_CASE("saving fails with the builder") {
     const TempDir dir;
     const auto store = dir.path() / "installed.egraph";
     const auto invocation = command(store, fake_builder(dir.path(), only_b(3), 9), egraph::Tui{});
-    const auto saved = egraph::save_stores(invocation, std::nullopt);
+    const auto saved = egraph::test::finish(egraph::save_stores(invocation, std::nullopt));
     REQUIRE_FALSE(saved.has_value());
     CHECK(saved.error().starts_with(
         std::format("{} exited with status 9", invocation.builder.value())));

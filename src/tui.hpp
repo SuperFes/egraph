@@ -10,6 +10,7 @@
 #include "evaluated.hpp"
 #include "graph.hpp"
 #include "human.hpp"
+#include "job.hpp"
 #include "plan.hpp"
 #include "pressure.hpp"
 #include "query.hpp"
@@ -148,12 +149,16 @@ struct Fresh {
     Evaluated evaluated{};
     std::vector<std::string> drift;
 };
+// The spinner's frame for a count, cycling.
+[[nodiscard]] std::string spinner_frame(std::size_t count, const Glyphs& glyph);
+
 // What `egraph check` finds, or why it could not run.
 using CheckResult = std::expected<Fresh, std::string>;
-// Builds a fresh store and compares the given installed store with it.
-using Checker = std::function<CheckResult(const Store&)>;
+// Builds a fresh store and compares the given installed store with it, which outlives the job.
+using Checker = std::function<Job<CheckResult>(const Store&)>;
+using RebuildResult = std::expected<Stores, std::string>;
 // Writes fresh stores over the ones on disk and loads them, or says why it could not.
-using Rebuilder = std::function<std::expected<Stores, std::string>()>;
+using Rebuilder = std::function<Job<RebuildResult>()>;
 
 // Reads the running emerges' snapshots.
 using Watcher = std::function<std::vector<emerge::Snapshot>()>;
@@ -270,7 +275,12 @@ struct Checked {
     // The check's build, kept for a preview.
     std::optional<Stores> fresh;
     Cursor cursor;
+    // Ticks while waiting, which turn the spinner.
+    std::size_t frame = 0;
 };
+
+// How often the check view polls a build it waits for.
+inline constexpr std::chrono::milliseconds wait_interval{100};
 
 // A message over whatever is on screen, which the next key dismisses.
 struct Dialog {
@@ -344,7 +354,7 @@ class App {
     [[nodiscard]] bool rebuild_requested() const {
         return checked_ && checked_->stage == Checked::Stage::rebuilding;
     }
-    void finish_rebuild(std::expected<Stores, std::string> result);
+    void finish_rebuild(RebuildResult result);
     // Open from the list, under any pages opened from it.
     [[nodiscard]] const std::optional<Watched>& watched() const { return watched_; }
     // Whether the emerge view is showing and due to read the snapshots, which run() then does.
@@ -936,12 +946,13 @@ template <class S> void draw_check(S& screen, App& app, const Glyphs& glyph, Siz
     using Stage = Checked::Stage;
     if (checked.stage == Stage::checking || checked.stage == Stage::rebuilding) {
         put_spans(screen, 1, 1,
-                  {{checked.stage == Stage::checking
-                        ? "Building a fresh store to compare with; this takes a few seconds"
-                        : "Rebuilding the store; this takes a few seconds",
+                  {{spinner_frame(checked.frame, glyph), tone_pen(Tone::heading)},
+                   {checked.stage == Stage::checking
+                        ? " Building a fresh store to compare with; this takes a few seconds"
+                        : " Rebuilding the store; this takes a few seconds",
                     tone_pen(Tone::note)}},
                   size.cols);
-        draw_hints(screen, size.rows - 1, size.cols, {});
+        draw_hints(screen, size.rows - 1, size.cols, {{"esc", "stop"}, {"q", "quit"}});
         return;
     }
     const bool rebuilt = checked.stage == Stage::rebuilt;
@@ -1066,8 +1077,6 @@ void draw_dialog(S& screen, const Dialog& dialog, const Glyphs& glyph, Size size
 // empty ones.
 [[nodiscard]] std::string progress_bar(std::uint64_t done, std::uint64_t total, std::size_t width,
                                        const Glyphs& glyph);
-// The spinner's frame for a count, cycling.
-[[nodiscard]] std::string spinner_frame(std::size_t count, const Glyphs& glyph);
 
 // What a task is doing, in words.
 [[nodiscard]] std::string task_state(const emerge::Task& task);
@@ -1368,18 +1377,53 @@ template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
     screen.render();
 }
 
+enum class Polled : std::uint8_t { idle, running, finished };
+
+// Starts the job the app asks for, polls it, and hands its result to finish; drops it, stopping
+// its work, once the app no longer asks.
+template <class T, class Start, class Finish>
+Polled poll(std::optional<Job<T>>& job, bool requested, const Start& start, const Finish& finish) {
+    if (!requested) {
+        job.reset();
+        return Polled::idle;
+    }
+    if (!job) {
+        job = start();
+    }
+    auto result = (*job)();
+    if (!result) {
+        return Polled::running;
+    }
+    job.reset();
+    finish(std::move(*result));
+    return Polled::finished;
+}
+
 // Runs until the user quits or input ends, making the fresh build a check asks for, or the
-// rebuild, once the waiting view is on screen.
+// rebuild, in the background once the waiting view is on screen.
 template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Services& services) {
+    std::optional<Job<CheckResult>> check;
+    std::optional<Job<RebuildResult>> rebuild;
     draw(screen, app, glyph);
     while (!app.done()) {
-        if (app.check_requested()) {
-            app.finish_check(services.check ? services.check(app.installed())
-                                            : std::unexpected(std::string{"no way to check"}));
-        } else if (app.rebuild_requested()) {
-            app.finish_rebuild(services.rebuild
-                                   ? services.rebuild()
-                                   : std::unexpected(std::string{"no way to rebuild"}));
+        const auto checked = poll(
+            check, app.check_requested(),
+            [&] {
+                return services.check
+                           ? services.check(app.installed())
+                           : ready(CheckResult{std::unexpected(std::string{"no way to check"})});
+            },
+            [&](CheckResult result) { app.finish_check(std::move(result)); });
+        const auto rebuilt = poll(
+            rebuild, app.rebuild_requested(),
+            [&] {
+                return services.rebuild ? services.rebuild()
+                                        : ready(RebuildResult{
+                                              std::unexpected(std::string{"no way to rebuild"})});
+            },
+            [&](RebuildResult result) { app.finish_rebuild(std::move(result)); });
+        if (checked == Polled::finished || rebuilt == Polled::finished) {
+            // Drawn below before any key is read.
         } else if (const auto change = app.steve_change_requested()) {
             app.finish_steve_change(services.set_steve
                                         ? services.set_steve(change->setting, change->value)

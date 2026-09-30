@@ -272,6 +272,10 @@ and run-and-done otherwise (`docs/vision.md`).
 - 13d: the app stays current: inputs checked on each tick, the incremental builder run as a
   child process watched without blocking, the new stores swapped in keeping the user's place.
   Check and rebuild stop freezing the screen the same way.
+  - 13d1 (done): check and rebuild run the builder as a child process (`os::start`) the
+    interface polls, with a spinner while it waits; leaving the view, or quitting, stops it.
+  - 13d2: inputs checked on each tick, an incremental refresh in the background, and the new
+    stores shared with the session and swapped in keeping the list, pages and cursors.
 
 ## 14. Plans
 

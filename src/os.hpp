@@ -35,6 +35,39 @@ struct SpawnError {
 std::expected<int, SpawnError> run(const std::vector<std::string>& argv,
                                    const std::optional<std::filesystem::path>& log = std::nullopt);
 
+// A process start() began. Destroying one that has not ended terminates it and reaps it.
+class Child {
+  public:
+    Child(const Child&) = delete;
+    Child& operator=(const Child&) = delete;
+    Child(Child&& other) noexcept;
+    Child& operator=(Child&& other) noexcept;
+    ~Child();
+
+    // How it ended, without waiting: its exit status, or why there is none; nothing while it
+    // runs.
+    [[nodiscard]] std::optional<std::expected<int, SpawnError>> poll();
+    // How it ended, waiting for it.
+    [[nodiscard]] std::expected<int, SpawnError> wait();
+
+  private:
+    friend std::expected<Child, SpawnError> start(const std::vector<std::string>& argv,
+                                                  const std::optional<std::filesystem::path>& log);
+    Child(int pid, std::string name);
+    // Waits for the process, with or without blocking.
+    std::optional<std::expected<int, SpawnError>> reap(bool block);
+    void stop() noexcept;
+
+    int pid_ = -1;
+    std::string name_;
+    std::optional<std::expected<int, SpawnError>> ended_;
+};
+
+// As run(), without waiting for the child.
+std::expected<Child, SpawnError>
+start(const std::vector<std::string>& argv,
+      const std::optional<std::filesystem::path>& log = std::nullopt);
+
 // Whether this process could create or replace a file at path by renaming a new one over it:
 // the nearest existing directory above it is writable.
 bool can_create(const std::filesystem::path& path);

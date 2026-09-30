@@ -257,49 +257,92 @@ std::optional<steve::Status> read_steve() {
                          .problem = problem};
 }
 
-// A full build into path whose output goes to a log rather than the terminal; an error ends with
-// the log's last lines.
-std::optional<std::string> quiet_build(const Invocation& invocation,
-                                       const std::filesystem::path& path) {
-    const auto log = std::filesystem::path{scratch_store()}.replace_extension(".log");
-    auto error = run_builder(invocation, "--full", path, log);
-    const auto output = last_lines(log, 8);
-    std::error_code ignored;
-    std::filesystem::remove(log, ignored);
-    if (error && !output.empty()) {
-        *error += ":\n" + output;
+// A file removed with this.
+class ScratchFile {
+  public:
+    explicit ScratchFile(std::filesystem::path path) : path_{std::move(path)} {}
+    ScratchFile(const ScratchFile&) = delete;
+    ScratchFile& operator=(const ScratchFile&) = delete;
+    ScratchFile(ScratchFile&& other) noexcept : path_{std::exchange(other.path_, {})} {}
+    ScratchFile& operator=(ScratchFile&&) = delete;
+    ~ScratchFile() {
+        if (!path_.empty()) {
+            std::error_code ignored;
+            std::filesystem::remove(path_, ignored);
+        }
     }
-    return error;
-}
 
-template <class Loaded> struct ScratchBuild {
-    Loaded loaded;
-    ScratchStores files;
+    [[nodiscard]] const std::filesystem::path& path() const { return path_; }
+
+  private:
+    std::filesystem::path path_;
 };
 
-// A full build into scratch files, loaded by load_path (Loaded is a Store or Stores); quiet keeps
-// the builder off the terminal.
-template <class Loaded, class Load>
-std::expected<ScratchBuild<Loaded>, std::string> scratch_build(const Invocation& invocation,
-                                                               bool quiet, const Load& load_path) {
-    ScratchStores files{scratch_store()};
-    if (auto error = quiet ? quiet_build(invocation, files.path())
-                           : run_builder(invocation, "--full", files.path())) {
-        return std::unexpected(std::move(*error));
+// A full build into path in the background, its output kept for errors rather than sent to the
+// terminal: the job ends with the error, which ends with the output's last lines, or with
+// nothing once the build succeeded.
+Job<std::optional<std::string>> background_build(const Invocation& invocation,
+                                                 const std::filesystem::path& path) {
+    ScratchFile log{std::filesystem::path{scratch_store()}.replace_extension(".log")};
+    auto child = os::start(builder_command(invocation, "--full", path), log.path());
+    if (!child) {
+        return ready(builder_error(invocation, std::unexpected(child.error())));
     }
-    auto loaded = load_path(files.path());
-    if (!loaded) {
-        return std::unexpected(std::move(loaded.error().message));
-    }
-    return ScratchBuild<Loaded>{.loaded = std::move(*loaded), .files = std::move(files)};
+    return [&invocation, child = std::move(*child),
+            log = std::move(log)]() mutable -> std::optional<std::optional<std::string>> {
+        const auto ended = child.poll();
+        if (!ended) {
+            return std::nullopt;
+        }
+        auto error = builder_error(invocation, *ended);
+        if (const auto output = last_lines(log.path(), 8); error && !output.empty()) {
+            *error += ":\n" + output;
+        }
+        return std::optional<std::optional<std::string>>{std::in_place, std::move(error)};
+    };
 }
 
-// As scratch_build, the files removed once loaded.
+// A full build into scratch files, loaded by load_path (Loaded is a Store or Stores), the files
+// removed once loaded.
 template <class Loaded, class Load>
-std::expected<Loaded, std::string> fresh_build(const Invocation& invocation, bool quiet,
+std::expected<Loaded, std::string> fresh_build(const Invocation& invocation,
                                                const Load& load_path) {
-    return scratch_build<Loaded>(invocation, quiet, load_path)
-        .transform([](ScratchBuild<Loaded>&& built) { return std::move(built).loaded; });
+    const ScratchStores files{scratch_store()};
+    if (auto error = run_builder(invocation, "--full", files.path())) {
+        return std::unexpected(std::move(*error));
+    }
+    return load_path(files.path()).transform_error([](const StoreError& e) { return e.message; });
+}
+
+// The check's fresh build in the background, and how stored differs from it; with keep, its
+// files are left in checked for a rebuild to save.
+Job<tui::CheckResult> background_check(const Invocation& invocation, const Store& stored,
+                                       std::optional<ScratchStores>& checked, bool keep) {
+    checked.reset();
+    return [files = ScratchStores{scratch_store()}, build = Job<std::optional<std::string>>{},
+            &invocation, &stored, &checked, keep]() mutable -> std::optional<tui::CheckResult> {
+        if (!build) {
+            build = background_build(invocation, files.path());
+        }
+        auto ended = build();
+        if (!ended) {
+            return std::nullopt;
+        }
+        if (*ended) {
+            return tui::CheckResult{std::unexpected(std::move(**ended))};
+        }
+        auto loaded = load_stores(files.path());
+        if (!loaded) {
+            return tui::CheckResult{std::unexpected(std::move(loaded.error().message))};
+        }
+        auto lines = drift(stored, loaded->installed);
+        if (keep) {
+            checked = std::move(files);
+        }
+        return tui::Fresh{.store = std::move(loaded->installed),
+                          .evaluated = std::move(loaded->evaluated),
+                          .drift = std::move(lines)};
+    };
 }
 
 } // namespace
@@ -328,8 +371,8 @@ void ScratchStores::remove() const {
     std::filesystem::remove(evaluated_store_path(path_), ignored);
 }
 
-std::expected<Stores, std::string> save_stores(const Invocation& invocation,
-                                               const std::optional<ScratchStores>& checked) {
+Job<std::expected<Stores, std::string>> save_stores(const Invocation& invocation,
+                                                    const std::optional<ScratchStores>& checked) {
     const auto path = store_path(invocation);
     if (checked) {
         if (auto stores = load_stores(checked->path()); stores && !staleness(*stores)) {
@@ -339,17 +382,24 @@ std::expected<Stores, std::string> save_stores(const Invocation& invocation,
                 std::pair{evaluated_store_path(checked->path()), evaluated_store_path(path)}};
             for (const auto& [from, to] : copies) {
                 if (const auto copied = os::replace_with_copy(from, to); !copied) {
-                    return std::unexpected(
-                        std::format("{}: {}", to.string(), copied.error().message()));
+                    return ready(tui::RebuildResult{std::unexpected(
+                        std::format("{}: {}", to.string(), copied.error().message()))});
                 }
             }
-            return std::move(*stores);
+            return ready(tui::RebuildResult{std::move(*stores)});
         }
     }
-    if (auto error = quiet_build(invocation, path)) {
-        return std::unexpected(std::move(*error));
-    }
-    return load_stores(path).transform_error([](const StoreError& e) { return e.message; });
+    return [build = background_build(invocation, path),
+            path]() mutable -> std::optional<tui::RebuildResult> {
+        auto ended = build();
+        if (!ended) {
+            return std::nullopt;
+        }
+        if (*ended) {
+            return tui::RebuildResult{std::unexpected(std::move(**ended))};
+        }
+        return load_stores(path).transform_error([](const StoreError& e) { return e.message; });
+    };
 }
 
 namespace {
@@ -365,8 +415,7 @@ Exit execute(const Check&, Session&, const Invocation& invocation, std::ostream&
         err << "egraph: " << stored.error().message << '\n';
         return Exit::failure;
     }
-    const auto built =
-        fresh_build<Store>(invocation, false, [](const auto& path) { return load(path); });
+    const auto built = fresh_build<Store>(invocation, [](const auto& path) { return load(path); });
     if (!built) {
         err << "egraph: " << built.error() << '\n';
         return Exit::failure;
@@ -725,19 +774,8 @@ Exit execute(const Tui&, Session& session, const Invocation& invocation, std::os
     std::optional<ScratchStores> checked;
     // The builder cannot share the terminal the interface owns; its output is kept for errors.
     // The drift compares installed stores, whichever dependencies the interface reads.
-    const auto check = [&invocation, &checked, saves](const Store& stored) -> tui::CheckResult {
-        checked.reset();
-        auto built = scratch_build<Stores>(invocation, true, load_stores);
-        if (!built) {
-            return std::unexpected(std::move(built.error()));
-        }
-        if (saves) {
-            checked = std::move(built->files);
-        }
-        auto lines = drift(stored, built->loaded.installed);
-        return tui::Fresh{.store = std::move(built->loaded.installed),
-                          .evaluated = std::move(built->loaded.evaluated),
-                          .drift = std::move(lines)};
+    const auto check = [&invocation, &checked, saves](const Store& stored) {
+        return background_check(invocation, stored, checked, saves);
     };
     tui::Rebuilder rebuild;
     if (saves) {

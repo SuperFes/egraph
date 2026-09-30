@@ -167,14 +167,26 @@ egraph::Stores only_b_updates() {
 
 const auto& ascii = egraph::glyphs(egraph::GlyphSet::ascii);
 
-// A check whose fresh build is the cyclic store, one package differing.
-const egraph::tui::Checker cyclic_check = [](const egraph::Store&) -> egraph::tui::CheckResult {
-    return egraph::tui::Fresh{.store = cyclic(), .drift = {"~dev-libs/b-1"}};
-};
+// Services whose jobs have their results at once.
+egraph::tui::Checker checking(std::function<egraph::tui::CheckResult(const egraph::Store&)> check) {
+    return [check = std::move(check)](const egraph::Store& stored) {
+        return egraph::ready(check(stored));
+    };
+}
+egraph::tui::Rebuilder rebuilding(std::function<egraph::tui::RebuildResult()> rebuild) {
+    return [rebuild = std::move(rebuild)] { return egraph::ready(rebuild()); };
+}
 
-const egraph::tui::Checker no_check = [](const egraph::Store&) -> egraph::tui::CheckResult {
-    return std::unexpected("no builder in tests");
-};
+// A check whose fresh build is the cyclic store, one package differing.
+const egraph::tui::Checker cyclic_check =
+    checking([](const egraph::Store&) -> egraph::tui::CheckResult {
+        return egraph::tui::Fresh{.store = cyclic(), .drift = {"~dev-libs/b-1"}};
+    });
+
+const egraph::tui::Checker no_check =
+    checking([](const egraph::Store&) -> egraph::tui::CheckResult {
+        return std::unexpected("no builder in tests");
+    });
 
 bool contains(const std::string& text, std::string_view part) {
     return text.find(part) != std::string::npos;
@@ -500,12 +512,12 @@ TEST_CASE("c checks the store against a fresh build, showing a wait first") {
     std::string waiting;
     int checks = 0;
     const egraph::tui::Checker check =
-        [&](const egraph::Store& stored) -> egraph::tui::CheckResult {
-        CHECK(&stored == &store);
-        waiting = screen.text();
-        ++checks;
-        return egraph::tui::Fresh{.store = sample(), .drift = {"+x/new-1", "~dev-libs/b-1"}};
-    };
+        checking([&](const egraph::Store& stored) -> egraph::tui::CheckResult {
+            CHECK(&stored == &store);
+            waiting = screen.text();
+            ++checks;
+            return egraph::tui::Fresh{.store = sample(), .drift = {"+x/new-1", "~dev-libs/b-1"}};
+        });
     egraph::tui::run(screen, app, ascii, {.check = check});
     CHECK(checks == 1);
     CHECK(contains(waiting, "Building a fresh store"));
@@ -542,6 +554,56 @@ TEST_CASE("c checks the store against a fresh build, showing a wait first") {
     CHECK(contains(screen.text(), "+ The store matches a fresh build"));
     app.handle(key(KeyKind::escape));
     CHECK_FALSE(app.checked().has_value());
+}
+
+TEST_CASE("a check's build runs in the background while the screen still answers") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{12, 120, {character(U'c'), key(KeyKind::tick), key(KeyKind::tick)}};
+    int polls = 0;
+    std::vector<std::string> waiting;
+    const egraph::tui::Checker check =
+        [&](const egraph::Store&) -> egraph::Job<egraph::tui::CheckResult> {
+        return [&]() -> std::optional<egraph::tui::CheckResult> {
+            waiting.push_back(screen.text());
+            if (++polls < 3) {
+                return std::nullopt;
+            }
+            return egraph::tui::Fresh{.store = sample(), .drift = {}};
+        };
+    };
+    egraph::tui::run(screen, app, ascii, {.check = check});
+    CHECK(polls == 3);
+    // Read with a timeout while it runs, so the spinner turns; then without.
+    REQUIRE(screen.timeouts.size() >= 3);
+    CHECK(screen.timeouts.at(1) == egraph::tui::wait_interval);
+    CHECK(screen.timeouts.at(2) == egraph::tui::wait_interval);
+    CHECK(screen.timeouts.back() == std::nullopt);
+    REQUIRE(waiting.size() == 3);
+    CHECK(contains(waiting.at(0), "| Building a fresh store"));
+    CHECK(contains(waiting.at(1), "/ Building a fresh store"));
+    CHECK(contains(waiting.at(0), "esc stop"));
+    CHECK(contains(screen.text(), "+ The store matches a fresh build"));
+}
+
+TEST_CASE("leaving the check view stops its build") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    for (const auto leave : {key(KeyKind::escape), character(U'q')}) {
+        egraph::tui::App app{store, graph};
+        FakeScreen screen{12, 120, {character(U'c'), leave}};
+        const auto alive = std::make_shared<int>(0);
+        const egraph::tui::Checker check =
+            [&](const egraph::Store&) -> egraph::Job<egraph::tui::CheckResult> {
+            return [alive]() -> std::optional<egraph::tui::CheckResult> { return std::nullopt; };
+        };
+        egraph::tui::run(screen, app, ascii, {.check = check});
+        CHECK(alive.use_count() == 1);
+        if (leave.kind == KeyKind::escape) {
+            CHECK_FALSE(app.checked().has_value());
+        }
+    }
 }
 
 TEST_CASE("a check that cannot run shows why") {
@@ -627,10 +689,11 @@ TEST_CASE("u shows a check's fresh build without saving it") {
     CHECK(app.dependents(0) == 0);
     FakeScreen screen{12, 120, {character(U'c')}};
     int rebuilds = 0;
-    const egraph::tui::Rebuilder rebuild = [&]() -> std::expected<egraph::Stores, std::string> {
-        ++rebuilds;
-        return egraph::Stores{.installed = cyclic(), .evaluated = {}};
-    };
+    const egraph::tui::Rebuilder rebuild =
+        rebuilding([&]() -> std::expected<egraph::Stores, std::string> {
+            ++rebuilds;
+            return egraph::Stores{.installed = cyclic(), .evaluated = {}};
+        });
     egraph::tui::run(screen, app, ascii, {.check = cyclic_check, .rebuild = rebuild});
     CHECK(contains(screen.text(), "u shows the fresh build, without saving it"));
     CHECK(contains(screen.line(11), "u preview"));
@@ -699,9 +762,10 @@ TEST_CASE("a failed rebuild leaves the store as it was") {
     const auto graph = egraph::build_graph(store);
     egraph::tui::App app{store, graph, egraph::tui::Update::save};
     FakeScreen screen{12, 120, {character(U'c'), character(U'u')}};
-    const egraph::tui::Rebuilder rebuild = []() -> std::expected<egraph::Stores, std::string> {
-        return std::unexpected("egraph-build exited with status 1:\nPermissionError");
-    };
+    const egraph::tui::Rebuilder rebuild =
+        rebuilding([]() -> std::expected<egraph::Stores, std::string> {
+            return std::unexpected("egraph-build exited with status 1:\nPermissionError");
+        });
     egraph::tui::run(screen, app, ascii, {.check = cyclic_check, .rebuild = rebuild});
     CHECK(app.source() == egraph::tui::Source::opened);
     CHECK(&app.store() == &store);
@@ -723,16 +787,18 @@ TEST_CASE("u does nothing without drift to fix") {
         egraph::tui::App app{store, graph, egraph::tui::Update::save};
         FakeScreen screen{12, 120, {character(U'u'), character(U'c'), character(U'u')}};
         int rebuilds = 0;
-        const egraph::tui::Checker check = [&](const egraph::Store&) -> egraph::tui::CheckResult {
-            if (fails) {
-                return std::unexpected("no builder");
-            }
-            return egraph::tui::Fresh{.store = sample(), .drift = {}};
-        };
-        const egraph::tui::Rebuilder rebuild = [&]() -> std::expected<egraph::Stores, std::string> {
-            ++rebuilds;
-            return egraph::Stores{.installed = sample(), .evaluated = {}};
-        };
+        const egraph::tui::Checker check =
+            checking([&](const egraph::Store&) -> egraph::tui::CheckResult {
+                if (fails) {
+                    return std::unexpected("no builder");
+                }
+                return egraph::tui::Fresh{.store = sample(), .drift = {}};
+            });
+        const egraph::tui::Rebuilder rebuild =
+            rebuilding([&]() -> std::expected<egraph::Stores, std::string> {
+                ++rebuilds;
+                return egraph::Stores{.installed = sample(), .evaluated = {}};
+            });
         egraph::tui::run(screen, app, ascii, {.check = check, .rebuild = rebuild});
         CHECK(rebuilds == 0);
         CHECK(app.source() == egraph::tui::Source::opened);
@@ -1365,11 +1431,11 @@ TEST_CASE("the check compares installed stores, and a preview keeps the evaluate
     egraph::tui::App app{both(), true};
     std::size_t checked_nodes = 0;
     const egraph::tui::Checker check =
-        [&](const egraph::Store& stored) -> egraph::tui::CheckResult {
-        checked_nodes = stored.nodes_in(stored.packages.at(0).deps.at(4)).size();
-        return egraph::tui::Fresh{
-            .store = sample(), .evaluated = evaluated_sample(), .drift = {"~dev-libs/b-1"}};
-    };
+        checking([&](const egraph::Store& stored) -> egraph::tui::CheckResult {
+            checked_nodes = stored.nodes_in(stored.packages.at(0).deps.at(4)).size();
+            return egraph::tui::Fresh{
+                .store = sample(), .evaluated = evaluated_sample(), .drift = {"~dev-libs/b-1"}};
+        });
     FakeScreen screen{12, 120, {character(U'c'), character(U'u')}};
     egraph::tui::run(screen, app, ascii, {.check = check});
     CHECK(checked_nodes == 4);
