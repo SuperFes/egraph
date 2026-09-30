@@ -343,8 +343,11 @@ built from a release tarball, tested against the portage users run rather than o
 - 15d (done): portage hooks a package can install: `/etc/portage/bin/post_emerge` is the user's own
   file, so the dispatcher is installed beside the hooks for the user to link, and postsync.d
   (which portage runs itself) takes egraph's hook directly. Step 16 replaces both.
-- 15e: the ebuild, in the overlay: the builder for the Python versions portage supports, the
-  store directory, `tui` as a USE flag, the unit tests in `src_test`.
+- 15e (done): the ebuild, `app-portage/egraph` in the Bonbon overlay (SuperFes/Bonbon), from
+  the GitHub release tarball (github.com/SuperFes/egraph, v0.1.1): python-single-r1 over
+  portage's Python versions, `tui` as a USE flag, the whole suite in `src_test` (the playground
+  tests skip without portage's test keys). Its test run found portage's exported
+  PORTAGE_CONFIGROOT reaching the unit tests, which 0.1.1 fixes.
 - 15f: continuous integration on a stock stage3: the whole suite against the installed portage
   release, so a portage change that breaks the builder shows up before users see it.
 
