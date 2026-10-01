@@ -365,8 +365,8 @@ binary packages (every merge builds from source).
 Trust comes in two phases. First egraph plans and asks, then runs emerge on exactly the plan's
 cpvs (`--oneshot`, the requested packages selected), so emerge's own checks and order still apply
 and any difference from egraph's plan stops the run and is recorded; with the targets fixed,
-emerge skips its deep walk over @world. Once that has shown no differences through weeks of real
-use, egraph schedules the merges itself.
+emerge skips its deep walk over @world. Then egraph schedules and runs the merges itself
+(16k), each stage held to emerge's own runs.
 
 - 16a (done): the plan for plain `emerge -u @world`: `updates` without `-D` updates only
   emerge's arguments, drops an update anything rejects rather than fall back or rebuild a
@@ -491,9 +491,34 @@ use, egraph schedules the merges itself.
   and sets.
 - 16j: the actions in the living app: updates picked, installs from search, orphans removed,
   a confirmation, the run in the emerge view, a failure's log tail.
-- 16k: egraph's own order, once 16c has shown no differences: each merge an
-  `emerge --oneshot --nodeps`, run in parallel as the plan's waits allow (with steve), a failure
-  skipping only what depends on it.
+- 16k: egraph's own execution: `egraph-exec`, a C++ sibling of `egraph` that holds the order,
+  the parallelism (with steve), priorities, failures and the display, and drives long-lived
+  Python workers that call portage's public phase and merge functions; the ebuild machinery
+  stays portage's. Decided with the user (2026-10-01), replacing one `emerge --oneshot --nodeps`
+  per merge: `--nodeps` turns off blocker handling, and parallel emerges overwrite each other's
+  resume list. emerge-equivalent ordering stays the default until real use shows the narrower
+  waits safe (undeclared dependencies are why emerge's merge-wait exists). Each stage is
+  compared with portage on playgrounds.
+  - 16k0: egraph's plan written as emerge's resume list, emerge's `--resume --pretend` holding
+    it with nothing dropped and the order kept.
+  - 16k1: when each build may start and merge: the plan's waits split by dependency kind
+    (build-time, install-time, runtime, post-merge), checked against emerge's own scheduler
+    graph.
+  - 16k2: a worker builds and merges one package; its vdb entry and image compared with
+    `emerge -1`'s.
+  - 16k3: a whole plan run one build at a time, blockers and uninstalls included; the final
+    system and world file compared with emerge's run.
+  - 16k4: parallel builds; a trace holds the rules emerge depends on (never two merges at once,
+    no build before what it builds against is merged, portage's locks taken as portage takes
+    them, tested against a concurrent emerge); timing compared with `emerge --jobs`. Workers
+    pooled, since each spends about a second loading portage's configuration.
+  - 16k5: a failure skipping only what depends on it, compared with what `emerge --keep-going`
+    drops.
+  - 16k6: the live view in the living app, through the status file the emerge view reads;
+    `emerge.log` written in emerge's format, so `qlop` still works.
+  - 16k7: portage updating itself mid-run, and a narrower merge-wait barrier offered as an
+    option.
+  - 16k8: side-by-side runs against emerge on the dev box.
 
 ## 17. `egraphd`, the service
 
