@@ -252,6 +252,17 @@ TEST_CASE("notices are read, and dispatch-conf runs, under the same roots") {
                                    "PORTAGE_OVERRIDE_EPREFIX=/mnt/prefix", "my-dispatch"});
 }
 
+TEST_CASE("updates and plan write emerge's resume list on request, the actions do not") {
+    CHECK(std::get<egraph::Updates>(parse("updates --resume-list /tmp/r").command).resume_list ==
+          std::filesystem::path{"/tmp/r"});
+    CHECK(std::get<egraph::PlanCommand>(parse("plan --resume-list /tmp/r a/b").command)
+              .resume_list == std::filesystem::path{"/tmp/r"});
+    CHECK_FALSE(std::get<egraph::Updates>(parse("updates").command).resume_list);
+    CHECK_THROWS(parse("update --resume-list /tmp/r"));
+    CHECK_THROWS(parse("install --resume-list /tmp/r a/b"));
+    CHECK_THROWS(parse("sync --resume-list /tmp/r"));
+}
+
 TEST_CASE("sync takes updates' options and runs emaint under the same roots") {
     const auto sync = std::get<egraph::Sync>(parse("sync -D --world --verify").command);
     CHECK(sync.deep);

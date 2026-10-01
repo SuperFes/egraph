@@ -499,8 +499,13 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   resume list. emerge-equivalent ordering stays the default until real use shows the narrower
   waits safe (undeclared dependencies are why emerge's merge-wait exists). Each stage is
   compared with portage on playgrounds.
-  - 16k0: egraph's plan written as emerge's resume list, emerge's `--resume --pretend` holding
-    it with nothing dropped and the order kept.
+  - 16k0 (done): egraph's plan written as emerge's resume list (`updates` and `plan`
+    `--resume-list`), and emerge's resume of it holding every merge, adding none, and resolving
+    the same uninstalls, for every update mode and every plan request on every scenario
+    (`test_resume.py`, through `_resume_depgraph`), and run for real by `emerge --resume`.
+    Resuming, emerge orders the merges again from its own graph (it keeps the list's order only
+    under `--nodeps`) and carries no uninstalls, so whether egraph's order is one emerge allows
+    is 16k1's.
   - 16k1: when each build may start and merge: the plan's waits split by dependency kind
     (build-time, install-time, runtime, post-merge), checked against emerge's own scheduler
     graph.

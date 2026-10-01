@@ -528,6 +528,34 @@ def test_a_failed_sync_still_shows_the_updates(system):
     assert f"PORTAGE_CONFIGROOT={machine.playground.eroot}" in called
 
 
+def resume(machine, *args):
+    """egraph's resume list for args, put where emerge keeps its own, then emerge --resume."""
+    path = machine.tmp_path / "resume.json"
+    result = machine.egraph(*args, "--resume-list", str(path))
+    assert result.returncode == 0, result.stderr
+    eroot = machine.playground.eroot
+    with open(os.path.join(eroot, portage.const.CACHE_PATH, "mtimedb"), "w") as f:
+        json.dump({"resume": json.loads(path.read_text())}, f)
+    ran = subprocess.run(
+        [machine.emerge, "--resume", "--ignore-default-opts", "--ask=n"],
+        capture_output=True,
+        text=True,
+    )
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+
+
+def test_emerge_resumes_the_lists_egraph_writes(system):
+    """updates and plan --resume-list, put where emerge keeps its resume list: emerge --resume
+    merges them, selecting a plan's targets but not the updates."""
+    machine = system()
+    resume(machine, "updates")
+    assert machine.installed("app-misc/a-2")
+    assert not machine.installed("app-misc/a-1")
+    resume(machine, "plan", "app-misc/b")
+    assert machine.installed("app-misc/b-1")
+    assert machine.world() == ["app-misc/a", "app-misc/b"]
+
+
 def test_nothing_needs_attention(system):
     machine = system()
     human = machine.egraph("--layout", "human", "notices")

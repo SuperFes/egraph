@@ -21,6 +21,7 @@
 #include "pressure.hpp"
 #include "remove.hpp"
 #include "request.hpp"
+#include "resume.hpp"
 #include "selection.hpp"
 #include "session.hpp"
 #include "steve.hpp"
@@ -103,6 +104,14 @@ CLI::Validator one_of(std::vector<std::pair<std::string, T>> choices, bool ignor
             std::format("{{{}}}", names)};
 }
 
+// --resume-list, filling the path field() returns.
+template <class Field> void add_resume_list(CLI::App* sub, Field field) {
+    sub->add_option_function<std::string>(
+           "--resume-list", [field](const std::string& path) { field() = path; },
+           "Also write the plan to FILE as emerge's resume list (mtimedb's resume entry, JSON)")
+        ->type_name("FILE");
+}
+
 // updates' options, for C: Updates or a command extending it.
 template <class C> void add_updates_options(CLI::App* sub, Invocation& invocation) {
     const auto updates = [&invocation]() -> Updates& { return std::get<C>(invocation.command); };
@@ -139,6 +148,9 @@ template <class C> void add_updates_options(CLI::App* sub, Invocation& invocatio
         sub->add_flag_callback(
             "--verify", [updates] { updates().verify = true; },
             "Also ask emerge --pretend, and show where its merge list differs");
+    }
+    if constexpr (std::is_same_v<C, Updates>) {
+        add_resume_list(sub, [updates]() -> auto& { return updates().resume_list; });
     }
 }
 
@@ -177,6 +189,7 @@ template <class C> void add_plan_options(CLI::App* sub, Invocation& invocation) 
         sub->add_flag_callback(
             "--verify", [plan] { plan().verify = true; },
             "Also ask emerge --pretend, and show where its merge list differs");
+        add_resume_list(sub, [plan]() -> auto& { return plan().resume_list; });
     }
 }
 
@@ -944,6 +957,25 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
     return shown;
 }
 
+// Writes the plan to path as emerge's resume list, but for one emerge would refuse.
+Exit write_resume_list(Exit status, const std::optional<std::filesystem::path>& path,
+                       std::string_view name, const Shown& shown, bool oneshot, std::ostream& err) {
+    if (!path) {
+        return status;
+    }
+    const auto& [plan, request, store, evaluated] = shown;
+    if (plan.refused()) {
+        err << "egraph: " << name << ": no resume list, as emerge would refuse the plan\n";
+        return status;
+    }
+    std::ofstream file{*path};
+    file << resume_entry(evaluated, plan, store.get().meta.eroot, request, oneshot) << '\n';
+    if (!file.flush()) {
+        return fail(err, std::format("{}: {}: cannot write", name, path->string()));
+    }
+    return status;
+}
+
 Exit execute(const Updates& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     const auto shown = show_updates(command, session, invocation, out, err);
@@ -951,10 +983,12 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
         return shown.error();
     }
     const auto& [plan, request, store, evaluated] = *shown;
-    const auto status = finish(command.verify ? verify(invocation, Updates::name, request, store,
-                                                       evaluated, plan, out, err)
-                                              : Exit::ok,
-                               plan);
+    const auto status =
+        write_resume_list(finish(command.verify ? verify(invocation, Updates::name, request, store,
+                                                         evaluated, plan, out, err)
+                                                : Exit::ok,
+                                 plan),
+                          command.resume_list, Updates::name, *shown, true, err);
     return offer_use_changes(
         status, plan, store, evaluated, session, invocation, out, err,
         [&](const Invocation& again) { return execute(command, session, again, out, err); });
@@ -1113,10 +1147,12 @@ Exit execute(const PlanCommand& command, Session& session, const Invocation& inv
         return shown.error();
     }
     const auto& [plan, request, store, evaluated] = *shown;
-    const auto status = finish(command.verify ? verify(invocation, PlanCommand::name, request,
-                                                       store, evaluated, plan, out, err)
-                                              : Exit::ok,
-                               plan);
+    const auto status =
+        write_resume_list(finish(command.verify ? verify(invocation, PlanCommand::name, request,
+                                                         store, evaluated, plan, out, err)
+                                                : Exit::ok,
+                                 plan),
+                          command.resume_list, PlanCommand::name, *shown, false, err);
     return offer_use_changes(
         status, plan, store, evaluated, session, invocation, out, err,
         [&](const Invocation& again) { return execute(command, session, again, out, err); });

@@ -101,6 +101,8 @@ struct Updates {
     bool deep = false;
     // The plan held to emerge --pretend's.
     bool verify = false;
+    // Where the plan goes as mtimedb's resume entry.
+    std::optional<std::filesystem::path> resume_list;
 };
 
 // A request planned as emerge --pretend would merge it.
@@ -117,6 +119,8 @@ struct PlanCommand {
     bool table = false;
     // The plan held to emerge --pretend's.
     bool verify = false;
+    // Where the plan goes as mtimedb's resume entry.
+    std::optional<std::filesystem::path> resume_list;
 };
 
 // emerge -u run on the updates once shown and confirmed, as emerge --oneshot: what it merges

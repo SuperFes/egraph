@@ -542,6 +542,18 @@ repositories rather than a difference from the plan before, which would need fre
 before the sync too. A sync replaces the main repository's metadata cache entries along with
 its ebuilds, which is what the evaluated store's freshness check watches there.
 
+`--resume-list` writes a plan as mtimedb's `resume` entry (`resume_entry`): the merges as
+`["ebuild", EROOT, cpv, "merge"]` in egraph's order, the request's options as emerge's option
+parser leaves them (`--changed-use` as `--reinstall=changed-use`), and the targets as favorites
+unless oneshot. It is the first piece of egraph-exec (16k): a list emerge can take over with
+`--resume` after a failure, and the one the emerge view reads. emerge's resume selects exactly
+the listed versions, never adds a merge, and drops one whose dependencies the list leaves
+unsatisfied, so its resume is a completeness check independent of `--verify`'s; but it orders
+the merges again and weighs the blockers again, which a list cannot carry. A cpv in two
+repositories resumes from the one emerge prefers, as the list has no place for a repository
+outside the favorites, and `=cpv` picks among equal versions spelled otherwise as emerge's
+direct plan does.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

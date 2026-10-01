@@ -173,19 +173,20 @@ def portdb(system):
     return system.trees[system.eroot]["porttree"].dbapi
 
 
-def write_stores(system, path, request_all=False):
+def write_stores(system, path, request_all=False, eroot="/"):
     """The installed store at path and the evaluated one beside it, as one builder run writes
-    them; with request_all, as if every repository cp had been evaluated on request."""
+    them; with request_all, as if every repository cp had been evaluated on request. They
+    record eroot as the root they describe."""
     from egraph_build import evaluated, installed, store
     from egraph_build.profile import implicit_iuse
 
-    meta = store.Meta("0", "0", "/", 0, implicit_iuse(system.vardb.settings))
+    meta = store.Meta("0", "0", eroot, 0, implicit_iuse(system.vardb.settings))
     store.write(path, store.encode(installed.build(system.vardb), meta))
     requested = portdb(system).cp_all() if request_all else ()
     layer, _ = evaluated.rebuild(
         system.vardb, portdb(system), None, None, requested=requested
     )
-    meta = store.EvaluatedMeta("0", "0", "/", 0, 0)
+    meta = store.EvaluatedMeta("0", "0", eroot, 0, 0)
     store.write(store.evaluated_path(path), store.encode_evaluated(layer, meta))
 
 
