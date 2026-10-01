@@ -479,13 +479,29 @@ first of `_select_pkg_from_installed`'s filters (`package.mask` and licenses, bu
 with packages already in the graph let through) is left out: it differs from the second only
 when both kinds of mask meet among one atom's matches.
 
+## Actions
+
+egraph plans and emerge executes (roadmap 16f). `update` and `install` show the plan `updates`
+and `plan` show, then stop before emerge if the plan is refused, empty, or the vdb under the
+store's EROOT cannot be written; then without `--yes` or a terminal to ask on. emerge cannot
+be handed a plan, only the request again, so the request goes to `emerge --pretend` first (as
+`--verify`) and nothing is merged unless the merge lists agree; on yes the same request runs as
+`emerge --ignore-default-opts --ask=n`, `update` with `--oneshot`. Ignoring EMERGE_DEFAULT_OPTS
+keeps what runs equal to what was verified; its options that only change how emerge carries
+out a plan (`--jobs`, `--keep-going` and the like: `execution_options`) are passed back, read
+through `egraph-build --emerge-options` so the C++ side never parses `make.conf`. emerge shares
+egraph's terminal; afterwards the session reloads, refreshing the stores whether or not it
+succeeded. A plan needing USE changes offers to write them first and acts again on the new
+plan. The interface refuses actions until it can show emerge's run itself (16j).
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,
   `PORTAGE_CONFIGROOT` and `PORTAGE_OVERRIDE_EPREFIX`, and `egraph` passes the ones given to
   `egraph-build`. The default store is `${ROOT}${EPREFIX}/var/cache/egraph/installed.egraph`.
   The store records its EROOT, and an incremental build for another EROOT is a full one.
-- Both tools share exit codes (0 ok, 1 failure, 2 usage, 3 not implemented, 4 drift); a test pins
+- Both tools share exit codes (0 ok, 1 failure, 2 usage, 3 not implemented, 4 drift, 5
+  differs, 6 refused); a test pins
   `builder/egraph_build/cli.py` to the `Exit` enum in `src/cli.hpp`.
 
 ## Freshness: validate on read

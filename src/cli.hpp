@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <iosfwd>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -29,10 +30,10 @@ enum class Exit : std::uint8_t {
     not_implemented = 3,
     // egraph check: the store differs from a fresh build.
     drift = 4,
-    // --verify: emerge --pretend would merge otherwise.
+    // --verify, or an action before merging: emerge --pretend would merge otherwise.
     differs = 5,
-    // updates and plan: emerge would refuse the plan, for blockers it cannot resolve or
-    // dependencies nothing satisfies.
+    // updates, plan and the actions: emerge would refuse the plan, for blockers it cannot
+    // resolve, dependencies nothing satisfies, REQUIRED_USE unmet or USE changes it needs.
     refused = 6,
 };
 
@@ -118,6 +119,23 @@ struct PlanCommand {
     bool verify = false;
 };
 
+// emerge -u run on the updates once shown and confirmed, as emerge --oneshot: what it merges
+// joins no set.
+struct Update : Updates {
+    static constexpr std::string_view name = "update";
+    // Run without asking.
+    bool yes = false;
+};
+
+// emerge run on a request once shown and confirmed.
+struct Install : PlanCommand {
+    static constexpr std::string_view name = "install";
+    // As emerge --oneshot: the targets join no set.
+    bool oneshot = false;
+    // Run without asking.
+    bool yes = false;
+};
+
 enum class ExportFormat : std::uint8_t { dot, json };
 
 struct Export {
@@ -164,8 +182,8 @@ struct Affected {
 };
 
 using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Blockers,
-                             Orphans, Updates, PlanCommand, Export, Stats, Rebuild, Refresh, Check,
-                             Tui, Shell, Affected>;
+                             Orphans, Updates, PlanCommand, Update, Install, Export, Stats, Rebuild,
+                             Refresh, Check, Tui, Shell, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.
@@ -203,6 +221,8 @@ struct Invocation {
     // A command may ask a question on standard input: one given on the command line with both
     // ends a terminal, never a shell or interface line.
     bool ask = false;
+    // USE changes were offered already, so they are not again when the command runs anew.
+    bool use_offered = false;
     // Where the running egraph is, and the user's cache directory ($XDG_CACHE_HOME, or
     // ~/.cache), which main fills in.
     std::filesystem::path program_dir;
@@ -270,9 +290,17 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
                                                        const std::filesystem::path& output,
                                                        const std::vector<std::string>& entries);
 
+// The egraph-build command line that writes EMERGE_DEFAULT_OPTS, a word a line, to output.
+[[nodiscard]] std::vector<std::string> emerge_options_command(const Invocation& invocation,
+                                                              const std::filesystem::path& output);
+
 // The emerge command line that pretends to carry out request under the invocation's roots.
 [[nodiscard]] std::vector<std::string> emerge_command(const Invocation& invocation,
                                                       const EmergeRequest& request);
+
+// The emerge command line with arguments under the invocation's roots.
+[[nodiscard]] std::vector<std::string> emerge_command(const Invocation& invocation,
+                                                      std::span<const std::string> arguments);
 
 // Declares every option and subcommand on app; app.parse() then fills invocation, which must
 // outlive the parse.

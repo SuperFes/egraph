@@ -3,7 +3,7 @@
 egraph-build \- evaluate the installed packages through portage and write egraph's store
 .SH SYNOPSIS
 .B egraph-build
-.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-pending ]
+.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-pending | \-\-emerge\-options ]
 .RI [ options ]
 .RI [ entry ...]
 .SH DESCRIPTION
@@ -53,10 +53,16 @@ of a merge list
 waits for, as JSON, to
 .BR \-\-output .
 .TP
+.B \-\-emerge\-options
+Write
+.B EMERGE_DEFAULT_OPTS
+as emerge splits it, a word a line, to
+.BR \-\-output .
+.TP
 .BI \-\-output " file"
 The file
-.B \-\-pending
-writes, apart from anything portage prints.
+.BR \-\-pending " and " \-\-emerge\-options
+write, apart from anything portage prints.
 .TP
 .BI \-\-store " file"
 The store to write (default

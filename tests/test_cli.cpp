@@ -165,6 +165,48 @@ TEST_CASE("updates and plan can be verified against emerge, the one in PATH by d
     CHECK_THROWS(parse("orphans --verify"));
 }
 
+TEST_CASE("update takes updates' options and --yes, and always verifies") {
+    const auto update = std::get<egraph::Update>(parse("update -DN --world --yes").command);
+    CHECK(update.deep);
+    CHECK(update.world);
+    CHECK(update.rebuilds == egraph::UseRebuilds::all);
+    CHECK(update.yes);
+    CHECK_FALSE(std::get<egraph::Update>(parse("update -y").command).world);
+    CHECK_FALSE(std::get<egraph::Update>(parse("update").command).yes);
+    CHECK_FALSE(parse("update --dynamic-deps n").dynamic_deps);
+    CHECK_THROWS(parse("update --verify"));
+}
+
+TEST_CASE("install takes plan's options, --oneshot and --yes") {
+    const auto install = std::get<egraph::Install>(parse("install -1y -uD a/b @set").command);
+    CHECK(install.targets == std::vector<std::string>{"a/b", "@set"});
+    CHECK(install.update);
+    CHECK(install.deep);
+    CHECK(install.oneshot);
+    CHECK(install.yes);
+    const auto plain = std::get<egraph::Install>(parse("install -n a/b").command);
+    CHECK(plain.noreplace);
+    CHECK_FALSE(plain.oneshot);
+    CHECK_FALSE(plain.yes);
+    CHECK_THROWS(parse("install"));
+    CHECK_THROWS(parse("install --verify a/b"));
+}
+
+TEST_CASE("emerge runs, and EMERGE_DEFAULT_OPTS is read, under the same roots") {
+    egraph::Invocation invocation;
+    invocation.builder = "egraph-build";
+    const std::vector<std::string> arguments{"--ask=n", "a/b"};
+    CHECK(egraph::emerge_command(invocation, arguments) ==
+          std::vector<std::string>{"emerge", "--root", "/", "--ask=n", "a/b"});
+    CHECK(egraph::emerge_options_command(invocation, "/tmp/out") ==
+          std::vector<std::string>{"egraph-build", "--emerge-options", "--output", "/tmp/out",
+                                   "--root", "/"});
+    invocation.config_root = "/mnt/config";
+    CHECK(egraph::emerge_options_command(invocation, "/tmp/out") ==
+          std::vector<std::string>{"egraph-build", "--emerge-options", "--output", "/tmp/out",
+                                   "--root", "/", "--config-root", "/mnt/config"});
+}
+
 TEST_CASE("dependency queries take emerge's --dynamic-deps, on by default") {
     for (const auto* command :
          {"deps a/b", "rdeps a/b", "why a/b", "orphans", "broken", "blockers", "affected"}) {

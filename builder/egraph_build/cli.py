@@ -64,10 +64,17 @@ def parser():
         const="pending",
         help="write what each ENTRY of a merge list waits for, as JSON, to --output",
     )
+    mode.add_argument(
+        "--emerge-options",
+        dest="mode",
+        action="store_const",
+        const="emerge-options",
+        help="write EMERGE_DEFAULT_OPTS as emerge splits it, a word a line, to --output",
+    )
     p.add_argument(
         "--output",
         type=Path,
-        help="file --pending writes, apart from anything portage prints",
+        help="file --pending and --emerge-options write, apart from anything portage prints",
     )
     p.add_argument(
         "entries",
@@ -192,6 +199,23 @@ def write_pending(args):
     return EXIT_OK
 
 
+def write_emerge_options(args):
+    import shlex
+
+    import portage
+
+    if args.output is None:
+        print("egraph-build: --emerge-options needs --output", file=sys.stderr)
+        return EXIT_USAGE
+    # The whole environment, as emerge reads it.
+    settings = portage.config(
+        config_root=args.config_root, target_root=args.root, eprefix=args.eprefix
+    )
+    words = shlex.split(settings.get("EMERGE_DEFAULT_OPTS", ""))
+    args.output.write_text("".join(f"{word}\n" for word in words))
+    return EXIT_OK
+
+
 def _previous(path, decode):
     from egraph_build import store
 
@@ -297,6 +321,8 @@ def main(argv=None):
         return EXIT_OK if e.code == 0 else EXIT_USAGE
     if args.mode == "pending":
         return write_pending(args)
+    if args.mode == "emerge-options":
+        return write_emerge_options(args)
     if args.mode == "evaluate":
         if not args.entries:
             print("egraph-build: --evaluate takes the cps to evaluate", file=sys.stderr)

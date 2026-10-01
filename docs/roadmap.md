@@ -451,7 +451,18 @@ use, egraph schedules the merges itself.
     meets is planned, as emerge's autounmask does.
 - 16f: actions: `update`, `install` (`--oneshot`, or the targets selected), `remove` (through
   `emerge --depclean` with atoms), `select`, `deselect`: the plan shown, a yes asked for, emerge
-  run on the plan, the stores refreshed at once.
+  run on the plan, the stores refreshed at once. emerge resolves the request again itself, so
+  each plan is verified against `emerge --pretend` first and nothing runs when they differ.
+  - 16f1 (done): `update` (`emerge -u --oneshot`) and `install`: stopped before emerge when the
+    plan is refused or empty, or the vdb cannot be written (run as root); `--yes` where there is
+    no terminal to ask on; EMERGE_DEFAULT_OPTS ignored but for its execution options (`--jobs`,
+    `--keep-going`, ...), read through `egraph-build --emerge-options`. `test_actions.py` merges
+    for real on a playground through the real emerge, the stores refreshed after.
+  - 16f2: `remove`: `emerge --depclean` with atoms, planned as depclean weighs arguments (the
+    selected set emptied, every installed package not matched protected) and verified against
+    its pretend output.
+  - 16f3: `select` (`emerge --select --noreplace`) and `deselect` (`emerge --deselect`), with
+    what a deselect leaves for depclean.
 - 16g: after a merge: the elog summary, pending `._cfg` files (`dispatch-conf` a key away),
   preserved libraries planned as their consumers' rebuilds, unread news.
 - 16h: `sync`: `emaint sync -a`, then what the sync brought: new updates, news.

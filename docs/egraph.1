@@ -80,7 +80,7 @@ The
 .B emerge
 that
 .B \-\-verify
-runs (default
+and the actions run (default
 .BR $EGRAPH_EMERGE ,
 else the one in
 .BR PATH ).
@@ -310,6 +310,96 @@ on the same request, under the same roots and without
 and show where its merge list differs: a package only one of them merges, a different kind of
 merge, or a new package's USE. The differences go to standard error in the lines layout, and
 make the exit status 5.
+.SS update
+Shows the updates as
+.B updates
+does, then has
+.B emerge \-u \-\-oneshot
+merge them, so that nothing it merges joins a set. Nothing is merged, and
+.B emerge
+is not run, when the plan is refused (exit status 6), when there is nothing to merge, or when the
+installed packages' database under the root cannot be written (exit status 1: run
+.B egraph
+as root). Otherwise the same request goes to
+.B emerge \-\-pretend
+first, as
+.B \-\-verify
+sends it, and nothing is merged if its merge list differs (exit status 5). Then
+.B egraph
+asks, and on yes runs
+.B emerge
+on the request under the same roots: without
+.BR EMERGE_DEFAULT_OPTS ,
+but for its options that change only how emerge carries out a plan
+.RB ( \-\-jobs ", " \-\-load\-average ", " \-\-keep\-going ", " \-\-quiet\-build ", " \-\-quiet\-fail ,
+.BR \-\-fail\-clean ", " \-\-buildpkg ", " \-\-buildpkg\-exclude ", " \-\-alert ", " \-\-color ,
+.BR \-\-quiet ", " \-\-nospinner ),
+read through
+.BR "egraph\-build \-\-emerge\-options" .
+The stores are refreshed as soon as it ends, even when it fails (exit status 1). Run from a
+terminal, a plan that needs USE changes offers to write them first, as
+.B updates
+does, and is made again. Without a terminal to ask on, or in the shell, only
+.B \-\-yes
+merges (exit status 2 otherwise); the interface runs no actions yet.
+.TP
+.B \-\-dynamic\-deps
+.TP
+.B \-\-held
+.TP
+.BR \-t ", " \-\-table
+.TP
+.B \-\-tree
+.TP
+.B \-\-world
+.TP
+.BR \-D ", " \-\-deep
+.TP
+.BR \-N ", " \-\-newuse
+.TP
+.BR \-U ", " \-\-changed\-use
+As for
+.BR updates .
+.TP
+.BR \-y ", " \-\-yes
+Run emerge without asking, and offer no USE changes.
+.SS install \fItarget\fR...
+Shows the plan for the targets as
+.B plan
+does, then has
+.B emerge
+merge it, as
+.B update
+does. The targets join
+.B @selected
+as
+.B emerge
+adds them, unless
+.BR \-\-oneshot .
+.TP
+.B \-\-dynamic\-deps
+.TP
+.BR \-u ", " \-\-update
+.TP
+.BR \-D ", " \-\-deep
+.TP
+.BR \-n ", " \-\-noreplace
+.TP
+.BR \-N ", " \-\-newuse
+.TP
+.BR \-U ", " \-\-changed\-use
+.TP
+.BR \-t ", " \-\-table
+As for
+.BR plan .
+.TP
+.BR \-1 ", " \-\-oneshot
+Add the targets to no set, as
+.B emerge \-\-oneshot
+does.
+.TP
+.BR \-y ", " \-\-yes
+Run emerge without asking, and offer no USE changes.
 .SS export \fR[\fIpackage\fR...]
 Part of the graph, or all of it without packages, for other tools.
 .TP
@@ -414,11 +504,11 @@ found the store differing from a fresh build.
 .TP
 .B 5
 .B \-\-verify
-found emerge merging otherwise.
+found emerge merging otherwise, or an action found it before merging.
 .TP
 .B 6
 emerge would refuse the plan of
-.BR updates " or " plan :
+.BR updates ", " plan ", " update " or " install :
 it has blockers emerge cannot resolve, dependencies nothing satisfies, REQUIRED_USE its USE
 leaves unsatisfied, or USE changes it needs.
 .SH EXAMPLES

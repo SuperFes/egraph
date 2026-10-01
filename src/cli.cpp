@@ -1,5 +1,6 @@
 #include "cli.hpp"
 
+#include "action.hpp"
 #include "affected.hpp"
 
 #include "atom.hpp"
@@ -96,6 +97,90 @@ CLI::Validator one_of(std::vector<std::pair<std::string, T>> choices, bool ignor
                 return {};
             },
             std::format("{{{}}}", names)};
+}
+
+// updates' options, for C: Updates or a command extending it.
+template <class C> void add_updates_options(CLI::App* sub, Invocation& invocation) {
+    const auto updates = [&invocation]() -> Updates& { return std::get<C>(invocation.command); };
+    sub->add_flag_callback(
+        "--held", [updates] { updates().held = true; },
+        "Also the updates installed dependents hold back, which of their atoms do, and the "
+        "remedies");
+    sub->add_flag_callback(
+        "-t,--table", [updates] { updates().table = true; },
+        "In merge order, each with the places of the merges it waits for");
+    sub->add_flag_callback(
+        "--tree", [updates] { updates().tree = true; },
+        "Each merge under the root set and the packages it comes from");
+    sub->add_flag_callback(
+        "--world", [updates] { updates().world = true; },
+        "Only the packages the root sets keep, as emerge -u @world");
+    sub->add_flag_callback(
+        "-D,--deep", [updates] { updates().deep = true; },
+        "Every package in scope, not only the arguments and what their merges need, as emerge "
+        "--deep");
+    sub->add_flag_callback(
+        "-N,--newuse", [updates] { updates().rebuilds = UseRebuilds::all; },
+        "Also the rebuilds emerge --newuse makes for changed USE or IUSE");
+    sub->add_flag_callback(
+        "-U,--changed-use",
+        [updates] {
+            auto& rebuilds = updates().rebuilds;
+            // --newuse takes in --changed-use's, as in emerge.
+            rebuilds = rebuilds == UseRebuilds::all ? rebuilds : UseRebuilds::changed;
+        },
+        "Also the rebuilds emerge --changed-use makes for changed USE");
+    // An action always verifies.
+    if constexpr (std::is_same_v<C, Updates>) {
+        sub->add_flag_callback(
+            "--verify", [updates] { updates().verify = true; },
+            "Also ask emerge --pretend, and show where its merge list differs");
+    }
+}
+
+// plan's options, for C: PlanCommand or a command extending it.
+template <class C> void add_plan_options(CLI::App* sub, Invocation& invocation) {
+    const auto plan = [&invocation]() -> PlanCommand& { return std::get<C>(invocation.command); };
+    sub->add_option_function<std::vector<std::string>>(
+           "targets", [plan](const std::vector<std::string>& targets) { plan().targets = targets; },
+           "Atoms and sets (@world, @selected, @system, @profile, @installed), as emerge's")
+        ->type_name("PACKAGE")
+        ->required();
+    sub->add_flag_callback(
+        "-u,--update", [plan] { plan().update = true; },
+        "Update each installed slot a target matches, as emerge -u");
+    sub->add_flag_callback(
+        "-D,--deep", [plan] { plan().deep = true; },
+        "Update every package in scope, not only the targets and what their merges need, as "
+        "emerge --deep (with -u)");
+    sub->add_flag_callback(
+        "-n,--noreplace", [plan] { plan().noreplace = true; },
+        "Skip a target something installed matches, as emerge --noreplace");
+    sub->add_flag_callback(
+        "-N,--newuse", [plan] { plan().rebuilds = UseRebuilds::all; },
+        "Also the rebuilds emerge --newuse makes for changed USE or IUSE (with -u)");
+    sub->add_flag_callback(
+        "-U,--changed-use",
+        [plan] {
+            auto& rebuilds = plan().rebuilds;
+            rebuilds = rebuilds == UseRebuilds::all ? rebuilds : UseRebuilds::changed;
+        },
+        "Also the rebuilds emerge --changed-use makes for changed USE (with -u)");
+    sub->add_flag_callback(
+        "-t,--table", [plan] { plan().table = true; },
+        "In merge order, each with the places of the merges it waits for");
+    if constexpr (std::is_same_v<C, PlanCommand>) {
+        sub->add_flag_callback(
+            "--verify", [plan] { plan().verify = true; },
+            "Also ask emerge --pretend, and show where its merge list differs");
+    }
+}
+
+// An action's --yes.
+template <class C> void add_yes(CLI::App* sub, Invocation& invocation) {
+    sub->add_flag_callback(
+        "-y,--yes", [&invocation] { std::get<C>(invocation.command).yes = true; },
+        "Run emerge without asking, as scripts must where there is no terminal to ask on");
 }
 
 // Where a command line was typed: the shell, or the interface's prompt.
@@ -750,12 +835,13 @@ Exit execute(const Orphans& command, Session& session, const Invocation& invocat
 }
 
 // When the invocation may ask, offers to write the plan's USE changes to package.use; once they
-// are, replan runs the command again, asking nothing, on stores refreshed for them.
+// are, replan runs the command again, offering no more, on stores refreshed for them.
 template <typename Replan>
 Exit offer_use_changes(Exit status, const Plan& plan, const Store& store,
                        const Evaluated& evaluated, Session& session, const Invocation& invocation,
                        std::ostream& out, std::ostream& err, const Replan& replan) {
-    if (!invocation.ask || plan.use_changes.empty() || !output(invocation).human) {
+    if (!invocation.ask || invocation.use_offered || plan.use_changes.empty() ||
+        !output(invocation).human) {
         return status;
     }
     const auto path = package_use_path(
@@ -770,48 +856,53 @@ Exit offer_use_changes(Exit status, const Plan& plan, const Store& store,
     out << "Wrote " << path.string() << "; planning again.\n";
     session.reload();
     auto again = invocation;
-    again.ask = false;
+    again.use_offered = true;
     return replan(again);
 }
 
-Exit execute(const Updates& command, Session& session, const Invocation& invocation,
-             std::ostream& out, std::ostream& err) {
+// A plan as shown, and the request that has emerge plan it too.
+struct Shown {
+    Plan plan;
+    EmergeRequest request;
+    // The session's, until it reloads.
+    std::reference_wrapper<const Store> store;
+    std::reference_wrapper<const Evaluated> evaluated;
+};
+
+// The updates, shown; the exit status instead when there are none to show.
+std::expected<Shown, Exit> show_updates(const Updates& command, Session& session,
+                                        const Invocation& invocation, std::ostream& out,
+                                        std::ostream& err) {
     // Both stores first, so that the dependencies are read from the same build.
     const auto stores = session.stores();
     if (!stores) {
-        return fail(err, stores.error());
+        return std::unexpected(fail(err, stores.error()));
     }
     const auto store = session.dependencies(invocation.dynamic_deps);
     if (!store) {
-        return fail(err, store.error());
+        return std::unexpected(fail(err, store.error()));
     }
     const auto& evaluated = stores->get().evaluated;
     const auto depclean = command.tree || command.world
                               ? std::optional{session.depclean(true, invocation.dynamic_deps)}
                               : std::nullopt;
     if (depclean && !*depclean) {
-        return fail(err, depclean->error());
+        return std::unexpected(fail(err, depclean->error()));
     }
     auto targets = command.world ? Targets{.scope = (*depclean)->get().kept.packages,
                                            .roots = true,
                                            .deep = command.deep}
                                  : Targets{.scope = {}, .roots = false, .deep = command.deep};
     targets.running_root = running_root(invocation);
-    const auto plan = plan_updates(*store, evaluated, command.rebuilds, targets);
-    const auto replan = [&](const Invocation& again) {
-        return execute(command, session, again, out, err);
-    };
-    const auto verified = [&] {
-        const EmergeRequest request{.targets = {command.world ? "@world" : "@installed"},
-                                    .update = true,
-                                    .deep = command.deep,
-                                    .rebuilds = command.rebuilds,
-                                    .dynamic_deps = invocation.dynamic_deps};
-        return finish(command.verify ? verify(invocation, Updates::name, request, *store, evaluated,
-                                              plan, out, err)
-                                     : Exit::ok,
-                      plan);
-    };
+    Shown shown{.plan = plan_updates(*store, evaluated, command.rebuilds, targets),
+                .request = {.targets = {command.world ? "@world" : "@installed"},
+                            .update = true,
+                            .deep = command.deep,
+                            .rebuilds = command.rebuilds,
+                            .dynamic_deps = invocation.dynamic_deps},
+                .store = *store,
+                .evaluated = evaluated};
+    const auto& plan = shown.plan;
     if (command.tree) {
         const auto tree = update_tree_lines(*store, evaluated, (*depclean)->get().kept, plan);
         if (const auto style = output(invocation); style.human) {
@@ -821,14 +912,13 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
         } else {
             write_lines(out, tree);
         }
-        return offer_use_changes(verified(), plan, *store, evaluated, session, invocation, out, err,
-                                 replan);
+        return shown;
     }
     std::optional<RemedyInputs> remedies;
     if (command.held) {
         const auto graph = session.graph(invocation.dynamic_deps);
         if (!graph) {
-            return fail(err, graph.error());
+            return std::unexpected(fail(err, graph.error()));
         }
         remedies = RemedyInputs{.graph = *graph, .rescope = {}};
         if (command.world) {
@@ -847,8 +937,23 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
     } else {
         write_lines(out, lines);
     }
-    return offer_use_changes(verified(), plan, *store, evaluated, session, invocation, out, err,
-                             replan);
+    return shown;
+}
+
+Exit execute(const Updates& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    const auto shown = show_updates(command, session, invocation, out, err);
+    if (!shown) {
+        return shown.error();
+    }
+    const auto& [plan, request, store, evaluated] = *shown;
+    const auto status = finish(command.verify ? verify(invocation, Updates::name, request, store,
+                                                       evaluated, plan, out, err)
+                                              : Exit::ok,
+                               plan);
+    return offer_use_changes(
+        status, plan, store, evaluated, session, invocation, out, err,
+        [&](const Invocation& again) { return execute(command, session, again, out, err); });
 }
 
 // The request the targets name, the cps only the repositories know evaluated first.
@@ -885,30 +990,32 @@ std::expected<Request, std::string> resolve_request(const PlanCommand& command, 
     }
 }
 
-Exit execute(const PlanCommand& command, Session& session, const Invocation& invocation,
-             std::ostream& out, std::ostream& err) {
+// The plan for a request, shown; the exit status instead when there is none to show.
+std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_view name,
+                                     Session& session, const Invocation& invocation,
+                                     std::ostream& out, std::ostream& err) {
     if (!command.update && (command.deep || command.rebuilds != UseRebuilds::none)) {
-        err << "egraph: plan: -D, -N and -U are only planned with -u\n";
-        return Exit::usage;
+        err << "egraph: " << name << ": -D, -N and -U are only planned with -u\n";
+        return std::unexpected(Exit::usage);
     }
     const auto request = resolve_request(command, session, invocation);
     if (!request) {
-        err << "egraph: plan: " << request.error() << '\n';
-        return Exit::failure;
+        err << "egraph: " << name << ": " << request.error() << '\n';
+        return std::unexpected(Exit::failure);
     }
     // Loaded again, as evaluating replaced them.
     const auto stores = session.stores();
     if (!stores) {
-        return fail(err, stores.error());
+        return std::unexpected(fail(err, stores.error()));
     }
     const auto store = session.dependencies(invocation.dynamic_deps);
     if (!store) {
-        return fail(err, store.error());
+        return std::unexpected(fail(err, store.error()));
     }
     const auto& evaluated = stores->get().evaluated;
     // An empty set asks for nothing.
     if (!request->installed && request->arguments.empty()) {
-        return Exit::ok;
+        return std::unexpected(Exit::ok);
     }
     const auto selection = command.update      ? Selection::update
                            : command.noreplace ? Selection::noreplace
@@ -917,13 +1024,13 @@ Exit execute(const PlanCommand& command, Session& session, const Invocation& inv
     targets.running_root = running_root(invocation);
     if (request->installed) {
         if (!request->arguments.empty() || selection != Selection::update) {
-            err << "egraph: plan: @installed is only planned alone and with -u\n";
-            return Exit::usage;
+            err << "egraph: " << name << ": @installed is only planned alone and with -u\n";
+            return std::unexpected(Exit::usage);
         }
     } else {
         const auto depclean = session.depclean(true, invocation.dynamic_deps);
         if (!depclean) {
-            return fail(err, depclean.error());
+            return std::unexpected(fail(err, depclean.error()));
         }
         // emerge completes its graph with @world, so the arguments' reach weighs beside it.
         targets.reach = request_reach(*store, evaluated, *request);
@@ -934,31 +1041,152 @@ Exit execute(const PlanCommand& command, Session& session, const Invocation& inv
         targets.roots = true;
         targets.request = request->arguments;
     }
-    const auto plan = plan_updates(*store, evaluated, command.rebuilds, targets);
-    const auto lines =
-        update_lines(*store, evaluated, plan, command.rebuilds, false, command.table, targets);
+    Shown shown{.plan = plan_updates(*store, evaluated, command.rebuilds, targets),
+                .request = {.targets = command.targets,
+                            .update = command.update,
+                            .deep = command.deep,
+                            .noreplace = command.noreplace,
+                            .rebuilds = command.rebuilds,
+                            .dynamic_deps = invocation.dynamic_deps},
+                .store = *store,
+                .evaluated = evaluated};
+    const auto lines = update_lines(*store, evaluated, shown.plan, command.rebuilds, false,
+                                    command.table, targets);
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme, command.table);
     } else {
         write_lines(out, lines);
     }
-    const auto replan = [&](const Invocation& again) {
-        return execute(command, session, again, out, err);
-    };
-    if (!command.verify) {
-        return offer_use_changes(finish(Exit::ok, plan), plan, *store, evaluated, session,
-                                 invocation, out, err, replan);
+    return shown;
+}
+
+Exit execute(const PlanCommand& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    const auto shown = show_plan(command, PlanCommand::name, session, invocation, out, err);
+    if (!shown) {
+        return shown.error();
     }
-    const EmergeRequest emerge_request{.targets = command.targets,
-                                       .update = command.update,
-                                       .deep = command.deep,
-                                       .noreplace = command.noreplace,
-                                       .rebuilds = command.rebuilds,
-                                       .dynamic_deps = invocation.dynamic_deps};
-    return offer_use_changes(finish(verify(invocation, PlanCommand::name, emerge_request, *store,
-                                           evaluated, plan, out, err),
-                                    plan),
-                             plan, *store, evaluated, session, invocation, out, err, replan);
+    const auto& [plan, request, store, evaluated] = *shown;
+    const auto status = finish(command.verify ? verify(invocation, PlanCommand::name, request,
+                                                       store, evaluated, plan, out, err)
+                                              : Exit::ok,
+                               plan);
+    return offer_use_changes(
+        status, plan, store, evaluated, session, invocation, out, err,
+        [&](const Invocation& again) { return execute(command, session, again, out, err); });
+}
+
+// EMERGE_DEFAULT_OPTS's options that change only how emerge runs, through egraph-build.
+std::expected<std::vector<std::string>, std::string> passed_options(const Invocation& invocation) {
+    const auto output = std::filesystem::path{scratch_store()}.replace_extension(".options");
+    const auto ran = output_of(emerge_options_command(invocation, output));
+    std::ifstream in{output};
+    std::vector<std::string> words;
+    for (std::string word; std::getline(in, word);) {
+        words.push_back(std::move(word));
+    }
+    in.close();
+    std::error_code ignored;
+    std::filesystem::remove(output, ignored);
+    if (!ran) {
+        return std::unexpected(ran.error());
+    }
+    return execution_options(words);
+}
+
+// An action: the plan show() shows, verified against emerge --pretend, confirmed, and emerge run
+// on it, the stores refreshed after; act runs the action again once USE changes are written.
+template <class Show, class Act>
+Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
+                const Invocation& invocation, std::ostream& out, std::ostream& err,
+                const Show& show, const Act& act) {
+    const auto shown = show();
+    if (!shown) {
+        return shown.error();
+    }
+    const auto& [plan, request, store, evaluated] = *shown;
+    if (!yes && !plan.use_changes.empty()) {
+        const auto status = offer_use_changes(Exit::refused, plan, store, evaluated, session,
+                                              invocation, out, err, act);
+        if (status != Exit::refused) {
+            return status;
+        }
+    }
+    const auto vdb = std::filesystem::path{store.get().meta.eroot} / "var/db/pkg";
+    const auto stop =
+        stop_before_verifying({.refused = plan.refused(),
+                               .empty = plan.merges.empty() && plan.uninstalls.empty(),
+                               .writable = os::can_create(vdb / "egraph"),
+                               .yes = yes,
+                               .can_ask = invocation.ask});
+    switch (stop.value_or(Stop::refused)) {
+    case Stop::refused:
+        if (stop) {
+            err << "egraph: " << name << ": emerge would refuse the plan; nothing was merged\n";
+            return Exit::refused;
+        }
+        break;
+    case Stop::nothing:
+        out << "Nothing to merge.\n";
+        return Exit::ok;
+    case Stop::unprivileged:
+        err << "egraph: " << name << ": merging needs write access to " << vdb.string()
+            << "; run egraph as root\n";
+        return Exit::failure;
+    case Stop::unconfirmed:
+        err << "egraph: " << name
+            << ": no terminal to ask on; give --yes to have emerge merge without asking\n";
+        return Exit::usage;
+    }
+    if (const auto status = verify(invocation, name, request, store, evaluated, plan, out, err);
+        status != Exit::ok) {
+        if (status == Exit::differs) {
+            err << "egraph: " << name << ": emerge would merge otherwise; nothing was merged\n";
+        }
+        return status;
+    }
+    const auto passed = passed_options(invocation);
+    if (!passed) {
+        err << "egraph: " << name << ": EMERGE_DEFAULT_OPTS could not be read: " << passed.error()
+            << '\n';
+        return Exit::failure;
+    }
+    if (!yes && !answered_yes(std::cin, out, "Have emerge merge this plan?")) {
+        return Exit::failure;
+    }
+    out << std::flush;
+    const auto ran = os::run(emerge_command(invocation, run_arguments(request, oneshot, *passed)));
+    // What emerge merged, before it failed too.
+    session.reload();
+    if (const auto stores = session.stores(); !stores) {
+        err << "egraph: " << name << ": the stores could not be refreshed: " << stores.error()
+            << '\n';
+    }
+    if (!ran) {
+        err << "egraph: " << name << ": " << ran.error().message << '\n';
+        return Exit::failure;
+    }
+    if (*ran != 0) {
+        err << "egraph: " << name << ": emerge exited with status " << *ran << '\n';
+        return Exit::failure;
+    }
+    return Exit::ok;
+}
+
+Exit execute(const Update& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    return run_action(
+        Update::name, true, command.yes, session, invocation, out, err,
+        [&] { return show_updates(command, session, invocation, out, err); },
+        [&](const Invocation& again) { return execute(command, session, again, out, err); });
+}
+
+Exit execute(const Install& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    return run_action(
+        Install::name, command.oneshot, command.yes, session, invocation, out, err,
+        [&] { return show_plan(command, Install::name, session, invocation, out, err); },
+        [&](const Invocation& again) { return execute(command, session, again, out, err); });
 }
 
 Exit execute(const Why& command, Session& session, const Invocation& invocation, std::ostream& out,
@@ -1296,75 +1524,26 @@ void configure(CLI::App& app, Invocation& invocation) {
               "Whether build-time dependencies keep packages, as emerge's option (default y)")
         ->transform(yes_no);
 
-    CLI::App* updates_cmd = add_dynamic_deps(add_command<Updates>(
-        app, invocation, "Installed packages emerge -u would replace or rebuild"));
-    updates_cmd->add_flag_callback(
-        "--held", [&invocation] { std::get<Updates>(invocation.command).held = true; },
-        "Also the updates installed dependents hold back, which of their atoms do, and the "
-        "remedies");
-    updates_cmd->add_flag_callback(
-        "-t,--table", [&invocation] { std::get<Updates>(invocation.command).table = true; },
-        "In merge order, each with the places of the merges it waits for");
-    updates_cmd->add_flag_callback(
-        "--tree", [&invocation] { std::get<Updates>(invocation.command).tree = true; },
-        "Each merge under the root set and the packages it comes from");
-    updates_cmd->add_flag_callback(
-        "--world", [&invocation] { std::get<Updates>(invocation.command).world = true; },
-        "Only the packages the root sets keep, as emerge -u @world");
-    updates_cmd->add_flag_callback(
-        "-D,--deep", [&invocation] { std::get<Updates>(invocation.command).deep = true; },
-        "Every package in scope, not only the arguments and what their merges need, as emerge "
-        "--deep");
-    updates_cmd->add_flag_callback(
-        "-N,--newuse",
-        [&invocation] { std::get<Updates>(invocation.command).rebuilds = UseRebuilds::all; },
-        "Also the rebuilds emerge --newuse makes for changed USE or IUSE");
-    updates_cmd->add_flag_callback(
-        "-U,--changed-use",
-        [&invocation] {
-            auto& rebuilds = std::get<Updates>(invocation.command).rebuilds;
-            // --newuse takes in --changed-use's, as in emerge.
-            rebuilds = rebuilds == UseRebuilds::all ? rebuilds : UseRebuilds::changed;
-        },
-        "Also the rebuilds emerge --changed-use makes for changed USE");
-    updates_cmd->add_flag_callback(
-        "--verify", [&invocation] { std::get<Updates>(invocation.command).verify = true; },
-        "Also ask emerge --pretend, and show where its merge list differs");
-
-    CLI::App* plan_cmd = add_dynamic_deps(add_command<PlanCommand>(
-        app, invocation, "What emerge --pretend would merge for a request"));
-    add_field(plan_cmd, invocation, "targets", &PlanCommand::targets,
-              "Atoms and sets (@world, @selected, @system, @profile, @installed), as emerge's")
-        ->type_name("PACKAGE")
-        ->required();
-    plan_cmd->add_flag_callback(
-        "-u,--update", [&invocation] { std::get<PlanCommand>(invocation.command).update = true; },
-        "Update each installed slot a target matches, as emerge -u");
-    plan_cmd->add_flag_callback(
-        "-D,--deep", [&invocation] { std::get<PlanCommand>(invocation.command).deep = true; },
-        "Update every package in scope, not only the targets and what their merges need, as "
-        "emerge --deep (with -u)");
-    plan_cmd->add_flag_callback(
-        "-n,--noreplace",
-        [&invocation] { std::get<PlanCommand>(invocation.command).noreplace = true; },
-        "Skip a target something installed matches, as emerge --noreplace");
-    plan_cmd->add_flag_callback(
-        "-N,--newuse",
-        [&invocation] { std::get<PlanCommand>(invocation.command).rebuilds = UseRebuilds::all; },
-        "Also the rebuilds emerge --newuse makes for changed USE or IUSE (with -u)");
-    plan_cmd->add_flag_callback(
-        "-U,--changed-use",
-        [&invocation] {
-            auto& rebuilds = std::get<PlanCommand>(invocation.command).rebuilds;
-            rebuilds = rebuilds == UseRebuilds::all ? rebuilds : UseRebuilds::changed;
-        },
-        "Also the rebuilds emerge --changed-use makes for changed USE (with -u)");
-    plan_cmd->add_flag_callback(
-        "-t,--table", [&invocation] { std::get<PlanCommand>(invocation.command).table = true; },
-        "In merge order, each with the places of the merges it waits for");
-    plan_cmd->add_flag_callback(
-        "--verify", [&invocation] { std::get<PlanCommand>(invocation.command).verify = true; },
-        "Also ask emerge --pretend, and show where its merge list differs");
+    add_updates_options<Updates>(
+        add_dynamic_deps(add_command<Updates>(
+            app, invocation, "Installed packages emerge -u would replace or rebuild")),
+        invocation);
+    add_plan_options<PlanCommand>(
+        add_dynamic_deps(add_command<PlanCommand>(
+            app, invocation, "What emerge --pretend would merge for a request")),
+        invocation);
+    CLI::App* update_cmd = add_dynamic_deps(add_command<Update>(
+        app, invocation,
+        "Show the updates, then have emerge -u --oneshot merge them once confirmed"));
+    add_updates_options<Update>(update_cmd, invocation);
+    add_yes<Update>(update_cmd, invocation);
+    CLI::App* install_cmd = add_dynamic_deps(add_command<Install>(
+        app, invocation, "Show the plan for a request, then have emerge merge it once confirmed"));
+    add_plan_options<Install>(install_cmd, invocation);
+    install_cmd->add_flag_callback(
+        "-1,--oneshot", [&invocation] { std::get<Install>(invocation.command).oneshot = true; },
+        "Add the targets to no set, as emerge --oneshot");
+    add_yes<Install>(install_cmd, invocation);
 
     CLI::App* export_cmd = add_command<Export>(app, invocation, "Export part of the graph");
     add_field(export_cmd, invocation, "--format", &Export::format, "Output format")
@@ -1488,6 +1667,11 @@ std::vector<std::string> builder_command(const Invocation& invocation, std::stri
 
 std::vector<std::string> emerge_command(const Invocation& invocation,
                                         const EmergeRequest& request) {
+    return emerge_command(invocation, pretend_arguments(request));
+}
+
+std::vector<std::string> emerge_command(const Invocation& invocation,
+                                        std::span<const std::string> arguments) {
     std::vector<std::string> argv{invocation.emerge.value_or("emerge"), "--root",
                                   invocation.root.string()};
     if (invocation.config_root) {
@@ -1496,8 +1680,15 @@ std::vector<std::string> emerge_command(const Invocation& invocation,
     if (invocation.eprefix) {
         argv.insert(argv.end(), {"--prefix", invocation.eprefix->string()});
     }
-    const auto arguments = pretend_arguments(request);
     argv.insert(argv.end(), arguments.begin(), arguments.end());
+    return argv;
+}
+
+std::vector<std::string> emerge_options_command(const Invocation& invocation,
+                                                const std::filesystem::path& output) {
+    std::vector<std::string> argv{builder_program(invocation), "--emerge-options", "--output",
+                                  output.string()};
+    add_roots(argv, invocation);
     return argv;
 }
 
@@ -1599,6 +1790,11 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
         std::holds_alternative<Shell>(command.command) ||
         std::holds_alternative<Tui>(command.command)) {
         return usage("already in the ", where);
+    }
+    // emerge would write over the interface's screen.
+    if (context == Context::interface && (std::holds_alternative<Update>(command.command) ||
+                                          std::holds_alternative<Install>(command.command))) {
+        return usage("actions run from the command line or the shell");
     }
     if (context == Context::interface) {
         // The interface lays the fields out itself.

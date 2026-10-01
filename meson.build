@@ -62,6 +62,7 @@ endif
 egraph_lib = static_library(
   'egraph',
   egraph_sources,
+  'src/action.cpp',
   'src/affected.cpp',
   'src/atom.cpp',
   'src/blockers.cpp',
@@ -206,6 +207,7 @@ endif
 
 unit_tests = executable(
   'unit-tests',
+  'tests/test_action.cpp',
   'tests/test_affected.cpp',
   'tests/test_atom.cpp',
   'tests/test_blockers.cpp',

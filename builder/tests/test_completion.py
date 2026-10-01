@@ -149,7 +149,7 @@ def test_zsh_completes_commands_options_values_and_packages(root, tmp_path):
         )
         screen_after("", "READY")
         tmux("send-keys", "-t", "t", "C-l")
-        screen_after("egraph up", "egraph updates")
+        screen_after("egraph orp", "egraph orphans")
         screen_after("egraph --layout h", "egraph --layout human")
         screen = screen_after("egraph updates --t", "--tree")
         assert "--table" in screen
