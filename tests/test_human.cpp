@@ -371,6 +371,27 @@ TEST_CASE("new packages come under their own heading, with what pulls them in") 
                        "\n1 upgrade, 1 new\n");
 }
 
+TEST_CASE("a package new in its slot names the installed versions in its other slots") {
+    std::ostringstream out;
+    egraph::human_updates(
+        out,
+        std::vector<std::string>{
+            "dev-cpp/glibmm-2.66\tupgrade\tdev-cpp/glibmm-2.66-r1\tgentoo",
+            "media-video/ff-151\tnew-slot\tmedia-video/ff-151\tgentoo\t\twww-client/opera-136 "
+            "media-video/ff:151\tmedia-video/ff-150.0.7871.124:150 media-video/ff-152:152",
+            "x/fresh-1\tnew\tx/fresh-1\tgentoo",
+            "x/lone-2\tnew-slot\tx/lone-2\tgentoo\t\t\tx/lone-1:1",
+        },
+        plain);
+    CHECK(out.str() == "U dev-cpp/glibmm  2.66 > 2.66-r1  ::gentoo\n"
+                       "\nNew\n"
+                       "N media-video/ff  151             ::gentoo  www-client/opera-136 "
+                       "media-video/ff:151  beside 150.0.7871.124:150 152:152\n"
+                       "N x/fresh         1               ::gentoo\n"
+                       "N x/lone          2               ::gentoo  beside 1:1\n"
+                       "\n1 upgrade, 1 new, 2 in new slots\n");
+}
+
 TEST_CASE("a new package's USE follows it on a line of its own") {
     std::ostringstream out;
     egraph::human_updates(out,
@@ -450,6 +471,23 @@ TEST_CASE("the update tree hangs each merge from its root") {
                        "      `- N x/mm  1  ::gentoo  3  w 2\n"
                        "         `- N x/chain  1  ::gentoo  2\n"
                        "\n2 upgrades, 2 new\n");
+}
+
+TEST_CASE("the update tree names a new slot's installed neighbours") {
+    const std::vector<std::string> table{
+        "1\t\tx/py-3\tnew-slot\tx/py-3\tgentoo\t\ta/top-2 x/py:3\tx/py-2:2",
+        "2\t1r\ta/top-1\tupgrade\ta/top-2\tgentoo",
+    };
+    const std::vector<std::string> tree{
+        "1\t@selected\ta/top-1\tx/py-3",
+        "2\t@selected\ta/top-1",
+    };
+    std::ostringstream out;
+    egraph::human_update_tree(out, table, tree, plain);
+    CHECK(out.str() == "@ @selected\n"
+                       "`- U a/top  1 > 2  ::gentoo  2  w 1\n"
+                       "   `- N x/py  3  ::gentoo  1  beside 2:2\n"
+                       "\n1 upgrade, 1 in a new slot\n");
 }
 
 TEST_CASE("broken groups by package and counts") {

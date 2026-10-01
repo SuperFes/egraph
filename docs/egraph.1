@@ -205,7 +205,9 @@ The installed packages
 would replace or rebuild, and the new packages it would pull in, each with the USE it would be
 built with as
 .B emerge \-v
-shows it. Then the installed packages it would uninstall for a blocker between them and a merge,
+shows it; a new package beside installed ones in other slots of its name is a new slot
+.RB ( new\-slot ,
+emerge's NS), with those installed versions. Then the installed packages it would uninstall for a blocker between them and a merge,
 and the blockers it could not resolve, for which it refuses the whole plan (exit status 6). On
 the running system's root, emerge only resolves a strong blocker
 .RB ( !! atom)

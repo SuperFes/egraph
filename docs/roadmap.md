@@ -538,6 +538,11 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   emerge leaves it; `plan -uD` also goes into every `||` alternative, emerge only into the one
   it chooses. Found with the `waits` scenario before its installed packages depended on exactly
   what top-2 goes deep into (`updates -D`, `--world` and `plan -uD`).
+- 16m (done): a new package in a new slot, beside installed ones, reported as emerge's `NS`:
+  the kind `new-slot` in `updates` and `plan` with the installed versions in its other slots
+  (`other_slots`), in the human layout, the tree and the living app; `--verify` compares it
+  with emerge's `NS`. Held to vardb for every update mode and plan request on every scenario
+  (`blocked`, `blockers`, `pulls` and `shallow` have one), and to the emerge binary.
 
 ## 17. `egraphd`, the service
 

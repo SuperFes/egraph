@@ -356,7 +356,14 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& origi
             merge_lines.push_back(std::move(line));
         } else {
             const auto cpv = evaluated.string(evaluated.candidates.at(merge.candidate).cpv);
-            auto line = std::format("{}\tnew\t{}", cpv, target_fields(merge.candidate));
+            std::string beside;
+            for (const auto id : other_slots(store, evaluated, merge)) {
+                const auto& pkg = store.packages.at(id);
+                beside += std::format("{}{}:{}", beside.empty() ? "" : " ", store.string(pkg.cpv),
+                                      store.string(pkg.slot));
+            }
+            auto line = std::format("{}\t{}\t{}", cpv, beside.empty() ? "new" : "new-slot",
+                                    target_fields(merge.candidate));
             std::string why;
             if (const auto& by = merge.pulled_by) {
                 why = std::format("{} {}", member(by->member), by->atom);
@@ -364,11 +371,14 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& origi
                 why = argument_text(*merge.named_by);
             }
             const auto use = use_display(evaluated, evaluated.candidates.at(merge.candidate));
-            if (!use.empty() || !why.empty()) {
+            if (!use.empty() || !why.empty() || !beside.empty()) {
                 line += std::format("\t{}", use);
             }
-            if (!why.empty()) {
+            if (!why.empty() || !beside.empty()) {
                 line += std::format("\t{}", why);
+            }
+            if (!beside.empty()) {
+                line += std::format("\t{}", beside);
             }
             merge_lines.push_back(std::move(line));
         }

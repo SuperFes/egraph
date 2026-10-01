@@ -928,6 +928,16 @@ std::string earlier_places(std::string_view place, std::string_view waits) {
     return places;
 }
 
+// A new-slot row's installed packages ("cpv:slot ..."), as "beside version:slot ...".
+void put_beside(std::ostream& out, std::string_view beside, const Painter& paint) {
+    out << "  " << paint("beside", Tone::note);
+    for (const auto each : words(beside)) {
+        const auto colon = std::min(each.find(':'), each.size());
+        out << ' ' << paint(split_cpv(each.substr(0, colon)).version, Tone::version)
+            << paint(each.substr(colon), Tone::note);
+    }
+}
+
 } // namespace
 
 void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme,
@@ -1005,7 +1015,9 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     std::ranges::reverse(use_changes);
     const bool refusals = !unsatisfied.empty() || !unmet.empty() || !use_changes.empty();
     const auto is_held = [](const auto& row) { return row.at(1) == "held"; };
-    const auto is_new = [](const auto& row) { return row.at(1) == "new"; };
+    const auto is_new = [](const auto& row) {
+        return row.at(1) == "new" || row.at(1) == "new-slot";
+    };
     // Every row shares the columns, so held ones line up under the updates.
     std::size_t cp_width = 0;
     std::size_t version_width = 0;
@@ -1060,9 +1072,14 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             out << std::string(pad, ' ') << "  " << paint(by.substr(0, cut), Tone::version) << ' '
                 << paint(by.substr(std::min(cut + 1, by.size())), Tone::note);
         };
-        if (row.at(1) == "new") {
-            if (row.size() > 5) {
+        if (is_new(row)) {
+            if (row.size() > 5 && !row.at(5).empty()) {
                 put_why(row.at(5));
+            } else if (row.size() > 6) {
+                out << std::string(pad, ' ');
+            }
+            if (row.size() > 6) {
+                put_beside(out, row.at(6), paint);
             }
         } else if (row.at(1) == "rebuild" && row.size() > 5) {
             put_why(row.at(5));
@@ -1076,7 +1093,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         }
         out << '\n';
         // A new package's USE on a line of its own: VARIABLE="flag -flag (fixed)" groups.
-        if (row.at(1) == "new" && row.size() > 4 && !row.at(4).empty()) {
+        if (is_new(row) && row.size() > 4 && !row.at(4).empty()) {
             out << std::string(place_width == 0 ? 3 : place_width + 4, ' ');
             for (const auto token : std::views::split(row.at(4), ' ')) {
                 std::string_view flag{token};
@@ -1100,16 +1117,16 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             out << '\n';
         }
     };
-    // up, down, rebuild, new, held
-    std::array<std::size_t, 5> counts{};
+    // up, down, rebuild, new, new slot, held
+    std::array<std::size_t, 6> counts{};
     for (std::size_t index = 0; index < rows.size(); ++index) {
         const auto& row = rows.at(index);
         if (is_held(row)) {
-            ++counts.at(4);
+            ++counts.at(5);
             continue;
         }
         if (is_new(row)) {
-            ++counts.at(3);
+            ++counts.at(row.at(1) == "new" ? 3 : 4);
             // In merge order, among the rest.
             if (table) {
                 put_row(index, glyph.added, Tone::good);
@@ -1127,16 +1144,16 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                 : down ? Tone::bad
                        : Tone::use);
     }
-    if (counts.at(0) + counts.at(1) + counts.at(2) + counts.at(3) == 0) {
+    if (counts.at(0) + counts.at(1) + counts.at(2) + counts.at(3) + counts.at(4) == 0) {
         if (!refusals) {
             out << paint(glyph.good, Tone::good) << ' ' << paint("Nothing to update.", Tone::good)
                 << '\n';
         }
-        if (counts.at(4) == 0 && !refusals) {
+        if (counts.at(5) == 0 && !refusals) {
             return;
         }
     }
-    if (counts.at(3) != 0 && !table) {
+    if (counts.at(3) + counts.at(4) != 0 && !table) {
         out << '\n' << paint("New", Tone::heading) << '\n';
         for (std::size_t index = 0; index < rows.size(); ++index) {
             if (is_new(rows.at(index))) {
@@ -1144,7 +1161,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             }
         }
     }
-    if (counts.at(4) != 0) {
+    if (counts.at(5) != 0) {
         out << '\n' << paint("Held back", Tone::heading) << '\n';
         for (std::size_t index = 0; index < rows.size(); ++index) {
             const auto& row = rows.at(index);
@@ -1261,24 +1278,25 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         }
         out << paint("emerge refuses the plan until package.use makes them", Tone::bad) << '\n';
     }
-    constexpr std::array<std::array<std::string_view, 2>, 10> nouns{
+    constexpr std::array<std::array<std::string_view, 2>, 11> nouns{
         {{" upgrade", " upgrades"},
          {" downgrade", " downgrades"},
          {" rebuild", " rebuilds"},
          {" new", " new"},
+         {" in a new slot", " in new slots"},
          {" held", " held"},
          {" uninstall", " uninstalls"},
          {" blocker", " blockers"},
          {" unsatisfied", " unsatisfied"},
          {" unmet", " unmet"},
          {" USE change", " USE changes"}}};
-    std::array<std::size_t, 10> all{};
+    std::array<std::size_t, 11> all{};
     std::ranges::copy(counts, all.begin());
-    all.at(5) = uninstalls.size();
-    all.at(6) = blocks.size();
-    all.at(7) = unsatisfied.size();
-    all.at(8) = unmet.size();
-    all.at(9) = use_changes.size();
+    all.at(6) = uninstalls.size();
+    all.at(7) = blocks.size();
+    all.at(8) = unsatisfied.size();
+    all.at(9) = unmet.size();
+    all.at(10) = use_changes.size();
     out << '\n';
     bool first = true;
     for (std::size_t i = 0; i < all.size(); ++i) {
@@ -1286,7 +1304,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             continue;
         }
         out << (first ? "" : paint(", ", Tone::note))
-            << paint(std::to_string(all.at(i)), i >= 6 ? Tone::bad : Tone::count)
+            << paint(std::to_string(all.at(i)), i >= 7 ? Tone::bad : Tone::count)
             << paint(nouns.at(i).at(all.at(i) == 1 ? 0 : 1), Tone::note);
         first = false;
     }
@@ -1335,7 +1353,7 @@ void human_update_tree(std::ostream& out, std::span<const std::string> table,
     const auto put_merge = [&](const Fields& row) {
         const bool up = row.at(3) == "upgrade";
         const bool down = row.at(3) == "downgrade";
-        const bool added = row.at(3) == "new";
+        const bool added = row.at(3) == "new" || row.at(3) == "new-slot";
         const auto mark = up      ? glyph.upgrade
                           : down  ? glyph.downgrade
                           : added ? glyph.added
@@ -1353,6 +1371,9 @@ void human_update_tree(std::ostream& out, std::span<const std::string> table,
             << paint(row.at(0), Tone::count);
         if (const auto waits = earlier_places(row.at(0), row.at(1)); !waits.empty()) {
             out << "  " << paint(glyph.waiting, Tone::note) << ' ' << paint(waits, Tone::count);
+        }
+        if (row.size() > 8) {
+            put_beside(out, row.at(8), paint);
         }
     };
     const auto walk = [&](this const auto& self, std::size_t index,
@@ -1383,15 +1404,21 @@ void human_update_tree(std::ostream& out, std::span<const std::string> table,
         out << '\n';
         walk(root, "");
     }
-    std::array<std::size_t, 4> counts{};
+    std::array<std::size_t, 5> counts{};
     for (const auto& row : rows) {
         const auto kind = row.at(3);
-        ++counts.at(kind == "upgrade" ? 0 : kind == "downgrade" ? 1 : kind == "rebuild" ? 2 : 3);
+        ++counts.at(kind == "upgrade"     ? 0
+                    : kind == "downgrade" ? 1
+                    : kind == "rebuild"   ? 2
+                    : kind == "new"       ? 3
+                                          : 4);
     }
-    constexpr std::array<std::array<std::string_view, 2>, 4> nouns{{{" upgrade", " upgrades"},
-                                                                    {" downgrade", " downgrades"},
-                                                                    {" rebuild", " rebuilds"},
-                                                                    {" new", " new"}}};
+    constexpr std::array<std::array<std::string_view, 2>, 5> nouns{
+        {{" upgrade", " upgrades"},
+         {" downgrade", " downgrades"},
+         {" rebuild", " rebuilds"},
+         {" new", " new"},
+         {" in a new slot", " in new slots"}}};
     out << '\n';
     bool first = true;
     for (std::size_t i = 0; i < counts.size(); ++i) {

@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <format>
 #include <string>
 #include <utility>
@@ -142,6 +143,59 @@ TEST_CASE("a slot nothing occupies is pulled in beside the installed one") {
     CHECK(plan(system) ==
           std::vector<std::string>{"app-misc/slotty-1 -> app-misc/slotty-2",
                                    "new dev-lang/py-3.14.1 <- app-misc/slotty-2 dev-lang/py:3.14"});
+}
+
+TEST_CASE("a merge new in its slot lists its cp's installed packages in their other slots") {
+    const auto system = make_system(
+        {{.cpv = "app-misc/slotty-1",
+          .deps = {{"RDEPEND", "dev-lang/py:3.13 dev-lang/py:3.12 dev-libs/lib"}}},
+         {.cpv = "dev-lang/py-3.13.1", .slot = "3.13"},
+         {.cpv = "dev-lang/py-3.12.9", .slot = "3.12"},
+         {.cpv = "dev-libs/lib-1"}},
+        {{.cpv = "app-misc/slotty-1",
+          .deps = {{"RDEPEND", "dev-lang/py:3.13 dev-lang/py:3.12 dev-libs/lib"}}},
+         {.cpv = "app-misc/slotty-2",
+          .deps = {{"RDEPEND", "dev-lang/py:3.14 dev-lang/py:3.12 dev-libs/lib dev-libs/fresh"}}},
+         {.cpv = "dev-lang/py-3.12.9", .slot = "3.12"},
+         {.cpv = "dev-lang/py-3.13.1", .slot = "3.13"},
+         {.cpv = "dev-lang/py-3.14.1", .slot = "3.14"},
+         {.cpv = "dev-libs/lib-1"},
+         {.cpv = "dev-libs/lib-2"},
+         {.cpv = "dev-libs/fresh-1"}});
+    const auto& [store, evaluated] = system;
+    const auto found = egraph::plan_updates(store, evaluated, egraph::UseRebuilds::none);
+    std::vector<std::string> lines;
+    for (const auto& merge : found.merges) {
+        auto line = std::string{evaluated.string(evaluated.candidates.at(merge.candidate).cpv)};
+        for (const auto id : egraph::other_slots(store, evaluated, merge)) {
+            line += std::format(" {}", store.string(store.packages.at(id).cpv));
+        }
+        lines.push_back(std::move(line));
+    }
+    std::ranges::sort(lines);
+    // A replacement has none, nor has a package whose cp nothing installed shares.
+    CHECK(lines == std::vector<std::string>{"app-misc/slotty-2",
+                                            "dev-lang/py-3.14.1 "
+                                            "dev-lang/py-3.12.9 dev-lang/py-3.13.1",
+                                            "dev-libs/fresh-1", "dev-libs/lib-2"});
+}
+
+TEST_CASE("a merge new in its slot is a new-slot line, with the installed ones last") {
+    const auto system = make_system(
+        {{.cpv = "app-misc/slotty-1", .deps = {{"RDEPEND", "dev-lang/py:3.13"}}},
+         {.cpv = "dev-lang/py-3.13.1", .slot = "3.13"}},
+        {{.cpv = "app-misc/slotty-1", .deps = {{"RDEPEND", "dev-lang/py:3.13"}}},
+         {.cpv = "app-misc/slotty-2", .deps = {{"RDEPEND", "dev-lang/py:3.14 dev-libs/fresh"}}},
+         {.cpv = "dev-lang/py-3.13.1", .slot = "3.13"},
+         {.cpv = "dev-lang/py-3.14.1", .slot = "3.14"},
+         {.cpv = "dev-libs/fresh-1"}});
+    CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none) ==
+          std::vector<std::string>{
+              "app-misc/slotty-1\tupgrade\tapp-misc/slotty-2\ttest_repo",
+              "dev-lang/py-3.14.1\tnew-slot\tdev-lang/py-3.14.1\ttest_repo\t\tapp-misc/slotty-2 "
+              "dev-lang/py:3.14\tdev-lang/py-3.13.1:3.13",
+              "dev-libs/fresh-1\tnew\tdev-libs/fresh-1\ttest_repo\t\tapp-misc/slotty-2 "
+              "dev-libs/fresh"});
 }
 
 TEST_CASE("a kept package's dependencies pull in what they lack, build-time ones too") {
@@ -822,7 +876,8 @@ TEST_CASE("a root atom's best version in a slot nothing occupies is pulled in") 
     CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none, false,
                                false, {.scope = {}, .roots = true}) ==
           std::vector<std::string>{
-              "dev-lang/lang-2\tnew\tdev-lang/lang-2\ttest_repo\t\t@selected dev-lang/lang"});
+              "dev-lang/lang-2\tnew-slot\tdev-lang/lang-2\ttest_repo\t\t@selected dev-lang/lang"
+              "\tdev-lang/lang-1:1"});
 }
 
 namespace {

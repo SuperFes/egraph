@@ -1814,6 +1814,34 @@ std::string wait_letters(const WaitKinds& kinds) {
     return letters;
 }
 
+std::vector<std::uint32_t> other_slots(const Store& store, const Evaluated& evaluated,
+                                       const Merge& merge) {
+    if (merge.replaces) {
+        return {};
+    }
+    const auto cp = evaluated.string(evaluated.candidates.at(merge.candidate).cp);
+    struct Found {
+        std::uint32_t id = 0;
+        std::optional<Version> version;
+    };
+    std::vector<Found> found;
+    for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
+        const auto& pkg = store.packages.at(id);
+        if (store.string(pkg.cp) == cp) {
+            found.push_back({.id = id, .version = version_of(store.string(pkg.cpv), cp)});
+        }
+    }
+    std::ranges::stable_sort(found, [](const Found& a, const Found& b) {
+        return a.version && b.version && vercmp(*a.version, *b.version) < 0;
+    });
+    std::vector<std::uint32_t> ids;
+    ids.reserve(found.size());
+    for (const auto& each : found) {
+        ids.push_back(each.id);
+    }
+    return ids;
+}
+
 std::string package_use_line(const Store& store, const Evaluated& evaluated,
                              const UseChange& change) {
     const auto& candidate = evaluated.candidates.at(change.candidate);

@@ -1881,6 +1881,25 @@ TEST_CASE("p shows the plan as a tree under each root set") {
     CHECK(contains(screen.line(15), "esc back"));
 }
 
+TEST_CASE("the plan view names a new slot's installed neighbours") {
+    egraph::tui::App app{shared(egraph::test::make_system(
+                             {{.cpv = "app-misc/top-1", .deps = {{"RDEPEND", "dev-lang/py:1"}}},
+                              {.cpv = "dev-lang/py-1", .slot = "1"}},
+                             {{.cpv = "app-misc/top-1", .deps = {{"RDEPEND", "dev-lang/py:1"}}},
+                              {.cpv = "app-misc/top-2", .deps = {{"RDEPEND", "dev-lang/py:2"}}},
+                              {.cpv = "dev-lang/py-1", .slot = "1"},
+                              {.cpv = "dev-lang/py-2", .slot = "2"}},
+                             {"app-misc/top"})),
+                         true};
+    FakeScreen screen{16, 120, {}};
+    app.handle(character(U'p'));
+    REQUIRE(app.planned().has_value());
+    egraph::tui::draw(screen, app, ascii);
+    const auto text = screen.text();
+    INFO(text);
+    CHECK(contains(text, "N dev-lang/py  2  ::test_repo  1  beside 1:1"));
+}
+
 TEST_CASE("the plan view moves over packages and opens the installed ones") {
     egraph::tui::App app{shared(glibmm_system()), true};
     app.handle(character(U'p'));

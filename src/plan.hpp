@@ -172,6 +172,11 @@ struct Plan {
     }
 };
 
+// For a merge new in its slot, the installed packages of its cp, in their other slots, by
+// version: emerge's NS.
+[[nodiscard]] std::vector<std::uint32_t> other_slots(const Store& store, const Evaluated& evaluated,
+                                                     const Merge& merge);
+
 // The package.use line emerge asks for the change: ">=cpv flags" when nothing visible or
 // installed of its cp is newer, ">=cpv:slot flags" when nothing in its slot is, else "=cpv flags";
 // the flags by name, "-flag" turning one off.

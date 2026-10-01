@@ -77,7 +77,7 @@ Total: 10 packages (5 upgrades, 4 new, 1 in new slot), Size of downloads: 0 KiB
     CHECK(
         found.merges ==
         std::vector<PretendMerge>{
-            {.cpv = "dev-lang/py-3.14.1", .repo = "test_repo", .kind = "new", .use = ""},
+            {.cpv = "dev-lang/py-3.14.1", .repo = "test_repo", .kind = "new-slot", .use = ""},
             {.cpv = "dev-libs/chain-1", .repo = "test_repo", .kind = "new", .use = ""},
             {.cpv = "dev-libs/fresh-1",
              .repo = "test_repo",
@@ -111,19 +111,25 @@ TEST_CASE("nothing to merge is an empty list") {
 }
 
 TEST_CASE("the plan's merges in emerge's terms, a new package with its USE") {
-    auto system = make_system(
-        {{.cpv = "app-misc/masked-2"}, {.cpv = "app-misc/up-1"}},
-        {{.cpv = "app-misc/up-1"},
-         {.cpv = "app-misc/up-2", .deps = {{"RDEPEND", "dev-libs/fresh"}}, .repo = "other"},
-         {.cpv = "app-misc/masked-1"},
-         {.cpv = "app-misc/masked-2", .visible = false},
-         {.cpv = "dev-libs/fresh-1", .iuse = "doc test", .use = "doc"}});
+    auto system = make_system({{.cpv = "app-misc/masked-2"},
+                               {.cpv = "app-misc/up-1"},
+                               {.cpv = "dev-lang/py-1", .slot = "1"}},
+                              {{.cpv = "app-misc/up-1"},
+                               {.cpv = "app-misc/up-2",
+                                .deps = {{"RDEPEND", "dev-libs/fresh dev-lang/py:2"}},
+                                .repo = "other"},
+                               {.cpv = "dev-lang/py-1", .slot = "1"},
+                               {.cpv = "dev-lang/py-2", .slot = "2"},
+                               {.cpv = "app-misc/masked-1"},
+                               {.cpv = "app-misc/masked-2", .visible = false},
+                               {.cpv = "dev-libs/fresh-1", .iuse = "doc test", .use = "doc"}});
     const auto plan =
         egraph::plan_updates(system.store, system.evaluated, egraph::UseRebuilds::none);
     CHECK(egraph::planned_merges(system.store, system.evaluated, plan).merges ==
           std::vector<PretendMerge>{
               {.cpv = "app-misc/masked-1", .repo = "test_repo", .kind = "downgrade", .use = ""},
               {.cpv = "app-misc/up-2", .repo = "other", .kind = "upgrade", .use = ""},
+              {.cpv = "dev-lang/py-2", .repo = "test_repo", .kind = "new-slot", .use = ""},
               {.cpv = "dev-libs/fresh-1",
                .repo = "test_repo",
                .kind = "new",
@@ -150,9 +156,13 @@ TEST_CASE("merge lists differ in cpvs, repositories, kinds and new packages' USE
         {.cpv = "app-misc/only-ours-1", .repo = "r", .kind = "new", .use = ""},
         {.cpv = "app-misc/repo-2", .repo = "overlay", .kind = "upgrade", .use = ""},
         {.cpv = "app-misc/kind-1", .repo = "r", .kind = "rebuild", .use = ""},
-        {.cpv = "dev-libs/use-1", .repo = "r", .kind = "new", .use = R"(USE="x -y")"}};
+        {.cpv = "dev-libs/use-1", .repo = "r", .kind = "new", .use = R"(USE="x -y")"},
+        {.cpv = "dev-libs/slot-2", .repo = "r", .kind = "new-slot", .use = R"(USE="x")"},
+        {.cpv = "dev-libs/apart-2", .repo = "r", .kind = "new", .use = ""}};
     const std::vector<PretendMerge> theirs = {
         {.cpv = "dev-libs/use-1", .repo = "r", .kind = "new", .use = R"(USE="-x -y")"},
+        {.cpv = "dev-libs/slot-2", .repo = "r", .kind = "new-slot", .use = R"(USE="-x")"},
+        {.cpv = "dev-libs/apart-2", .repo = "r", .kind = "new-slot", .use = ""},
         {.cpv = "app-misc/kind-1", .repo = "r", .kind = "new", .use = ""},
         {.cpv = "app-misc/repo-2", .repo = "r", .kind = "upgrade", .use = ""},
         {.cpv = "app-misc/only-theirs-3", .repo = "r", .kind = "downgrade", .use = ""}};
@@ -166,6 +176,8 @@ TEST_CASE("merge lists differ in cpvs, repositories, kinds and new packages' USE
             "app-misc/only-theirs-3::r\temerge\tdowngrade",
             "app-misc/repo-2::overlay\tegraph\tupgrade",
             "app-misc/repo-2::r\temerge\tupgrade",
+            "dev-libs/apart-2::r\tkind\tnew\tnew-slot",
+            "dev-libs/slot-2::r\tuse\tUSE=\"x\"\tUSE=\"-x\"",
             "dev-libs/use-1::r\tuse\tUSE=\"x -y\"\tUSE=\"-x -y\"",
         });
 }

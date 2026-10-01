@@ -144,7 +144,7 @@ std::optional<PretendMerge> parse_merge(std::string_view line) {
     const auto column = [status](std::size_t index) {
         return index < status.size() ? status.at(index) : ' ';
     };
-    std::string kind = column(1) == 'N'   ? "new"
+    std::string kind = column(1) == 'N'   ? (column(2) == 'S' ? "new-slot" : "new")
                        : column(4) != 'U' ? "rebuild"
                        : column(5) == 'D' ? "downgrade"
                                           : "upgrade";
@@ -291,7 +291,9 @@ Pretend planned_merges(const Store& store, const Evaluated& original, const Plan
         found.merges.push_back(PretendMerge{
             .cpv = std::string{evaluated.string(candidate.cpv)},
             .repo = std::string{evaluated.string(candidate.repo)},
-            .kind = std::string{merge.replaces ? kind_text(merge.kind) : "new"},
+            .kind = std::string{merge.replaces ? kind_text(merge.kind)
+                                : other_slots(store, evaluated, merge).empty() ? "new"
+                                                                               : "new-slot"},
             .use = merge.replaces ? std::string{} : use_display(evaluated, candidate)});
     }
     for (const auto& each : plan.uninstalls) {
@@ -378,7 +380,7 @@ std::vector<std::string> merge_differences(const Pretend& our_list, const Preten
         const auto key = std::format("{}::{}", our.cpv, our.repo);
         if (our.kind != their.kind) {
             lines.push_back(std::format("{}\tkind\t{}\t{}", key, our.kind, their.kind));
-        } else if (our.kind == "new" && our.use != their.use) {
+        } else if ((our.kind == "new" || our.kind == "new-slot") && our.use != their.use) {
             lines.push_back(std::format("{}\tuse\t{}\t{}", key, our.use, their.use));
         }
     };

@@ -1151,6 +1151,16 @@ inline std::vector<Span> merge_spans(const App& app, const Planned& planned, std
         spans.push_back({std::format("  {} ", glyph.waiting), tone_pen(Tone::note)});
         spans.push_back({std::move(waits), tone_pen(Tone::count)});
     }
+    if (const auto beside = other_slots(app.store(), evaluated, merge); !beside.empty()) {
+        spans.push_back({"  beside", tone_pen(Tone::note)});
+        for (const auto id : beside) {
+            const auto& pkg = app.store().packages.at(id);
+            spans.push_back({std::format(" {}", split_cpv(app.store().string(pkg.cpv)).version),
+                             tone_pen(Tone::version)});
+            spans.push_back(
+                {std::format(":{}", app.store().string(pkg.slot)), tone_pen(Tone::note)});
+        }
+    }
     return spans;
 }
 

@@ -118,6 +118,10 @@ def test_possible_dependencies_name_their_flags(playgrounds, tmp_path):
 TRAILING_KINDS = ("uninstall", "blocks", "unsatisfied", "required-use", "use-change")
 
 
+# A new package's kinds: alone in its cp, or beside installed packages in other slots.
+NEW_KINDS = ("new", "new-slot")
+
+
 def merge_lines(text):
     """updates or plan output without its uninstalls, blocks and refusals."""
     return [
@@ -208,7 +212,7 @@ def parse_updates(text):
     found = {}
     for line in merge_lines(text):
         cpv, kind, target, repo, *flags = line.split("\t")
-        if kind == "new" or len(flags) > 1:
+        if kind in NEW_KINDS or len(flags) > 1:
             continue
         names = (
             frozenset(rebuild_flag(flag) for flag in flags[0].split())
@@ -224,7 +228,7 @@ def new_use(text):
     found = {}
     for line in merge_lines(text):
         cpv, kind, *fields = line.split("\t")
-        if kind == "new":
+        if kind in NEW_KINDS:
             found[cpv] = fields[2] if len(fields) > 2 else ""
     return found
 
@@ -238,8 +242,29 @@ def merged(text):
     rebuilt = {
         fields[0] for fields in lines if fields[1] == "rebuild" and len(fields) > 5
     }
-    new = {fields[0] for fields in lines if fields[1] == "new"}
+    new = {fields[0] for fields in lines if fields[1] in NEW_KINDS}
     return replaced, rebuilt, new
+
+
+def new_slots_agree(vardb, text):
+    """Whether each new package is new-slot exactly when emerge shows it NS (its cp installed in
+    another slot), listing those installed packages as "cpv:slot", by version."""
+    from portage.versions import cpv_getkey
+
+    for line in merge_lines(text):
+        cpv, kind, *fields = line.split("\t")
+        if kind not in NEW_KINDS:
+            continue
+        installed = vardb.match(cpv_getkey(cpv))
+        beside = " ".join(
+            f"{other}:{vardb.aux_get(other, ['SLOT'])[0].split('/')[0]}"
+            for other in installed
+        )
+        if (kind == "new-slot") != bool(installed):
+            return False
+        if installed and fields[4:] != [beside]:
+            return False
+    return True
 
 
 @pytest.mark.parametrize(
@@ -295,6 +320,7 @@ def test_updates_are_emerges(
     assert blockers_agree(blocker_rows(output), expected)
     assert merged(output) == (expected.replaced, expected.rebuilt, expected.new)
     assert new_use(output) == expected.use
+    assert new_slots_agree(scenario.vardb, output)
     for cpv, (kind, replacement) in parse_updates(output).items():
         order = vercmp(cpv_getversion(replacement.cpv), cpv_getversion(cpv))
         assert kind == (
@@ -325,7 +351,7 @@ def plan_merges(text):
     merges = set()
     for line in merge_lines(text):
         cpv, kind, target, repo, *_ = line.split("\t")
-        merges.add(("" if kind == "new" else cpv, target, repo))
+        merges.add(("" if kind in NEW_KINDS else cpv, target, repo))
     return frozenset(merges)
 
 
@@ -413,6 +439,7 @@ def test_plans_are_emerges(playgrounds, tmp_path, name, mode):
         if not ties(plan_merges(result.stdout), expected.merges):
             differences.add(target)
         assert blockers_agree(blocker_rows(result.stdout), expected), target
+        assert new_slots_agree(system.vardb, result.stdout), target
         use = new_use(result.stdout)
         for cpv in use.keys() & expected.use.keys():
             assert use[cpv] == expected.use[cpv], (target, cpv)
@@ -575,11 +602,11 @@ def test_update_tree_follows_why(scenario, system, dynamic_deps):
     ]
     assert [fields[0] for fields in tree] == [fields[0] for fields in table]
     # The installed cpv a candidate cpv replaces, for a new package's puller.
-    replaced = {fields[4]: fields[2] for fields in table if fields[3] != "new"}
+    replaced = {fields[4]: fields[2] for fields in table if fields[3] not in NEW_KINDS}
     for row, fields in zip(table, tree):
         chain = fields[2:]
         assert chain[-1] == row[2]
-        if row[3] == "new":
+        if row[3] in NEW_KINDS:
             puller = row[7].split(" ")[0]
             if len(chain) > 1:
                 assert chain[-2] in (puller, replaced.get(puller)), row
