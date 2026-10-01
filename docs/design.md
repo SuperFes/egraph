@@ -518,6 +518,14 @@ whose files the store's freshness check could not afford to stat. Reading never 
 unread lists, so egraph stays read-only outside its actions. On a terminal without `--yes`,
 configuration updates offer `dispatch-conf`, given the roots through the environment.
 
+Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
+touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
+the set is emerge's own. `parse_request` takes sets the store does not hold from its caller
+(`Sets`), so `plan` and `install` name `@preserved-rebuild` as emerge does, its atoms weighed
+as set atoms; emerge gets the set name, both to verify and to run. After an action on a
+terminal the rebuild is planned and offered once (`Invocation::rebuild_offered`), since a rebuild
+that leaves libraries preserved would otherwise offer itself again.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

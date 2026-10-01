@@ -255,6 +255,8 @@ struct Invocation {
     bool ask = false;
     // USE changes were offered already, so they are not again when the command runs anew.
     bool use_offered = false;
+    // The rebuild of what uses preserved libraries was offered already, by the action that runs.
+    bool rebuild_offered = false;
     // Where the running egraph is, and the user's cache directory ($XDG_CACHE_HOME, or
     // ~/.cache), which main fills in.
     std::filesystem::path program_dir;

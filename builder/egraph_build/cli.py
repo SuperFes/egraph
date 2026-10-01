@@ -76,7 +76,8 @@ def parser():
         dest="mode",
         action="store_const",
         const="notices",
-        help="write the configuration updates waiting and the unread news, as JSON, to --output",
+        help="write the configuration updates waiting, the unread news and the preserved "
+        "libraries, as JSON, to --output",
     )
     p.add_argument(
         "--output",
@@ -230,10 +231,14 @@ def write_notices(args):
     if args.output is None:
         print("egraph-build: --notices needs --output", file=sys.stderr)
         return EXIT_USAGE
-    settings, portdb, _ = open_trees(args.config_root, args.root, args.eprefix)
+    tree = _tree(args.config_root, args.root, args.eprefix)
+    vardb = tree["vartree"].dbapi
+    settings = vardb.settings
     args.output.write_text(
         notices.to_json(
-            notices.config_updates(settings), notices.unread_news(settings, portdb)
+            notices.config_updates(settings),
+            notices.unread_news(settings, tree["porttree"].dbapi),
+            *notices.preserved_libraries(vardb),
         )
     )
     return EXIT_OK

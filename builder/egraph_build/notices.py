@@ -1,5 +1,6 @@
-"""What needs the user once emerge has run: configuration files with updates waiting, and
-unread news. Both as emerge reports them after a merge, read without changing anything.
+"""What needs the user once emerge has run: configuration files with updates waiting, unread
+news, and preserved libraries with what uses them. All as emerge reports them after a merge,
+read without changing anything.
 """
 
 import fnmatch
@@ -74,7 +75,53 @@ def unread_news(settings, portdb):
     return sorted(found)
 
 
-def to_json(config, news):
+def preserved_libraries(vardb):
+    """(path, package, consumers) for each library emerge preserved, consumers being the
+    installed packages using it, and the atoms of @preserved-rebuild, as emerge loads the set.
+
+    None for both when the registry cannot be read (only root and the portage group may), and
+    None for the atoms and no consumers when the linkage map cannot be built. The registry, the
+    linkage map and the set configuration are private to portage; only this function uses them.
+    """
+    from portage.exception import CommandNotFound, PermissionDenied
+
+    from egraph_build.roots import _set_config
+
+    try:
+        libraries = vardb._plib_registry.getPreservedLibs()
+    except PermissionDenied:
+        return None, None
+    if not libraries:
+        return [], []
+    linkmap = vardb._linkmap
+    try:
+        linkmap.rebuild()
+    except CommandNotFound:
+        return (
+            sorted(
+                (path, cpv, ()) for cpv, paths in libraries.items() for path in paths
+            ),
+            None,
+        )
+    preserved = {path for paths in libraries.values() for path in paths}
+    found = []
+    for cpv, paths in libraries.items():
+        for path in paths:
+            consumers = set(linkmap.findConsumers(path, greedy=False))
+            # As emerge shows them: other preserved libraries only when nothing else uses it.
+            using = (consumers - preserved) or consumers
+            owners = {
+                owner
+                for consumer in using
+                for owner in linkmap.getOwners(consumer)
+                if vardb.cpv_exists(owner)
+            }
+            found.append((path, cpv, tuple(sorted(owners))))
+    atoms = _set_config(vardb).getSetAtoms("preserved-rebuild")
+    return sorted(found), sorted(str(atom) for atom in atoms)
+
+
+def to_json(config, news, preserved=(), rebuild=()):
     return json.dumps(
         {
             "config": [{"file": file, "update": update} for file, update in config],
@@ -82,6 +129,15 @@ def to_json(config, news):
                 {"repo": repo, "item": item, "title": title}
                 for repo, item, title in news
             ],
+            "preserved": (
+                None
+                if preserved is None
+                else [
+                    {"path": path, "package": cpv, "consumers": list(consumers)}
+                    for path, cpv, consumers in preserved
+                ]
+            ),
+            "rebuild": None if rebuild is None else list(rebuild),
         },
         indent=1,
         sort_keys=True,

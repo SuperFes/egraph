@@ -474,7 +474,7 @@ use, egraph schedules the merges itself.
   - 16g1 (done): `notices`: the configuration files waiting in `._cfg` updates, as emerge finds them,
     and the unread news, with their titles, read through `egraph-build --notices`; shown after
     every action that ran emerge, `dispatch-conf` offered on a terminal.
-  - 16g2: preserved libraries in `notices`, with the packages using them; the rebuild of their
+  - 16g2 (done): preserved libraries in `notices`, with the packages using them; the rebuild of their
     consumers planned as `emerge --oneshot @preserved-rebuild`, verified against its pretend
     output, and offered after an action.
   - 16g3: the elog summary after a run, read from the log `save_summary` appends to while emerge

@@ -960,8 +960,50 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
 }
 
 // The request the targets name, the cps only the repositories know evaluated first.
+// What needs the user once emerge has run, through egraph-build.
+std::expected<Notices, std::string> read_notices(const Invocation& invocation) {
+    const auto output = std::filesystem::path{scratch_store()}.replace_extension(".notices");
+    const auto ran = output_of(notices_command(invocation, output));
+    std::ostringstream text;
+    if (std::ifstream in{output}; in) {
+        text << in.rdbuf();
+    }
+    std::error_code ignored;
+    std::filesystem::remove(output, ignored);
+    if (!ran) {
+        return std::unexpected(ran.error());
+    }
+    return parse_notices(text.str());
+}
+
+// The sets a request may name that egraph-build loads as emerge does: @preserved-rebuild.
+std::expected<Sets, std::string> given_sets(std::span<const std::string> targets,
+                                            const Invocation& invocation) {
+    constexpr std::string_view name = "preserved-rebuild";
+    if (!std::ranges::contains(targets, std::format("@{}", name))) {
+        return Sets{};
+    }
+    const auto notices = read_notices(invocation);
+    if (!notices) {
+        return std::unexpected(std::format("@{}: {}", name, notices.error()));
+    }
+    if (!notices->preserved) {
+        return std::unexpected(std::format(
+            "@{}: the preserved libraries' registry cannot be read; run egraph as root", name));
+    }
+    if (!notices->rebuild) {
+        return std::unexpected(
+            std::format("@{}: what uses the preserved libraries cannot be found", name));
+    }
+    return Sets{{std::string(name), *notices->rebuild}};
+}
+
 std::expected<Request, std::string> resolve_request(const PlanCommand& command, Session& session,
                                                     const Invocation& invocation) {
+    const auto given = given_sets(command.targets, invocation);
+    if (!given) {
+        return std::unexpected(given.error());
+    }
     for (bool evaluated = false;; evaluated = true) {
         const auto stores = session.stores();
         if (!stores) {
@@ -971,7 +1013,7 @@ std::expected<Request, std::string> resolve_request(const PlanCommand& command, 
         if (!store) {
             return std::unexpected(store.error());
         }
-        auto request = parse_request(*store, stores->get().evaluated, command.targets);
+        auto request = parse_request(*store, stores->get().evaluated, command.targets, *given);
         if (!request || request->unevaluated.empty()) {
             return request;
         }
@@ -1097,22 +1139,6 @@ std::expected<std::vector<std::string>, std::string> passed_options(const Invoca
     return execution_options(words);
 }
 
-// What needs the user once emerge has run, through egraph-build.
-std::expected<Notices, std::string> read_notices(const Invocation& invocation) {
-    const auto output = std::filesystem::path{scratch_store()}.replace_extension(".notices");
-    const auto ran = output_of(notices_command(invocation, output));
-    std::ostringstream text;
-    if (std::ifstream in{output}; in) {
-        text << in.rdbuf();
-    }
-    std::error_code ignored;
-    std::filesystem::remove(output, ignored);
-    if (!ran) {
-        return std::unexpected(ran.error());
-    }
-    return parse_notices(text.str());
-}
-
 void show_notices(const Notices& notices, const Invocation& invocation, std::ostream& out) {
     const auto lines = notice_lines(notices);
     if (const auto style = output(invocation); style.human) {
@@ -1122,29 +1148,45 @@ void show_notices(const Notices& notices, const Invocation& invocation, std::ost
     }
 }
 
-// After emerge has run: the notices, and dispatch-conf offered for configuration updates.
-void follow_up(std::string_view name, bool yes, const Invocation& invocation, std::ostream& out,
-               std::ostream& err) {
+Exit execute(const Install& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err);
+
+// After emerge has run: the notices, dispatch-conf offered for configuration updates, and the
+// rebuild of what uses preserved libraries planned and offered, once.
+void follow_up(std::string_view name, bool yes, Session& session, const Invocation& invocation,
+               std::ostream& out, std::ostream& err) {
     const auto notices = read_notices(invocation);
     if (!notices) {
         err << "egraph: " << name << ": the notices could not be read: " << notices.error() << '\n';
         return;
     }
-    if (output(invocation).human && (!notices->config.empty() || !notices->news.empty())) {
+    if (output(invocation).human && !notice_lines(*notices).empty()) {
         out << '\n';
     }
     show_notices(*notices, invocation, out);
-    if (notices->config.empty() || yes || !invocation.ask ||
-        !answered_yes(std::cin, out, "Run dispatch-conf now?")) {
+    if (yes || !invocation.ask) {
         return;
     }
-    out << std::flush;
-    const auto ran = os::run(dispatch_conf_command(invocation));
-    if (!ran) {
-        err << "egraph: " << name << ": " << ran.error().message << '\n';
-    } else if (*ran != 0) {
-        err << "egraph: " << name << ": dispatch-conf exited with status " << *ran << '\n';
+    if (!notices->config.empty() && answered_yes(std::cin, out, "Run dispatch-conf now?")) {
+        out << std::flush;
+        const auto ran = os::run(dispatch_conf_command(invocation));
+        if (!ran) {
+            err << "egraph: " << name << ": " << ran.error().message << '\n';
+        } else if (*ran != 0) {
+            err << "egraph: " << name << ": dispatch-conf exited with status " << *ran << '\n';
+        }
     }
+    if (notices->rebuild.value_or(std::vector<std::string>{}).empty() ||
+        invocation.rebuild_offered) {
+        return;
+    }
+    out << "\nRebuilding what uses the preserved libraries:\n";
+    Install rebuild;
+    rebuild.targets = {"@preserved-rebuild"};
+    rebuild.oneshot = true;
+    auto again = invocation;
+    again.rebuild_offered = true;
+    std::ignore = execute(rebuild, session, again, out, err);
 }
 
 Exit execute(const NoticesCommand&, Session&, const Invocation& invocation, std::ostream& out,
@@ -1153,7 +1195,7 @@ Exit execute(const NoticesCommand&, Session&, const Invocation& invocation, std:
     if (!notices) {
         return fail(err, std::format("notices: {}", notices.error()));
     }
-    if (notices->config.empty() && notices->news.empty()) {
+    if (notice_lines(*notices).empty()) {
         if (output(invocation).human) {
             out << "Nothing needs attention.\n";
         }
@@ -1241,7 +1283,7 @@ Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
             write_lines(out, changes);
         }
     }
-    follow_up(name, yes, invocation, out, err);
+    follow_up(name, yes, session, invocation, out, err);
     if (!ran) {
         err << "egraph: " << name << ": " << ran.error().message << '\n';
         return Exit::failure;

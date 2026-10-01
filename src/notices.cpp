@@ -22,6 +22,10 @@ bool all_have(const Json& list, std::initializer_list<std::string_view> fields) 
            });
 }
 
+bool strings(const Json& list) {
+    return list.is_array() && std::ranges::all_of(list, &Json::is_string);
+}
+
 } // namespace
 
 std::expected<Notices, std::string> parse_notices(std::string_view text) {
@@ -37,7 +41,30 @@ std::expected<Notices, std::string> parse_notices(std::string_view text) {
     if (news == json.end() || !all_have(*news, {"repo", "item", "title"})) {
         return std::unexpected("news: not a list of news items");
     }
+    const auto preserved = json.find("preserved");
+    if (preserved == json.end() ||
+        !(preserved->is_null() || (all_have(*preserved, {"path", "package"}) &&
+                                   std::ranges::all_of(*preserved, [](const Json& entry) {
+                                       return strings(entry.value("consumers", Json{}));
+                                   })))) {
+        return std::unexpected("preserved: not a list of libraries and what uses them");
+    }
+    const auto rebuild = json.find("rebuild");
+    if (rebuild == json.end() || !(rebuild->is_null() || strings(*rebuild))) {
+        return std::unexpected("rebuild: not a list of atoms");
+    }
     Notices notices;
+    if (!preserved->is_null()) {
+        auto& found = notices.preserved.emplace();
+        for (const auto& entry : *preserved) {
+            found.push_back({.path = entry.at("path").get<std::string>(),
+                             .package = entry.at("package").get<std::string>(),
+                             .consumers = entry.at("consumers").get<std::vector<std::string>>()});
+        }
+    }
+    if (!rebuild->is_null()) {
+        notices.rebuild = rebuild->get<std::vector<std::string>>();
+    }
     for (const auto& entry : *config) {
         notices.config.push_back({.file = entry.at("file").get<std::string>(),
                                   .update = entry.at("update").get<std::string>()});
@@ -58,6 +85,17 @@ std::vector<std::string> notice_lines(const Notices& notices) {
     }
     for (const auto& [repo, item, title] : notices.news) {
         lines.push_back(std::format("{}\tnews\t{}\t{}", item, repo, title));
+    }
+    for (const auto& [path, package, consumers] :
+         notices.preserved.value_or(std::vector<Notices::Preserved>{})) {
+        std::string joined;
+        for (const auto& consumer : consumers) {
+            joined += std::format("{}{}", joined.empty() ? "" : " ", consumer);
+        }
+        lines.push_back(std::format("{}\tpreserved\t{}\t{}", path, package, joined));
+    }
+    for (const auto& atom : notices.rebuild.value_or(std::vector<std::string>{})) {
+        lines.push_back(std::format("{}\trebuild", atom));
     }
     return lines;
 }

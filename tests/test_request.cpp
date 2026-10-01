@@ -58,6 +58,16 @@ TEST_CASE("a set expands to the root atoms the store holds for it") {
           "@preserved-rebuild: no such set in the store");
 }
 
+TEST_CASE("a set the caller gives expands to its atoms, named by it") {
+    const auto system = sample();
+    const egraph::Sets given{{"preserved-rebuild", {"dev-libs/lib:0", "app-misc/tool:0"}}};
+    const std::vector<std::string> words{"@preserved-rebuild", "app-misc/fresh"};
+    CHECK(egraph::parse_request(system.store, system.evaluated, words, given)->arguments ==
+          std::vector<egraph::Argument>{{.set = "preserved-rebuild", .atom = "dev-libs/lib:0"},
+                                        {.set = "preserved-rebuild", .atom = "app-misc/tool:0"},
+                                        {.set = "", .atom = "app-misc/fresh"}});
+}
+
 TEST_CASE("a name without a category takes the one the stores know it in") {
     const auto system = sample();
     CHECK(parse(system, {"fresh"})->arguments ==

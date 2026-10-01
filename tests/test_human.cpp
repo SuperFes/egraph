@@ -182,6 +182,21 @@ TEST_CASE("notices list configuration updates by file, then unread news") {
     CHECK(news.str() == "Unread news (eselect news read):\n  2026-09-01-x\n");
 }
 
+TEST_CASE("notices list preserved libraries with what they come from and what uses them") {
+    std::ostringstream out;
+    egraph::human_notices(
+        out,
+        std::vector<std::string>{"2026-09-01-x\tnews\tgentoo\tX happened",
+                                 "/usr/lib/libfoo.so.1\tpreserved\tdev-libs/foo-2\ta/bar-1 a/baz-1",
+                                 "/usr/lib/libold.so.1\tpreserved\tdev-libs/old-2\t",
+                                 "a/bar:0\trebuild", "a/baz:0\trebuild"},
+        plain);
+    CHECK(out.str() == "Unread news (eselect news read):\n  2026-09-01-x  X happened\n"
+                       "\nPreserved libraries (egraph install -1 @preserved-rebuild):\n"
+                       "  /usr/lib/libfoo.so.1  from dev-libs/foo-2, used by a/bar-1, a/baz-1\n"
+                       "  /usr/lib/libold.so.1  from dev-libs/old-2\n");
+}
+
 TEST_CASE("a verified removal says emerge removes the same") {
     std::ostringstream same;
     egraph::human_verification(same, {}, plain, "removes");

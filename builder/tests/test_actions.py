@@ -1,5 +1,6 @@
 """update and install: the plan shown, verified, confirmed, and merged by the real emerge."""
 
+import json
 import os
 import shlex
 import shutil
@@ -451,3 +452,129 @@ def test_nothing_needs_attention(system):
     human = machine.egraph("--layout", "human", "notices")
     assert human.returncode == 0, human.stderr
     assert human.stdout == "Nothing needs attention.\n"
+
+
+# A library whose soname moves from 1 to 2, and a program linked against it: updating the
+# library has emerge preserve libfoo.so.1 for app-misc/bar until bar is rebuilt.
+LIBRARY = r"""S="${WORKDIR}"
+src_compile() {
+	echo 'int foo(void) { return 0; }' > foo.c || die
+	${CC:-cc} -shared -fPIC -Wl,-soname,libfoo.so.%(v)s -o libfoo.so.%(v)s foo.c || die
+}
+src_install() {
+	mkdir -p "${ED}/usr/lib" || die
+	cp libfoo.so.%(v)s "${ED}/usr/lib/" || die
+	ln -s libfoo.so.%(v)s "${ED}/usr/lib/libfoo.so" || die
+}
+"""
+PROGRAM = r"""S="${WORKDIR}"
+src_compile() {
+	echo 'int foo(void); int main(void) { return foo(); }' > bar.c || die
+	${CC:-cc} -o bar bar.c -L"${EPREFIX}/usr/lib" -Wl,-rpath,"${EPREFIX}/usr/lib" -lfoo || die
+}
+src_install() {
+	mkdir -p "${ED}/usr/bin" || die
+	cp bar "${ED}/usr/bin/" || die
+}
+"""
+PRESERVING = {
+    "dev-libs/foo-1": {"EAPI": "8", "MISC_CONTENT": LIBRARY % {"v": "1"}},
+    "dev-libs/foo-2": {"EAPI": "8", "MISC_CONTENT": LIBRARY % {"v": "2"}},
+    "app-misc/bar-1": {
+        "EAPI": "8",
+        "DEPEND": "dev-libs/foo",
+        "RDEPEND": "dev-libs/foo",
+        "MISC_CONTENT": PROGRAM,
+    },
+}
+
+
+@pytest.fixture
+def preserving(gnupg_home, tmp_path):
+    """A system with dev-libs/foo-1 and app-misc/bar merged for real, foo-2 waiting."""
+    from portage.tests.resolver.ResolverPlayground import ResolverPlayground
+
+    scanelf = shutil.which("scanelf")
+    compiler = shutil.which("cc")
+    if not scanelf or not compiler:
+        pytest.skip("needs scanelf and cc")
+    playground = ResolverPlayground(ebuilds=PRESERVING, world=["app-misc/bar"])
+    try:
+        machine = System(playground, tmp_path)
+        # portage's linkage map runs the scanelf under EPREFIX.
+        bin_dir = os.path.join(playground.eprefix, "usr", "bin")
+        os.makedirs(bin_dir, exist_ok=True)
+        os.symlink(scanelf, os.path.join(bin_dir, "scanelf"))
+        for args in (["--oneshot", "=dev-libs/foo-1"], ["app-misc/bar"]):
+            merged = subprocess.run([machine.emerge, *args], capture_output=True)
+            assert merged.returncode == 0, merged.stdout + merged.stderr
+        # Only egraph's runs count.
+        machine.runs.unlink()
+        yield machine
+    finally:
+        playground.cleanup()
+
+
+def registry(machine):
+    path = os.path.join(
+        machine.playground.eroot, "var", "lib", "portage", "preserved_libs_registry"
+    )
+    with open(path) as f:
+        return json.load(f)
+
+
+def test_preserved_libraries_follow_the_merge_that_preserves_them(preserving):
+    machine = preserving
+    result = machine.egraph("install", "--yes", "--oneshot", "=dev-libs/foo-2")
+    assert result.returncode == 0, result.stdout + result.stderr
+    library = os.path.join(machine.playground.eprefix, "usr", "lib", "libfoo.so.1")
+    expected = [
+        f"{library}\tpreserved\tdev-libs/foo-2\tapp-misc/bar-1",
+        "app-misc/bar:0\trebuild",
+    ]
+    assert result.stdout.splitlines()[-2:] == expected
+    # --yes offers no rebuild.
+    assert len(machine.emerged()) == 1
+    # Preserved libraries alone are something to list.
+    assert machine.egraph("notices").stdout.splitlines() == expected
+    human = machine.egraph("--layout", "human", "notices")
+    assert "Preserved libraries" in human.stdout
+
+
+def test_preserved_rebuild_is_planned_verified_and_run(preserving):
+    machine = preserving
+    machine.egraph("install", "--yes", "--oneshot", "=dev-libs/foo-2")
+    plan = machine.egraph("plan", "--verify", "@preserved-rebuild")
+    assert plan.returncode == 0, plan.stdout + plan.stderr
+    assert "app-misc/bar-1" in plan.stdout
+    result = machine.egraph("install", "--yes", "--oneshot", "@preserved-rebuild")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert machine.emerged()[-1][-2:] == ["--oneshot", "@preserved-rebuild"]
+    assert registry(machine) == {}
+    assert machine.egraph("notices").stdout == ""
+
+
+def test_without_preserved_libraries_the_set_is_empty(preserving):
+    result = preserving.egraph("plan", "@preserved-rebuild")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("answer", ["y", "n"])
+def test_on_a_terminal_the_rebuild_is_offered_once(preserving, answer):
+    machine = preserving
+    env = dict(os.environ, EGRAPH_STRICT="1")
+    command = machine.command("install", "--oneshot", "=dev-libs/foo-2")
+    status, printed = on_terminal(command, ["y", answer], env)
+    assert status == 0, printed
+    assert "Preserved libraries (egraph install -1 @preserved-rebuild):" in printed
+    assert "Rebuilding what uses the preserved libraries:" in printed
+    assert printed.count("Have emerge merge this plan? [y/N]") == 2
+    if answer == "n":
+        assert len(machine.emerged()) == 1
+        assert registry(machine) != {}
+        return
+    assert machine.emerged()[-1][-2:] == ["--oneshot", "@preserved-rebuild"]
+    assert registry(machine) == {}
+    # The rebuild's own run lists nothing more to rebuild, and offers nothing.
+    assert printed.count("Rebuilding what uses") == 1

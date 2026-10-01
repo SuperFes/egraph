@@ -734,6 +734,29 @@ void human_notices(std::ostream& out, std::span<const std::string> records, cons
         }
         out << '\n';
     }
+    bool preserved_first = true;
+    for (const auto& row : rows) {
+        if (row.at(1) != "preserved") {
+            continue;
+        }
+        if (preserved_first) {
+            out << (files.empty() && first ? "" : "\n")
+                << paint("Preserved libraries", Tone::heading)
+                << paint(" (egraph install -1 @preserved-rebuild)", Tone::note) << ":\n";
+            preserved_first = false;
+        }
+        out << "  " << row.front() << "  " << paint("from ", Tone::note)
+            << paint_cpv(row.at(2), paint);
+        bool consumer_first = true;
+        for (const auto part : std::views::split(row.at(3), ' ')) {
+            if (const std::string_view consumer{part}; !consumer.empty()) {
+                out << paint(consumer_first ? ", used by " : ", ", Tone::note)
+                    << paint_cpv(consumer, paint);
+                consumer_first = false;
+            }
+        }
+        out << '\n';
+    }
 }
 
 std::string holder_note(std::span<const std::string_view> dependents,

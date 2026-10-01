@@ -108,3 +108,27 @@ def test_the_cli_writes_both_as_json(system, tmp_path):
 
 def test_it_needs_an_output():
     assert cli.main(["--notices"]) == cli.EXIT_USAGE
+
+
+def test_no_registry_is_no_preserved_libraries(system):
+    vardb = system.trees[system.eroot]["vartree"].dbapi
+    assert notices.preserved_libraries(vardb) == ([], [])
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads anything")
+def test_an_unreadable_registry_is_unknown(system, tmp_path):
+    from portage.util._dyn_libs.PreservedLibsRegistry import PreservedLibsRegistry
+
+    path = tmp_path / "preserved_libs_registry"
+    path.write_text('{"a/b:0": ["a/b-2", "1", ["/usr/lib/liba.so.1"]]}')
+    path.chmod(0)
+    vardb = system.trees[system.eroot]["vartree"].dbapi
+    readable = vardb._plib_registry
+    vardb._plib_registry = PreservedLibsRegistry(system.settings["ROOT"], str(path))
+    try:
+        assert notices.preserved_libraries(vardb) == (None, None)
+    finally:
+        vardb._plib_registry = readable
+    written = json.loads(notices.to_json([], [], None, None))
+    assert written["preserved"] is None
+    assert written["rebuild"] is None

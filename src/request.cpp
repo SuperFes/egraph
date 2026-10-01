@@ -132,7 +132,8 @@ std::optional<std::string> refusal(const Store& store, const Evaluated& evaluate
 } // namespace
 
 std::expected<Request, std::string> parse_request(const Store& store, const Evaluated& evaluated,
-                                                  std::span<const std::string> words) {
+                                                  std::span<const std::string> words,
+                                                  const Sets& given) {
     Request request;
     // Filled on the first atom: the cps the stores answer for, and those with every repository's.
     std::optional<std::pair<Cps, Cps>> cps;
@@ -141,6 +142,12 @@ std::expected<Request, std::string> parse_request(const Store& store, const Eval
             const auto name = std::string_view{word}.substr(1);
             if (name == "installed") {
                 request.installed = true;
+                continue;
+            }
+            if (const auto found = given.find(name); found != given.end()) {
+                for (const auto& atom : found->second) {
+                    request.arguments.push_back({.set = std::string(name), .atom = atom});
+                }
                 continue;
             }
             if (!known_set(name)) {

@@ -266,7 +266,13 @@ What
 would merge for the targets, in the lines
 .B updates
 prints: atoms (a name without its category takes the one the repositories know it in) and the sets
-.BR @world ", " @selected ", " @system ", " @profile " and " @installed .
+.BR @world ", " @selected ", " @system ", " @profile ", " @installed
+and
+.BR @preserved\-rebuild ,
+which
+.B egraph\-build \-\-notices
+loads as emerge does (as root: only root and the portage group may read the registry of
+preserved libraries).
 A package the request names is merged even when installed, as plain
 .B emerge
 does. A package only the repositories know is evaluated first by
@@ -482,14 +488,25 @@ has run, as it reports it: the configuration files under
 .B CONFIG_PROTECT
 with
 .I ._cfg
-updates waiting (which portage finds only where the user can write), and the repositories'
-unread news items with their titles, read through
+updates waiting (which portage finds only where the user can write), the repositories'
+unread news items with their titles, and the libraries emerge preserved for what still uses
+them, with the packages that do, read through
 .BR "egraph\-build \-\-notices" .
 As lines, an update is its file,
 .BR config
-and the update, and a news item is the item,
+and the update; a news item is the item,
 .BR news ,
-its repository and its title.
+its repository and its title; a preserved library is its path,
+.BR preserved ,
+the package it comes from and the packages using it, space-separated; and each atom of
+.B @preserved\-rebuild
+follows with
+.BR rebuild .
+After an action run from a terminal without
+.BR \-\-yes ,
+preserved libraries have
+.B egraph install \-\-oneshot @preserved\-rebuild
+planned and offered at once, not again after that rebuild.
 .SS export \fR[\fIpackage\fR...]
 Part of the graph, or all of it without packages, for other tools.
 .TP

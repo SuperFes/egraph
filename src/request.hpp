@@ -5,6 +5,7 @@
 #include "store.hpp"
 
 #include <expected>
+#include <map>
 #include <span>
 #include <string>
 #include <vector>
@@ -25,9 +26,15 @@ struct Request {
 // @installed) or an atom; an atom without a category takes the one the repositories or the
 // installed packages know its name in, the one outside virtual, acct-group and acct-user when
 // the others are there, as emerge picks. An error for an unknown set, an invalid or ambiguous
-// atom, and an atom that nothing installed and no visible ebuild matches, once evaluated.
-[[nodiscard]] std::expected<Request, std::string>
-parse_request(const Store& store, const Evaluated& evaluated, std::span<const std::string> words);
+// atom, and an atom that nothing installed and no visible ebuild matches, once evaluated. A set
+// in given expands to its atoms instead.
+// Sets the store does not hold, by name, each with its atoms.
+using Sets = std::map<std::string, std::vector<std::string>, std::less<>>;
+
+[[nodiscard]] std::expected<Request, std::string> parse_request(const Store& store,
+                                                                const Evaluated& evaluated,
+                                                                std::span<const std::string> words,
+                                                                const Sets& given = {});
 
 // The installed packages emerge --deep recurses into from the arguments: those the atoms match,
 // or that a visible version they match would replace, and what they depend on, through the
