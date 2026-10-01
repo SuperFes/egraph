@@ -478,9 +478,12 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& origi
         }
         for (std::size_t i = 0; i < plan.order.size(); ++i) {
             const auto merge = plan.order.at(i);
+            auto by_place = plan.merges.at(merge).waits;
+            std::ranges::sort(by_place, {}, [&](const Wait& wait) { return place.at(wait.merge); });
             std::string waits;
-            for (const auto wait : plan.merges.at(merge).waits) {
-                waits += std::format("{}{}", waits.empty() ? "" : " ", place.at(wait));
+            for (const auto& wait : by_place) {
+                waits += std::format("{}{}{}", waits.empty() ? "" : " ", place.at(wait.merge),
+                                     wait_letters(wait.kinds));
             }
             lines.push_back(std::format("{}\t{}\t{}", i + 1, waits, merge_lines.at(merge)));
         }

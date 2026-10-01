@@ -910,6 +910,24 @@ void put_remedies(std::ostream& out, std::string_view indent, const Fields& row,
     }
 }
 
+// The places of a table row's waits that hold it after the merge there (ordering, in plan.hpp):
+// those before its own place, without their kinds.
+std::string earlier_places(std::string_view place, std::string_view waits) {
+    // Places have no leading zeros, so the shorter is the smaller.
+    const auto before = [](std::string_view a, std::string_view b) {
+        return a.size() != b.size() ? a.size() < b.size() : a < b;
+    };
+    std::string places;
+    for (const auto wait : words(waits)) {
+        const auto digits = std::min(wait.find_first_not_of("0123456789"), wait.size());
+        const auto letters = wait.substr(digits);
+        if (before(wait.substr(0, digits), place) && letters.find_first_of("bir") != letters.npos) {
+            places += std::format("{}{}", places.empty() ? "" : " ", wait.substr(0, digits));
+        }
+    }
+    return places;
+}
+
 } // namespace
 
 void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme,
@@ -917,14 +935,14 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     const auto& paint = theme.paint;
     const auto& glyph = theme.glyph();
     auto rows = split_all(records);
-    // A table row's place and the places it waits for, taken off ahead of its fields.
-    std::vector<std::pair<std::string_view, std::string_view>> places(rows.size());
+    // A table row's place and the earlier places it waits for, taken off ahead of its fields.
+    std::vector<std::pair<std::string_view, std::string>> places(rows.size());
     std::size_t place_width = 0;
     std::size_t waits_width = 0;
     if (table) {
         for (std::size_t i = 0; i < rows.size(); ++i) {
             auto& row = rows.at(i);
-            places.at(i) = {row.at(0), row.at(1)};
+            places.at(i) = {row.at(0), earlier_places(row.at(0), row.at(1))};
             row.erase(row.begin(), row.begin() + 2);
             place_width = std::max(place_width, places.at(i).first.size());
             if (!places.at(i).second.empty()) {
@@ -1028,7 +1046,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         // The waits column's padding, written only when something follows it.
         std::size_t pad = 0;
         if (waits_width != 0) {
-            const auto waits = places.at(index).second;
+            const auto& waits = places.at(index).second;
             if (waits.empty()) {
                 pad = 2 + waits_width;
             } else {
@@ -1333,8 +1351,8 @@ void human_update_tree(std::ostream& out, std::span<const std::string> table,
         }
         out << "  " << paint("::" + std::string{row.at(5)}, Tone::repo) << "  "
             << paint(row.at(0), Tone::count);
-        if (!row.at(1).empty()) {
-            out << "  " << paint(glyph.waiting, Tone::note) << ' ' << paint(row.at(1), Tone::count);
+        if (const auto waits = earlier_places(row.at(0), row.at(1)); !waits.empty()) {
+            out << "  " << paint(glyph.waiting, Tone::note) << ' ' << paint(waits, Tone::count);
         }
     };
     const auto walk = [&](this const auto& self, std::size_t index,

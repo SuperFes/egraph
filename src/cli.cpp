@@ -121,7 +121,7 @@ template <class C> void add_updates_options(CLI::App* sub, Invocation& invocatio
         "remedies");
     sub->add_flag_callback(
         "-t,--table", [updates] { updates().table = true; },
-        "In merge order, each with the places of the merges it waits for");
+        "In merge order, each with the places and kinds of the merges it waits for");
     sub->add_flag_callback(
         "--tree", [updates] { updates().tree = true; },
         "Each merge under the root set and the packages it comes from");
@@ -184,7 +184,7 @@ template <class C> void add_plan_options(CLI::App* sub, Invocation& invocation) 
         "Also the rebuilds emerge --changed-use makes for changed USE (with -u)");
     sub->add_flag_callback(
         "-t,--table", [plan] { plan().table = true; },
-        "In merge order, each with the places of the merges it waits for");
+        "In merge order, each with the places and kinds of the merges it waits for");
     if constexpr (std::is_same_v<C, PlanCommand>) {
         sub->add_flag_callback(
             "--verify", [plan] { plan().verify = true; },

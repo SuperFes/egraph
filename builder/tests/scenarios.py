@@ -28,6 +28,11 @@ ATOM_VERSIONS = (
     "20260101",
 )
 
+# The waits scenario's installed top-1 keeps every package top-2 goes deep into, and via the ||
+# alternative top-2 chooses for being in the graph, so the updates' scope is the same either way
+# (roadmap 16l); the other alternative has no update, since plan -uD would go into it.
+TOP_1 = "dev-libs/b dev-libs/d dev-libs/i dev-libs/r dev-libs/post app-misc/via"
+
 SCENARIOS = {
     # The fork's _InstalledGraph test system.
     "reference": {
@@ -1135,5 +1140,55 @@ SCENARIOS = {
             "app-misc/user-1": {"EAPI": "8"},
         },
         "profile": {"package.use.mask": ("=dev-libs/pinned-2 x",)},
+    },
+    # Every dependency kind between merges: build-time, install-time, run-time through a ||,
+    # post-merge; a merge reached only through an installed package that stays; and a libc
+    # update every later merge waits for.
+    "waits": {
+        "world": ["app-misc/top", "app-misc/via"],
+        "ebuilds": {
+            "app-misc/top-1": {"EAPI": "8", "RDEPEND": TOP_1},
+            "app-misc/top-2": {
+                "EAPI": "8",
+                "BDEPEND": "dev-libs/b",
+                "DEPEND": "dev-libs/d dev-libs/r",
+                "IDEPEND": "dev-libs/i",
+                "RDEPEND": "dev-libs/r || ( dev-libs/alt-x dev-libs/alt-y ) app-misc/via",
+                "PDEPEND": "dev-libs/post",
+            },
+            "app-misc/via-1": {"EAPI": "8", "RDEPEND": "dev-libs/deep dev-libs/alt-y"},
+            "dev-libs/b-1": {"EAPI": "8"},
+            "dev-libs/b-2": {"EAPI": "8"},
+            "dev-libs/d-1": {"EAPI": "8"},
+            "dev-libs/d-2": {"EAPI": "8"},
+            "dev-libs/i-1": {"EAPI": "8"},
+            "dev-libs/i-2": {"EAPI": "8"},
+            "dev-libs/r-1": {"EAPI": "8"},
+            "dev-libs/r-2": {"EAPI": "8"},
+            "dev-libs/post-1": {"EAPI": "8"},
+            "dev-libs/post-2": {"EAPI": "8"},
+            "dev-libs/alt-x-1": {"EAPI": "8"},
+            "dev-libs/alt-y-1": {"EAPI": "8"},
+            "dev-libs/alt-y-2": {"EAPI": "8"},
+            "dev-libs/deep-1": {"EAPI": "8"},
+            "dev-libs/deep-2": {"EAPI": "8"},
+            "sys-libs/glibc-1": {"EAPI": "8"},
+            "sys-libs/glibc-2": {"EAPI": "8"},
+            "virtual/libc-1": {"EAPI": "8", "RDEPEND": "sys-libs/glibc"},
+        },
+        "installed": {
+            "app-misc/top-1": {"EAPI": "8", "RDEPEND": TOP_1},
+            "app-misc/via-1": {"EAPI": "8", "RDEPEND": "dev-libs/deep dev-libs/alt-y"},
+            "dev-libs/b-1": {"EAPI": "8"},
+            "dev-libs/d-1": {"EAPI": "8"},
+            "dev-libs/i-1": {"EAPI": "8"},
+            "dev-libs/r-1": {"EAPI": "8"},
+            "dev-libs/post-1": {"EAPI": "8"},
+            "dev-libs/alt-x-1": {"EAPI": "8"},
+            "dev-libs/alt-y-1": {"EAPI": "8"},
+            "dev-libs/deep-1": {"EAPI": "8"},
+            "sys-libs/glibc-1": {"EAPI": "8"},
+            "virtual/libc-1": {"EAPI": "8", "RDEPEND": "sys-libs/glibc"},
+        },
     },
 }

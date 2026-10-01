@@ -40,6 +40,14 @@ is right.
   them merges it, or `--nodeps`. `test_removals_let_updates_through` checks every removal
   against emerge on the system without the holders (`bounds`: pylint, stray, and a plugin whose
   rebuild would hold its host while freeing another plugin's update).
+- A merge's waits count every alternative of a `||` that merges, where emerge's scheduler graph
+  holds only the one it chose, and every merge an installed package it depends on leads to,
+  where emerge's graph holds only the installed packages its traversal visited (deep or not,
+  complete or not, and the fork's neighbourhood pruning). Both are supersets, so a build egraph
+  starts is never one emerge would hold; `test_waits.py` checks each against the scheduler
+  graph (`waits`: `dev-libs/deep` through `app-misc/via`; the `||` superset is the unit test
+  `every alternative of a || that merges is waited for`, since a scenario with both alternatives
+  updated runs into roadmap 16l).
 - Among equal versions of a cp (`1.0` and `1.00`), emerge picks in directory order: `cp_list`
   sorts stably after `os.listdir`, so the pick depends on the filesystem (CI's container and a
   tmpfs disagree). egraph's does not; `ties` in `test_queries.py` and `--verify` count equal

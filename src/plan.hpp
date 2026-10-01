@@ -30,6 +30,42 @@ struct Reason {
     auto operator<=>(const Reason&) const = default;
 };
 
+// The dependency kinds by which one merge waits for another.
+struct WaitKinds {
+    // DEPEND or BDEPEND: merged before it builds.
+    bool build = false;
+    // IDEPEND: merged before it merges.
+    bool install = false;
+    // RDEPEND.
+    bool run = false;
+    // PDEPEND: merged after it where the order allows.
+    bool post = false;
+    // emerge's implicit wait on a libc it merges, which every later merge has.
+    bool libc = false;
+    // Reached through installed packages that stay, as emerge's scheduler waits for any merge
+    // its graph leads to.
+    bool through = false;
+    auto operator<=>(const WaitKinds&) const = default;
+};
+
+// A merge another merge waits for.
+struct Wait {
+    // Index into Plan::merges.
+    std::uint32_t merge = 0;
+    WaitKinds kinds;
+    auto operator<=>(const Wait&) const = default;
+};
+
+// The wait holds its merge after the other by one of its own dependencies: what the plan's
+// displays list, for a merge placed before it.
+[[nodiscard]] inline bool ordering(const WaitKinds& kinds) {
+    return kinds.build || kinds.install || kinds.run;
+}
+
+// The kinds as the plan's table writes them after a place: b build, i install, r run, p post,
+// l libc, t through.
+[[nodiscard]] std::string wait_letters(const WaitKinds& kinds);
+
 // A package the plan merges.
 struct Merge {
     // Index into Evaluated::candidates.
@@ -45,9 +81,11 @@ struct Merge {
     // For a slot-operator rebuild of the installed version: the merge whose slot or sub-slot
     // breaks its binding, with the bound atom as the rebuilt package's dependencies print it.
     std::optional<Reason> rebuilt_for;
-    // Indices into Plan::merges of the merges before it in Plan::order that its DEPEND,
-    // BDEPEND, RDEPEND or IDEPEND match, every member of a || counting; sorted.
-    std::vector<std::uint32_t> waits;
+    // The other merges its DEPEND, BDEPEND, IDEPEND, RDEPEND or PDEPEND match, every member of a
+    // || counting, a libc emerge merges before it, and those any installed package it depends on
+    // leads to through others; by merge. Those after it in Plan::order are waits the order
+    // breaks: PDEPEND's, a cycle's, and some through installed packages.
+    std::vector<Wait> waits;
 };
 
 // An installed package whose pending update the plan leaves out, or replaces with an earlier

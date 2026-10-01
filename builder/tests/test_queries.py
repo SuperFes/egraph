@@ -532,7 +532,15 @@ def test_update_order_is_valid(scenario, system, dynamic_deps):
     rows = [line.split("\t") for line in output.splitlines()]
     target = {fields[0]: fields[4] for fields in rows}
     place = {fields[4]: int(fields[0]) for fields in rows}
-    found = {fields[4]: {target[wait] for wait in fields[1].split()} for fields in rows}
+    # The earlier merges each waits for by a dependency of its own.
+    found = {
+        fields[4]: {
+            target[wait.rstrip("birplt")]
+            for wait in fields[1].split()
+            if set(wait) & set("bir") and int(wait.rstrip("birplt")) < int(fields[0])
+        }
+        for fields in rows
+    }
     emerge_place = {cpv: i for i, cpv in enumerate(expected.order)}
     assert set(place) == set(emerge_place)
     db = scenario.trees[scenario.eroot]["porttree"].dbapi

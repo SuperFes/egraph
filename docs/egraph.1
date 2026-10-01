@@ -239,7 +239,25 @@ Also the updates that installed dependents hold back, which of their atoms do, a
 that would get past them.
 .TP
 .BR \-t ", " \-\-table
-In merge order, each with the places of the merges it waits for.
+In merge order, each with the places of the merges it waits for, each followed by its kinds:
+.B b
+build (DEPEND, BDEPEND),
+.B i
+install (IDEPEND),
+.B r
+run (RDEPEND),
+.B p
+post (PDEPEND),
+.B l
+emerge's implicit wait on a libc it merges, and
+.B t
+through installed packages it depends on.
+A place after its own is a wait the order breaks.
+The human layout lists only the earlier places waited for by
+.BR b ,
+.B i
+or
+.BR r .
 .TP
 .B \-\-tree
 Each merge under the root set and the packages it comes from.
@@ -343,7 +361,25 @@ also the rebuilds
 makes.
 .TP
 .BR \-t ", " \-\-table
-In merge order, each with the places of the merges it waits for.
+In merge order, each with the places of the merges it waits for, each followed by its kinds:
+.B b
+build (DEPEND, BDEPEND),
+.B i
+install (IDEPEND),
+.B r
+run (RDEPEND),
+.B p
+post (PDEPEND),
+.B l
+emerge's implicit wait on a libc it merges, and
+.B t
+through installed packages it depends on.
+A place after its own is a wait the order breaks.
+The human layout lists only the earlier places waited for by
+.BR b ,
+.B i
+or
+.BR r .
 .TP
 .B \-\-verify
 Also run

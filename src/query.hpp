@@ -133,19 +133,19 @@ struct RemedyInputs {
 // off when empty, and the USE too when both are. A slot-operator rebuild is kind rebuild with
 // empty flags, then "<TAB>merge atom": the merge that breaks its binding and the bound atom. With
 // table, the merges in merge order instead, each line led by "place<TAB>waits<TAB>", its place from
-// 1 and the places it waits for, space-separated; held lines follow, led by two empty fields. With
-// remedies, each held line is followed by its remedies (remedy.hpp), each led by the held cpv as
-// well: "cpv<TAB>holder<TAB>holder cpv<TAB>dependents" for each installed package rejecting it, the
-// installed packages depending on that one space-separated, then a "@set atom" field per root
-// atom selecting it; "cpv<TAB>remove<TAB>frees" when removing the holders lets it through, with
-// the held cpvs that frees besides, space-separated; "cpv<TAB>nodeps" when only holders reject it.
-// Last, "cpv<TAB>uninstall<TAB>holder<TAB>atom<TAB>blocked" for each installed package the plan
-// uninstalls, with the blocker that needs it, then "holder<TAB>blocks<TAB>atom<TAB>blocked" for
-// each blocker emerge cannot resolve, then "cpv<TAB>unsatisfied<TAB>atom" for each dependency
-// nothing satisfies, the cpv empty for an argument, then
-// "cpv<TAB>required-use<TAB>repo<TAB>USE<TAB>unsatisfied<TAB>complete" for each version whose
-// REQUIRED_USE its USE leaves unsatisfied: the constraints left, and the whole REQUIRED_USE when
-// they are only part of it (else empty), then
+// 1 and the places it waits for, space-separated, each followed by wait_letters; held lines follow,
+// led by two empty fields. With remedies, each held line is followed by its remedies (remedy.hpp),
+// each led by the held cpv as well: "cpv<TAB>holder<TAB>holder cpv<TAB>dependents" for each
+// installed package rejecting it, the installed packages depending on that one space-separated,
+// then a "@set atom" field per root atom selecting it; "cpv<TAB>remove<TAB>frees" when removing the
+// holders lets it through, with the held cpvs that frees besides, space-separated; "cpv<TAB>nodeps"
+// when only holders reject it. Last, "cpv<TAB>uninstall<TAB>holder<TAB>atom<TAB>blocked" for each
+// installed package the plan uninstalls, with the blocker that needs it, then
+// "holder<TAB>blocks<TAB>atom<TAB>blocked" for each blocker emerge cannot resolve, then
+// "cpv<TAB>unsatisfied<TAB>atom" for each dependency nothing satisfies, the cpv empty for an
+// argument, then "cpv<TAB>required-use<TAB>repo<TAB>USE<TAB>unsatisfied<TAB>complete" for each
+// version whose REQUIRED_USE its USE leaves unsatisfied: the constraints left, and the whole
+// REQUIRED_USE when they are only part of it (else empty), then
 // "cpv<TAB>use-change<TAB>repo<TAB>package.use line<TAB>required by..." for each USE change the
 // plan needs (package_use_line, then a field per link of required_by); in the table led by two
 // empty fields too.

@@ -1135,10 +1135,18 @@ inline std::vector<Span> merge_spans(const App& app, const Planned& planned, std
     }
     spans.push_back({std::format("  ::{}", evaluated.string(target.repo)), tone_pen(Tone::repo)});
     spans.push_back({std::format("  {}", planned.places.at(index)), tone_pen(Tone::count)});
-    if (!merge.waits.empty()) {
+    std::vector<std::size_t> earlier;
+    for (const auto& wait : merge.waits) {
+        const auto place = planned.places.at(wait.merge);
+        if (ordering(wait.kinds) && place < planned.places.at(index)) {
+            earlier.push_back(place);
+        }
+    }
+    if (!earlier.empty()) {
+        std::ranges::sort(earlier);
         std::string waits;
-        for (const auto wait : merge.waits) {
-            waits += std::format("{}{}", waits.empty() ? "" : " ", planned.places.at(wait));
+        for (const auto place : earlier) {
+            waits += std::format("{}{}", waits.empty() ? "" : " ", place);
         }
         spans.push_back({std::format("  {} ", glyph.waiting), tone_pen(Tone::note)});
         spans.push_back({std::move(waits), tone_pen(Tone::count)});

@@ -1589,54 +1589,118 @@ void order_merges(const Store& store, const Evaluated& evaluated, Plan& plan) {
         by_cp[std::string(evaluated.string(candidate(merge).cp))].push_back(merge);
     }
     std::map<std::string, std::optional<Atom>, std::less<>> atoms;
-    // The merges each one waits for, true where only a run-time dependency does.
-    std::vector<std::map<std::uint32_t, bool>> needs(count);
-    for (std::uint32_t merge = 0; merge < count; ++merge) {
-        for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
-            if (dep_kinds.at(kind) == "PDEPEND") {
-                continue;
+    // The merges other than self an atom matches.
+    const auto matching = [&](std::string_view text, std::optional<std::uint32_t> self) {
+        auto parsed = atoms.find(text);
+        if (parsed == atoms.end()) {
+            auto atom = parse_atom(text);
+            if (atom && atom->slot_operator) {
+                atom->sub_slot.reset();
             }
-            const bool runtime = dep_kinds.at(kind) == "RDEPEND";
+            parsed = atoms
+                         .emplace(std::string(text),
+                                  atom ? std::optional{std::move(*atom)} : std::nullopt)
+                         .first;
+        }
+        std::vector<std::uint32_t> found;
+        const auto& atom = parsed->second;
+        if (!atom) {
+            return found;
+        }
+        if (const auto same = by_cp.find(atom->cp); same != by_cp.end()) {
+            for (const auto other : same->second) {
+                if (other != self && matches(store, evaluated, candidate(other), *atom)) {
+                    found.push_back(other);
+                }
+            }
+        }
+        return found;
+    };
+    // The merges each one waits for, with the kinds it does by.
+    std::vector<std::map<std::uint32_t, WaitKinds>> needs(count);
+    for (std::uint32_t merge = 0; merge < count; ++merge) {
+        for (std::uint32_t kind = 0; kind < dep_kinds.size(); ++kind) {
+            const auto name = dep_kinds.at(kind);
             for (const auto& node : evaluated.nodes_in(candidate(merge).deps.at(kind))) {
                 if (node.type != NodeType::atom) {
                     continue;
                 }
-                const auto text = evaluated.string(node.atom);
-                auto parsed = atoms.find(text);
-                if (parsed == atoms.end()) {
-                    auto atom = parse_atom(text);
-                    if (atom && atom->slot_operator) {
-                        atom->sub_slot.reset();
-                    }
-                    parsed = atoms
-                                 .emplace(std::string(text),
-                                          atom ? std::optional{std::move(*atom)} : std::nullopt)
-                                 .first;
-                }
-                const auto& atom = parsed->second;
-                if (!atom) {
-                    continue;
-                }
-                const auto same = by_cp.find(atom->cp);
-                if (same == by_cp.end()) {
-                    continue;
-                }
-                for (const auto other : same->second) {
-                    if (other == merge || !matches(store, evaluated, candidate(other), *atom)) {
-                        continue;
-                    }
-                    const auto [found, added] = needs.at(merge).emplace(other, runtime);
-                    if (!added) {
-                        found->second = found->second && runtime;
-                    }
+                for (const auto other : matching(evaluated.string(node.atom), merge)) {
+                    auto& kinds = needs.at(merge)[other];
+                    kinds.build = kinds.build || is_build_kind(kind);
+                    kinds.install = kinds.install || name == "IDEPEND";
+                    kinds.run = kinds.run || name == "RDEPEND";
+                    kinds.post = kinds.post || name == "PDEPEND";
                 }
             }
         }
     }
-    // emerge has every merge wait for libc (virtual/libc's provider): it goes first, with what
-    // it waits for, though the waits are not listed.
-    std::vector<bool> early(count);
+    // What each installed package leads to: those it depends on that stay, and the merges its
+    // atoms match, the replacement of one it depends on among them.
+    std::map<std::uint32_t, std::uint32_t> replacing;
+    for (std::uint32_t merge = 0; merge < count; ++merge) {
+        if (const auto id = plan.merges.at(merge).replaces) {
+            replacing.emplace(*id, merge);
+        }
+    }
+    const auto installed_count = store.packages.size();
+    std::vector<std::vector<std::uint32_t>> stays(installed_count);
+    std::vector<std::vector<std::uint32_t>> leads(installed_count);
+    for (std::uint32_t id = 0; id < installed_count; ++id) {
+        for (const auto range : store.packages.at(id).deps) {
+            for (const auto& node : store.nodes_in(range)) {
+                if (node.type != NodeType::atom) {
+                    continue;
+                }
+                for (const auto match : store.ids_in(node.matches)) {
+                    if (const auto found = replacing.find(match); found != replacing.end()) {
+                        leads.at(id).push_back(found->second);
+                    } else {
+                        stays.at(id).push_back(match);
+                    }
+                }
+                std::ranges::copy(matching(store.string(node.atom), std::nullopt),
+                                  std::back_inserter(leads.at(id)));
+            }
+        }
+    }
+    // A merge reaches through the installed packages that stay what they lead to, as emerge's
+    // scheduler waits for any merge its graph reaches.
     std::vector<std::uint32_t> stack;
+    for (std::uint32_t merge = 0; merge < count; ++merge) {
+        std::vector<bool> seen(installed_count);
+        for (const auto range : candidate(merge).deps) {
+            for (const auto& node : evaluated.nodes_in(range)) {
+                if (node.type != NodeType::atom) {
+                    continue;
+                }
+                for (const auto id : evaluated.ids_in(node.matches)) {
+                    if (!replacing.contains(id)) {
+                        stack.push_back(id);
+                    }
+                }
+            }
+        }
+        while (!stack.empty()) {
+            const auto id = stack.back();
+            stack.pop_back();
+            if (seen.at(id)) {
+                continue;
+            }
+            seen.at(id) = true;
+            for (const auto other : leads.at(id)) {
+                if (other != merge) {
+                    needs.at(merge)[other].through = true;
+                }
+            }
+            std::ranges::copy(stays.at(id), std::back_inserter(stack));
+        }
+    }
+    // Only a run-time dependency holds it back.
+    const auto run_only = [](const WaitKinds& kinds) { return !kinds.build && !kinds.install; };
+    // emerge has every merge wait for libc (virtual/libc's provider): it goes first, with what
+    // it waits for.
+    std::vector<bool> libc(count);
     for (const auto& pkg : store.packages) {
         if (store.string(pkg.cp) != "virtual/libc") {
             continue;
@@ -1649,10 +1713,18 @@ void order_merges(const Store& store, const Evaluated& evaluated, Plan& plan) {
                 for (const auto id : store.ids_in(node.matches)) {
                     const auto same = by_cp.find(store.string(store.packages.at(id).cp));
                     if (same != by_cp.end()) {
-                        std::ranges::copy(same->second, std::back_inserter(stack));
+                        for (const auto merge : same->second) {
+                            libc.at(merge) = true;
+                        }
                     }
                 }
             }
+        }
+    }
+    std::vector<bool> early(count);
+    for (std::uint32_t merge = 0; merge < count; ++merge) {
+        if (libc.at(merge)) {
+            stack.push_back(merge);
         }
     }
     while (!stack.empty()) {
@@ -1660,15 +1732,17 @@ void order_merges(const Store& store, const Evaluated& evaluated, Plan& plan) {
         stack.pop_back();
         if (!early.at(merge)) {
             early.at(merge) = true;
-            for (const auto& [other, runtime] : needs.at(merge)) {
-                stack.push_back(other);
+            for (const auto& [other, kinds] : needs.at(merge)) {
+                if (ordering(kinds)) {
+                    stack.push_back(other);
+                }
             }
         }
     }
     std::vector<bool> placed(count);
     while (plan.order.size() < count) {
-        // Ready first, then ready but for run-time waits, then the fewest waits left; libc
-        // first among them, then plan order.
+        // Ready first, then ready but for waits through installed packages, then but for
+        // run-time waits, then the fewest waits left; libc first among them, then plan order.
         std::optional<std::tuple<int, bool, std::size_t, std::size_t, std::uint32_t>> best;
         for (std::uint32_t merge = 0; merge < count; ++merge) {
             if (placed.at(merge)) {
@@ -1676,15 +1750,21 @@ void order_merges(const Store& store, const Evaluated& evaluated, Plan& plan) {
             }
             std::size_t build = 0;
             std::size_t all = 0;
-            for (const auto& [other, runtime] : needs.at(merge)) {
-                if (!placed.at(other)) {
-                    ++all;
-                    build += runtime ? 0 : 1;
+            bool through = false;
+            for (const auto& [other, kinds] : needs.at(merge)) {
+                if (placed.at(other)) {
+                    continue;
                 }
+                if (ordering(kinds)) {
+                    ++all;
+                    build += run_only(kinds) ? 0U : 1U;
+                }
+                through = through || kinds.through;
             }
-            const std::tuple key{all == 0     ? 0
-                                 : build == 0 ? 1
-                                              : 2,
+            const std::tuple key{all == 0 && !through ? 0
+                                 : all == 0           ? 1
+                                 : build == 0         ? 2
+                                                      : 3,
                                  !early.at(merge), build, all, merge};
             if (!best || key < *best) {
                 best = key;
@@ -1694,17 +1774,45 @@ void order_merges(const Store& store, const Evaluated& evaluated, Plan& plan) {
             break;
         }
         const auto merge = std::get<4>(*best);
-        for (const auto& [other, runtime] : needs.at(merge)) {
-            if (placed.at(other)) {
-                plan.merges.at(merge).waits.push_back(other);
-            }
-        }
         placed.at(merge) = true;
         plan.order.push_back(merge);
+    }
+    // Every later merge waits for a libc merged before it, but for a rebuild of the installed
+    // version and the other libcs.
+    std::set<std::string_view> installed;
+    for (const auto& pkg : store.packages) {
+        installed.insert(store.string(pkg.cpv));
+    }
+    std::vector<std::uint32_t> libcs;
+    for (const auto merge : plan.order) {
+        if (!libc.at(merge)) {
+            for (const auto other : libcs) {
+                needs.at(merge)[other].libc = true;
+            }
+        } else if (!installed.contains(evaluated.string(candidate(merge).cpv))) {
+            libcs.push_back(merge);
+        }
+    }
+    for (std::uint32_t merge = 0; merge < count; ++merge) {
+        for (const auto& [other, kinds] : needs.at(merge)) {
+            plan.merges.at(merge).waits.push_back({.merge = other, .kinds = kinds});
+        }
     }
 }
 
 } // namespace
+
+std::string wait_letters(const WaitKinds& kinds) {
+    std::string letters;
+    for (const auto& [kind, letter] :
+         {std::pair{kinds.build, 'b'}, std::pair{kinds.install, 'i'}, std::pair{kinds.run, 'r'},
+          std::pair{kinds.post, 'p'}, std::pair{kinds.libc, 'l'}, std::pair{kinds.through, 't'}}) {
+        if (kind) {
+            letters += letter;
+        }
+    }
+    return letters;
+}
 
 std::string package_use_line(const Store& store, const Evaluated& evaluated,
                              const UseChange& change) {

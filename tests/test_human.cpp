@@ -404,15 +404,15 @@ TEST_CASE("a slot-operator rebuild says which merge it is for") {
                        "\n1 upgrade, 1 rebuild\n");
 }
 
-TEST_CASE("the table numbers merges in order, with what each waits for") {
+TEST_CASE("the table numbers merges in order, with the earlier merges each waits for") {
     std::ostringstream out;
     egraph::human_updates(out,
                           std::vector<std::string>{
-                              "1\t\tdev-libs/chain-1\tnew\tdev-libs/chain-1\tgentoo\t\tdev-cpp/"
+                              "1\t3r\tdev-libs/chain-1\tnew\tdev-libs/chain-1\tgentoo\t\tdev-cpp/"
                               "mm-common-1 dev-libs/chain",
-                              "2\t1\tdev-cpp/mm-common-1\tnew\tdev-cpp/mm-common-1\tgentoo\t"
+                              "2\t1r 3p\tdev-cpp/mm-common-1\tnew\tdev-cpp/mm-common-1\tgentoo\t"
                               "USE=\"doc\"\ta/glibmm-2 dev-cpp/mm-common",
-                              "3\t2\ta/glibmm-1\tupgrade\ta/glibmm-2\tgentoo",
+                              "3\t1l 2b\ta/glibmm-1\tupgrade\ta/glibmm-2\tgentoo",
                               "\t\ta/host-1\theld\ta/host-2\tgentoo\t\ta/holder-1 <a/host-2",
                           },
                           plain, true);
@@ -431,8 +431,8 @@ TEST_CASE("the update tree hangs each merge from its root") {
     const std::vector<std::string> table{
         "1\t\ta/loose-1\tupgrade\ta/loose-2\tgentoo",
         "2\t\tx/chain-1\tnew\tx/chain-1\tgentoo\t\tx/mm-1 x/chain",
-        "3\t2\tx/mm-1\tnew\tx/mm-1\tgentoo\tUSE=\"doc\"\ta/glibmm-2 x/mm",
-        "4\t3\ta/glibmm-1\tupgrade\ta/glibmm-2\tgentoo",
+        "3\t2r\tx/mm-1\tnew\tx/mm-1\tgentoo\tUSE=\"doc\"\ta/glibmm-2 x/mm",
+        "4\t3b 1p\ta/glibmm-1\tupgrade\ta/glibmm-2\tgentoo",
     };
     const std::vector<std::string> tree{
         "1\t\ta/loose-1",

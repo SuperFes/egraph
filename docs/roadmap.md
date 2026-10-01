@@ -506,9 +506,16 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     Resuming, emerge orders the merges again from its own graph (it keeps the list's order only
     under `--nodeps`) and carries no uninstalls, so whether egraph's order is one emerge allows
     is 16k1's.
-  - 16k1: when each build may start and merge: the plan's waits split by dependency kind
-    (build-time, install-time, runtime, post-merge), checked against emerge's own scheduler
-    graph.
+  - 16k1a (done): when each build may start and merge: each merge's waits with their kinds
+    (build, install, run, post, emerge's implicit libc wait, and through installed packages
+    that stay, which emerge's scheduler also waits on), in `-t`; held to the scheduler graph
+    emerge builds from egraph's resume list (`test_waits.py`, every update mode and plan request
+    on every scenario, and the `waits` scenario for every kind): the same direct edges with the
+    same kinds but for `||` alternatives emerge did not choose, a superset of what it reaches
+    through installed packages, and egraph's order keeping every wait emerge's order keeps.
+  - 16k1b: the uninstalls' places: before the merge whose blocker needs them, or after it where
+    emerge reverses the edge to install both at once, held to the scheduler graph's uninstall
+    nodes.
   - 16k2: a worker builds and merges one package; its vdb entry and image compared with
     `emerge -1`'s.
   - 16k3: a whole plan run one build at a time, blockers and uninstalls included; the final
@@ -524,6 +531,13 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   - 16k7: portage updating itself mid-run, and a narrower merge-wait barrier offered as an
     option.
   - 16k8: side-by-side runs against emerge on the dev box.
+- 16l: a gap in the deep plan's scope, which follows the installed versions' dependencies where
+  `emerge -uD` follows those of the versions replacing them. An installed package only a merge's
+  new dependencies reach (an orphan until then) keeps its version where emerge updates it, and
+  one only the replaced version depended on (now an unchosen `||` alternative) is updated where
+  emerge leaves it; `plan -uD` also goes into every `||` alternative, emerge only into the one
+  it chooses. Found with the `waits` scenario before its installed packages depended on exactly
+  what top-2 goes deep into (`updates -D`, `--world` and `plan -uD`).
 
 ## 17. `egraphd`, the service
 
