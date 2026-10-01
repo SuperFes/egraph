@@ -233,6 +233,25 @@ TEST_CASE("emerge runs, and EMERGE_DEFAULT_OPTS is read, under the same roots") 
                                    "--root", "/", "--config-root", "/mnt/config"});
 }
 
+TEST_CASE("notices are read, and dispatch-conf runs, under the same roots") {
+    CHECK(std::holds_alternative<egraph::NoticesCommand>(parse("notices").command));
+    CHECK(parse("--dispatch-conf /bin/true notices").dispatch_conf == "/bin/true");
+    egraph::Invocation invocation;
+    invocation.builder = "egraph-build";
+    CHECK(egraph::notices_command(invocation, "/tmp/out") ==
+          std::vector<std::string>{"egraph-build", "--notices", "--output", "/tmp/out", "--root",
+                                   "/"});
+    CHECK(egraph::dispatch_conf_command(invocation) == std::vector<std::string>{"dispatch-conf"});
+    invocation.dispatch_conf = "my-dispatch";
+    invocation.root = "/mnt/root";
+    invocation.config_root = "/mnt/config";
+    invocation.eprefix = "/mnt/prefix";
+    // dispatch-conf takes its roots from the environment only.
+    CHECK(egraph::dispatch_conf_command(invocation) ==
+          std::vector<std::string>{"env", "ROOT=/mnt/root", "PORTAGE_CONFIGROOT=/mnt/config",
+                                   "PORTAGE_OVERRIDE_EPREFIX=/mnt/prefix", "my-dispatch"});
+}
+
 TEST_CASE("dependency queries take emerge's --dynamic-deps, on by default") {
     for (const auto* command :
          {"deps a/b", "rdeps a/b", "why a/b", "orphans", "broken", "blockers", "affected"}) {

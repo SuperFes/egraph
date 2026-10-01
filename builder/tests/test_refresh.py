@@ -225,8 +225,9 @@ def test_plan_refuses_a_name_no_repository_knows(repository_system):
 
 
 def on_terminal(command, answer, env):
-    """Runs command on a pseudo-terminal, answering its [y/N] question with answer: (status,
-    everything it printed, ANSI codes stripped)."""
+    """Runs command on a pseudo-terminal, answering its [y/N] question with answer, or its
+    questions in turn with a list of answers: (status, everything it printed, ANSI codes
+    stripped)."""
     import pty
     import re
     import select
@@ -237,7 +238,8 @@ def on_terminal(command, answer, env):
     )
     os.close(slave)
     printed = b""
-    answered = False
+    answers = [answer] if isinstance(answer, str) else list(answer)
+    answered = 0
     while True:
         ready, _, _ = select.select([master], [], [], 120)
         if not ready:
@@ -250,9 +252,9 @@ def on_terminal(command, answer, env):
         if not chunk:
             break
         printed += chunk
-        if not answered and b"[y/N]" in printed:
-            os.write(master, answer.encode() + b"\n")
-            answered = True
+        while answered < min(printed.count(b"[y/N]"), len(answers)):
+            os.write(master, answers[answered].encode() + b"\n")
+            answered += 1
     os.close(master)
     status = process.wait()
     text = re.sub(r"\x1b\[[0-9;]*m", "", printed.decode(errors="replace"))

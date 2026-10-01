@@ -3,7 +3,7 @@
 egraph-build \- evaluate the installed packages through portage and write egraph's store
 .SH SYNOPSIS
 .B egraph-build
-.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-pending | \-\-emerge\-options ]
+.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-pending | \-\-emerge\-options | \-\-notices ]
 .RI [ options ]
 .RI [ entry ...]
 .SH DESCRIPTION
@@ -59,9 +59,14 @@ Write
 as emerge splits it, a word a line, to
 .BR \-\-output .
 .TP
+.B \-\-notices
+Write the configuration files with updates waiting, as emerge finds them, and the unread news
+items with their titles, as JSON, to
+.BR \-\-output .
+.TP
 .BI \-\-output " file"
 The file
-.BR \-\-pending " and " \-\-emerge\-options
+.BR \-\-pending ", " \-\-emerge\-options " and " \-\-notices
 write, apart from anything portage prints.
 .TP
 .BI \-\-store " file"

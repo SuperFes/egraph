@@ -471,6 +471,14 @@ use, egraph schedules the merges itself.
     joined or left @selected are read back from the refreshed stores.
 - 16g: after a merge: the elog summary, pending `._cfg` files (`dispatch-conf` a key away),
   preserved libraries planned as their consumers' rebuilds, unread news.
+  - 16g1 (done): `notices`: the configuration files waiting in `._cfg` updates, as emerge finds them,
+    and the unread news, with their titles, read through `egraph-build --notices`; shown after
+    every action that ran emerge, `dispatch-conf` offered on a terminal.
+  - 16g2: preserved libraries in `notices`, with the packages using them; the rebuild of their
+    consumers planned as `emerge --oneshot @preserved-rebuild`, verified against its pretend
+    output, and offered after an action.
+  - 16g3: the elog summary after a run, read from the log `save_summary` appends to while emerge
+    runs, emerge's own echo of it left out then.
 - 16h: `sync`: `emaint sync -a`, then what the sync brought: new updates, news.
 - 16i: a repository index from the builder (every cp, its description, versions per slot,
   keywords and masks), incremental on sync; search across the repositories, and pages for

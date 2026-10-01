@@ -85,6 +85,16 @@ and the actions run (default
 else the one in
 .BR PATH ).
 .TP
+.BI \-\-dispatch\-conf " command"
+The
+.B dispatch\-conf
+an action offers when configuration updates are waiting (default
+.BR $EGRAPH_DISPATCH_CONF ,
+else the one in
+.BR PATH ).
+It takes the roots from
+.BR ROOT ", " PORTAGE_CONFIGROOT " and " PORTAGE_OVERRIDE_EPREFIX .
+.TP
 .B \-\-no\-refresh
 Answer from a stale store instead of bringing it up to date.
 .TP
@@ -336,7 +346,12 @@ but for its options that change only how emerge carries out a plan
 .BR \-\-quiet ", " \-\-nospinner ),
 read through
 .BR "egraph\-build \-\-emerge\-options" .
-The stores are refreshed as soon as it ends, even when it fails (exit status 1). Run from a
+The stores are refreshed as soon as it ends, even when it fails (exit status 1), and what
+.B notices
+lists follows; run from a terminal without
+.BR \-\-yes ,
+configuration updates waiting offer
+.BR dispatch\-conf . Run from a
 terminal, a plan that needs USE changes offers to write them first, as
 .B updates
 does, and is made again. Without a terminal to ask on, or in the shell, only
@@ -460,6 +475,21 @@ removes them; nothing is merged or removed.
 .TP
 .BR \-y ", " \-\-yes
 Run emerge without asking.
+.SS notices
+What needs attention once
+.B emerge
+has run, as it reports it: the configuration files under
+.B CONFIG_PROTECT
+with
+.I ._cfg
+updates waiting (which portage finds only where the user can write), and the repositories'
+unread news items with their titles, read through
+.BR "egraph\-build \-\-notices" .
+As lines, an update is its file,
+.BR config
+and the update, and a news item is the item,
+.BR news ,
+its repository and its title.
 .SS export \fR[\fIpackage\fR...]
 Part of the graph, or all of it without packages, for other tools.
 .TP
@@ -508,9 +538,10 @@ standard input).
 Defaults for
 .BR \-\-root ", " \-\-config\-root " and " \-\-eprefix .
 .TP
-.BR EGRAPH_STORE ", " EGRAPH_BUILD ", " EGRAPH_EMERGE ", " EGRAPH_LAYOUT ", " EGRAPH_GLYPHS
+.BR EGRAPH_STORE ", " EGRAPH_BUILD ", " EGRAPH_EMERGE ", " EGRAPH_DISPATCH_CONF ", " EGRAPH_LAYOUT ,
+.B EGRAPH_GLYPHS
 Defaults for
-.BR \-\-store ", " \-\-builder ", " \-\-emerge ", " \-\-layout " and " \-\-glyphs .
+.BR \-\-store ", " \-\-builder ", " \-\-emerge ", " \-\-dispatch\-conf ", " \-\-layout " and " \-\-glyphs .
 .TP
 .B NO_COLOR
 When set and not empty, no colour unless

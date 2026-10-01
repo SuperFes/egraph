@@ -692,6 +692,50 @@ void human_selection(std::ostream& out, std::span<const std::string> records, co
     }
 }
 
+void human_notices(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto rows = split_all(records);
+    // Each file once, with how many updates wait for it; rows come grouped by file.
+    std::vector<std::pair<std::string_view, std::size_t>> files;
+    for (const auto& row : rows) {
+        if (row.at(1) != "config") {
+            continue;
+        }
+        if (files.empty() || files.back().first != row.front()) {
+            files.emplace_back(row.front(), 0);
+        }
+        ++files.back().second;
+    }
+    if (!files.empty()) {
+        out << paint("Configuration updates", Tone::heading)
+            << paint(" (dispatch-conf)", Tone::note) << ":\n";
+        for (const auto& [file, count] : files) {
+            out << "  " << file;
+            if (count > 1) {
+                out << "  " << paint(std::to_string(count), Tone::count)
+                    << paint(" updates", Tone::note);
+            }
+            out << '\n';
+        }
+    }
+    bool first = true;
+    for (const auto& row : rows) {
+        if (row.at(1) != "news") {
+            continue;
+        }
+        if (first) {
+            out << (files.empty() ? "" : "\n") << paint("Unread news", Tone::heading)
+                << paint(" (eselect news read)", Tone::note) << ":\n";
+            first = false;
+        }
+        out << "  " << paint(row.front(), Tone::note);
+        if (const auto title = row.at(3); !title.empty()) {
+            out << "  " << title;
+        }
+        out << '\n';
+    }
+}
+
 std::string holder_note(std::span<const std::string_view> dependents,
                         std::span<const std::string_view> sets) {
     std::vector<std::string_view> others;

@@ -226,6 +226,10 @@ void human_deselect(std::ostream& out, std::span<const std::string> records, con
 // selection_changes' records, after an action: what joined @selected, then what left it.
 void human_selection(std::ostream& out, std::span<const std::string> records, const Theme& theme);
 
+// notice_lines records under headings, a blank line between: the configuration files with
+// updates waiting, how many when more than one, then the unread news by item; nothing for none.
+void human_notices(std::ostream& out, std::span<const std::string> records, const Theme& theme);
+
 // removal_lines' records: what goes, then what is kept with what keeps it, and a count.
 void human_removal(std::ostream& out, std::span<const std::string> records, const Theme& theme);
 

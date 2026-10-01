@@ -14,6 +14,7 @@
 #include "graph.hpp"
 #include "human.hpp"
 #include "json.hpp"
+#include "notices.hpp"
 #include "os.hpp"
 #include "package_use.hpp"
 #include "pressure.hpp"
@@ -1096,6 +1097,72 @@ std::expected<std::vector<std::string>, std::string> passed_options(const Invoca
     return execution_options(words);
 }
 
+// What needs the user once emerge has run, through egraph-build.
+std::expected<Notices, std::string> read_notices(const Invocation& invocation) {
+    const auto output = std::filesystem::path{scratch_store()}.replace_extension(".notices");
+    const auto ran = output_of(notices_command(invocation, output));
+    std::ostringstream text;
+    if (std::ifstream in{output}; in) {
+        text << in.rdbuf();
+    }
+    std::error_code ignored;
+    std::filesystem::remove(output, ignored);
+    if (!ran) {
+        return std::unexpected(ran.error());
+    }
+    return parse_notices(text.str());
+}
+
+void show_notices(const Notices& notices, const Invocation& invocation, std::ostream& out) {
+    const auto lines = notice_lines(notices);
+    if (const auto style = output(invocation); style.human) {
+        human_notices(out, lines, style.theme);
+    } else {
+        write_lines(out, lines);
+    }
+}
+
+// After emerge has run: the notices, and dispatch-conf offered for configuration updates.
+void follow_up(std::string_view name, bool yes, const Invocation& invocation, std::ostream& out,
+               std::ostream& err) {
+    const auto notices = read_notices(invocation);
+    if (!notices) {
+        err << "egraph: " << name << ": the notices could not be read: " << notices.error() << '\n';
+        return;
+    }
+    if (output(invocation).human && (!notices->config.empty() || !notices->news.empty())) {
+        out << '\n';
+    }
+    show_notices(*notices, invocation, out);
+    if (notices->config.empty() || yes || !invocation.ask ||
+        !answered_yes(std::cin, out, "Run dispatch-conf now?")) {
+        return;
+    }
+    out << std::flush;
+    const auto ran = os::run(dispatch_conf_command(invocation));
+    if (!ran) {
+        err << "egraph: " << name << ": " << ran.error().message << '\n';
+    } else if (*ran != 0) {
+        err << "egraph: " << name << ": dispatch-conf exited with status " << *ran << '\n';
+    }
+}
+
+Exit execute(const NoticesCommand&, Session&, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    const auto notices = read_notices(invocation);
+    if (!notices) {
+        return fail(err, std::format("notices: {}", notices.error()));
+    }
+    if (notices->config.empty() && notices->news.empty()) {
+        if (output(invocation).human) {
+            out << "Nothing needs attention.\n";
+        }
+        return Exit::ok;
+    }
+    show_notices(*notices, invocation, out);
+    return Exit::ok;
+}
+
 // An action: the plan show() shows, verified against emerge --pretend, confirmed, and emerge run
 // on it, the stores refreshed after; act runs the action again once USE changes are written.
 // How an action speaks of what it does: "merge", "merging", "merged", or the same of removing.
@@ -1174,6 +1241,7 @@ Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
             write_lines(out, changes);
         }
     }
+    follow_up(name, yes, invocation, out, err);
     if (!ran) {
         err << "egraph: " << name << ": " << ran.error().message << '\n';
         return Exit::failure;
@@ -1639,6 +1707,11 @@ void configure(CLI::App& app, Invocation& invocation) {
                    "emerge command that --verify runs (default: emerge in PATH)")
         ->type_name("COMMAND")
         ->envname("EGRAPH_EMERGE");
+    app.add_option("--dispatch-conf", invocation.dispatch_conf,
+                   "Command an action offers for configuration updates (default: dispatch-conf "
+                   "in PATH)")
+        ->type_name("COMMAND")
+        ->envname("EGRAPH_DISPATCH_CONF");
     app.add_flag("--no-refresh", invocation.no_refresh,
                  "Answer from a stale store instead of rebuilding it");
     app.add_option("--layout", invocation.layout,
@@ -1795,6 +1868,9 @@ void configure(CLI::App& app, Invocation& invocation) {
                                        {"forward", Direction::forward},
                                        {"both", Direction::both}}));
 
+    add_command<NoticesCommand>(
+        app, invocation,
+        "What needs attention once emerge has run: configuration updates waiting, unread news");
     add_command<Stats>(app, invocation, "Store and graph statistics");
     add_command<Tui>(app, invocation, "Browse the graph in a terminal interface");
     add_command<Shell>(app, invocation,
@@ -1920,6 +1996,34 @@ std::vector<std::string> emerge_options_command(const Invocation& invocation,
     std::vector<std::string> argv{builder_program(invocation), "--emerge-options", "--output",
                                   output.string()};
     add_roots(argv, invocation);
+    return argv;
+}
+
+std::vector<std::string> notices_command(const Invocation& invocation,
+                                         const std::filesystem::path& output) {
+    std::vector<std::string> argv{builder_program(invocation), "--notices", "--output",
+                                  output.string()};
+    add_roots(argv, invocation);
+    return argv;
+}
+
+std::vector<std::string> dispatch_conf_command(const Invocation& invocation) {
+    std::vector<std::string> roots;
+    if (invocation.root != "/") {
+        roots.push_back("ROOT=" + invocation.root.string());
+    }
+    if (invocation.config_root) {
+        roots.push_back("PORTAGE_CONFIGROOT=" + invocation.config_root->string());
+    }
+    if (invocation.eprefix) {
+        roots.push_back("PORTAGE_OVERRIDE_EPREFIX=" + invocation.eprefix->string());
+    }
+    std::vector<std::string> argv;
+    if (!roots.empty()) {
+        argv.emplace_back("env");
+        argv.insert(argv.end(), roots.begin(), roots.end());
+    }
+    argv.push_back(invocation.dispatch_conf.value_or("dispatch-conf"));
     return argv;
 }
 

@@ -164,6 +164,24 @@ TEST_CASE("an action's changes to @selected follow it") {
     CHECK(out.str() == "\n+ c/d joined @selected\n- a/b left @selected\n");
 }
 
+TEST_CASE("notices list configuration updates by file, then unread news") {
+    std::ostringstream none;
+    egraph::human_notices(none, {}, plain);
+    CHECK(none.str().empty());
+    std::ostringstream out;
+    egraph::human_notices(out,
+                          std::vector<std::string>{"/etc/a\tconfig\t/etc/._cfg0000_a",
+                                                   "/etc/a\tconfig\t/etc/._cfg0001_a",
+                                                   "/etc/b\tconfig\t/etc/._cfg0000_b",
+                                                   "2026-09-01-x\tnews\tgentoo\tX happened"},
+                          plain);
+    CHECK(out.str() == "Configuration updates (dispatch-conf):\n  /etc/a  2 updates\n  /etc/b\n"
+                       "\nUnread news (eselect news read):\n  2026-09-01-x  X happened\n");
+    std::ostringstream news;
+    egraph::human_notices(news, std::vector<std::string>{"2026-09-01-x\tnews\tgentoo\t"}, plain);
+    CHECK(news.str() == "Unread news (eselect news read):\n  2026-09-01-x\n");
+}
+
 TEST_CASE("a verified removal says emerge removes the same") {
     std::ostringstream same;
     egraph::human_verification(same, {}, plain, "removes");

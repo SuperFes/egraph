@@ -510,6 +510,14 @@ lists what joined or left. `deselect` shows the atoms `emerge --pretend --desele
 its own matching (`Atom.intersects`, slot and repository rules) decides, and adds what depclean
 would remove once they are gone (`deselect_lines`, the roots dropped as `KeepOptions::dropped`).
 
+After emerge runs, an action lists what needs the user (16g, `notices`, also a command of its
+own): the `._cfg` files waiting under CONFIG_PROTECT and the repositories' unread news, read
+through `egraph-build --notices` with portage's own `find_updated_config_files` and the unread
+lists emerge updates after a merge. Nothing is stored: the `._cfg` scan walks CONFIG_PROTECT,
+whose files the store's freshness check could not afford to stat. Reading never updates the
+unread lists, so egraph stays read-only outside its actions. On a terminal without `--yes`,
+configuration updates offer `dispatch-conf`, given the roots through the environment.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

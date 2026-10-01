@@ -71,10 +71,18 @@ def parser():
         const="emerge-options",
         help="write EMERGE_DEFAULT_OPTS as emerge splits it, a word a line, to --output",
     )
+    mode.add_argument(
+        "--notices",
+        dest="mode",
+        action="store_const",
+        const="notices",
+        help="write the configuration updates waiting and the unread news, as JSON, to --output",
+    )
     p.add_argument(
         "--output",
         type=Path,
-        help="file --pending and --emerge-options write, apart from anything portage prints",
+        help="file --pending, --emerge-options and --notices write, apart from anything portage "
+        "prints",
     )
     p.add_argument(
         "entries",
@@ -216,6 +224,21 @@ def write_emerge_options(args):
     return EXIT_OK
 
 
+def write_notices(args):
+    from egraph_build import notices
+
+    if args.output is None:
+        print("egraph-build: --notices needs --output", file=sys.stderr)
+        return EXIT_USAGE
+    settings, portdb, _ = open_trees(args.config_root, args.root, args.eprefix)
+    args.output.write_text(
+        notices.to_json(
+            notices.config_updates(settings), notices.unread_news(settings, portdb)
+        )
+    )
+    return EXIT_OK
+
+
 def _previous(path, decode):
     from egraph_build import store
 
@@ -323,6 +346,8 @@ def main(argv=None):
         return write_pending(args)
     if args.mode == "emerge-options":
         return write_emerge_options(args)
+    if args.mode == "notices":
+        return write_notices(args)
     if args.mode == "evaluate":
         if not args.entries:
             print("egraph-build: --evaluate takes the cps to evaluate", file=sys.stderr)

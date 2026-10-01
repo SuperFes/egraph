@@ -24,7 +24,12 @@ PORTAGE_LIB = os.path.dirname(os.path.dirname(portage.__file__))
 
 EBUILDS = {
     "app-misc/a-1": {"EAPI": "8", "KEYWORDS": "x86"},
-    "app-misc/a-2": {"EAPI": "8", "KEYWORDS": "x86"},
+    # Installs a protected file, which waits as ._cfg where one is already there.
+    "app-misc/a-2": {
+        "EAPI": "8",
+        "KEYWORDS": "x86",
+        "MISC_CONTENT": 'S="${WORKDIR}"\nsrc_install() { mkdir -p "${ED}/etc"; echo two > "${ED}/etc/conf"; }\n',
+    },
     "app-misc/b-1": {"EAPI": "8", "KEYWORDS": "x86"},
     "app-misc/c-1": {"EAPI": "8", "KEYWORDS": "x86"},
     "app-misc/blocker-1": {"EAPI": "8", "KEYWORDS": "x86", "RDEPEND": "!!app-misc/a"},
@@ -141,6 +146,34 @@ class System:
         path = os.path.join(self.playground.eroot, "var", "lib", "portage", "world")
         with open(path) as f:
             return f.read().split()
+
+
+NEWS = """Title: Read me
+Author: A Developer <dev@example.org>
+Posted: 2026-09-01
+Revision: 1
+News-Item-Format: 2.0
+
+Something to read.
+"""
+
+
+def leave_notices(machine):
+    """A configuration file of the user's that a-2 installs over, and a news item for everyone,
+    which emerge marks unread once it has merged something. Their notice lines."""
+    etc = os.path.join(machine.playground.eroot, "etc")
+    os.makedirs(etc, exist_ok=True)
+    with open(os.path.join(etc, "conf"), "w") as f:
+        f.write("one\n")
+    repo = machine.playground.settings.repositories["test_repo"].location
+    item = "2026-09-01-read-me"
+    os.makedirs(os.path.join(repo, "metadata", "news", item))
+    with open(os.path.join(repo, "metadata", "news", item, f"{item}.en.txt"), "w") as f:
+        f.write(NEWS)
+    return [
+        f"{etc}/conf\tconfig\t{etc}/._cfg0000_conf",
+        f"{item}\tnews\ttest_repo\tRead me",
+    ]
 
 
 @pytest.fixture
@@ -377,3 +410,44 @@ def test_deselecting_what_is_not_selected_does_nothing(system):
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Nothing to deselect." in result.stdout
     assert machine.emerged() == []
+
+
+def test_notices_follow_an_action(system):
+    """What emerge leaves for the user after a merge, listed after the action and by notices."""
+    machine = system()
+    expected = leave_notices(machine)
+    assert machine.egraph("notices").stdout == ""
+    result = machine.egraph("update", "--yes")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines()[-2:] == expected
+    notices = machine.egraph("notices")
+    assert notices.returncode == 0, notices.stderr
+    assert notices.stdout.splitlines() == expected
+    human = machine.egraph("--layout", "human", "notices")
+    assert "Configuration updates (dispatch-conf):" in human.stdout
+    assert "  2026-09-01-read-me  Read me" in human.stdout
+
+
+@pytest.mark.parametrize("answer", ["y", "n"])
+def test_on_a_terminal_dispatch_conf_is_offered(system, answer):
+    machine = system()
+    leave_notices(machine)
+    dispatched = machine.tmp_path / "dispatched"
+    dispatch = script(machine.tmp_path / "dispatch-conf", f"env > {dispatched}\n")
+    env = dict(os.environ, EGRAPH_STRICT="1")
+    command = machine.command("--dispatch-conf", dispatch, "update")
+    status, printed = on_terminal(command, ["y", answer], env)
+    assert status == 0, printed
+    assert "Configuration updates (dispatch-conf):" in printed
+    assert "Run dispatch-conf now? [y/N]" in printed
+    if answer == "n":
+        assert not dispatched.exists()
+        return
+    assert f"PORTAGE_CONFIGROOT={machine.playground.eroot}" in dispatched.read_text()
+
+
+def test_nothing_needs_attention(system):
+    machine = system()
+    human = machine.egraph("--layout", "human", "notices")
+    assert human.returncode == 0, human.stderr
+    assert human.stdout == "Nothing needs attention.\n"

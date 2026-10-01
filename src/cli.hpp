@@ -160,6 +160,11 @@ struct Deselect {
     bool yes = false;
 };
 
+// What needs the user once emerge has run: configuration updates waiting, unread news.
+struct NoticesCommand {
+    static constexpr std::string_view name = "notices";
+};
+
 enum class ExportFormat : std::uint8_t { dot, json };
 
 struct Export {
@@ -207,8 +212,8 @@ struct Affected {
 
 using Command =
     std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Blockers, Orphans,
-                 Updates, PlanCommand, Update, Install, Remove, Select, Deselect, Export, Stats,
-                 Rebuild, Refresh, Check, Tui, Shell, Affected>;
+                 Updates, PlanCommand, Update, Install, Remove, Select, Deselect, NoticesCommand,
+                 Export, Stats, Rebuild, Refresh, Check, Tui, Shell, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.
@@ -226,6 +231,8 @@ struct Invocation {
     std::optional<std::string> builder;
     // Run to verify a plan; unset, the emerge in PATH.
     std::optional<std::string> emerge;
+    // Offered after an action leaves configuration updates; unset, the dispatch-conf in PATH.
+    std::optional<std::string> dispatch_conf;
     bool no_refresh = false;
     // emerge --dynamic-deps: dependency queries read an installed package's dependencies from its
     // ebuild when the same version is still in its repository (the evaluated store).
@@ -318,6 +325,13 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
 // The egraph-build command line that writes EMERGE_DEFAULT_OPTS, a word a line, to output.
 [[nodiscard]] std::vector<std::string> emerge_options_command(const Invocation& invocation,
                                                               const std::filesystem::path& output);
+
+// The egraph-build command line that writes the notices, as JSON, to output.
+[[nodiscard]] std::vector<std::string> notices_command(const Invocation& invocation,
+                                                       const std::filesystem::path& output);
+
+// The dispatch-conf command line, under the invocation's roots.
+[[nodiscard]] std::vector<std::string> dispatch_conf_command(const Invocation& invocation);
 
 // The emerge command line that pretends to carry out request under the invocation's roots.
 [[nodiscard]] std::vector<std::string> emerge_command(const Invocation& invocation,
