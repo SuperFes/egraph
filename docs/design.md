@@ -526,6 +526,13 @@ as set atoms; emerge gets the set name, both to verify and to run. After an acti
 terminal the rebuild is planned and offered once (`Invocation::rebuild_offered`), since a rebuild
 that leaves libraries preserved would otherwise offer itself again.
 
+The elog messages of a run are read from what `save_summary` (on in make.globals) appended to
+its log while emerge ran: the size is taken before, the rest parsed after (`parse_elog_summary`;
+a log rotated meanwhile is read whole). emerge's `echo` module would print the same messages
+just above, so the run gets `PORTAGE_ELOG_SYSTEM` without it, but only when the summary holds
+every class echo shows; `egraph-build --emerge-options` decides, as it knows the module classes.
+Without `save_summary`, emerge's own output is left alone.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

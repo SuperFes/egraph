@@ -69,7 +69,8 @@ def parser():
         dest="mode",
         action="store_const",
         const="emerge-options",
-        help="write EMERGE_DEFAULT_OPTS as emerge splits it, a word a line, to --output",
+        help="write EMERGE_DEFAULT_OPTS as emerge splits it, and where the elog summary goes, as "
+        "JSON, to --output",
     )
     mode.add_argument(
         "--notices",
@@ -209,9 +210,12 @@ def write_pending(args):
 
 
 def write_emerge_options(args):
+    import json
     import shlex
 
     import portage
+
+    from egraph_build import notices
 
     if args.output is None:
         print("egraph-build: --emerge-options needs --output", file=sys.stderr)
@@ -220,8 +224,12 @@ def write_emerge_options(args):
     settings = portage.config(
         config_root=args.config_root, target_root=args.root, eprefix=args.eprefix
     )
-    words = shlex.split(settings.get("EMERGE_DEFAULT_OPTS", ""))
-    args.output.write_text("".join(f"{word}\n" for word in words))
+    summary, system = notices.elog_settings(settings)
+    written = {
+        "options": shlex.split(settings.get("EMERGE_DEFAULT_OPTS", "")),
+        "elog": {"summary": summary, "system": system},
+    }
+    args.output.write_text(json.dumps(written, indent=1, sort_keys=True))
     return EXIT_OK
 
 

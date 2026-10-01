@@ -692,6 +692,30 @@ void human_selection(std::ostream& out, std::span<const std::string> records, co
     }
 }
 
+void human_elog(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    const auto& paint = theme.paint;
+    std::string_view package;
+    // The class and phase of the message the lines belong to, shown once.
+    std::pair<std::string_view, std::string_view> message;
+    for (const auto& row : split_all(records)) {
+        if (row.front() != package) {
+            package = row.front();
+            message = {};
+            out << '\n'
+                << paint("Messages for ", Tone::heading) << paint_cpv(package, paint) << ":\n";
+        }
+        if (const std::pair here{row.at(2), row.at(3)}; here != message) {
+            message = here;
+            const bool loud = here.first == "ERROR" || here.first == "WARN";
+            out << "  "
+                << paint(std::format("{} ({})", here.second, here.first),
+                         loud ? Tone::bad : Tone::note)
+                << '\n';
+        }
+        out << (row.at(4).empty() ? "" : "    ") << row.at(4) << '\n';
+    }
+}
+
 void human_notices(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
     const auto& paint = theme.paint;
     const auto rows = split_all(records);

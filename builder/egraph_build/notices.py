@@ -8,7 +8,7 @@ import json
 import os
 
 from portage.const import NEWS_LIB_PATH
-from portage.util import find_updated_config_files, grabfile
+from portage.util import find_updated_config_files, grabfile, normalize_path
 
 # Where GLEP 42 puts a repository's news items, and the language emerge reads them in.
 NEWS_PATH = os.path.join("metadata", "news")
@@ -119,6 +119,39 @@ def preserved_libraries(vardb):
             found.append((path, cpv, tuple(sorted(owners))))
     atoms = _set_config(vardb).getSetAtoms("preserved-rebuild")
     return sorted(found), sorted(str(atom) for atom in atoms)
+
+
+def _module(name):
+    # As elog_process: - is nicer than _ in a module's name.
+    return name.replace("-", "_")
+
+
+def elog_settings(settings):
+    """Where save_summary appends each package's elog messages, and PORTAGE_ELOG_SYSTEM without
+    echo when the summary holds every class echo shows; None for either that does not apply.
+    """
+    tokens = settings.get("PORTAGE_ELOG_SYSTEM", "").split()
+    default = set(settings.get("PORTAGE_ELOG_CLASSES", "").split())
+    classes = {}
+    for token in tokens:
+        name, _, levels = token.partition(":")
+        classes.setdefault(_module(name), set()).update(filter(None, levels.split(",")))
+    if "save_summary" not in classes:
+        return None, None
+    # As mod_save_summary.
+    if settings.get("PORTAGE_LOGDIR"):
+        logdir = normalize_path(settings["PORTAGE_LOGDIR"])
+    else:
+        logdir = os.path.join(
+            os.sep, settings["BROOT"].lstrip(os.sep), "var", "log", "portage"
+        )
+    summary = os.path.join(logdir, "elog", "summary.log")
+    if "echo" not in classes or not (classes["echo"] or default) <= (
+        classes["save_summary"] or default
+    ):
+        return summary, None
+    rest = [token for token in tokens if _module(token.partition(":")[0]) != "echo"]
+    return summary, " ".join(rest)
 
 
 def to_json(config, news, preserved=(), rebuild=()):

@@ -5,9 +5,11 @@
 #include "verify.hpp"
 
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace egraph {
@@ -16,6 +18,19 @@ namespace egraph {
 // a plan but not what it plans: --jobs, --load-average, --keep-going and the like, each as
 // --name or --name=value.
 [[nodiscard]] std::vector<std::string> execution_options(std::span<const std::string> defaults);
+
+// What emerge runs under, as egraph-build --emerge-options writes it.
+struct RunSettings {
+    // EMERGE_DEFAULT_OPTS as portage splits it.
+    std::vector<std::string> defaults;
+    // The log elog's save_summary module appends to, if it is on.
+    std::optional<std::string> elog_summary;
+    // PORTAGE_ELOG_SYSTEM without echo, for a run whose summary egraph shows instead; none to
+    // leave it as it is.
+    std::optional<std::string> elog_system;
+};
+
+[[nodiscard]] std::expected<RunSettings, std::string> parse_run_settings(std::string_view text);
 
 // emerge's options and arguments to carry out request, asking nothing: EMERGE_DEFAULT_OPTS
 // ignored but for passed (execution_options), --oneshot when oneshot.

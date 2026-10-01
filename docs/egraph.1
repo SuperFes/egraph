@@ -352,13 +352,18 @@ but for its options that change only how emerge carries out a plan
 .BR \-\-quiet ", " \-\-nospinner ),
 read through
 .BR "egraph\-build \-\-emerge\-options" .
-The stores are refreshed as soon as it ends, even when it fails (exit status 1), and what
+Messages the ebuilds logged follow, read from what elog's
+.B save_summary
+module appended to its log while emerge ran (emerge's own
+.B echo
+of them is left out then, when the log holds every class it shows). The stores are refreshed
+as soon as emerge ends, even when it fails (exit status 1), and what
 .B notices
 lists follows; run from a terminal without
 .BR \-\-yes ,
 configuration updates waiting offer
-.BR dispatch\-conf . Run from a
-terminal, a plan that needs USE changes offers to write them first, as
+.BR dispatch\-conf .
+Run from a terminal, a plan that needs USE changes offers to write them first, as
 .B updates
 does, and is made again. Without a terminal to ask on, or in the shell, only
 .B \-\-yes

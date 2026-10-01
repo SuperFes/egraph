@@ -164,6 +164,23 @@ TEST_CASE("an action's changes to @selected follow it") {
     CHECK(out.str() == "\n+ c/d joined @selected\n- a/b left @selected\n");
 }
 
+TEST_CASE("elog messages follow by package, each class and phase once") {
+    std::ostringstream none;
+    egraph::human_elog(none, {}, plain);
+    CHECK(none.str().empty());
+    std::ostringstream out;
+    egraph::human_elog(out,
+                       std::vector<std::string>{"a/b-1\telog\tLOG\tpostinst\tFirst.",
+                                                "a/b-1\telog\tLOG\tpostinst\t",
+                                                "a/b-1\telog\tLOG\tpostinst\tSecond.",
+                                                "a/b-1\telog\tWARN\tpostinst\tCareful.",
+                                                "c/d-2\telog\tQA\tother\tQA Notice: x"},
+                       plain);
+    CHECK(out.str() == "\nMessages for a/b-1:\n  postinst (LOG)\n    First.\n\n    Second.\n"
+                       "  postinst (WARN)\n    Careful.\n"
+                       "\nMessages for c/d-2:\n  other (QA)\n    QA Notice: x\n");
+}
+
 TEST_CASE("notices list configuration updates by file, then unread news") {
     std::ostringstream none;
     egraph::human_notices(none, {}, plain);

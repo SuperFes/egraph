@@ -25,11 +25,13 @@ PORTAGE_LIB = os.path.dirname(os.path.dirname(portage.__file__))
 
 EBUILDS = {
     "app-misc/a-1": {"EAPI": "8", "KEYWORDS": "x86"},
-    # Installs a protected file, which waits as ._cfg where one is already there.
+    # Installs a protected file, which waits as ._cfg where one is already there, and logs.
     "app-misc/a-2": {
         "EAPI": "8",
         "KEYWORDS": "x86",
-        "MISC_CONTENT": 'S="${WORKDIR}"\nsrc_install() { mkdir -p "${ED}/etc"; echo two > "${ED}/etc/conf"; }\n',
+        "MISC_CONTENT": 'S="${WORKDIR}"\n'
+        'src_install() { mkdir -p "${ED}/etc"; echo two > "${ED}/etc/conf"; }\n'
+        'pkg_postinst() { elog "Something to know."; ewarn "Careful."; }\n',
     },
     "app-misc/b-1": {"EAPI": "8", "KEYWORDS": "x86"},
     "app-misc/c-1": {"EAPI": "8", "KEYWORDS": "x86"},
@@ -97,8 +99,11 @@ class System:
             body += f'case " $* " in *" --pretend "*) {pretend} ;; esac\n'
         body += f'{exports}exec {run} "$@"\n'
         self.emerge = script(tmp_path / "emerge", body)
+        # Under emerge's EPREFIX, as on a real system: the build root (and so the elog
+        # summary's place) comes from it.
         self.builder = script(
             tmp_path / "egraph-build",
+            f"export PORTAGE_OVERRIDE_EPREFIX={shlex.quote(eprefix)}\n"
             f'PYTHONPATH="{BUILDER_DIR}:{PORTAGE_LIB}" '
             f'exec "{sys.executable}" -m egraph_build "$@"\n',
         )
@@ -183,7 +188,7 @@ def system(gnupg_home, tmp_path):
 
     made = []
 
-    def make(pretend=None, removable=False):
+    def make(pretend=None, removable=False, make_conf=()):
         playground = ResolverPlayground(
             ebuilds={**EBUILDS, **REMOVABLE},
             installed={**INSTALLED, **REMOVABLE} if removable else INSTALLED,
@@ -192,7 +197,9 @@ def system(gnupg_home, tmp_path):
                 if removable
                 else ["app-misc/a"]
             ),
-            user_config={"make.conf": ('EMERGE_DEFAULT_OPTS="--jobs 2 --ask --deep"',)},
+            user_config={
+                "make.conf": ('EMERGE_DEFAULT_OPTS="--jobs 2 --ask --deep"', *make_conf)
+            },
         )
         made.append(playground)
         return System(playground, tmp_path, pretend)
@@ -578,3 +585,41 @@ def test_on_a_terminal_the_rebuild_is_offered_once(preserving, answer):
     assert registry(machine) == {}
     # The rebuild's own run lists nothing more to rebuild, and offers nothing.
     assert printed.count("Rebuilding what uses") == 1
+
+
+ELOG = [
+    "app-misc/a-2\telog\tLOG\tpostinst\tSomething to know.",
+    "app-misc/a-2\telog\tWARN\tpostinst\tCareful.",
+]
+
+
+def test_the_elog_summary_follows_the_run(system):
+    """What save_summary appended while emerge ran, shown by egraph instead of emerge's echo."""
+    machine = system()
+    result = machine.egraph("update", "--yes")
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[lines.index(ELOG[0]) :][:2] == ELOG
+    assert "Messages for package app-misc/a-2" not in result.stdout
+    human = machine.egraph("--layout", "human", "install", "--yes", "=app-misc/a-2")
+    assert human.returncode == 0, human.stdout + human.stderr
+    assert "Messages for app-misc/a-2:\n  postinst (LOG)\n    Something to know.\n" in (
+        human.stdout
+    )
+
+
+@pytest.mark.parametrize(
+    "elog_system, shown",
+    [
+        # Nothing egraph could read: emerge's echo stays.
+        ("echo", False),
+        # The summary misses a class echo shows, so echo stays too.
+        ("save_summary:error echo", False),
+    ],
+)
+def test_emerge_echoes_what_egraph_cannot_show(system, elog_system, shown):
+    machine = system(make_conf=(f'PORTAGE_ELOG_SYSTEM="{elog_system}"',))
+    result = machine.egraph("update", "--yes")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ELOG[0] not in result.stdout.splitlines()
+    assert "Messages for package app-misc/a-2" in result.stdout

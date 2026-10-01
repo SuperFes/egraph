@@ -8,6 +8,7 @@
 #include "build_info.hpp"
 #include "check.hpp"
 #include "depclean.hpp"
+#include "elog.hpp"
 #include "emerge.hpp"
 #include "evaluated.hpp"
 #include "freshness.hpp"
@@ -1121,22 +1122,37 @@ Exit execute(const PlanCommand& command, Session& session, const Invocation& inv
         [&](const Invocation& again) { return execute(command, session, again, out, err); });
 }
 
-// EMERGE_DEFAULT_OPTS's options that change only how emerge runs, through egraph-build.
-std::expected<std::vector<std::string>, std::string> passed_options(const Invocation& invocation) {
+// What emerge runs under, through egraph-build.
+std::expected<RunSettings, std::string> run_settings(const Invocation& invocation) {
     const auto output = std::filesystem::path{scratch_store()}.replace_extension(".options");
     const auto ran = output_of(emerge_options_command(invocation, output));
-    std::ifstream in{output};
-    std::vector<std::string> words;
-    for (std::string word; std::getline(in, word);) {
-        words.push_back(std::move(word));
+    std::ostringstream text;
+    if (std::ifstream in{output}; in) {
+        text << in.rdbuf();
     }
-    in.close();
     std::error_code ignored;
     std::filesystem::remove(output, ignored);
     if (!ran) {
         return std::unexpected(ran.error());
     }
-    return execution_options(words);
+    return parse_run_settings(text.str());
+}
+
+// A log's size now, nothing for one that is not there yet.
+std::uintmax_t log_size(const std::optional<std::string>& path) {
+    std::error_code error;
+    const auto size = path ? std::filesystem::file_size(*path, error) : 0;
+    return error ? 0 : size;
+}
+
+// What a log holds past offset: all of it once it has been rotated to less.
+std::string appended(const std::string& path, std::uintmax_t offset) {
+    std::ostringstream text;
+    if (std::ifstream in{path}; in) {
+        text << in.rdbuf();
+    }
+    auto all = std::move(text).str();
+    return offset <= all.size() ? all.substr(offset) : all;
 }
 
 void show_notices(const Notices& notices, const Invocation& invocation, std::ostream& out) {
@@ -1259,17 +1275,32 @@ Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
                      const Invocation& invocation, std::ostream& out, std::ostream& err) {
     // Copied before the session reloads, which takes store with it.
     const auto selected = world_atoms(store);
-    const auto passed = passed_options(invocation);
-    if (!passed) {
-        err << "egraph: " << name << ": EMERGE_DEFAULT_OPTS could not be read: " << passed.error()
+    const auto settings = run_settings(invocation);
+    if (!settings) {
+        err << "egraph: " << name << ": EMERGE_DEFAULT_OPTS could not be read: " << settings.error()
             << '\n';
         return Exit::failure;
     }
     if (!yes && !answered_yes(std::cin, out, question)) {
         return Exit::failure;
     }
+    auto argv = emerge_command(invocation, arguments(execution_options(settings->defaults)));
+    // egraph shows the summary, so emerge need not echo it too.
+    if (settings->elog_system) {
+        argv.insert(argv.begin(), {"env", "PORTAGE_ELOG_SYSTEM=" + *settings->elog_system});
+    }
+    const auto logged = log_size(settings->elog_summary);
     out << std::flush;
-    const auto ran = os::run(emerge_command(invocation, arguments(*passed)));
+    const auto ran = os::run(argv);
+    if (settings->elog_summary) {
+        const auto messages =
+            elog_lines(parse_elog_summary(appended(*settings->elog_summary, logged)));
+        if (const auto style = output(invocation); style.human) {
+            human_elog(out, messages, style.theme);
+        } else {
+            write_lines(out, messages);
+        }
+    }
     // What emerge did before it failed counts too.
     session.reload();
     if (const auto stores = session.stores(); !stores) {

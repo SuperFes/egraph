@@ -1,5 +1,7 @@
 #include "action.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -173,6 +175,37 @@ std::optional<Stop> stop_before_verifying(const Readiness& readiness) {
         return Stop::unconfirmed;
     }
     return std::nullopt;
+}
+
+std::expected<RunSettings, std::string> parse_run_settings(std::string_view text) {
+    using Json = nlohmann::json;
+    const auto json = Json::parse(text, nullptr, false);
+    if (json.is_discarded() || !json.is_object()) {
+        return std::unexpected("not a JSON object");
+    }
+    const auto words = json.find("options");
+    if (words == json.end() || !words->is_array() ||
+        !std::ranges::all_of(*words, &Json::is_string)) {
+        return std::unexpected("options: not a list of words");
+    }
+    const auto elog = json.find("elog");
+    if (elog == json.end() || !elog->is_object()) {
+        return std::unexpected("elog: not an object");
+    }
+    RunSettings settings{.defaults = words->get<std::vector<std::string>>(),
+                         .elog_summary = std::nullopt,
+                         .elog_system = std::nullopt};
+    for (const auto& [field, value] : {std::pair{"summary", &settings.elog_summary},
+                                       std::pair{"system", &settings.elog_system}}) {
+        const auto found = elog->find(field);
+        if (found == elog->end() || !(found->is_null() || found->is_string())) {
+            return std::unexpected(std::format("elog: {}: not a string or null", field));
+        }
+        if (found->is_string()) {
+            *value = found->get<std::string>();
+        }
+    }
+    return settings;
 }
 
 } // namespace egraph

@@ -94,3 +94,23 @@ TEST_CASE("an action stops before verifying for refusals, nothing, privileges, t
     readiness.refused = true;
     CHECK(stop_before_verifying(readiness) == Stop::refused);
 }
+
+TEST_CASE("what emerge runs under is read from egraph-build's JSON") {
+    const auto settings = egraph::parse_run_settings(R"({
+ "options": ["--jobs", "4"],
+ "elog": {"summary": "/var/log/portage/elog/summary.log", "system": "save_summary"}
+})");
+    REQUIRE(settings);
+    CHECK(settings->defaults == std::vector<std::string>{"--jobs", "4"});
+    CHECK(settings->elog_summary == "/var/log/portage/elog/summary.log");
+    CHECK(settings->elog_system == "save_summary");
+    const auto plain =
+        egraph::parse_run_settings(R"({"options": [], "elog": {"summary": null, "system": null}})");
+    REQUIRE(plain);
+    CHECK_FALSE(plain->elog_summary);
+    CHECK_FALSE(plain->elog_system);
+    CHECK_FALSE(egraph::parse_run_settings("--jobs\n4\n"));
+    CHECK_FALSE(egraph::parse_run_settings(R"({"options": [1], "elog": {}})"));
+    CHECK_FALSE(egraph::parse_run_settings(R"({"options": [], "elog": {"summary": 1}})"));
+    CHECK_FALSE(egraph::parse_run_settings(R"({"options": []})"));
+}

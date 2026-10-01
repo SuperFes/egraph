@@ -469,7 +469,7 @@ use, egraph schedules the merges itself.
     with the packages depclean would then remove. Which atom emerge records is its own
     (`create_world_atom` reads the repositories' slots), so after every action the atoms that
     joined or left @selected are read back from the refreshed stores.
-- 16g: after a merge: the elog summary, pending `._cfg` files (`dispatch-conf` a key away),
+- 16g (done): after a merge: the elog summary, pending `._cfg` files (`dispatch-conf` a key away),
   preserved libraries planned as their consumers' rebuilds, unread news.
   - 16g1 (done): `notices`: the configuration files waiting in `._cfg` updates, as emerge finds them,
     and the unread news, with their titles, read through `egraph-build --notices`; shown after
@@ -477,7 +477,7 @@ use, egraph schedules the merges itself.
   - 16g2 (done): preserved libraries in `notices`, with the packages using them; the rebuild of their
     consumers planned as `emerge --oneshot @preserved-rebuild`, verified against its pretend
     output, and offered after an action.
-  - 16g3: the elog summary after a run, read from the log `save_summary` appends to while emerge
+  - 16g3 (done): the elog summary after a run, read from the log `save_summary` appends to while emerge
     runs, emerge's own echo of it left out then.
 - 16h: `sync`: `emaint sync -a`, then what the sync brought: new updates, news.
 - 16i: a repository index from the builder (every cp, its description, versions per slot,
