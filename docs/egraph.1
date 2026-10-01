@@ -272,7 +272,11 @@ does.
 .BR \-D ", " \-\-deep
 Every package in scope, not only the arguments and what their merges need, as
 .B emerge \-\-deep
-does.
+does; with
+.BR \-\-world ,
+what the versions the root sets move to depend on, through the one alternative of each
+.B ||
+emerge would take.
 .TP
 .BR \-N ", " \-\-newuse
 Also the rebuilds
@@ -339,7 +343,10 @@ does.
 .BR \-D ", " \-\-deep
 With
 .BR \-u ,
-every package in scope, as
+every package the targets lead to through the versions they move to, and the one alternative
+of each
+.B ||
+emerge would take, as
 .B emerge \-\-deep
 does.
 .TP

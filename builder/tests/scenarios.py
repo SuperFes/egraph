@@ -29,8 +29,7 @@ ATOM_VERSIONS = (
 )
 
 # The waits scenario's installed top-1 keeps every package top-2 goes deep into, and via the ||
-# alternative top-2 chooses for being in the graph, so the updates' scope is the same either way
-# (roadmap 16l); the other alternative has no update, since plan -uD would go into it.
+# alternative top-2 chooses for being in the graph.
 TOP_1 = "dev-libs/b dev-libs/d dev-libs/i dev-libs/r dev-libs/post app-misc/via"
 
 SCENARIOS = {
@@ -1168,6 +1167,7 @@ SCENARIOS = {
             "dev-libs/post-1": {"EAPI": "8"},
             "dev-libs/post-2": {"EAPI": "8"},
             "dev-libs/alt-x-1": {"EAPI": "8"},
+            "dev-libs/alt-x-2": {"EAPI": "8"},
             "dev-libs/alt-y-1": {"EAPI": "8"},
             "dev-libs/alt-y-2": {"EAPI": "8"},
             "dev-libs/deep-1": {"EAPI": "8"},
@@ -1189,6 +1189,41 @@ SCENARIOS = {
             "dev-libs/deep-1": {"EAPI": "8"},
             "sys-libs/glibc-1": {"EAPI": "8"},
             "virtual/libc-1": {"EAPI": "8", "RDEPEND": "sys-libs/glibc"},
+        },
+    },
+    # -uD goes into what the versions replacing installed ones depend on: an orphan only a new
+    # version depends on, not what only the replaced one did, and one alternative of a ||.
+    "deep-scope": {
+        "world": ["app-misc/gains", "app-misc/drops", "app-misc/either"],
+        "ebuilds": {
+            "app-misc/gains-1": {"EAPI": "8"},
+            "app-misc/gains-2": {"EAPI": "8", "RDEPEND": "dev-libs/orphan"},
+            "app-misc/drops-1": {"EAPI": "8", "RDEPEND": "dev-libs/old"},
+            "app-misc/drops-2": {"EAPI": "8"},
+            "app-misc/either-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-libs/x dev-libs/y )",
+            },
+            "dev-libs/orphan-1": {"EAPI": "8"},
+            "dev-libs/orphan-2": {"EAPI": "8"},
+            "dev-libs/old-1": {"EAPI": "8"},
+            "dev-libs/old-2": {"EAPI": "8"},
+            "dev-libs/x-1": {"EAPI": "8"},
+            "dev-libs/x-2": {"EAPI": "8"},
+            "dev-libs/y-1": {"EAPI": "8"},
+            "dev-libs/y-2": {"EAPI": "8"},
+        },
+        "installed": {
+            "app-misc/gains-1": {"EAPI": "8"},
+            "app-misc/drops-1": {"EAPI": "8", "RDEPEND": "dev-libs/old"},
+            "app-misc/either-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-libs/x dev-libs/y )",
+            },
+            "dev-libs/orphan-1": {"EAPI": "8"},
+            "dev-libs/old-1": {"EAPI": "8"},
+            "dev-libs/x-1": {"EAPI": "8"},
+            "dev-libs/y-1": {"EAPI": "8"},
         },
     },
 }

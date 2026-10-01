@@ -1,11 +1,14 @@
 #include "request.hpp"
 
 #include "atom.hpp"
+#include "version.hpp"
 
 #include <algorithm>
 #include <array>
 #include <format>
 #include <functional>
+#include <map>
+#include <optional>
 #include <set>
 #include <string_view>
 #include <utility>
@@ -129,6 +132,398 @@ std::optional<std::string> refusal(const Store& store, const Evaluated& evaluate
     return std::format("{}: nothing matches{}", text, hint);
 }
 
+const Node& element(std::span<const Node> nodes, std::size_t index) {
+    return nodes.subspan(index, 1).front();
+}
+
+std::optional<Version> version_of(std::string_view cpv, std::string_view cp) {
+    return parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
+}
+
+// emerge --deep's walk of its graph from the arguments (depgraph._create_graph): each package
+// follows the version it ends up with, and its ||s wait until the plain dependencies are in,
+// each then taking one alternative.
+class Reach {
+  public:
+    Reach(const Store& store EGRAPH_KEPT_BY_THIS, const Evaluated& evaluated EGRAPH_KEPT_BY_THIS,
+          const Request& request)
+        : store_(store), evaluated_(evaluated), reached_(store.packages.size()),
+          taken_(evaluated.candidates.size()) {
+        for (const auto& argument : request.arguments) {
+            if (auto atom = parse_atom(argument.atom)) {
+                // What a USE change could have it merge reaches too.
+                atom->use.clear();
+                cps_.insert(atom->cp);
+                atoms_.push_back(std::move(*atom));
+            }
+        }
+        for (std::uint32_t i = 0; i < evaluated.candidates.size(); ++i) {
+            const auto& candidate = evaluated.candidates.at(i);
+            if (candidate.visible()) {
+                visible_[std::string(evaluated.string(candidate.cp))].push_back(i);
+            }
+        }
+        for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
+            installed_[std::string(store.string(store.packages.at(id).cp))].push_back(id);
+        }
+    }
+
+    std::vector<bool> walk() {
+        for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
+            if (named(id)) {
+                reach(id);
+            }
+        }
+        for (const auto& atom : atoms_) {
+            if (const auto best = best_match(atom)) {
+                take(*best);
+            }
+        }
+        while (!stack_.empty() || !disjunctions_.empty()) {
+            while (!stack_.empty()) {
+                const auto step = stack_.back();
+                stack_.pop_back();
+                follow(step);
+            }
+            if (!disjunctions_.empty()) {
+                const auto step = disjunctions_.back();
+                disjunctions_.pop_back();
+                choose(step);
+            }
+        }
+        return std::move(reached_);
+    }
+
+  private:
+    // An installed package's dependencies, or a candidate's.
+    struct Step {
+        bool candidate = false;
+        std::uint32_t index = 0;
+    };
+    // The versions an installed package follows: its own, and the candidate replacing it.
+    struct Version {
+        bool installed = true;
+        std::optional<std::uint32_t> candidate;
+    };
+
+    std::reference_wrapper<const Store> store_;
+    std::reference_wrapper<const Evaluated> evaluated_;
+    std::vector<Atom> atoms_;
+    Cps cps_;
+    // Visible candidates and installed packages, by cp.
+    std::map<std::string, std::vector<std::uint32_t>, std::less<>> visible_;
+    std::map<std::string, std::vector<std::uint32_t>, std::less<>> installed_;
+    std::vector<bool> reached_;
+    std::vector<bool> taken_;
+    std::vector<Step> stack_;
+    std::vector<Step> disjunctions_;
+
+    [[nodiscard]] const Store& store() const { return store_.get(); }
+    [[nodiscard]] const Evaluated& evaluated() const { return evaluated_.get(); }
+
+    [[nodiscard]] bool named(std::uint32_t id) const {
+        return std::ranges::any_of(atoms_, [&](const Atom& atom) {
+            return matches(store(), store().packages.at(id), atom);
+        });
+    }
+
+    [[nodiscard]] std::optional<std::uint32_t>
+    best(std::string_view cp, const std::function<bool(const Candidate&)>& wanted) const {
+        const auto found = visible_.find(cp);
+        if (found == visible_.end()) {
+            return std::nullopt;
+        }
+        std::optional<std::uint32_t> best;
+        std::optional<egraph::Version> best_version;
+        for (const auto index : found->second) {
+            const auto& candidate = evaluated().candidates.at(index);
+            if (!wanted(candidate)) {
+                continue;
+            }
+            auto version = version_of(evaluated().string(candidate.cpv), cp);
+            if (version && (!best_version || vercmp(*version, *best_version) > 0)) {
+                best = index;
+                best_version = std::move(version);
+            }
+        }
+        return best;
+    }
+
+    [[nodiscard]] std::optional<std::uint32_t> best_match(const Atom& atom) const {
+        return best(atom.cp, [&](const Candidate& candidate) {
+            return matches(store(), evaluated(), candidate, atom);
+        });
+    }
+
+    // An argument moves to the best version its atoms accept in its slot, and stays without
+    // one; any other package moves to its update.
+    [[nodiscard]] Version version(std::uint32_t id) const {
+        const auto& pkg = store().packages.at(id);
+        const auto cp = store().string(pkg.cp);
+        if (cps_.contains(cp)) {
+            const auto slot = store().string(pkg.slot);
+            const auto found = best(cp, [&](const Candidate& candidate) {
+                return evaluated().string(candidate.slot) == slot &&
+                       std::ranges::any_of(atoms_, [&](const Atom& atom) {
+                           return matches(store(), evaluated(), candidate, atom);
+                       });
+            });
+            if (found) {
+                if (evaluated().string(evaluated().candidates.at(*found).cpv) ==
+                    store().string(pkg.cpv)) {
+                    return {};
+                }
+                return {.installed = false, .candidate = found};
+            }
+            if (named(id)) {
+                return {};
+            }
+        }
+        const auto& own = evaluated().packages.at(id);
+        if (!own.target) {
+            return {};
+        }
+        // A --newuse rebuild keeps the version, and its dependencies may be either.
+        return {.installed = own.rebuild.count != 0, .candidate = own.target};
+    }
+
+    void reach(std::uint32_t id) {
+        if (!reached_.at(id)) {
+            reached_.at(id) = true;
+            stack_.push_back({.candidate = false, .index = id});
+        }
+    }
+
+    void push(std::uint32_t candidate) {
+        if (!taken_.at(candidate)) {
+            taken_.at(candidate) = true;
+            stack_.push_back({.candidate = true, .index = candidate});
+        }
+    }
+
+    [[nodiscard]] bool installed_version(std::uint32_t index) const {
+        const auto& candidate = evaluated().candidates.at(index);
+        const auto found = installed_.find(evaluated().string(candidate.cp));
+        return found != installed_.end() &&
+               std::ranges::any_of(found->second, [&](std::uint32_t id) {
+                   return store().string(store().packages.at(id).cpv) ==
+                          evaluated().string(candidate.cpv);
+               });
+    }
+
+    // A candidate joins the graph: the installed package in its slot decides its own version,
+    // and one of the installed version stands for it.
+    void take(std::uint32_t index) {
+        const auto& candidate = evaluated().candidates.at(index);
+        const auto found = installed_.find(evaluated().string(candidate.cp));
+        if (found != installed_.end()) {
+            for (const auto id : found->second) {
+                const auto& pkg = store().packages.at(id);
+                if (store().string(pkg.slot) != evaluated().string(candidate.slot)) {
+                    continue;
+                }
+                reach(id);
+                if (store().string(pkg.cpv) == evaluated().string(candidate.cpv)) {
+                    return;
+                }
+            }
+        }
+        push(index);
+    }
+
+    [[nodiscard]] const Tables& tables(Step step) const {
+        return step.candidate ? static_cast<const Tables&>(evaluated())
+                              : static_cast<const Tables&>(store());
+    }
+
+    [[nodiscard]] const std::array<Range, dep_kinds.size()>& deps(Step step) const {
+        return step.candidate ? evaluated().candidates.at(step.index).deps
+                              : store().packages.at(step.index).deps;
+    }
+
+    // Outside every ||.
+    static bool plain(std::span<const Node> list, std::size_t index) {
+        for (auto parent = element(list, index).parent; parent != no_parent;
+             parent = element(list, parent).parent) {
+            if (element(list, parent).type != NodeType::all_of) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void follow(Step step) {
+        if (!step.candidate) {
+            const auto [installed, candidate] = version(step.index);
+            if (candidate) {
+                push(*candidate);
+            }
+            if (!installed) {
+                return;
+            }
+        }
+        const auto& tables = this->tables(step);
+        bool disjunctive = false;
+        for (const auto range : deps(step)) {
+            const auto list = tables.nodes_in(range);
+            for (std::size_t i = 0; i < list.size(); ++i) {
+                if (!plain(list, i)) {
+                    continue;
+                }
+                const auto& node = element(list, i);
+                if (node.type == NodeType::atom) {
+                    take_atom(tables, node);
+                } else if (node.type == NodeType::any_of) {
+                    disjunctive = true;
+                }
+            }
+        }
+        if (disjunctive) {
+            disjunctions_.push_back(step);
+        }
+    }
+
+    void choose(Step step) {
+        const auto& tables = this->tables(step);
+        for (const auto range : deps(step)) {
+            const auto list = tables.nodes_in(range);
+            for (std::size_t i = 0; i < list.size(); ++i) {
+                if (element(list, i).type == NodeType::any_of && plain(list, i)) {
+                    take_node(tables, list, i);
+                }
+            }
+        }
+    }
+
+    // Without its USE dependencies, as what a USE change could have it merge reaches too.
+    [[nodiscard]] static std::optional<Atom> atom(const Tables& tables, const Node& node,
+                                                  bool use = false) {
+        auto atom = parse_atom(tables.string(node.atom));
+        if (!atom) {
+            return std::nullopt;
+        }
+        if (!use) {
+            atom->use.clear();
+        }
+        return std::move(*atom);
+    }
+
+    void take_atom(const Tables& tables, const Node& node) {
+        const auto ids = tables.ids_in(node.matches);
+        if (!ids.empty()) {
+            std::ranges::for_each(ids, [this](std::uint32_t id) { reach(id); });
+        } else if (const auto wanted = atom(tables, node)) {
+            if (const auto found = best_match(*wanted)) {
+                // The installed version, which only a USE change lets match, joins the graph
+                // rebuilt and holds its slot: emerge leaves its update out.
+                if (installed_version(*found)) {
+                    push(*found);
+                } else {
+                    take(*found);
+                }
+            }
+        }
+    }
+
+    // How an alternative stands: every atom in the graph, installed, or visible.
+    enum class Standing : std::uint8_t { in_graph, installed, visible };
+
+    [[nodiscard]] bool stands(const Tables& tables, std::span<const Node> list, std::size_t index,
+                              Standing standing) const {
+        const auto& node = element(list, index);
+        switch (node.type) {
+        case NodeType::weak_blocker:
+        case NodeType::strong_blocker:
+            return true;
+        case NodeType::atom: {
+            const auto ids = tables.ids_in(node.matches);
+            if (standing == Standing::installed) {
+                return !ids.empty();
+            }
+            if (standing == Standing::in_graph) {
+                if (std::ranges::any_of(ids,
+                                        [this](std::uint32_t id) { return reached_.at(id); })) {
+                    return true;
+                }
+            } else if (!ids.empty()) {
+                return true;
+            }
+            // emerge takes an alternative a USE change would satisfy only once none is left.
+            const auto wanted = atom(tables, node, true);
+            if (!wanted) {
+                return false;
+            }
+            if (standing == Standing::visible) {
+                return best_match(*wanted).has_value();
+            }
+            const auto found = visible_.find(wanted->cp);
+            return found != visible_.end() &&
+                   std::ranges::any_of(found->second, [&](std::uint32_t candidate) {
+                       return taken_.at(candidate) &&
+                              matches(store(), evaluated(), evaluated().candidates.at(candidate),
+                                      *wanted);
+                   });
+        }
+        case NodeType::any_of:
+        case NodeType::all_of: {
+            const bool any = node.type == NodeType::any_of;
+            bool some = false;
+            for (std::size_t child = index + 1; child < list.size(); ++child) {
+                if (element(list, child).parent != index) {
+                    continue;
+                }
+                some = true;
+                if (stands(tables, list, child, standing) == any) {
+                    return any;
+                }
+            }
+            return !any || !some;
+        }
+        }
+        return false;
+    }
+
+    void take_node(const Tables& tables, std::span<const Node> list, std::size_t index) {
+        const auto& node = element(list, index);
+        switch (node.type) {
+        case NodeType::weak_blocker:
+        case NodeType::strong_blocker:
+            return;
+        case NodeType::atom:
+            take_atom(tables, node);
+            return;
+        case NodeType::all_of:
+            for (std::size_t child = index + 1; child < list.size(); ++child) {
+                if (element(list, child).parent == index) {
+                    take_node(tables, list, child);
+                }
+            }
+            return;
+        case NodeType::any_of: {
+            std::optional<std::size_t> first;
+            for (const auto standing :
+                 {Standing::in_graph, Standing::installed, Standing::visible}) {
+                for (std::size_t child = index + 1; child < list.size() && !first; ++child) {
+                    if (element(list, child).parent == index &&
+                        stands(tables, list, child, standing)) {
+                        first = child;
+                    }
+                }
+            }
+            for (std::size_t child = index + 1; child < list.size() && !first; ++child) {
+                if (element(list, child).parent == index) {
+                    first = child;
+                }
+            }
+            if (first) {
+                take_node(tables, list, *first);
+            }
+            return;
+        }
+        }
+    }
+};
+
 } // namespace
 
 std::expected<Request, std::string> parse_request(const Store& store, const Evaluated& evaluated,
@@ -192,75 +587,7 @@ std::expected<Request, std::string> parse_request(const Store& store, const Eval
 
 std::vector<bool> request_reach(const Store& store, const Evaluated& evaluated,
                                 const Request& request) {
-    std::vector<Atom> atoms;
-    std::set<std::string, std::less<>> cps;
-    for (const auto& argument : request.arguments) {
-        if (auto atom = parse_atom(argument.atom)) {
-            // What a USE change could have it merge reaches too.
-            atom->use.clear();
-            cps.insert(atom->cp);
-            atoms.push_back(std::move(*atom));
-        }
-    }
-    std::vector<std::uint32_t> stack;
-    const auto push_deps = [&](const Tables& tables, const auto& deps) {
-        for (const auto range : deps) {
-            for (const auto& node : tables.nodes_in(range)) {
-                if (node.type == NodeType::atom) {
-                    std::ranges::copy(tables.ids_in(node.matches), std::back_inserter(stack));
-                }
-            }
-        }
-    };
-    for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
-        const auto& pkg = store.packages.at(id);
-        if (std::ranges::any_of(atoms,
-                                [&](const Atom& atom) { return matches(store, pkg, atom); })) {
-            stack.push_back(id);
-        }
-    }
-    for (const auto& candidate : evaluated.candidates) {
-        if (!candidate.visible() || !cps.contains(evaluated.string(candidate.cp)) ||
-            std::ranges::none_of(atoms, [&](const Atom& atom) {
-                return matches(store, evaluated, candidate, atom);
-            })) {
-            continue;
-        }
-        push_deps(evaluated, candidate.deps);
-        // The installed version it would replace.
-        for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
-            const auto& pkg = store.packages.at(id);
-            if (store.string(pkg.cp) == evaluated.string(candidate.cp) &&
-                store.string(pkg.slot) == evaluated.string(candidate.slot)) {
-                stack.push_back(id);
-            }
-        }
-    }
-    std::vector<bool> reach(store.packages.size());
-    while (!stack.empty()) {
-        const auto id = stack.back();
-        stack.pop_back();
-        if (reach.at(id)) {
-            continue;
-        }
-        reach.at(id) = true;
-        const auto& pkg = store.packages.at(id);
-        push_deps(store, pkg.deps);
-        const auto target = evaluated.packages.at(id).target;
-        if (!target) {
-            continue;
-        }
-        // An argument moves only to a version its atom accepts.
-        const auto& candidate = evaluated.candidates.at(*target);
-        const auto named = [&](const Atom& atom) { return matches(store, pkg, atom); };
-        const auto accepts = [&](const Atom& atom) {
-            return matches(store, evaluated, candidate, atom);
-        };
-        if (std::ranges::none_of(atoms, named) || std::ranges::any_of(atoms, accepts)) {
-            push_deps(evaluated, candidate.deps);
-        }
-    }
-    return reach;
+    return Reach(store, evaluated, request).walk();
 }
 
 } // namespace egraph

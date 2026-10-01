@@ -38,8 +38,9 @@ using Sets = std::map<std::string, std::vector<std::string>, std::less<>>;
 
 // The installed packages emerge --deep recurses into from the arguments: those the atoms match,
 // or that a visible version they match would replace, and what they depend on, through the
-// installed packages' dependencies and those of the versions they would move to, starting from
-// the visible versions the atoms match as well.
+// dependencies of the version each ends up with (an argument's best its atoms accept in its slot,
+// any other package's update) and of the new packages they pull in, and through the one
+// alternative of each || emerge takes: one already in the graph, else installed, else visible.
 [[nodiscard]] std::vector<bool> request_reach(const Store& store, const Evaluated& evaluated,
                                               const Request& request);
 

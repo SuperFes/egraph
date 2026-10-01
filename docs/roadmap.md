@@ -531,13 +531,16 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   - 16k7: portage updating itself mid-run, and a narrower merge-wait barrier offered as an
     option.
   - 16k8: side-by-side runs against emerge on the dev box.
-- 16l: a gap in the deep plan's scope, which follows the installed versions' dependencies where
+- 16l (done): a gap in the deep plan's scope, which follows the installed versions' dependencies where
   `emerge -uD` follows those of the versions replacing them. An installed package only a merge's
   new dependencies reach (an orphan until then) keeps its version where emerge updates it, and
   one only the replaced version depended on (now an unchosen `||` alternative) is updated where
   emerge leaves it; `plan -uD` also goes into every `||` alternative, emerge only into the one
   it chooses. Found with the `waits` scenario before its installed packages depended on exactly
-  what top-2 goes deep into (`updates -D`, `--world` and `plan -uD`).
+  what top-2 goes deep into (`updates -D`, `--world` and `plan -uD`). The reach now walks as
+  emerge's `_create_graph` does, each package through the version it ends up with and each `||`
+  deferred until the plain dependencies are in, then through one alternative; `--world` takes
+  it as `plan @world` does. The `deep-scope` scenario holds each form.
 - 16m (done): a new package in a new slot, beside installed ones, reported as emerge's `NS`:
   the kind `new-slot` in `updates` and `plan` with the installed versions in its other slots
   (`other_slots`), in the human layout, the tree and the living app; `--verify` compares it

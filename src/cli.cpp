@@ -910,6 +910,18 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
                                            .roots = true,
                                            .deep = command.deep}
                                  : Targets{.scope = {}, .roots = false, .deep = command.deep};
+    if (command.world) {
+        // -uD goes where the versions it moves to lead, which depclean's kept set does not.
+        const auto world = parse_request(*store, evaluated, std::array{std::string("@world")});
+        if (!world) {
+            err << "egraph: updates: " << world.error() << '\n';
+            return std::unexpected(Exit::failure);
+        }
+        targets.reach = request_reach(*store, evaluated, *world);
+        for (std::size_t id = 0; id < targets.scope.size(); ++id) {
+            targets.scope.at(id) = targets.scope.at(id) || targets.reach.at(id);
+        }
+    }
     targets.running_root = running_root(invocation);
     Shown shown{.plan = plan_updates(*store, evaluated, command.rebuilds, targets),
                 .request = {.targets = {command.world ? "@world" : "@installed"},

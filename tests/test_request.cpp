@@ -185,3 +185,114 @@ TEST_CASE("a request reaches what a USE change could have its atoms merge") {
     CHECK(egraph::request_reach(system.store, system.evaluated, *request) ==
           std::vector<bool>{true, true});
 }
+
+TEST_CASE("a request reaches what an update depends on, not what the version it replaces did") {
+    const auto system =
+        make_system({{.cpv = "app-misc/gains-1"},
+                     {.cpv = "app-misc/drops-1", .deps = {{"RDEPEND", "dev-libs/old"}}},
+                     {.cpv = "dev-libs/orphan-1"},
+                     {.cpv = "dev-libs/old-1"}},
+                    {{.cpv = "app-misc/gains-1"},
+                     {.cpv = "app-misc/gains-2", .deps = {{"RDEPEND", "dev-libs/orphan"}}},
+                     {.cpv = "app-misc/drops-1", .deps = {{"RDEPEND", "dev-libs/old"}}},
+                     {.cpv = "app-misc/drops-2"},
+                     {.cpv = "dev-libs/orphan-1"},
+                     {.cpv = "dev-libs/old-1"}});
+    const auto request = parse(system, {"app-misc/gains", "app-misc/drops"});
+    REQUIRE(request);
+    CHECK(egraph::request_reach(system.store, system.evaluated, *request) ==
+          std::vector<bool>{true, true, true, false});
+    // An argument its atom keeps at the installed version keeps that version's dependencies.
+    const auto pinned = parse(system, {"=app-misc/drops-1"});
+    REQUIRE(pinned);
+    CHECK(egraph::request_reach(system.store, system.evaluated, *pinned) ==
+          std::vector<bool>{false, true, false, true});
+}
+
+TEST_CASE("a request reaches what a new package it pulls in depends on") {
+    const auto system =
+        make_system({{.cpv = "app-misc/top-1"}, {.cpv = "dev-libs/deep-1"}},
+                    {{.cpv = "app-misc/top-1"},
+                     {.cpv = "app-misc/top-2", .deps = {{"RDEPEND", "dev-libs/fresh"}}},
+                     {.cpv = "dev-libs/fresh-1", .deps = {{"RDEPEND", "dev-libs/deep"}}},
+                     {.cpv = "dev-libs/deep-1"}});
+    const auto request = parse(system, {"app-misc/top"});
+    REQUIRE(request);
+    CHECK(egraph::request_reach(system.store, system.evaluated, *request) ==
+          std::vector<bool>{true, true});
+}
+
+TEST_CASE("a request reaches one alternative of a ||, one already reached before the first") {
+    const auto system = make_system(
+        {{.cpv = "app-misc/either-1", .deps = {{"RDEPEND", "|| ( dev-libs/x dev-libs/y )"}}},
+         {.cpv = "app-misc/other-1", .deps = {{"RDEPEND", "dev-libs/z"}}},
+         {.cpv = "dev-libs/x-1"},
+         {.cpv = "dev-libs/y-1"},
+         {.cpv = "dev-libs/z-1", .deps = {{"RDEPEND", "dev-libs/y"}}}},
+        {{.cpv = "app-misc/either-1", .deps = {{"RDEPEND", "|| ( dev-libs/x dev-libs/y )"}}},
+         {.cpv = "app-misc/other-1", .deps = {{"RDEPEND", "dev-libs/z"}}},
+         {.cpv = "dev-libs/x-1"},
+         {.cpv = "dev-libs/y-1"},
+         {.cpv = "dev-libs/z-1", .deps = {{"RDEPEND", "dev-libs/y"}}}});
+    const auto alone = parse(system, {"app-misc/either"});
+    REQUIRE(alone);
+    CHECK(egraph::request_reach(system.store, system.evaluated, *alone) ==
+          std::vector<bool>{true, false, true, false, false});
+    // The || waits until the plain dependencies are in, as emerge's do.
+    const auto both = parse(system, {"app-misc/either", "app-misc/other"});
+    REQUIRE(both);
+    CHECK(egraph::request_reach(system.store, system.evaluated, *both) ==
+          std::vector<bool>{true, true, false, true, true});
+}
+
+TEST_CASE("a request reaches the first alternative of a || that is installed, else visible") {
+    const auto system = make_system(
+        {{.cpv = "app-misc/either-1",
+          .deps = {{"RDEPEND", "|| ( dev-libs/gone dev-libs/fresh dev-libs/y )"}}},
+         {.cpv = "app-misc/new-1", .deps = {{"RDEPEND", "|| ( dev-libs/gone dev-libs/fresh )"}}},
+         {.cpv = "dev-libs/y-1"},
+         {.cpv = "dev-libs/deep-1"}},
+        {{.cpv = "app-misc/either-1",
+          .deps = {{"RDEPEND", "|| ( dev-libs/gone dev-libs/fresh dev-libs/y )"}}},
+         {.cpv = "app-misc/new-1", .deps = {{"RDEPEND", "|| ( dev-libs/gone dev-libs/fresh )"}}},
+         {.cpv = "dev-libs/fresh-1", .deps = {{"RDEPEND", "dev-libs/deep"}}},
+         {.cpv = "dev-libs/y-1"},
+         {.cpv = "dev-libs/deep-1"}});
+    const auto installed = parse(system, {"app-misc/either"});
+    REQUIRE(installed);
+    CHECK(egraph::request_reach(system.store, system.evaluated, *installed) ==
+          std::vector<bool>{true, false, true, false});
+    const auto visible = parse(system, {"app-misc/new"});
+    REQUIRE(visible);
+    CHECK(egraph::request_reach(system.store, system.evaluated, *visible) ==
+          std::vector<bool>{false, true, false, true});
+}
+
+TEST_CASE("a request leaves the update out of an installed version only a USE change lets match") {
+    const auto system = make_system(
+        {{.cpv = "dev-libs/lib-1", .iuse = "gtk"}, {.cpv = "dev-libs/deep-1"}},
+        {{.cpv = "app-misc/wantold-1", .deps = {{"RDEPEND", "<dev-libs/lib-2[gtk]"}}},
+         {.cpv = "dev-libs/lib-1", .deps = {{"RDEPEND", "dev-libs/deep"}}, .iuse = "gtk"},
+         {.cpv = "dev-libs/lib-2", .iuse = "gtk"},
+         {.cpv = "dev-libs/deep-1"}});
+    const auto request = parse(system, {"app-misc/wantold"});
+    REQUIRE(request);
+    // The rebuild's own dependencies are followed.
+    CHECK(egraph::request_reach(system.store, system.evaluated, *request) ==
+          std::vector<bool>{false, true});
+}
+
+TEST_CASE("a request passes over an alternative only a USE change would satisfy") {
+    const auto system =
+        make_system({{.cpv = "dev-libs/lib-1", .iuse = "gtk"}, {.cpv = "dev-libs/deep-1"}},
+                    {{.cpv = "app-misc/anyof-1",
+                      .deps = {{"RDEPEND", "|| ( dev-libs/lib[gtk] dev-libs/other )"}}},
+                     {.cpv = "dev-libs/lib-1", .iuse = "gtk"},
+                     {.cpv = "dev-libs/lib-2", .iuse = "gtk"},
+                     {.cpv = "dev-libs/other-1", .deps = {{"RDEPEND", "dev-libs/deep"}}},
+                     {.cpv = "dev-libs/deep-1"}});
+    const auto request = parse(system, {"app-misc/anyof"});
+    REQUIRE(request);
+    CHECK(egraph::request_reach(system.store, system.evaluated, *request) ==
+          std::vector<bool>{false, true});
+}

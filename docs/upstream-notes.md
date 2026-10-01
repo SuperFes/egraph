@@ -45,9 +45,8 @@ is right.
   where emerge's graph holds only the installed packages its traversal visited (deep or not,
   complete or not, and the fork's neighbourhood pruning). Both are supersets, so a build egraph
   starts is never one emerge would hold; `test_waits.py` checks each against the scheduler
-  graph (`waits`: `dev-libs/deep` through `app-misc/via`; the `||` superset is the unit test
-  `every alternative of a || that merges is waited for`, since a scenario with both alternatives
-  updated runs into roadmap 16l).
+  graph (`waits`: `dev-libs/deep` through `app-misc/via`, and `app-misc/top-2`'s `||` with
+  both alternatives updated).
 - Among equal versions of a cp (`1.0` and `1.00`), emerge picks in directory order: `cp_list`
   sorts stably after `os.listdir`, so the pick depends on the filesystem (CI's container and a
   tmpfs disagree). egraph's does not; `ties` in `test_queries.py` and `--verify` count equal
