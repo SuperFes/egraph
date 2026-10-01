@@ -194,7 +194,11 @@ with the dependencies no visible version matches, and emerge refuses it too.
 So it does a version emerge would select whose REQUIRED_USE its USE leaves unsatisfied, even one
 it then passes over: the plan ends with the constraints left unmet, which a
 .I package.use
-change must meet.
+change must meet. A USE dependency no version meets as it would be built takes the USE change
+emerge's autounmask asks for, on the best version that can take it: the plan is made with it
+and ends with the
+.I package.use
+lines, each with what requires it, and emerge refuses it until they are written.
 .TP
 .B \-\-dynamic\-deps
 .TP
@@ -405,8 +409,8 @@ found emerge merging otherwise.
 .B 6
 emerge would refuse the plan of
 .BR updates " or " plan :
-it has blockers emerge cannot resolve, dependencies nothing satisfies, or REQUIRED_USE its USE
-leaves unsatisfied.
+it has blockers emerge cannot resolve, dependencies nothing satisfies, REQUIRED_USE its USE
+leaves unsatisfied, or USE changes it needs.
 .SH EXAMPLES
 .TP
 .B egraph rdeps dev\-libs/openssl

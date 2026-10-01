@@ -180,7 +180,10 @@ package matches, outside any `||` or all-of group installed packages satisfy; or
 alternative of a `||` group whose satisfied atoms an update could all leave unsatisfied (every
 installed package one matches has a visible version in its slot that the atom rejects, USE
 aside). The candidates of the cps so reached are followed in turn until nothing new is named.
-Blockers name nothing.
+So are the node lists a visible candidate's tokens give with the USE changes autounmask could
+ask of it: the flag states that the reached atoms' USE dependencies set for its cp, where they
+differ from its own and the flag is in its IUSE, each alone and every uncontradicted one
+together. Blockers name nothing.
 
 1. String ids: cp, cpv, repo, slot, sub-slot.
 2. USE: list of string ids, the flags the ebuild would be built with now, within its IUSE.

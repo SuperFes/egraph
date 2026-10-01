@@ -62,3 +62,8 @@ is right.
   and emerge falls back past it. The builder follows depgraph (`masks.invalid_ebuild`,
   `test_invalid_ebuilds_are_masked`, and every scenario's candidates against
   `update.invalid_reasons`).
+- When autounmask asks for a USE change to a package already in its graph, emerge's merge list
+  keeps what that package's dependencies pulled in under its old USE: `emerge -pu @installed`
+  lists `lib-2` with `gtk` but not the `gtkdep` that `gtk? ( dev-libs/gtkdep )` needs. egraph
+  plans with the change made, which is what emerge merges once package.use makes it
+  (`test_use_changes_once_made_are_emerges`, `usechange` scenario).

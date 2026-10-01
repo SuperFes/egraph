@@ -782,16 +782,18 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     std::vector<Fields> blocks;
     std::vector<Fields> unsatisfied;
     std::vector<Fields> unmet;
+    std::vector<Fields> use_changes;
     for (std::size_t i = rows.size(); i-- > 0;) {
         const auto kind = rows.at(i).size() > 1 ? rows.at(i).at(1) : std::string_view{};
         if (kind != "uninstall" && kind != "blocks" && kind != "unsatisfied" &&
-            kind != "required-use") {
+            kind != "required-use" && kind != "use-change") {
             continue;
         }
-        auto& into = kind == "uninstall"     ? uninstalls
-                     : kind == "blocks"      ? blocks
-                     : kind == "unsatisfied" ? unsatisfied
-                                             : unmet;
+        auto& into = kind == "uninstall"      ? uninstalls
+                     : kind == "blocks"       ? blocks
+                     : kind == "unsatisfied"  ? unsatisfied
+                     : kind == "required-use" ? unmet
+                                              : use_changes;
         into.push_back(std::move(rows.at(i)));
         rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
         places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
@@ -800,7 +802,8 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     std::ranges::reverse(blocks);
     std::ranges::reverse(unsatisfied);
     std::ranges::reverse(unmet);
-    const bool refusals = !unsatisfied.empty() || !unmet.empty();
+    std::ranges::reverse(use_changes);
+    const bool refusals = !unsatisfied.empty() || !unmet.empty() || !use_changes.empty();
     const auto is_held = [](const auto& row) { return row.at(1) == "held"; };
     const auto is_new = [](const auto& row) { return row.at(1) == "new"; };
     // Every row shares the columns, so held ones line up under the updates.
@@ -1047,7 +1050,18 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         out << paint("its USE leaves REQUIRED_USE unsatisfied: emerge refuses the plan", Tone::bad)
             << '\n';
     }
-    constexpr std::array<std::array<std::string_view, 2>, 9> nouns{
+    if (!use_changes.empty()) {
+        // As emerge words them, for package.use.
+        out << '\n' << paint("USE changes needed", Tone::heading) << '\n';
+        for (const auto& row : use_changes) {
+            for (std::size_t i = 4; i < row.size(); ++i) {
+                out << paint(std::format("# required by {}", row.at(i)), Tone::note) << '\n';
+            }
+            out << paint(row.at(3), Tone::use) << '\n';
+        }
+        out << paint("emerge refuses the plan until package.use makes them", Tone::bad) << '\n';
+    }
+    constexpr std::array<std::array<std::string_view, 2>, 10> nouns{
         {{" upgrade", " upgrades"},
          {" downgrade", " downgrades"},
          {" rebuild", " rebuilds"},
@@ -1056,13 +1070,15 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
          {" uninstall", " uninstalls"},
          {" blocker", " blockers"},
          {" unsatisfied", " unsatisfied"},
-         {" unmet", " unmet"}}};
-    std::array<std::size_t, 9> all{};
+         {" unmet", " unmet"},
+         {" USE change", " USE changes"}}};
+    std::array<std::size_t, 10> all{};
     std::ranges::copy(counts, all.begin());
     all.at(5) = uninstalls.size();
     all.at(6) = blocks.size();
     all.at(7) = unsatisfied.size();
     all.at(8) = unmet.size();
+    all.at(9) = use_changes.size();
     out << '\n';
     bool first = true;
     for (std::size_t i = 0; i < all.size(); ++i) {

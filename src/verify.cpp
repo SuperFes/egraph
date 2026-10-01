@@ -241,7 +241,8 @@ Pretend parse_pretend(std::string_view output, bool failed) {
     return found;
 }
 
-Pretend planned_merges(const Store& store, const Evaluated& evaluated, const Plan& plan) {
+Pretend planned_merges(const Store& store, const Evaluated& original, const Plan& plan) {
+    const auto& evaluated = plan.evaluated_or(original);
     Pretend found;
     found.merges.reserve(plan.merges.size() + plan.uninstalls.size());
     for (const auto& merge : plan.merges) {

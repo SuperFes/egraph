@@ -59,4 +59,8 @@ struct Atom {
 [[nodiscard]] bool matches(const Store& installed, const Evaluated& evaluated,
                            const Candidate& candidate, const Atom& atom);
 
+// Whether flag is in the ebuild's IUSE or implied, as Package.iuse.get_flag has it.
+[[nodiscard]] bool has_flag(const Store& installed, const Evaluated& evaluated,
+                            const Candidate& candidate, std::string_view flag);
+
 } // namespace egraph

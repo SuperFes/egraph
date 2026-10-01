@@ -5,6 +5,7 @@
 #include "atom.hpp"
 #include "evaluated.hpp"
 #include "store.hpp"
+#include "use_reduce.hpp"
 #include "version.hpp"
 
 #include <algorithm>
@@ -34,6 +35,9 @@ struct Installed {
     DepStrings deps = {};
     std::string slot = "0";
     std::string sub_slot = {};
+    // Space-separated flags: its IUSE, and those it was built with.
+    std::string iuse = {};
+    std::string use = {};
 };
 
 struct Available {
@@ -225,6 +229,15 @@ inline System make_system(const std::vector<Installed>& installed, std::vector<A
         record.repo = store_intern("test_repo");
         record.eapi = store_intern("8");
         record.iuse_effective = true;
+        for (auto [range, text] : {std::pair{&record.iuse, &pkg.iuse}, {&record.use, &pkg.use}}) {
+            auto words = detail::tokens(*text);
+            std::ranges::sort(words);
+            *range = {.first = static_cast<std::uint32_t>(store.ids.size()),
+                      .count = static_cast<std::uint32_t>(words.size())};
+            for (const auto& word : words) {
+                store.ids.push_back(store_intern(word));
+            }
+        }
         store.packages.push_back(record);
     }
     const detail::Matcher match = [&store](std::string_view text) {
@@ -291,7 +304,42 @@ inline System make_system(const std::vector<Installed>& installed, std::vector<A
                                  .count = 1};
             evaluated.ids.push_back(evaluated_intern("package.mask"));
         } else {
-            candidate.deps = detail::trees(ebuild.deps, evaluated, evaluated_intern, match);
+            DepStrings plain;
+            for (const auto& [kind, text] : ebuild.deps) {
+                if (text.find('?') == std::string::npos) {
+                    plain.emplace(kind, text);
+                }
+            }
+            candidate.deps = detail::trees(plain, evaluated, evaluated_intern, match);
+            // Conditionals are reduced under its USE as the builder reduces them.
+            for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+                const auto text = ebuild.deps.find(dep_kinds.at(kind));
+                if (text == ebuild.deps.end() || text->second.find('?') == std::string::npos) {
+                    continue;
+                }
+                const auto words = detail::tokens(text->second);
+                const std::vector<std::string_view> views(words.begin(), words.end());
+                const auto use_words = detail::tokens(ebuild.use);
+                const std::set<std::string_view> enabled(use_words.begin(), use_words.end());
+                const auto first = static_cast<std::uint32_t>(evaluated.nodes.size());
+                for (const auto& reduced :
+                     reduce_dependencies(views, enabled, ebuild.empty_groups_true)) {
+                    std::string_view atom = reduced.text;
+                    atom.remove_prefix(std::min(atom.find_first_not_of('!'), atom.size()));
+                    const auto ids =
+                        reduced.text.empty() ? std::vector<std::uint32_t>{} : match(atom);
+                    evaluated.nodes.push_back(
+                        {.type = reduced.type,
+                         .parent = reduced.parent,
+                         .atom = evaluated_intern(reduced.text),
+                         .matches = {.first = static_cast<std::uint32_t>(evaluated.ids.size()),
+                                     .count = static_cast<std::uint32_t>(ids.size())}});
+                    evaluated.ids.insert(evaluated.ids.end(), ids.begin(), ids.end());
+                }
+                candidate.deps.at(kind) = {
+                    .first = first,
+                    .count = static_cast<std::uint32_t>(evaluated.nodes.size()) - first};
+            }
             candidate.required_use = {.first = static_cast<std::uint32_t>(evaluated.ids.size()),
                                       .count = 0};
             for (const auto& token : detail::tokens(ebuild.required_use)) {

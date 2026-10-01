@@ -44,6 +44,8 @@ class Updates(NamedTuple):
     unsatisfied: frozenset = frozenset()
     # "cpv::repo" of the versions it shows REQUIRED_USE unmet for.
     unmet: frozenset = frozenset()
+    # "cpv::repo" -> the flags autounmask asks package.use to change for it ("flag", "-flag").
+    use_changes: dict = None
 
 
 def updates(
@@ -176,6 +178,13 @@ def updates(
         for _, details in dynamic._unsatisfied_deps_for_display
         if details.get("show_req_use")
     )
+    use_changes = {
+        f"{pkg.cpv}::{pkg.repo}": frozenset(
+            flag if state else f"-{flag}" for flag, state in needed[1].items()
+        )
+        for pkg, needed in dynamic._needed_use_config_changes.items()
+        if pkg in dynamic.digraph
+    }
     return Updates(
         success,
         replaced,
@@ -189,6 +198,7 @@ def updates(
         blocked,
         unsatisfied,
         unmet,
+        use_changes,
     )
 
 

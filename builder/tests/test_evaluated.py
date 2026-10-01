@@ -193,7 +193,8 @@ def test_candidate_deps_are_depgraphs(scenario):
 
 def test_candidates_reach_what_emerge_may_pull_in(scenario):
     """Every cp emerge may pull in (reached_cps) has its candidates, when it has any ebuild,
-    and every candidate cp is installed or so reached."""
+    also with the USE changes the atoms' USE dependencies could ask of a candidate; and every
+    candidate cp is installed or so reached."""
     layer = build(scenario)
     db = portdb(scenario)
     by_cp = collections.defaultdict(list)
@@ -202,6 +203,15 @@ def test_candidates_reach_what_emerge_may_pull_in(scenario):
     breaks = evaluated.may_break(by_cp)
     trees = [pkg.deps for pkg in layer]
     trees.extend(c.deps for c in layer.candidates() if not c.reasons)
+    demands = collections.defaultdict(set)
+    for deps in trees:
+        evaluated._note_demands(deps, demands)
+    for c in layer.candidates():
+        if not c.reasons and c.cp in demands:
+            changed = list(
+                evaluated.changed_deps(c, frozenset(demands[c.cp]), lambda atom: ())
+            )
+            trees.extend(changed)
     named = set().union(*(evaluated.reached_cps(t, breaks) for t in trees))
     for cp in named:
         if db.cp_list(cp):

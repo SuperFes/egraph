@@ -380,11 +380,9 @@ bool matches(const Store& store, const Package& pkg, const Atom& atom) {
     return subject_matches(store.implicit, installed_subject(store, pkg), atom);
 }
 
-bool matches(const Store& installed, const Evaluated& evaluated, const Candidate& candidate,
-             const Atom& atom) {
-    if (evaluated.string(candidate.cp) != atom.cp) {
-        return false;
-    }
+namespace {
+
+Subject candidate_subject(const Evaluated& evaluated, const Candidate& candidate) {
     Subject subject{.cp = evaluated.string(candidate.cp),
                     .cpv = evaluated.string(candidate.cpv),
                     .slot = evaluated.string(candidate.slot),
@@ -400,7 +398,20 @@ bool matches(const Store& installed, const Evaluated& evaluated, const Candidate
     for (const auto id : evaluated.ids_in(candidate.iuse)) {
         subject.iuse.push_back(evaluated.string(id));
     }
-    return subject_matches(installed.implicit, subject, atom);
+    return subject;
+}
+
+} // namespace
+
+bool matches(const Store& installed, const Evaluated& evaluated, const Candidate& candidate,
+             const Atom& atom) {
+    return evaluated.string(candidate.cp) == atom.cp &&
+           subject_matches(installed.implicit, candidate_subject(evaluated, candidate), atom);
+}
+
+bool has_flag(const Store& installed, const Evaluated& evaluated, const Candidate& candidate,
+              std::string_view flag) {
+    return in_iuse(installed.implicit, candidate_subject(evaluated, candidate), flag);
 }
 
 } // namespace egraph

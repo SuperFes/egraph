@@ -327,10 +327,11 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
                         rebuilds, held, table, targets, remedies);
 }
 
-std::vector<std::string> update_lines(const Store& store, const Evaluated& evaluated,
+std::vector<std::string> update_lines(const Store& store, const Evaluated& original,
                                       const Plan& plan, UseRebuilds rebuilds, bool held, bool table,
                                       const Targets& targets,
                                       const std::optional<RemedyInputs>& remedies) {
+    const auto& evaluated = plan.evaluated_or(original);
     const auto target_fields = [&evaluated](std::uint32_t target) {
         const auto& candidate = evaluated.candidates.at(target);
         return std::format("{}\t{}", evaluated.string(candidate.cpv),
@@ -425,10 +426,11 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
             }
         }
     }
-    // Uninstalls, blocks, unsatisfied dependencies and unmet REQUIRED_USE, after everything else.
+    // Uninstalls, blocks, unsatisfied dependencies, unmet REQUIRED_USE and needed USE changes,
+    // after everything else.
     std::vector<std::string> trailing_rows;
     trailing_rows.reserve(plan.uninstalls.size() + plan.blocks.size() + plan.unsatisfied.size() +
-                          plan.unmet.size());
+                          plan.unmet.size() + plan.use_changes.size());
     const auto block_fields = [&](const Block& block) {
         return std::format("{}\t{}\t{}", member(block.holder), block.atom, member(block.blocked));
     };
@@ -455,6 +457,16 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
             std::format("{}\trequired-use\t{}\t{}\t{}\t{}", evaluated.string(candidate.cpv),
                         evaluated.string(candidate.repo), use_display(evaluated, candidate), unmet,
                         unmet == whole ? std::string{} : whole));
+    }
+    for (const auto& needed : plan.use_changes) {
+        const auto& candidate = evaluated.candidates.at(needed.change.candidate);
+        auto row = std::format("{}\tuse-change\t{}\t{}", evaluated.string(candidate.cpv),
+                               evaluated.string(candidate.repo),
+                               package_use_line(store, evaluated, needed.change));
+        for (const auto& link : required_by(store, evaluated, plan, needed)) {
+            row += std::format("\t{}", link);
+        }
+        trailing_rows.push_back(std::move(row));
     }
     std::vector<std::string> lines;
     if (table) {
@@ -507,8 +519,9 @@ std::vector<std::string> update_tree_lines(const Store& store, const Evaluated& 
                              plan_updates(store, evaluated, rebuilds, targets));
 }
 
-std::vector<std::string> update_tree_lines(const Store& store, const Evaluated& evaluated,
+std::vector<std::string> update_tree_lines(const Store& store, const Evaluated& original,
                                            const Kept& kept, const Plan& plan) {
+    const auto& evaluated = plan.evaluated_or(original);
     std::map<std::uint32_t, std::uint32_t> by_candidate;
     for (std::uint32_t i = 0; i < plan.merges.size(); ++i) {
         by_candidate.emplace(plan.merges.at(i).candidate, i);

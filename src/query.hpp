@@ -145,7 +145,10 @@ struct RemedyInputs {
 // nothing satisfies, the cpv empty for an argument, then
 // "cpv<TAB>required-use<TAB>repo<TAB>USE<TAB>unsatisfied<TAB>complete" for each version whose
 // REQUIRED_USE its USE leaves unsatisfied: the constraints left, and the whole REQUIRED_USE when
-// they are only part of it (else empty); in the table led by two empty fields too.
+// they are only part of it (else empty), then
+// "cpv<TAB>use-change<TAB>repo<TAB>package.use line<TAB>required by..." for each USE change the
+// plan needs (package_use_line, then a field per link of required_by); in the table led by two
+// empty fields too.
 [[nodiscard]] std::vector<std::string>
 update_lines(const Store& store, const Evaluated& evaluated, UseRebuilds rebuilds,
              bool held = false, bool table = false, const Targets& targets = {},

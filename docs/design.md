@@ -378,6 +378,19 @@ conditionals evaluated as `Atom.evaluate_conditionals` prints them) and laid out
 lays out its node lists; `test_use_reduce.py` holds it to the builder's reduction over generated
 strings, every scenario candidate under every USE of its IUSE, and the live repositories'
 conditional strings, and checks that each candidate's own USE gives back its stored nodes.
+A USE dependency that no visible version meets as it would be built is met as emerge's
+autounmask meets it (`_pkg_use_enabled` with a target USE): on the best visible version whose
+IUSE has every flag the dependency sets (or a default for it), none it must change fixed by the
+profile, and no change already asked of it contradicted; inside a `||`, only when no alternative
+does without, and then on the first that can. The planner records the change and plans again
+on the evaluated store with it made (`with_use_changes`: the USE replaced, the dependencies
+reduced from the tokens under it and matched against the installed packages), as emerge
+restarts with its config changes, until no more are asked; an installed version is rebuilt with
+the changed flags. The plan keeps the changed store for its output, and is refused with the
+`package.use` lines, written as emerge writes them (`>=cpv` unless something newer is visible
+or installed, `>=cpv:slot` unless in its slot, else `=cpv`). The builder reaches what such a
+change could pull in: a candidate's tokens reduced with the flags the reached atoms' USE
+dependencies ask of its cp.
 
 `updates --world` plans `emerge -uD @world` instead (roadmap 12c): the packages depclean keeps
 are in scope, and one outside keeps its version while its dependencies weigh nothing. emerge's

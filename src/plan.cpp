@@ -43,9 +43,13 @@ std::size_t emerge_rank(std::size_t kind) {
 class Planner {
   public:
     Planner(const Store& store EGRAPH_KEPT_BY_THIS, const Evaluated& evaluated EGRAPH_KEPT_BY_THIS,
-            UseRebuilds rebuilds, const Targets& targets EGRAPH_KEPT_BY_THIS)
+            UseRebuilds rebuilds, const Targets& targets EGRAPH_KEPT_BY_THIS,
+            std::span<const UseChange> changes = {})
         : store_ref_(store), evaluated_ref_(evaluated), targets_ref_(targets),
           choices_(store.packages.size()) {
+        for (const auto& change : changes) {
+            changed_.emplace(change.candidate, change.flags);
+        }
         for (std::uint32_t i = 0; i < evaluated.candidates.size(); ++i) {
             by_cp_[std::string(evaluated.string(evaluated.candidates.at(i).cp))].push_back(i);
         }
@@ -116,6 +120,9 @@ class Planner {
         }
         return result();
     }
+
+    // The USE changes run() found needed beyond those made already.
+    [[nodiscard]] std::vector<NeededUseChange> proposed() && { return std::move(proposed_); }
 
   private:
     struct Choice {
@@ -228,6 +235,14 @@ class Planner {
     std::map<std::uint32_t, Reason> backtracked_;
     // Candidates emerge would have selected in some pass, and so checked their REQUIRED_USE.
     std::set<std::uint32_t> selected_;
+    // The USE changes evaluated already has made, by candidate.
+    std::map<std::uint32_t, std::map<std::string, bool, std::less<>>> changed_;
+    // Further USE changes autounmask asks for, each candidate's first; and those a pull asked
+    // for before it was known whether it fails.
+    std::vector<NeededUseChange> proposed_;
+    std::vector<NeededUseChange> pending_;
+    // The member whose dependencies are being pulled in.
+    std::optional<Member> puller_;
     std::map<std::string, std::vector<std::uint32_t>, std::less<>> by_cp_;
     std::map<std::string, std::optional<Atom>, std::less<>> atoms_;
     // Slot and sub-slot a slot-operator atom is bound to, by the atom's text.
@@ -323,6 +338,11 @@ class Planner {
             // Only an installed version emerge can keep skips it, whether or not an ebuild
             // of it is left.
             return;
+        }
+        if (!best && arg.atom) {
+            if (auto change = autounmask(*arg.atom)) {
+                propose({.change = std::move(*change), .pulled_by = {}, .named_by = arg.named});
+            }
         }
         if (!best) {
             // A root set's atom may keep what is installed, and @selected's match nothing.
@@ -868,7 +888,9 @@ class Planner {
             const auto cp = evaluated().string(candidate.cp);
             const auto from = version_of(store().string(store().packages.at(*id).cpv), cp);
             const auto to = version_of(evaluated().string(candidate.cpv), cp);
-            if (!choices_.at(*id).wanted && from && to && vercmp(*to, *from) > 0) {
+            // A newer version, or the same one built with changed USE.
+            if (!choices_.at(*id).wanted && from && to &&
+                (vercmp(*to, *from) > 0 || (vercmp(*to, *from) == 0 && changed_.contains(*best)))) {
                 wanted_.emplace_back(*id, *best);
             }
             return std::nullopt;
@@ -895,11 +917,18 @@ class Planner {
         }
         const auto& from = store().packages.at(id);
         choice.options = {candidate};
+        // A rebuild for changed USE shows the changed flags as --newuse does.
+        std::string flags;
+        if (const auto changed = changed_.find(candidate); changed != changed_.end()) {
+            for (const auto& [flag, on] : changed->second) {
+                flags += std::format("{}{}{}*", flags.empty() ? "" : " ", on ? "" : "-", flag);
+            }
+        }
         choice.wanted = PendingUpdate{
             .kind = update_kind(store().string(from.cp), store().string(from.cpv),
                                 evaluated().string(evaluated().candidates.at(candidate).cpv)),
             .target = candidate,
-            .flags = {}};
+            .flags = std::move(flags)};
         choice.induced = true;
     }
 
@@ -920,6 +949,17 @@ class Planner {
             const auto& wanted = atom(text);
             const auto found = wanted ? pullable(*wanted) : std::nullopt;
             if (!found) {
+                // emerge's autounmask only runs when nothing matches, an installed package
+                // included: one a merge replaces holds that merge back instead.
+                if (wanted && puller_ && tables.ids_in(node.matches).empty() &&
+                    !best_match(*wanted)) {
+                    if (auto change = autounmask(*wanted)) {
+                        pending_.push_back(
+                            {.change = std::move(*change),
+                             .pulled_by = Reason{.member = *puller_, .atom = std::string(text)},
+                             .named_by = {}});
+                    }
+                }
                 return false;
             }
             place(*found);
@@ -930,6 +970,9 @@ class Planner {
         case NodeType::all_of: {
             const bool any = node.type == NodeType::any_of;
             const auto start = pulls.size();
+            // A || asks for a USE change only when no alternative will do without, and then
+            // of the first that can take one.
+            const auto asked = pending_.size();
             bool some = false;
             for (std::size_t child = index + 1; child < list.size(); ++child) {
                 if (element(list, child).parent != index) {
@@ -939,6 +982,7 @@ class Planner {
                 const auto before = pulls.size();
                 const bool done = pull(tables, list, child, pulls);
                 if (any && done) {
+                    pending_.resize(asked);
                     return true;
                 }
                 if (!any && !done) {
@@ -949,10 +993,91 @@ class Planner {
                     rollback(pulls, before);
                 }
             }
+            if (any && pending_.size() > asked + 1) {
+                pending_.resize(asked + 1);
+            }
             return !any || !some;
         }
         }
         return false;
+    }
+
+    // What emerge's autounmask changes to meet wanted's USE dependencies: the best visible
+    // version that can meet them, with the flags; none when no version can.
+    [[nodiscard]] std::optional<UseChange> autounmask(const Atom& wanted) const {
+        const auto found = by_cp_.find(wanted.cp);
+        if (wanted.use.empty() || found == by_cp_.end()) {
+            return std::nullopt;
+        }
+        auto plain = wanted;
+        plain.use.clear();
+        std::vector<std::pair<Version, std::uint32_t>> options;
+        for (const auto index : found->second) {
+            const auto& candidate = evaluated().candidates.at(index);
+            if (!candidate.visible() || backtracked_.contains(index) ||
+                !matches(store(), evaluated(), candidate, plain)) {
+                continue;
+            }
+            if (auto version = version_of(evaluated().string(candidate.cpv), wanted.cp)) {
+                options.emplace_back(std::move(*version), index);
+            }
+        }
+        std::ranges::stable_sort(
+            options, [](const auto& a, const auto& b) { return vercmp(a.first, b.first) > 0; });
+        for (const auto& [version, index] : options) {
+            if (auto change = use_change(index, wanted)) {
+                return change;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // The flags of the candidate to change, on top of those changed already, for wanted's USE
+    // dependencies to hold; none when they cannot be or need not be.
+    [[nodiscard]] std::optional<UseChange> use_change(std::uint32_t index,
+                                                      const Atom& wanted) const {
+        const auto& candidate = evaluated().candidates.at(index);
+        const auto in = [&](Range range, std::string_view flag) {
+            return std::ranges::any_of(evaluated().ids_in(range), [&](std::uint32_t id) {
+                return evaluated().string(id) == flag;
+            });
+        };
+        UseChange change{.candidate = index, .flags = {}};
+        if (const auto earlier = changed_.find(index); earlier != changed_.end()) {
+            change.flags = earlier->second;
+        }
+        bool needed = false;
+        for (const auto& dep : wanted.use) {
+            if (!has_flag(store(), evaluated(), candidate, dep.flag)) {
+                // Its default decides, and the user cannot change that.
+                const bool counts = dep.fallback == UseDependency::Default::enabled;
+                if (dep.fallback == UseDependency::Default::none || counts != dep.enabled) {
+                    return std::nullopt;
+                }
+                continue;
+            }
+            if (in(candidate.use, dep.flag) == dep.enabled) {
+                continue;
+            }
+            if (in(candidate.forced, dep.flag)) {
+                return std::nullopt;
+            }
+            const auto [at, added] = change.flags.try_emplace(dep.flag, dep.enabled);
+            if (!added && at->second != dep.enabled) {
+                return std::nullopt;
+            }
+            needed = true;
+        }
+        return needed ? std::optional{std::move(change)} : std::nullopt;
+    }
+
+    // Keeps a USE change, the first asked of its candidate.
+    void propose(NeededUseChange needed) {
+        if (std::ranges::none_of(proposed_, [&](const NeededUseChange& each) {
+                return each.change.candidate == needed.change.candidate;
+            })) {
+            proposed_.push_back(std::move(needed));
+        }
     }
 
     void rollback(std::vector<std::pair<std::uint32_t, std::string>>& pulls, std::size_t size) {
@@ -1191,7 +1316,16 @@ class Planner {
                     std::vector<std::pair<std::uint32_t, std::string>> pulls;
                     wanted_.clear();
                     const bool disjunctive = element(list, i).type == NodeType::any_of;
-                    if (pull(tables, list, i, pulls)) {
+                    puller_ = item.member;
+                    pending_.clear();
+                    const bool pulled_in = pull(tables, list, i, pulls);
+                    puller_.reset();
+                    if (!pulled_in) {
+                        for (auto& needed : pending_) {
+                            propose(std::move(needed));
+                        }
+                    }
+                    if (pulled_in) {
                         for (auto& [candidate, text] : pulls) {
                             reached_pulls.emplace_back(rank, disjunctive, candidate);
                             pulled_.push_back(
@@ -1572,6 +1706,80 @@ void order_merges(const Store& store, const Evaluated& evaluated, Plan& plan) {
 
 } // namespace
 
+std::string package_use_line(const Store& store, const Evaluated& evaluated,
+                             const UseChange& change) {
+    const auto& candidate = evaluated.candidates.at(change.candidate);
+    const auto cp = evaluated.string(candidate.cp);
+    const auto version = version_of(evaluated.string(candidate.cpv), cp);
+    bool latest = true;
+    bool latest_in_slot = true;
+    const auto newer = [&](std::string_view cpv, std::string_view slot) {
+        const auto other = version_of(cpv, cp);
+        if (version && other && vercmp(*other, *version) > 0) {
+            latest = false;
+            latest_in_slot = latest_in_slot && slot != evaluated.string(candidate.slot);
+        }
+    };
+    for (const auto& other : evaluated.candidates) {
+        if (other.visible() && evaluated.string(other.cp) == cp) {
+            newer(evaluated.string(other.cpv), evaluated.string(other.slot));
+        }
+    }
+    for (const auto& pkg : store.packages) {
+        if (store.string(pkg.cp) == cp) {
+            newer(store.string(pkg.cpv), store.string(pkg.slot));
+        }
+    }
+    auto line = latest           ? std::format(">={}", evaluated.string(candidate.cpv))
+                : latest_in_slot ? std::format(">={}:{}", evaluated.string(candidate.cpv),
+                                               evaluated.string(candidate.slot))
+                                 : std::format("={}", evaluated.string(candidate.cpv));
+    for (const auto& [flag, on] : change.flags) {
+        line += std::format(" {}{}", on ? "" : "-", flag);
+    }
+    return line;
+}
+
+std::vector<std::string> required_by(const Store& store, const Evaluated& evaluated,
+                                     const Plan& plan, const NeededUseChange& needed) {
+    std::vector<std::string> chain;
+    const auto argument = [&chain](const Argument& named) {
+        chain.push_back(named.set.empty() ? std::format("{} (argument)", named.atom)
+                                          : std::format("@{}", named.set));
+    };
+    if (needed.named_by) {
+        argument(*needed.named_by);
+        return chain;
+    }
+    std::optional<Member> at =
+        needed.pulled_by ? std::optional{needed.pulled_by->member} : std::nullopt;
+    std::set<std::uint32_t> seen;
+    while (at) {
+        if (!at->candidate) {
+            const auto& pkg = store.packages.at(at->index);
+            chain.push_back(std::format("{}::{}", store.string(pkg.cpv), store.string(pkg.repo)));
+            break;
+        }
+        const auto& candidate = evaluated.candidates.at(at->index);
+        chain.push_back(std::format("{}::{}", evaluated.string(candidate.cpv),
+                                    evaluated.string(candidate.repo)));
+        const auto merge = std::ranges::find_if(
+            plan.merges, [&](const Merge& each) { return each.candidate == at->index; });
+        if (!seen.insert(at->index).second || merge == plan.merges.end()) {
+            break;
+        }
+        if (merge->pulled_by) {
+            at = merge->pulled_by->member;
+        } else {
+            if (merge->named_by) {
+                argument(*merge->named_by);
+            }
+            at.reset();
+        }
+    }
+    return chain;
+}
+
 RequiredUse required_use_of(const Evaluated& evaluated, const Candidate& candidate) {
     std::vector<std::string_view> tokens;
     for (const auto id : evaluated.ids_in(candidate.required_use)) {
@@ -1586,10 +1794,56 @@ RequiredUse required_use_of(const Evaluated& evaluated, const Candidate& candida
 
 Plan plan_updates(const Store& store, const Evaluated& evaluated, UseRebuilds rebuilds,
                   const Targets& targets) {
-    auto plan = Planner(store, evaluated, rebuilds, targets).run();
-    weigh_blockers(store, evaluated, targets, plan);
-    order_merges(store, evaluated, plan);
-    return plan;
+    // emerge restarts with each USE change autounmask asks for, as many times as it backtracks.
+    constexpr int restarts = 20;
+    std::vector<NeededUseChange> needed;
+    std::shared_ptr<const Evaluated> changed;
+    const auto changes_of = [&needed] {
+        std::vector<UseChange> changes;
+        changes.reserve(needed.size());
+        for (const auto& each : needed) {
+            changes.push_back(each.change);
+        }
+        return changes;
+    };
+    for (int round = 0;; ++round) {
+        const auto changes = changes_of();
+        const auto& current = changed ? *changed : evaluated;
+        Planner planner(store, current, rebuilds, targets, changes);
+        auto plan = planner.run();
+        auto proposed = std::move(planner).proposed();
+        if (proposed.empty() || round == restarts) {
+            weigh_blockers(store, current, targets, plan);
+            order_merges(store, current, plan);
+            // Only what the plan merges, as emerge shows only what its graph holds.
+            for (auto& each : needed) {
+                if (std::ranges::any_of(plan.merges, [&](const Merge& merge) {
+                        return merge.candidate == each.change.candidate;
+                    })) {
+                    plan.use_changes.push_back(std::move(each));
+                }
+            }
+            std::ranges::sort(plan.use_changes, [&](const auto& a, const auto& b) {
+                return current.string(current.candidates.at(a.change.candidate).cpv) <
+                       current.string(current.candidates.at(b.change.candidate).cpv);
+            });
+            plan.changed = std::move(changed);
+            return plan;
+        }
+        for (auto& each : proposed) {
+            const auto earlier = std::ranges::find_if(needed, [&](const NeededUseChange& had) {
+                return had.change.candidate == each.change.candidate;
+            });
+            if (earlier == needed.end()) {
+                needed.push_back(std::move(each));
+            } else {
+                // Its flags build on the earlier ones; the first reason stays.
+                earlier->change.flags = std::move(each.change.flags);
+            }
+        }
+        changed =
+            std::make_shared<const Evaluated>(with_use_changes(evaluated, store, changes_of()));
+    }
 }
 
 } // namespace egraph

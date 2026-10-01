@@ -4,8 +4,10 @@
 #include "query.hpp"
 #include "required_use.hpp"
 #include "store.hpp"
+#include "use_changes.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -83,6 +85,14 @@ struct Missing {
     auto operator<=>(const Missing&) const = default;
 };
 
+// A USE change the plan needs, as autounmask proposes it for package.use.
+struct NeededUseChange {
+    UseChange change;
+    // The first dependency that needed it, or the argument whose atom did.
+    std::optional<Reason> pulled_by;
+    std::optional<Argument> named_by;
+};
+
 struct Plan {
     // Replacements in the installed packages' order, then new packages by cpv.
     std::vector<Merge> merges;
@@ -106,12 +116,35 @@ struct Plan {
     // pulled in counts, even one given up later, but for what a pull would add after a
     // dependency nothing satisfies stops emerge first (see plan_updates).
     std::vector<std::uint32_t> unmet;
+    // USE changes to merges, by candidate, that emerge's autounmask would ask for; it refuses
+    // the plan until they are made.
+    std::vector<NeededUseChange> use_changes;
+    // The evaluated store the plan was made against, with use_changes made; none without them.
+    std::shared_ptr<const Evaluated> changed;
 
     // emerge would refuse the plan.
     [[nodiscard]] bool refused() const {
-        return !blocks.empty() || !unsatisfied.empty() || !unmet.empty();
+        return !blocks.empty() || !unsatisfied.empty() || !unmet.empty() || !use_changes.empty();
+    }
+
+    // What the plan's candidate indices mean: changed, or the evaluated store it was made from.
+    [[nodiscard]] const Evaluated&
+    evaluated_or(const Evaluated& original EGRAPH_LIFETIMEBOUND) const EGRAPH_LIFETIMEBOUND {
+        return changed ? *changed : original;
     }
 };
+
+// The package.use line emerge asks for the change: ">=cpv flags" when nothing visible or
+// installed of its cp is newer, ">=cpv:slot flags" when nothing in its slot is, else "=cpv flags";
+// the flags by name, "-flag" turning one off.
+[[nodiscard]] std::string package_use_line(const Store& store, const Evaluated& evaluated,
+                                           const UseChange& change);
+
+// What needed the change, nearest first, as emerge's "# required by" comments name them: each
+// package as cpv::repo, up to "atom (argument)" for an argument of emerge's, or "@set" for a
+// set's atom. A package the plan replaces ends the chain.
+[[nodiscard]] std::vector<std::string> required_by(const Store& store, const Evaluated& evaluated,
+                                                   const Plan& plan, const NeededUseChange& needed);
 
 // The candidate's REQUIRED_USE weighed under its USE.
 [[nodiscard]] RequiredUse required_use_of(const Evaluated& evaluated, const Candidate& candidate);
@@ -146,6 +179,11 @@ struct Plan {
 // emerge's order RDEPEND, IDEPEND, PDEPEND, DEPEND, BDEPEND) with an atom nothing satisfies, and
 // any || group's once one does. Across packages emerge's order is not followed, so this may
 // count a version emerge never gets to.
+// A dependency with USE dependencies that no visible version meets as it would be built, emerge's
+// autounmask meets with the best visible version that can: every flag the dependency sets is in
+// its IUSE (or has a default), none it must change is masked or forced by the profile, and no
+// change already asked of it contradicts. The plan is then made again with that version's USE
+// changed and its dependencies reduced under it (with_use_changes), until no more are needed.
 // Then its blockers are weighed as emerge validates them (weigh_blockers), and -u's greedy
 // slots leave out an installed slot whose best version and the atom's best block each other.
 [[nodiscard]] Plan plan_updates(const Store& store, const Evaluated& evaluated,

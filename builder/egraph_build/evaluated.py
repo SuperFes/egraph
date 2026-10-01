@@ -603,6 +603,51 @@ def reached_cps(deps, may_break=lambda node: False):
     return found
 
 
+def _note_demands(deps, demands):
+    """Adds to demands, {cp: {(flag, state)}}, what the atoms of node tuples ask of their cps'
+    USE."""
+    for nodes in deps:
+        for node in nodes:
+            if node.type != installed.ATOM:
+                continue
+            try:
+                atom = Atom(node.atom, allow_repo=True)
+            except InvalidAtom:
+                continue
+            if atom.use:
+                demands[atom.cp].update((flag, True) for flag in atom.use.enabled)
+                demands[atom.cp].update((flag, False) for flag in atom.use.disabled)
+
+
+def changed_deps(candidate, wanted, match):
+    """The candidate's node tuples under its USE with wanted's flag states, {(flag, state)},
+    set: each one alone, then every one that no other contradicts, together. Only flags in its
+    IUSE count."""
+    use = frozenset(candidate.use)
+    iuse = frozenset(candidate.iuse)
+    changes = sorted(
+        (flag, state)
+        for flag, state in wanted
+        if flag in iuse and (flag in use) != state
+    )
+    flags = collections.Counter(flag for flag, _ in changes)
+    variants = [{change} for change in changes]
+    variants.append({change for change in changes if flags[change[0]] == 1})
+    strings = {
+        kind: " ".join(tokens) for kind, tokens in zip(DEP_KINDS, candidate.tokens)
+    }
+    seen = set()
+    for variant in variants:
+        changed = (use | {f for f, on in variant if on}) - {
+            f for f, on in variant if not on
+        }
+        if not variant or changed in seen:
+            continue
+        seen.add(changed)
+        deps, _ = installed.dependency_trees(strings, changed, None, match)
+        yield deps
+
+
 def _cp(atom):
     return Atom(atom, allow_repo=True).cp
 
@@ -704,23 +749,38 @@ def rebuild(vardb, portdb, previous, cps, carry=None, match=None, requested=()):
     requested = (
         frozenset(requested).intersection(repository_cps).difference(installed_cps)
     )
-    # What emerge may have to pull in (reached_cps), and theirs in turn.
+    # What emerge may have to pull in (reached_cps), and theirs in turn; and what a candidate's
+    # dependencies name with the USE changes autounmask could ask of it.
     reached = set(installed_cps)
     breaks = may_break(by_cp)
+    demands = collections.defaultdict(set)
     queue = sorted(requested)
     for deps in itertools.chain(
         (pkg.deps for pkg in packages),
         (c.deps for found in by_cp.values() for c in found),
     ):
+        _note_demands(deps, demands)
         queue.extend(reached_cps(deps, breaks) - reached)
+    expanded = set()
     while queue:
-        cp = queue.pop()
-        if cp in reached:
-            continue
-        reached.add(cp)
-        by_cp[cp] = candidates_of(cp)
-        for c in by_cp[cp]:
-            queue.extend(reached_cps(c.deps, breaks) - reached)
+        while queue:
+            cp = queue.pop()
+            if cp in reached:
+                continue
+            reached.add(cp)
+            by_cp[cp] = candidates_of(cp)
+            for c in by_cp[cp]:
+                _note_demands(c.deps, demands)
+                queue.extend(reached_cps(c.deps, breaks) - reached)
+        for cp in sorted(demands.keys() & by_cp.keys()):
+            wanted = frozenset(demands[cp])
+            for c in by_cp[cp]:
+                if c.reasons or (c.cpv, c.repo, wanted) in expanded:
+                    continue
+                expanded.add((c.cpv, c.repo, wanted))
+                for deps in changed_deps(c, wanted, match):
+                    _note_demands(deps, demands)
+                    queue.extend(reached_cps(deps, breaks) - reached)
     return (
         EvaluatedLayer(
             packages,

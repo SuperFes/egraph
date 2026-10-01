@@ -434,13 +434,16 @@ use, egraph schedules the merges itself.
     emerge words them, the plan refused; `--verify` reads emerge's unmet requirements. A
     `required` scenario holds the cases, and the check is shadowed against portage's over
     generated strings and the live repositories'.
-  - 16e3: USE changes as autounmask proposes them.
+  - 16e3 (done): USE changes as autounmask proposes them.
     - 16e3a (done): evaluated store format 8 keeps each candidate's dependency tokens, and
       `use_reduce` is ported to reduce them under other USE, shadowed against the builder's
       reduction.
-    - 16e3b: the planner's autounmask: a USE dependency no version meets as it is built meets it
-      with its flags changed, its dependencies then reduced under the new USE; the plan shows the
-      changed USE and the `package.use` lines with their "required by" chains, and is refused.
+    - 16e3b (done): the planner's autounmask: a USE dependency no version meets as it is built
+      meets it with its flags changed, the plan made again with its dependencies reduced under
+      the new USE; the plan shows the changed USE and the `package.use` lines with their
+      "required by" chains, and is refused. The builder reaches what the changes could pull in.
+      A `usechange` scenario holds the cases, and each plan is held to what emerge merges once
+      package.use makes the changes.
   - 16e4: `--verify` over the new refusals; the `package.use` line offered and written.
 - 16f: actions: `update`, `install` (`--oneshot`, or the targets selected), `remove` (through
   `emerge --depclean` with atoms), `select`, `deselect`: the plan shown, a yes asked for, emerge

@@ -114,13 +114,14 @@ def test_possible_dependencies_name_their_flags(playgrounds, tmp_path):
     assert result.returncode == 2
 
 
-BLOCKER_KINDS = ("uninstall", "blocks")
+# The rows after the merges: blockers, and what refuses the plan.
+TRAILING_KINDS = ("uninstall", "blocks", "unsatisfied", "required-use", "use-change")
 
 
 def merge_lines(text):
-    """updates or plan output without its uninstalls and blocks."""
+    """updates or plan output without its uninstalls, blocks and refusals."""
     return [
-        line for line in text.splitlines() if line.split("\t")[1] not in BLOCKER_KINDS
+        line for line in text.splitlines() if line.split("\t")[1] not in TRAILING_KINDS
     ]
 
 
@@ -146,16 +147,47 @@ def unsatisfied_rows(text):
     )
 
 
+def unmet_rows(text):
+    """The cpv::repo of the required-use rows in updates or plan output."""
+    return frozenset(
+        f"{fields[0]}::{fields[2]}"
+        for fields in (line.split("\t") for line in text.splitlines())
+        if fields[1] == "required-use"
+    )
+
+
+def use_change_rows(text):
+    """{cpv::repo: flags} of the use-change rows in updates or plan output."""
+    return {
+        f"{fields[0]}::{fields[2]}": frozenset(fields[3].split()[1:])
+        for fields in (line.split("\t") for line in text.splitlines())
+        if fields[1] == "use-change"
+    }
+
+
 def refusal_agrees(text, expected):
-    """Whether egraph refuses the plan where emerge does, for blockers or dependencies nothing
-    satisfies, and among the latter names those emerge shows."""
+    """Whether egraph refuses the plan where emerge does: for blockers, for dependencies nothing
+    satisfies or REQUIRED_USE unmet, naming at least what emerge names (it stops at the first it
+    finds), or for USE changes, the same ones."""
+    unsatisfied, unmet = unsatisfied_rows(text), unmet_rows(text)
+    if expected.unmet:
+        return expected.unmet <= unmet
+    if expected.unsatisfied:
+        return expected.unsatisfied <= unsatisfied
     return (
-        not expected.unsatisfied or expected.unsatisfied <= unsatisfied_rows(text)
-    ) and bool(unsatisfied_rows(text)) == bool(expected.unsatisfied)
+        not unsatisfied
+        and not unmet
+        and use_change_rows(text) == (expected.use_changes or {})
+    )
 
 
 def refuses(expected):
-    return expected.blocked or bool(expected.unsatisfied)
+    return (
+        expected.blocked
+        or bool(expected.unsatisfied)
+        or bool(expected.unmet)
+        or bool(expected.use_changes)
+    )
 
 
 def blockers_agree(rows, expected):
@@ -256,7 +288,9 @@ def test_updates_are_emerges(
     ), result.stderr
     output = result.stdout
     assert refusal_agrees(output, expected)
-    if expected.unsatisfied:
+    # Its merge list stops at what it refuses for, or misses what a USE change pulls in when
+    # the changed package was in its graph already: test_use_changes_once_made_are_emerges.
+    if expected.unsatisfied or expected.unmet or expected.use_changes:
         return
     assert blockers_agree(blocker_rows(output), expected)
     assert merged(output) == (expected.replaced, expected.rebuilt, expected.new)
@@ -374,7 +408,7 @@ def test_plans_are_emerges(playgrounds, tmp_path, name, mode):
             result.stderr,
         )
         assert refusal_agrees(result.stdout, expected), target
-        if expected.unsatisfied:
+        if expected.unsatisfied or expected.unmet or expected.use_changes:
             continue
         if not ties(plan_merges(result.stdout), expected.merges):
             differences.add(target)
@@ -763,3 +797,41 @@ def test_the_shell_answers_as_one_shot_commands(scenario, system):
             text=True,
         )
         assert shell.stdout == expected, command
+
+
+@pytest.mark.parametrize("mode", sorted(PLAN_MODES))
+def test_use_changes_once_made_are_emerges(playgrounds, tmp_path, mode):
+    """Each plan egraph refuses for USE changes is the plan emerge makes once package.use makes
+    them: the same merges, and nothing refused."""
+    from portage.tests.resolver.ResolverPlayground import ResolverPlayground
+
+    import update
+    from conftest import System, playground_arguments
+
+    name = "usechange"
+    system = playgrounds(name)
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path)
+    options, flags = PLAN_MODES[mode]
+    checked = 0
+    for target in plan_requests(name):
+        result = egraph(path, "plan", *flags, target, check=False)
+        lines = [
+            row.split("\t")[3]
+            for row in result.stdout.splitlines()
+            if row.split("\t")[1] == "use-change"
+        ]
+        if not lines:
+            continue
+        checked += 1
+        arguments = playground_arguments(name)
+        arguments["user_config"] = {"package.use": tuple(lines)}
+        changed = ResolverPlayground(**arguments)
+        try:
+            trees = changed.trees
+            expected = update.updates(trees, changed.eroot, target=[target], **options)
+        finally:
+            changed.cleanup()
+        assert expected.success, (target, lines)
+        assert ties(plan_merges(result.stdout), expected.merges), target
+    assert checked

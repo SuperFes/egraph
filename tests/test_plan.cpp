@@ -66,6 +66,16 @@ std::vector<std::string> plan(const egraph::test::System& system,
         lines.push_back(
             std::format("unmet {}", evaluated.string(evaluated.candidates.at(each).cpv)));
     }
+    for (const auto& each : found.use_changes) {
+        auto line = std::format(
+            "use {}", evaluated.string(evaluated.candidates.at(each.change.candidate).cpv));
+        for (const auto& [flag, on] : each.change.flags) {
+            line += std::format(" {}{}", on ? "" : "-", flag);
+        }
+        line += std::format(" <- {}",
+                            each.pulled_by ? reason(system, *each.pulled_by) : each.named_by->atom);
+        lines.push_back(std::move(line));
+    }
     return lines;
 }
 
@@ -1295,4 +1305,123 @@ TEST_CASE("update_lines ends with the REQUIRED_USE left unmet, and all of it whe
             "app-misc/cond-1\tnew\tapp-misc/cond-1\ttest_repo\tUSE=\"x -a -b\"\tapp-misc/cond",
             "app-misc/cond-1\trequired-use\ttest_repo\tUSE=\"x -a -b\"\tx? ( || ( a b ) )"
             "\tx? ( || ( a b ) ) !x? ( b )"});
+}
+
+TEST_CASE("a USE dependency nothing meets as built takes a USE change, as autounmask asks") {
+    const auto system = make_system(
+        {}, {{.cpv = "dev-libs/lib-1", .iuse = "gtk qt"},
+             {.cpv = "dev-libs/lib-2",
+              .deps = {{"RDEPEND", "gtk? ( dev-libs/gtkdep )"}},
+              .iuse = "gtk qt"},
+             {.cpv = "dev-libs/gtkdep-1"},
+             {.cpv = "dev-libs/other-1"},
+             {.cpv = "app-misc/wantgtk-1", .deps = {{"RDEPEND", "dev-libs/lib[gtk]"}}},
+             {.cpv = "app-misc/wantnoqt-1", .deps = {{"RDEPEND", "dev-libs/lib[-qt,gtk]"}}},
+             {.cpv = "app-misc/anyof-1",
+              .deps = {{"RDEPEND", "|| ( dev-libs/lib[gtk] dev-libs/other )"}}},
+             {.cpv = "app-misc/anyof2-1",
+              .deps = {{"RDEPEND", "|| ( dev-libs/lib[gtk] dev-libs/nothere )"}}}});
+    // Its dependencies follow the changed USE.
+    CHECK(
+        plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/wantgtk"})) ==
+        std::vector<std::string>{"new app-misc/wantgtk-1 <- ",
+                                 "new dev-libs/gtkdep-1 <- dev-libs/lib-2 dev-libs/gtkdep",
+                                 "new dev-libs/lib-2 <- app-misc/wantgtk-1 dev-libs/lib[gtk]",
+                                 "use dev-libs/lib-2 gtk <- app-misc/wantgtk-1 dev-libs/lib[gtk]"});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/wantnoqt"})).back() ==
+          "use dev-libs/lib-2 gtk <- app-misc/wantnoqt-1 dev-libs/lib[-qt,gtk]");
+    // A || takes an alternative that needs none, else changes its first.
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/anyof"})) ==
+          std::vector<std::string>{"new app-misc/anyof-1 <- ",
+                                   "new dev-libs/other-1 <- app-misc/anyof-1 dev-libs/other"});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/anyof2"})).back() ==
+          "use dev-libs/lib-2 gtk <- app-misc/anyof2-1 dev-libs/lib[gtk]");
+    // An argument's atom too.
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"dev-libs/lib[gtk]"})).back() ==
+          "use dev-libs/lib-2 gtk <- dev-libs/lib[gtk]");
+    const auto& [store, evaluated] = system;
+    const auto found = egraph::plan_updates(store, evaluated, egraph::UseRebuilds::none,
+                                            reinstall({"app-misc/wantgtk"}));
+    CHECK(found.refused());
+    REQUIRE(found.changed);
+    const auto& lib = found.changed->candidates.at(found.use_changes.front().change.candidate);
+    CHECK(found.changed->string(found.changed->ids_in(lib.use).front()) == "gtk");
+}
+
+TEST_CASE("autounmask rebuilds an installed version, and passes over a version it cannot change") {
+    const auto system = make_system(
+        {{.cpv = "dev-libs/lib-1"}},
+        {{.cpv = "dev-libs/lib-1", .iuse = "gtk qt"},
+         {.cpv = "app-misc/wantgtk-1", .deps = {{"RDEPEND", "dev-libs/lib[gtk]"}}},
+         {.cpv = "dev-libs/pinned-1", .iuse = "x"},
+         {.cpv = "dev-libs/pinned-2", .iuse = "x", .forced = "x"},
+         {.cpv = "app-misc/wantx-1", .deps = {{"RDEPEND", "dev-libs/pinned[x]"}}},
+         {.cpv = "app-misc/wantmissing-1", .deps = {{"RDEPEND", "dev-libs/pinned[nope]"}}}});
+    CHECK(
+        plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/wantgtk"})) ==
+        std::vector<std::string>{"dev-libs/lib-1 -> dev-libs/lib-1", "new app-misc/wantgtk-1 <- ",
+                                 "use dev-libs/lib-1 gtk <- app-misc/wantgtk-1 dev-libs/lib[gtk]"});
+    CHECK(
+        plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/wantx"})) ==
+        std::vector<std::string>{"new app-misc/wantx-1 <- ",
+                                 "new dev-libs/pinned-1 <- app-misc/wantx-1 dev-libs/pinned[x]",
+                                 "use dev-libs/pinned-1 x <- app-misc/wantx-1 dev-libs/pinned[x]"});
+    // A flag outside IUSE, with no default, no change can meet.
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/wantmissing"})) ==
+          std::vector<std::string>{"unsatisfied app-misc/wantmissing-1 dev-libs/pinned[nope]"});
+}
+
+TEST_CASE("update_lines ends with the package.use lines a plan needs, and what needs them") {
+    const auto system = make_system(
+        {}, {{.cpv = "dev-libs/lib-1", .iuse = "gtk qt"},
+             {.cpv = "dev-libs/lib-2", .iuse = "gtk qt"},
+             {.cpv = "dev-libs/lib-3", .iuse = "gtk qt", .forced = "gtk"},
+             {.cpv = "dev-libs/lib-4", .visible = false, .iuse = "gtk qt"},
+             {.cpv = "app-misc/user-1", .deps = {{"RDEPEND", "app-misc/wantgtk"}}},
+             {.cpv = "app-misc/wantgtk-1", .deps = {{"RDEPEND", "dev-libs/lib[gtk,-qt]"}}}});
+    const auto targets = reinstall({"app-misc/user"});
+    const auto& [store, evaluated] = system;
+    const auto lines =
+        egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, false, false, targets);
+    // The profile fixes gtk on lib-3 and lib-4 is masked; lib-3 is newer, so "=".
+    CHECK(lines.back() == "dev-libs/lib-2\tuse-change\ttest_repo\t=dev-libs/lib-2 gtk"
+                          "\tapp-misc/wantgtk-1::test_repo\tapp-misc/user-1::test_repo"
+                          "\tapp-misc/user (argument)");
+    // The merge shows the USE it is built with.
+    CHECK(std::ranges::contains(
+        lines, std::string{"dev-libs/lib-2\tnew\tdev-libs/lib-2\ttest_repo\tUSE=\"gtk -qt\"\t"
+                           "app-misc/wantgtk-1 dev-libs/lib[gtk,-qt]"}));
+}
+
+TEST_CASE("package_use_line takes >= when nothing visible or installed is newer") {
+    const auto system = make_system({{.cpv = "dev-libs/lib-3", .slot = "3"}},
+                                    {{.cpv = "dev-libs/lib-1", .iuse = "gtk"},
+                                     {.cpv = "dev-libs/lib-2", .slot = "2", .iuse = "gtk"},
+                                     {.cpv = "dev-libs/lib-5", .visible = false, .iuse = "gtk"}});
+    const auto& [store, evaluated] = system;
+    const auto line = [&](std::string_view cpv) {
+        for (std::uint32_t i = 0; i < evaluated.candidates.size(); ++i) {
+            if (evaluated.string(evaluated.candidates.at(i).cpv) == cpv) {
+                return egraph::package_use_line(
+                    store, evaluated, {.candidate = i, .flags = {{"gtk", true}, {"qt", false}}});
+            }
+        }
+        return std::string{};
+    };
+    // lib-3 is installed in its own slot; lib-5 is masked.
+    CHECK(line("dev-libs/lib-2") == ">=dev-libs/lib-2:2 gtk -qt");
+    CHECK(line("dev-libs/lib-1") == ">=dev-libs/lib-1:0 gtk -qt");
+}
+
+TEST_CASE("an installed build a USE dependency accepts holds an update back, with no USE change") {
+    const auto system =
+        make_system({{.cpv = "dev-libs/gcr-1", .iuse = "gtk", .use = "gtk"},
+                     {.cpv = "app-misc/keyring-1", .deps = {{"RDEPEND", "dev-libs/gcr[gtk]"}}}},
+                    {{.cpv = "dev-libs/gcr-1", .iuse = "gtk"},
+                     {.cpv = "dev-libs/gcr-2", .iuse = "gtk"},
+                     {.cpv = "app-misc/keyring-1", .deps = {{"RDEPEND", "dev-libs/gcr[gtk]"}}}},
+                    {"app-misc/keyring", "dev-libs/gcr"});
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               egraph::Targets{.scope = {}, .roots = true, .deep = true}) ==
+          std::vector<std::string>{"dev-libs/gcr-1 held <- app-misc/keyring-1 dev-libs/gcr[gtk]"});
 }

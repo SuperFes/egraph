@@ -1100,4 +1100,40 @@ SCENARIOS = {
             "app-misc/holder-1": {"EAPI": "8", "RDEPEND": "<dev-libs/held-2"},
         },
     },
+    "usechange": {
+        # USE changes autounmask asks for refuse an update, which the targets leave to plans.
+        "held": True,
+        "world": ["app-misc/user"],
+        "ebuilds": {
+            "dev-libs/lib-1": {"EAPI": "8", "IUSE": "gtk qt"},
+            "dev-libs/lib-2": {
+                "EAPI": "8",
+                "IUSE": "gtk qt",
+                "RDEPEND": "gtk? ( dev-libs/gtkdep )",
+            },
+            "dev-libs/gtkdep-1": {"EAPI": "8"},
+            "dev-libs/other-1": {"EAPI": "8"},
+            "dev-libs/pinned-1": {"EAPI": "8", "IUSE": "x"},
+            "dev-libs/pinned-2": {"EAPI": "8", "IUSE": "x"},
+            "app-misc/wantgtk-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib[gtk]"},
+            "app-misc/wantnoqt-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib[gtk,-qt]"},
+            "app-misc/anyof-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-libs/lib[gtk] dev-libs/other )",
+            },
+            "app-misc/anyof2-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-libs/lib[gtk] dev-libs/nothere )",
+            },
+            "app-misc/wantx-1": {"EAPI": "8", "RDEPEND": "dev-libs/pinned[x]"},
+            "app-misc/user-1": {"EAPI": "8"},
+            "app-misc/user-2": {"EAPI": "8", "RDEPEND": "app-misc/wantgtk"},
+            "app-misc/wantold-1": {"EAPI": "8", "RDEPEND": "<dev-libs/lib-2[gtk]"},
+        },
+        "installed": {
+            "dev-libs/lib-1": {"EAPI": "8", "IUSE": "gtk qt"},
+            "app-misc/user-1": {"EAPI": "8"},
+        },
+        "profile": {"package.use.mask": ("=dev-libs/pinned-2 x",)},
+    },
 }

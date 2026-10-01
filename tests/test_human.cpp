@@ -450,6 +450,23 @@ TEST_CASE("updates end with the REQUIRED_USE their USE leaves unmet") {
                        "2 unmet\n");
 }
 
+TEST_CASE("updates end with the USE changes emerge asks for, as it words them") {
+    const std::vector<std::string> records{
+        "dev-libs/lib-2\tuse-change\tgentoo\t>=dev-libs/lib-2 gtk"
+        "\ta/want-1::gentoo\ta/want (argument)",
+    };
+    std::ostringstream out;
+    egraph::human_updates(out, records, plain);
+    CHECK(out.str() == "\n"
+                       "USE changes needed\n"
+                       "# required by a/want-1::gentoo\n"
+                       "# required by a/want (argument)\n"
+                       ">=dev-libs/lib-2 gtk\n"
+                       "emerge refuses the plan until package.use makes them\n"
+                       "\n"
+                       "1 USE change\n");
+}
+
 TEST_CASE("blockers group by holder and count what they block") {
     const std::vector<std::string> records{
         "a/b-1\tRDEPEND\t!!x/gone\t",
