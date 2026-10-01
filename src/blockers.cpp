@@ -10,6 +10,7 @@
 #include <optional>
 #include <set>
 #include <string_view>
+#include <utility>
 
 namespace egraph {
 
@@ -48,7 +49,8 @@ class Weigher {
     }
 
     void run(Plan& plan) {
-        std::map<std::uint32_t, Block> uninstalls;
+        // By installed package: the first blocker needing it gone, and the merges in its way.
+        std::map<std::uint32_t, std::pair<Block, std::set<std::uint32_t>>> uninstalls;
         std::set<Block> blocks;
         const auto weigh = [&](const Member& holder, std::size_t kind) {
             for (const auto& node : nodes(holder, kind)) {
@@ -69,8 +71,18 @@ class Weigher {
                 weigh({.candidate = true, .index = candidate}, kind);
             }
         }
-        for (auto& [id, why] : uninstalls) {
-            plan.uninstalls.push_back({.package = id, .why = std::move(why)});
+        std::map<std::uint32_t, std::uint32_t> by_candidate;
+        for (std::uint32_t i = 0; i < plan.merges.size(); ++i) {
+            by_candidate.emplace(plan.merges.at(i).candidate, i);
+        }
+        for (auto& [id, found] : uninstalls) {
+            auto& [why, merges] = found;
+            std::vector<std::uint32_t> after;
+            for (const auto candidate : merges) {
+                after.push_back(by_candidate.at(candidate));
+            }
+            std::ranges::sort(after);
+            plan.uninstalls.push_back({.package = id, .why = std::move(why), .after = after});
         }
         plan.blocks.assign(blocks.begin(), blocks.end());
     }
@@ -297,7 +309,8 @@ class Weigher {
 
     // One blocker of holder, as _validate_blockers weighs it.
     void weigh_one(const Member& holder, const Node& node,
-                   std::map<std::uint32_t, Block>& uninstalls, std::set<Block>& blocks) {
+                   std::map<std::uint32_t, std::pair<Block, std::set<std::uint32_t>>>& uninstalls,
+                   std::set<Block>& blocks) {
         const auto& tables = this->tables(holder);
         const auto text = std::string(tables.string(node.atom));
         const bool strong = node.type == NodeType::strong_blocker;
@@ -358,7 +371,12 @@ class Weigher {
             return;
         }
         for (const auto& [id, other] : removals) {
-            uninstalls.try_emplace(id, Block{.holder = holder, .atom = text, .blocked = other});
+            auto& found =
+                uninstalls
+                    .try_emplace(id, Block{.holder = holder, .atom = text, .blocked = other},
+                                 std::set<std::uint32_t>{})
+                    .first->second;
+            found.second.insert(holder.candidate ? holder.index : other.index);
         }
     }
 };

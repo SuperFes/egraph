@@ -502,8 +502,20 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& origi
                 lines.push_back(std::format("\t\t{}", line));
             }
         }
-        for (const auto& line : trailing_rows) {
-            lines.push_back(std::format("\t\t{}", line));
+        // The uninstalls lead them, each with the places of the merges it waits for.
+        for (std::size_t i = 0; i < trailing_rows.size(); ++i) {
+            std::vector<std::size_t> after;
+            if (i < plan.uninstalls.size()) {
+                for (const auto merge : plan.uninstalls.at(i).after) {
+                    after.push_back(place.at(merge));
+                }
+                std::ranges::sort(after);
+            }
+            std::string waits;
+            for (const auto each : after) {
+                waits += std::format("{}{}", waits.empty() ? "" : " ", each);
+            }
+            lines.push_back(std::format("\t{}\t{}", waits, trailing_rows.at(i)));
         }
         return lines;
     }

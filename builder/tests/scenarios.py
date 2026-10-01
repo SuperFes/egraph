@@ -819,8 +819,9 @@ SCENARIOS = {
     # Blockers emerge resolves: a merge's weak blocker on an installed package nothing needs any
     # more (a renamed package, an orphaned holder of a blocker against a merge, an older slot, a
     # tool only a build blocks, a || alternative another satisfies) uninstalls it; one on a
-    # version a merge replaces, or in the merge's own slot, needs nothing. Beside them, blockers
-    # between installed packages that no merge touches, a build-time one among them.
+    # version a merge replaces, or in the merge's own slot, needs nothing; the orphaned holder
+    # also blocked by the merge pulling in what it blocks. Beside them, blockers between
+    # installed packages that no merge touches, a build-time one among them.
     "blockers": {
         "world": [
             "app-misc/user",
@@ -843,7 +844,7 @@ SCENARIOS = {
             "app-misc/top-1": {"EAPI": "8"},
             "app-misc/top-2": {
                 "EAPI": "8",
-                "RDEPEND": "app-misc/fresh !app-misc/flagged[foo]",
+                "RDEPEND": "app-misc/fresh !app-misc/flagged[foo] !app-misc/holder",
             },
             "dev-libs/s-1": {"EAPI": "8", "SLOT": "1"},
             "dev-libs/s-1.1": {"EAPI": "8", "SLOT": "1"},

@@ -31,16 +31,22 @@ KINDS = {
 
 
 def table(text):
-    """(merge cpvs in egraph's order, {(cpv, cpv it waits for): letters}) from updates -t or
-    plan -t output."""
-    rows = [line.split("\t") for line in text.splitlines() if line.split("\t")[0]]
+    """(merge cpvs in egraph's order, {(cpv, cpv it waits for): letters}, {uninstalled cpv:
+    merge cpvs it waits for}) from updates -t or plan -t output."""
+    lines = [line.split("\t") for line in text.splitlines()]
+    rows = [fields for fields in lines if fields[0]]
     order = [fields[4] for fields in rows]
     waits = {}
     for fields in rows:
         for wait in fields[1].split():
             place, kinds = re.fullmatch(r"(\d+)([a-z]*)", wait).groups()
             waits[(fields[4], order[int(place) - 1])] = kinds
-    return order, waits
+    uninstalls = {
+        fields[2]: frozenset(order[int(place) - 1] for place in fields[1].split())
+        for fields in lines
+        if len(fields) > 3 and not fields[0] and fields[3] == "uninstall"
+    }
+    return order, waits, uninstalls
 
 
 def in_any_of(system, cpv, repo, use, kinds, waited):
@@ -95,13 +101,14 @@ def same_version(cpvs):
 def check_waits(system, result, path, repos):
     """egraph's waits are the scheduler graph's: each direct edge with its kinds, but for the
     alternatives of a || emerge did not choose; each merge reached only through installed
-    packages, among more; and its order keeps each wait emerge's order does, but PDEPEND's.
+    packages, among more; its order keeps each wait emerge's order does, but PDEPEND's; and each
+    uninstall waits for the merges emerge's does.
     """
     if result.returncode == EXIT_REFUSED or not path.exists():
         return
     entry = json.loads(path.read_text())
     path.unlink()
-    order, waits = table(result.stdout)
+    order, waits, uninstalls = table(result.stdout)
     if not order:
         return
     found = scheduled(system.trees, system.eroot, entry)
@@ -127,6 +134,9 @@ def check_waits(system, result, path, repos):
     for (cpv, other), kinds in edges.items():
         if set(kinds) & set("bir") and emerge_place[other] < emerge_place[cpv]:
             assert place[other] < place[cpv], (cpv, other, kinds)
+    assert uninstalls == {
+        cpv: frozenset(map(spell, merges)) for cpv, merges in found.uninstalls.items()
+    }
 
 
 def repositories(text):

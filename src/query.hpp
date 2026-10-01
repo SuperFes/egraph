@@ -148,7 +148,7 @@ struct RemedyInputs {
 // REQUIRED_USE when they are only part of it (else empty), then
 // "cpv<TAB>use-change<TAB>repo<TAB>package.use line<TAB>required by..." for each USE change the
 // plan needs (package_use_line, then a field per link of required_by); in the table led by two
-// empty fields too.
+// empty fields too, but for an uninstall's second: the places of the merges it waits for.
 [[nodiscard]] std::vector<std::string>
 update_lines(const Store& store, const Evaluated& evaluated, UseRebuilds rebuilds,
              bool held = false, bool table = false, const Targets& targets = {},

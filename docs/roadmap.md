@@ -513,9 +513,14 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     on every scenario, and the `waits` scenario for every kind): the same direct edges with the
     same kinds but for `||` alternatives emerge did not choose, a superset of what it reaches
     through installed packages, and egraph's order keeping every wait emerge's order keeps.
-  - 16k1b: the uninstalls' places: before the merge whose blocker needs them, or after it where
-    emerge reverses the edge to install both at once, held to the scheduler graph's uninstall
-    nodes.
+  - 16k1b (done): the uninstalls' places: each waits for every merge whose blocker needs it
+    gone (egraph kept only the first), in `-t`. emerge never uninstalls first: a merge cannot go
+    while an uninstall is in its way, and the uninstall is only ever scheduled by reversing that
+    edge, the two installed at once until it runs, straight after them as emerge prefers an
+    uninstall (a strong blocker on the running root never gets that far, and is a block).
+    Held to the scheduler graph's uninstall nodes in emerge's merge list (`test_waits.py`), the
+    `blockers` scenario now with one uninstall two merges need, one blocking it and one it
+    blocks.
   - 16k2: a worker builds and merges one package; its vdb entry and image compared with
     `emerge -1`'s.
   - 16k3: a whole plan run one build at a time, blockers and uninstalls included; the final

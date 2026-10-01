@@ -538,6 +538,24 @@ TEST_CASE("updates list uninstalls and blocks after the merges") {
                        "1 upgrade, 1 new, 2 uninstalls, 1 blocker\n");
 }
 
+TEST_CASE("the table lists the merges each uninstall waits for") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{
+                              "1\t\ta/new-1\tnew\ta/new-1\tgentoo",
+                              "2\t1r\ta/user-1\tupgrade\ta/user-2\tgentoo",
+                              "\t1 2\ta/old-1\tuninstall\ta/new-1\t!a/old\ta/old-1",
+                          },
+                          plain, true);
+    CHECK(out.str() == "1 N a/new   1      ::gentoo\n"
+                       "2 U a/user  1 > 2  ::gentoo  w 1\n"
+                       "\n"
+                       "Uninstalled\n"
+                       "- a/old-1  blocked by a/new-1 !a/old  w 1 2\n"
+                       "\n"
+                       "1 upgrade, 1 new, 1 uninstall\n");
+}
+
 TEST_CASE("updates end with the dependencies nothing satisfies") {
     const std::vector<std::string> records{
         "a/upd-1\tupgrade\ta/upd-2\tgentoo",

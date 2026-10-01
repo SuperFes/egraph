@@ -266,6 +266,39 @@ TEST_CASE("emerge's completed graph keeps what it reaches, through every kind") 
                                    "block app-misc/fresh-1 !app-misc/x app-misc/x-1"});
 }
 
+TEST_CASE("an uninstall waits for every merge whose blocker needs it gone") {
+    // "uninstall cpv: merge cpv..." per uninstall.
+    const auto waits = [](const egraph::test::System& system) {
+        const auto plan = egraph::plan_updates(system.store, system.evaluated,
+                                               egraph::UseRebuilds::none, world());
+        std::vector<std::string> lines;
+        for (const auto& each : plan.uninstalls) {
+            auto line = std::format(
+                "uninstall {}:", system.store.string(system.store.packages.at(each.package).cpv));
+            for (const auto merge : each.after) {
+                line += std::format(
+                    " {}",
+                    system.evaluated.string(
+                        system.evaluated.candidates.at(plan.merges.at(merge).candidate).cpv));
+            }
+            lines.push_back(std::move(line));
+        }
+        return lines;
+    };
+    CHECK(waits(renamed("!app-misc/old", {"app-misc/user"})) ==
+          std::vector<std::string>{"uninstall app-misc/old-1: app-misc/new-1"});
+    // holder-1 blocks the merge top-2 pulls in, and top-2 blocks holder-1.
+    const auto both = make_system(
+        {Installed{.cpv = "app-misc/holder-1", .deps = {{"RDEPEND", "!app-misc/fresh"}}},
+         Installed{.cpv = "app-misc/top-1"}},
+        {Available{.cpv = "app-misc/fresh-1"}, Available{.cpv = "app-misc/top-1"},
+         Available{.cpv = "app-misc/top-2",
+                   .deps = {{"RDEPEND", "app-misc/fresh !app-misc/holder"}}}},
+        {"app-misc/top"});
+    CHECK(waits(both) ==
+          std::vector<std::string>{"uninstall app-misc/holder-1: app-misc/top-2 app-misc/fresh-1"});
+}
+
 TEST_CASE("a blocker between two merges is a block") {
     const auto system =
         make_system({}, {Available{.cpv = "app-misc/a-1", .deps = {{"RDEPEND", "!app-misc/b"}}},
@@ -301,6 +334,13 @@ TEST_CASE("update lines end with the uninstalls, then the blocks") {
               "app-misc/user-1\tupgrade\tapp-misc/user-2\ttest_repo",
               "app-misc/new-1\tnew\tapp-misc/new-1\ttest_repo\t\tapp-misc/user-2 app-misc/new",
               "app-misc/old-1\tuninstall\tapp-misc/new-1\t!app-misc/old\tapp-misc/old-1"});
+    // In the table, after the place of the merge it waits for.
+    const auto moved_table = egraph::update_lines(moved.store, moved.evaluated,
+                                                  egraph::UseRebuilds::none, false, true, world());
+    REQUIRE(moved_table.size() == 3);
+    CHECK(moved_table.at(0).starts_with("1\t\tapp-misc/new-1\t"));
+    CHECK(moved_table.back() ==
+          "\t1\tapp-misc/old-1\tuninstall\tapp-misc/new-1\t!app-misc/old\tapp-misc/old-1");
     const auto kept = renamed("!app-misc/old", {"app-misc/user", "app-misc/old"});
     const auto table = egraph::update_lines(kept.store, kept.evaluated, egraph::UseRebuilds::none,
                                             false, true, world());

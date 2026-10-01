@@ -952,6 +952,12 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     if (table) {
         for (std::size_t i = 0; i < rows.size(); ++i) {
             auto& row = rows.at(i);
+            // An uninstall waits for merges in any place, and lists them after its own fields.
+            if (row.size() > 3 && row.at(3) == "uninstall") {
+                places.at(i) = {row.at(0), std::string(row.at(1))};
+                row.erase(row.begin(), row.begin() + 2);
+                continue;
+            }
             places.at(i) = {row.at(0), earlier_places(row.at(0), row.at(1))};
             row.erase(row.begin(), row.begin() + 2);
             place_width = std::max(place_width, places.at(i).first.size());
@@ -989,6 +995,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     // Uninstalls, blocks, unsatisfied dependencies and unmet REQUIRED_USE, taken off: they share
     // no columns with the merges.
     std::vector<Fields> uninstalls;
+    std::vector<std::string> uninstall_waits;
     std::vector<Fields> blocks;
     std::vector<Fields> unsatisfied;
     std::vector<Fields> unmet;
@@ -1005,10 +1012,14 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                      : kind == "required-use" ? unmet
                                               : use_changes;
         into.push_back(std::move(rows.at(i)));
+        if (kind == "uninstall") {
+            uninstall_waits.push_back(std::move(places.at(i).second));
+        }
         rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
         places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
     }
     std::ranges::reverse(uninstalls);
+    std::ranges::reverse(uninstall_waits);
     std::ranges::reverse(blocks);
     std::ranges::reverse(unsatisfied);
     std::ranges::reverse(unmet);
@@ -1213,7 +1224,8 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             width = std::max(width, row.at(0).size());
         }
         out << '\n' << paint("Uninstalled", Tone::heading) << '\n';
-        for (const auto& row : uninstalls) {
+        for (std::size_t i = 0; i < uninstalls.size(); ++i) {
+            const auto& row = uninstalls.at(i);
             out << paint(glyph.orphan, Tone::bad) << ' ' << paint_cpv(row.at(0), paint)
                 << spaces(row.at(0).size(), width) << "  ";
             // Blocked by a merge, or blocking one itself.
@@ -1223,6 +1235,9 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             } else {
                 out << paint("blocked by", Tone::note) << ' ';
                 put_blocker(row.at(2), row.at(3));
+            }
+            if (const auto& waits = uninstall_waits.at(i); !waits.empty()) {
+                out << "  " << paint(glyph.waiting, Tone::note) << ' ' << paint(waits, Tone::count);
             }
             out << '\n';
         }

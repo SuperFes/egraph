@@ -112,6 +112,10 @@ struct Block {
 struct Uninstall {
     std::uint32_t package = 0;
     Block why;
+    // Indices into Plan::merges, sorted: each merge whose blocker needs it gone. It goes once
+    // they are all merged, the two installed at once meanwhile, as emerge reverses the blocker's
+    // edge rather than uninstall first; and straight after, as emerge prefers an uninstall.
+    std::vector<std::uint32_t> after;
 };
 
 // A dependency nothing visible satisfies.

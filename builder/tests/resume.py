@@ -32,6 +32,9 @@ class Scheduled(NamedTuple):
     through: frozenset
     # cpv -> the USE emerge merges it with.
     use: dict
+    # Installed cpv uninstalled -> the cpvs of the merges it waits for. A replaced version's
+    # uninstall, which emerge drops for the merge, is left out.
+    uninstalls: dict
 
 
 def resume_depgraph(trees, eroot, entry):
@@ -99,9 +102,11 @@ def letters(priorities):
 def scheduled(trees, eroot, entry):
     """The scheduler graph emerge --resume would run entry by, between its merges: as
     schedulerGraph() makes it, with the implicit libc waits it adds."""
+    from _emerge.Package import Package
+
     success, depgraph, _, tasks = resume_depgraph(trees, eroot, entry)
     if not success:
-        return Scheduled(False, (), {}, frozenset(), {})
+        return Scheduled(False, (), {}, frozenset(), {}, {})
     graph = depgraph._dynamic_config._scheduler_graph
     merged = set(merges_in(tasks))
     explicit = {
@@ -146,6 +151,13 @@ def scheduled(trees, eroot, entry):
         edges,
         frozenset(through),
         {str(pkg.cpv): frozenset(pkg.use.enabled) for pkg in merged},
+        {
+            str(pkg.cpv): frozenset(
+                str(child.cpv) for child in graph.child_nodes(pkg) if child in merged
+            )
+            for pkg in tasks
+            if isinstance(pkg, Package) and pkg.operation == "uninstall"
+        },
     )
 
 
