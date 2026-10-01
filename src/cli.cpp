@@ -135,7 +135,7 @@ template <class C> void add_updates_options(CLI::App* sub, Invocation& invocatio
         },
         "Also the rebuilds emerge --changed-use makes for changed USE");
     // An action always verifies.
-    if constexpr (std::is_same_v<C, Updates>) {
+    if constexpr (!std::is_same_v<C, Update>) {
         sub->add_flag_callback(
             "--verify", [updates] { updates().verify = true; },
             "Also ask emerge --pretend, and show where its merge list differs");
@@ -1164,6 +1164,22 @@ void show_notices(const Notices& notices, const Invocation& invocation, std::ost
     }
 }
 
+// The notices, set apart from what a run printed before them; nullopt, said on err, when they
+// could not be read.
+std::optional<Notices> show_notices_after(std::string_view name, const Invocation& invocation,
+                                          std::ostream& out, std::ostream& err) {
+    auto notices = read_notices(invocation);
+    if (!notices) {
+        err << "egraph: " << name << ": the notices could not be read: " << notices.error() << '\n';
+        return std::nullopt;
+    }
+    if (output(invocation).human && !notice_lines(*notices).empty()) {
+        out << '\n';
+    }
+    show_notices(*notices, invocation, out);
+    return std::move(*notices);
+}
+
 Exit execute(const Install& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err);
 
@@ -1171,16 +1187,8 @@ Exit execute(const Install& command, Session& session, const Invocation& invocat
 // rebuild of what uses preserved libraries planned and offered, once.
 void follow_up(std::string_view name, bool yes, Session& session, const Invocation& invocation,
                std::ostream& out, std::ostream& err) {
-    const auto notices = read_notices(invocation);
-    if (!notices) {
-        err << "egraph: " << name << ": the notices could not be read: " << notices.error() << '\n';
-        return;
-    }
-    if (output(invocation).human && !notice_lines(*notices).empty()) {
-        out << '\n';
-    }
-    show_notices(*notices, invocation, out);
-    if (yes || !invocation.ask) {
+    const auto notices = show_notices_after(name, invocation, out, err);
+    if (!notices || yes || !invocation.ask) {
         return;
     }
     if (!notices->config.empty() && answered_yes(std::cin, out, "Run dispatch-conf now?")) {
@@ -1219,6 +1227,29 @@ Exit execute(const NoticesCommand&, Session&, const Invocation& invocation, std:
     }
     show_notices(*notices, invocation, out);
     return Exit::ok;
+}
+
+Exit execute(const Sync& command, Session& session, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    out << std::flush;
+    const auto ran = os::run(sync_command(invocation));
+    // The repositories that synced before a failure count too.
+    session.reload();
+    if (output(invocation).human) {
+        out << '\n';
+    }
+    const auto status =
+        execute(static_cast<const Updates&>(command), session, invocation, out, err);
+    std::ignore = show_notices_after(Sync::name, invocation, out, err);
+    if (!ran) {
+        err << "egraph: " << Sync::name << ": " << ran.error().message << '\n';
+        return Exit::failure;
+    }
+    if (*ran != 0) {
+        err << "egraph: " << Sync::name << ": emaint exited with status " << *ran << '\n';
+        return Exit::failure;
+    }
+    return status;
 }
 
 // An action: the plan show() shows, verified against emerge --pretend, confirmed, and emerge run
@@ -1785,6 +1816,10 @@ void configure(CLI::App& app, Invocation& invocation) {
                    "in PATH)")
         ->type_name("COMMAND")
         ->envname("EGRAPH_DISPATCH_CONF");
+    app.add_option("--emaint", invocation.emaint,
+                   "emaint command that sync runs (default: emaint in PATH)")
+        ->type_name("COMMAND")
+        ->envname("EGRAPH_EMAINT");
     app.add_flag("--no-refresh", invocation.no_refresh,
                  "Answer from a stale store instead of rebuilding it");
     app.add_option("--layout", invocation.layout,
@@ -1921,6 +1956,11 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->type_name("PACKAGE")
         ->required();
     add_yes<Deselect>(deselect_cmd, invocation);
+    add_updates_options<Sync>(
+        add_dynamic_deps(add_command<Sync>(
+            app, invocation,
+            "Have emaint sync the repositories, then show the updates and the notices")),
+        invocation);
 
     CLI::App* export_cmd = add_command<Export>(app, invocation, "Export part of the graph");
     add_field(export_cmd, invocation, "--format", &Export::format, "Output format")
@@ -2033,6 +2073,26 @@ void add_roots(std::vector<std::string>& argv, const Invocation& invocation) {
     }
 }
 
+// argv under the invocation's roots, for a portage tool that takes them from the environment only.
+std::vector<std::string> with_environment_roots(const Invocation& invocation,
+                                                std::vector<std::string> argv) {
+    std::vector<std::string> roots;
+    if (invocation.root != "/") {
+        roots.push_back("ROOT=" + invocation.root.string());
+    }
+    if (invocation.config_root) {
+        roots.push_back("PORTAGE_CONFIGROOT=" + invocation.config_root->string());
+    }
+    if (invocation.eprefix) {
+        roots.push_back("PORTAGE_OVERRIDE_EPREFIX=" + invocation.eprefix->string());
+    }
+    if (!roots.empty()) {
+        roots.insert(roots.begin(), "env");
+        argv.insert(argv.begin(), roots.begin(), roots.end());
+    }
+    return argv;
+}
+
 } // namespace
 
 std::vector<std::string> builder_command(const Invocation& invocation, std::string_view mode,
@@ -2081,23 +2141,12 @@ std::vector<std::string> notices_command(const Invocation& invocation,
 }
 
 std::vector<std::string> dispatch_conf_command(const Invocation& invocation) {
-    std::vector<std::string> roots;
-    if (invocation.root != "/") {
-        roots.push_back("ROOT=" + invocation.root.string());
-    }
-    if (invocation.config_root) {
-        roots.push_back("PORTAGE_CONFIGROOT=" + invocation.config_root->string());
-    }
-    if (invocation.eprefix) {
-        roots.push_back("PORTAGE_OVERRIDE_EPREFIX=" + invocation.eprefix->string());
-    }
-    std::vector<std::string> argv;
-    if (!roots.empty()) {
-        argv.emplace_back("env");
-        argv.insert(argv.end(), roots.begin(), roots.end());
-    }
-    argv.push_back(invocation.dispatch_conf.value_or("dispatch-conf"));
-    return argv;
+    return with_environment_roots(invocation, {invocation.dispatch_conf.value_or("dispatch-conf")});
+}
+
+std::vector<std::string> sync_command(const Invocation& invocation) {
+    return with_environment_roots(invocation,
+                                  {invocation.emaint.value_or("emaint"), "sync", "--auto"});
 }
 
 std::vector<std::string> pending_command(const Invocation& invocation,
@@ -2204,7 +2253,8 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
                                           std::holds_alternative<Install>(command.command) ||
                                           std::holds_alternative<Remove>(command.command) ||
                                           std::holds_alternative<Select>(command.command) ||
-                                          std::holds_alternative<Deselect>(command.command))) {
+                                          std::holds_alternative<Deselect>(command.command) ||
+                                          std::holds_alternative<Sync>(command.command))) {
         return usage("actions run from the command line or the shell");
     }
     if (context == Context::interface) {

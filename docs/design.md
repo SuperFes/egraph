@@ -533,6 +533,15 @@ just above, so the run gets `PORTAGE_ELOG_SYSTEM` without it, but only when the 
 every class echo shows; `egraph-build --emerge-options` decides, as it knows the module classes.
 Without `save_summary`, emerge's own output is left alone.
 
+`sync` runs `emaint sync --auto`, which is what `emerge --sync` runs (package moves and the
+news update included), with the roots in the environment as for `dispatch-conf`. It needs no
+confirmation and no privilege check of egraph's: emaint judges whether it can write each
+repository. The stores reload after it, failed or not, and the updates and notices follow as
+`updates` and `notices` show them, so "what the sync brought" is the plan against the synced
+repositories rather than a difference from the plan before, which would need fresh stores
+before the sync too. A sync replaces the main repository's metadata cache entries along with
+its ebuilds, which is what the evaluated store's freshness check watches there.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

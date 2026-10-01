@@ -252,6 +252,24 @@ TEST_CASE("notices are read, and dispatch-conf runs, under the same roots") {
                                    "PORTAGE_OVERRIDE_EPREFIX=/mnt/prefix", "my-dispatch"});
 }
 
+TEST_CASE("sync takes updates' options and runs emaint under the same roots") {
+    const auto sync = std::get<egraph::Sync>(parse("sync -D --world --verify").command);
+    CHECK(sync.deep);
+    CHECK(sync.world);
+    CHECK(sync.verify);
+    CHECK_FALSE(parse("sync --dynamic-deps n").dynamic_deps);
+    CHECK_THROWS(parse("sync -y"));
+    CHECK(parse("--emaint /bin/true sync").emaint == "/bin/true");
+    egraph::Invocation invocation;
+    CHECK(egraph::sync_command(invocation) == std::vector<std::string>{"emaint", "sync", "--auto"});
+    invocation.emaint = "my-emaint";
+    invocation.config_root = "/mnt/config";
+    // emaint takes its roots from the environment only.
+    CHECK(egraph::sync_command(invocation) ==
+          std::vector<std::string>{"env", "PORTAGE_CONFIGROOT=/mnt/config", "my-emaint", "sync",
+                                   "--auto"});
+}
+
 TEST_CASE("dependency queries take emerge's --dynamic-deps, on by default") {
     for (const auto* command :
          {"deps a/b", "rdeps a/b", "why a/b", "orphans", "broken", "blockers", "affected"}) {

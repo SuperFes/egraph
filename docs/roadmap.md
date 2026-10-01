@@ -479,7 +479,10 @@ use, egraph schedules the merges itself.
     output, and offered after an action.
   - 16g3 (done): the elog summary after a run, read from the log `save_summary` appends to while emerge
     runs, emerge's own echo of it left out then.
-- 16h: `sync`: `emaint sync -a`, then what the sync brought: new updates, news.
+- 16h (done): `sync`: `emaint sync -a`, then what the sync brought: the updates, as `updates`
+  shows them with the same options, and the notices, the news the sync marked unread among
+  them; both after a failed sync too. `test_actions.py` syncs a playground by rsync from a
+  mirror through the real emaint.
 - 16i: a repository index from the builder (every cp, its description, versions per slot,
   keywords and masks), incremental on sync; search across the repositories, and pages for
   packages not installed. Shell completion answered from it by a hidden `egraph complete`, which

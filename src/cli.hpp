@@ -160,6 +160,12 @@ struct Deselect {
     bool yes = false;
 };
 
+// emaint sync --auto, then the updates the repositories now offer, shown as updates shows them,
+// and the notices.
+struct Sync : Updates {
+    static constexpr std::string_view name = "sync";
+};
+
 // What needs the user once emerge has run: configuration updates waiting, unread news.
 struct NoticesCommand {
     static constexpr std::string_view name = "notices";
@@ -212,8 +218,8 @@ struct Affected {
 
 using Command =
     std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Blockers, Orphans,
-                 Updates, PlanCommand, Update, Install, Remove, Select, Deselect, NoticesCommand,
-                 Export, Stats, Rebuild, Refresh, Check, Tui, Shell, Affected>;
+                 Updates, PlanCommand, Update, Install, Remove, Select, Deselect, Sync,
+                 NoticesCommand, Export, Stats, Rebuild, Refresh, Check, Tui, Shell, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.
@@ -233,6 +239,8 @@ struct Invocation {
     std::optional<std::string> emerge;
     // Offered after an action leaves configuration updates; unset, the dispatch-conf in PATH.
     std::optional<std::string> dispatch_conf;
+    // Run by sync; unset, the emaint in PATH.
+    std::optional<std::string> emaint;
     bool no_refresh = false;
     // emerge --dynamic-deps: dependency queries read an installed package's dependencies from its
     // ebuild when the same version is still in its repository (the evaluated store).
@@ -334,6 +342,10 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
 
 // The dispatch-conf command line, under the invocation's roots.
 [[nodiscard]] std::vector<std::string> dispatch_conf_command(const Invocation& invocation);
+
+// The emaint command line that syncs the repositories set to auto-sync, under the invocation's
+// roots.
+[[nodiscard]] std::vector<std::string> sync_command(const Invocation& invocation);
 
 // The emerge command line that pretends to carry out request under the invocation's roots.
 [[nodiscard]] std::vector<std::string> emerge_command(const Invocation& invocation,

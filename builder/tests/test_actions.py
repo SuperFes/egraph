@@ -1,5 +1,6 @@
 """update and install: the plan shown, verified, confirmed, and merged by the real emerge."""
 
+import datetime
 import json
 import os
 import shlex
@@ -10,6 +11,7 @@ import sys
 import portage
 import portage.const
 import pytest
+from portage.const import TIMESTAMP_FORMAT
 
 from test_build import age, vdb
 from test_refresh import on_terminal
@@ -50,6 +52,16 @@ def script(path, body):
     return str(path)
 
 
+def portage_program(name):
+    """The command line running one of portage's programs, the tested portage's."""
+    program = os.path.join(portage.const.PORTAGE_BIN_PATH, name)
+    if os.path.exists(program):
+        return f"{shlex.quote(sys.executable)} {shlex.quote(program)}"
+    # An installed portage keeps them in PATH only, behind its own interpreter.
+    path = os.pathsep.join((os.environ.get("PATH", ""), "/usr/sbin", "/usr/bin"))
+    return shlex.quote(shutil.which(name, path=path))
+
+
 class System:
     """A playground real merges can happen in, with an emerge that logs each run's arguments
     and a builder for egraph to refresh its stores with."""
@@ -87,18 +99,16 @@ class System:
             f"export {name}={shlex.quote(value)}\n"
             for name, value in environment.items()
         )
-        program = os.path.join(portage.const.PORTAGE_BIN_PATH, "emerge")
-        # An installed portage keeps emerge in PATH only, behind its own interpreter.
-        run = f"{shlex.quote(sys.executable)} {shlex.quote(program)}"
-        if not os.path.exists(program):
-            run = shlex.quote(shutil.which("emerge"))
         log = shlex.quote(str(self.runs))
         # Each run's arguments on a line of their own.
         body = f'echo "$*" >> {log}\n'
         if pretend is not None:
             body += f'case " $* " in *" --pretend "*) {pretend} ;; esac\n'
-        body += f'{exports}exec {run} "$@"\n'
+        body += f'{exports}exec {portage_program("emerge")} "$@"\n'
         self.emerge = script(tmp_path / "emerge", body)
+        self.emaint = script(
+            tmp_path / "emaint", f'{exports}exec {portage_program("emaint")} "$@"\n'
+        )
         # Under emerge's EPREFIX, as on a real system: the build root (and so the elog
         # summary's place) comes from it.
         self.builder = script(
@@ -122,6 +132,8 @@ class System:
             self.builder,
             "--emerge",
             self.emerge,
+            "--emaint",
+            self.emaint,
             "--color",
             "never",
             *args,
@@ -188,9 +200,15 @@ def system(gnupg_home, tmp_path):
 
     made = []
 
-    def make(pretend=None, removable=False, make_conf=()):
+    def make(pretend=None, removable=False, make_conf=(), mirror=None, ebuilds=None):
+        # test_repo syncs from mirror, by rsync.
+        repos_conf = (
+            ()
+            if mirror is None
+            else ("[test_repo]", "sync-type = rsync", f"sync-uri = file://{mirror}")
+        )
         playground = ResolverPlayground(
-            ebuilds={**EBUILDS, **REMOVABLE},
+            ebuilds={**EBUILDS, **REMOVABLE, **(ebuilds or {})},
             installed={**INSTALLED, **REMOVABLE} if removable else INSTALLED,
             world=(
                 ["app-misc/a", "app-misc/user", "app-misc/leaf"]
@@ -198,7 +216,11 @@ def system(gnupg_home, tmp_path):
                 else ["app-misc/a"]
             ),
             user_config={
-                "make.conf": ('EMERGE_DEFAULT_OPTS="--jobs 2 --ask --deep"', *make_conf)
+                "make.conf": (
+                    'EMERGE_DEFAULT_OPTS="--jobs 2 --ask --deep"',
+                    *make_conf,
+                ),
+                "repos.conf": repos_conf,
             },
         )
         made.append(playground)
@@ -452,6 +474,58 @@ def test_on_a_terminal_dispatch_conf_is_offered(system, answer):
         assert not dispatched.exists()
         return
     assert f"PORTAGE_CONFIGROOT={machine.playground.eroot}" in dispatched.read_text()
+
+
+def test_sync_shows_what_the_repositories_now_offer(system, tmp_path):
+    """sync: emaint brings a new version and a news item from the mirror; the updates and the
+    notices follow, from stores refreshed for the sync."""
+    if shutil.which("rsync") is None:
+        pytest.skip("rsync: command not found")
+    mirror = tmp_path / "mirror"
+    # The mirror has a-3, with its digest and metadata cache entry; the system's repository
+    # does not yet.
+    machine = system(mirror=mirror, ebuilds={"app-misc/a-3": PLAIN})
+    repo = machine.playground.settings.repositories["test_repo"].location
+    shutil.copytree(repo, mirror, symlinks=True)
+    os.remove(os.path.join(repo, "app-misc/a/a-3.ebuild"))
+    os.remove(os.path.join(repo, "metadata/md5-cache/app-misc/a-3"))
+    age(repo)
+    item = "2026-09-01-read-me"
+    os.makedirs(mirror / "metadata/news" / item)
+    (mirror / "metadata/news" / item / f"{item}.en.txt").write_text(NEWS)
+    (mirror / "metadata/timestamp.chk").write_text(
+        datetime.datetime.now(datetime.timezone.utc).strftime(TIMESTAMP_FORMAT) + "\n"
+    )
+    assert "app-misc/a-3" not in machine.egraph("updates").stdout
+    result = machine.egraph("sync")
+    assert result.returncode == 0, result.stdout + result.stderr
+    updates = machine.egraph("--no-refresh", "updates")
+    assert "app-misc/a-3" in updates.stdout
+    assert result.stdout.endswith(
+        updates.stdout + f"{item}\tnews\ttest_repo\tRead me\n"
+    )
+    human = machine.egraph("--layout", "human", "sync")
+    assert human.returncode == 0, human.stdout + human.stderr
+    assert "app-misc/a  1 → 3" in human.stdout
+    assert human.stdout.endswith(
+        f"Unread news (eselect news read):\n  {item}  Read me\n"
+    )
+
+
+def test_a_failed_sync_still_shows_the_updates(system):
+    machine = system()
+    ran = machine.tmp_path / "ran"
+    machine.emaint = script(
+        machine.tmp_path / "failing-emaint",
+        f'echo "$*" > {ran}; env >> {ran}; exit 3\n',
+    )
+    result = machine.egraph("sync")
+    assert result.returncode == 1
+    assert "egraph: sync: emaint exited with status 3" in result.stderr
+    assert "app-misc/a-2" in result.stdout
+    called = ran.read_text().splitlines()
+    assert called[0] == "sync --auto"
+    assert f"PORTAGE_CONFIGROOT={machine.playground.eroot}" in called
 
 
 def test_nothing_needs_attention(system):

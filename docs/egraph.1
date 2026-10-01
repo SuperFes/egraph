@@ -95,6 +95,18 @@ else the one in
 It takes the roots from
 .BR ROOT ", " PORTAGE_CONFIGROOT " and " PORTAGE_OVERRIDE_EPREFIX .
 .TP
+.BI \-\-emaint " command"
+The
+.B emaint
+that
+.B sync
+runs (default
+.BR $EGRAPH_EMAINT ,
+else the one in
+.BR PATH ),
+with the roots in the environment as for
+.BR dispatch\-conf .
+.TP
 .B \-\-no\-refresh
 Answer from a stale store instead of bringing it up to date.
 .TP
@@ -486,6 +498,37 @@ removes them; nothing is merged or removed.
 .TP
 .BR \-y ", " \-\-yes
 Run emerge without asking.
+.SS sync
+.B emaint sync \-\-auto
+syncs the repositories set to auto-sync, as
+.B emerge \-\-sync
+does, and the stores are refreshed; then the updates, as
+.B updates
+shows them with the same options, and the notices, the news the sync brought among them.
+Whether the repositories can be written is for
+.B emaint
+to judge: syncing as a user who cannot fails there. The updates and notices follow a failed
+sync too, for the repositories that synced; the exit status is then 1.
+.TP
+.B \-\-dynamic\-deps
+.TP
+.B \-\-held
+.TP
+.BR \-t ", " \-\-table
+.TP
+.B \-\-tree
+.TP
+.B \-\-world
+.TP
+.BR \-D ", " \-\-deep
+.TP
+.BR \-N ", " \-\-newuse
+.TP
+.BR \-U ", " \-\-changed\-use
+.TP
+.B \-\-verify
+As for
+.BR updates .
 .SS notices
 What needs attention once
 .B emerge
@@ -560,10 +603,11 @@ standard input).
 Defaults for
 .BR \-\-root ", " \-\-config\-root " and " \-\-eprefix .
 .TP
-.BR EGRAPH_STORE ", " EGRAPH_BUILD ", " EGRAPH_EMERGE ", " EGRAPH_DISPATCH_CONF ", " EGRAPH_LAYOUT ,
-.B EGRAPH_GLYPHS
+.BR EGRAPH_STORE ", " EGRAPH_BUILD ", " EGRAPH_EMERGE ", " EGRAPH_DISPATCH_CONF ", " EGRAPH_EMAINT ,
+.BR EGRAPH_LAYOUT ", " EGRAPH_GLYPHS
 Defaults for
-.BR \-\-store ", " \-\-builder ", " \-\-emerge ", " \-\-dispatch\-conf ", " \-\-layout " and " \-\-glyphs .
+.BR \-\-store ", " \-\-builder ", " \-\-emerge ", " \-\-dispatch\-conf ", " \-\-emaint ,
+.BR \-\-layout " and " \-\-glyphs .
 .TP
 .B NO_COLOR
 When set and not empty, no colour unless
