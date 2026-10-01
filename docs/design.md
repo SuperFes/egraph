@@ -391,6 +391,12 @@ the changed flags. The plan keeps the changed store for its output, and is refus
 or installed, `>=cpv:slot` unless in its slot, else `=cpv`). The builder reaches what such a
 change could pull in: a candidate's tokens reduced with the flags the reached atoms' USE
 dependencies ask of its cp.
+`--verify` compares the changes emerge asks for (package and flags, as sets: emerge prints a
+set's order) and nothing else then, since emerge's merge list may predate some of them. Run from
+a terminal, `plan` and `updates` offer to write the lines (`package_use_text`, the "# required
+by" comments included) to `package.use`, or `package.use/zz-autounmask` when it is a directory,
+and on yes reload the session, so the stores refresh for the changed configuration, and plan
+again. Shell and interface lines never ask: their standard input is the shell's.
 
 `updates --world` plans `emerge -uD @world` instead (roadmap 12c): the packages depclean keeps
 are in scope, and one outside keeps its version while its dependencies weigh nothing. emerge's

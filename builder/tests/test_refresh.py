@@ -222,3 +222,87 @@ def test_plan_refuses_a_name_no_repository_knows(repository_system):
     assert result.returncode == 1
     assert "nowhere: no package by that name in the repositories" in result.stderr
     assert evaluations(repository_system) == []
+
+
+def on_terminal(command, answer, env):
+    """Runs command on a pseudo-terminal, answering its [y/N] question with answer: (status,
+    everything it printed, ANSI codes stripped)."""
+    import pty
+    import re
+    import select
+
+    master, slave = pty.openpty()
+    process = subprocess.Popen(
+        command, stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True
+    )
+    os.close(slave)
+    printed = b""
+    answered = False
+    while True:
+        ready, _, _ = select.select([master], [], [], 120)
+        if not ready:
+            process.kill()
+            break
+        try:
+            chunk = os.read(master, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        printed += chunk
+        if not answered and b"[y/N]" in printed:
+            os.write(master, answer.encode() + b"\n")
+            answered = True
+    os.close(master)
+    status = process.wait()
+    text = re.sub(r"\x1b\[[0-9;]*m", "", printed.decode(errors="replace"))
+    return status, text.replace("\r\n", "\n")
+
+
+@pytest.mark.parametrize("answer", ["y", "n"])
+def test_use_changes_are_written_on_yes_and_planned_again(
+    mutable_playground, tmp_path, answer
+):
+    """On a terminal, plan offers to write the USE changes it needs to package.use; on yes it
+    writes them and plans again on stores refreshed for them, which need none."""
+    playground = mutable_playground("usechange")
+    age(playground.eroot)
+    builder = tmp_path / "egraph-build"
+    builder.write_text(
+        "#!/bin/sh\n"
+        f'PYTHONPATH="{BUILDER_DIR}:{PORTAGE_LIB}" exec "{sys.executable}" -m egraph_build "$@"\n'
+    )
+    builder.chmod(0o755)
+    command = [
+        EGRAPH,
+        "--store",
+        str(tmp_path / "installed.egraph"),
+        "--config-root",
+        playground.eroot,
+        "--eprefix",
+        playground.eprefix,
+        "--builder",
+        str(builder),
+        "--color",
+        "never",
+        "plan",
+        "app-misc/wantgtk",
+    ]
+    status, printed = on_terminal(command, answer, dict(os.environ, EGRAPH_STRICT="1"))
+    path = os.path.join(playground.eroot, "etc", "portage", "package.use")
+    assert ">=dev-libs/lib-2 gtk\n" in printed
+    assert f"Write the USE changes to {path}? [y/N]" in printed
+    if answer == "n":
+        assert status == 6, printed
+        assert not os.path.exists(path)
+        return
+    assert status == 0, printed
+    with open(path) as written:
+        assert written.read() == (
+            "# required by app-misc/wantgtk-1::test_repo\n"
+            "# required by app-misc/wantgtk (argument)\n"
+            ">=dev-libs/lib-2 gtk\n"
+        )
+    again = printed.split("planning again.\n", 1)[1]
+    assert "USE changes needed" not in again
+    assert "dev-libs/gtkdep" in again

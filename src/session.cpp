@@ -135,6 +135,14 @@ std::expected<std::shared_ptr<const Stores>, std::string> Session::shared_stores
     return stores_;
 }
 
+void Session::reload() {
+    stores_.reset();
+    installed_.reset();
+    dynamic_.reset();
+    graphs_ = {};
+    depclean_ = {};
+}
+
 void Session::adopt(std::shared_ptr<const Stores> stores, std::filesystem::path used) {
     stores_ = std::move(stores);
     used_ = std::move(used);

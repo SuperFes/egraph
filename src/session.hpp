@@ -61,6 +61,10 @@ class Session {
     // the build or the load failed.
     [[nodiscard]] std::optional<std::string> evaluate(std::span<const std::string> cps);
 
+    // Forgets the stores, so the next call loads them again, refreshing them if stale (after a
+    // configuration change, say); every reference this returned goes.
+    void reload();
+
     // Sends later warnings to warnings instead.
     void warn_to(std::ostream& warnings EGRAPH_KEPT_BY_THIS) { warnings_ = warnings; }
 

@@ -200,12 +200,18 @@ struct Invocation {
     bool utf8 = false;
     // Standard input is a terminal, so the shell prompts.
     bool input_terminal = false;
+    // A command may ask a question on standard input: one given on the command line with both
+    // ends a terminal, never a shell or interface line.
+    bool ask = false;
     // Where the running egraph is, and the user's cache directory ($XDG_CACHE_HOME, or
     // ~/.cache), which main fills in.
     std::filesystem::path program_dir;
     std::optional<std::filesystem::path> cache_home;
     Command command;
 };
+
+// Asks question on out and reads the answer from in: yes only for y or yes; a closed input is no.
+[[nodiscard]] bool answered_yes(std::istream& in, std::ostream& out, std::string_view question);
 
 // The layout, colouring and glyphs an invocation resolves to. Lines are never coloured.
 struct Style {

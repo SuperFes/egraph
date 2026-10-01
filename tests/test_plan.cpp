@@ -1425,3 +1425,12 @@ TEST_CASE("an installed build a USE dependency accepts holds an update back, wit
                egraph::Targets{.scope = {}, .roots = true, .deep = true}) ==
           std::vector<std::string>{"dev-libs/gcr-1 held <- app-misc/keyring-1 dev-libs/gcr[gtk]"});
 }
+
+TEST_CASE("an argument's USE dependencies take a USE change over an installed version") {
+    const auto system = make_system({{.cpv = "dev-libs/lib-1", .iuse = "gtk qt"}},
+                                    {{.cpv = "dev-libs/lib-1", .iuse = "gtk qt"},
+                                     {.cpv = "dev-libs/lib-2", .iuse = "gtk qt"}});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"dev-libs/lib[gtk]"})) ==
+          std::vector<std::string>{"dev-libs/lib-1 -> dev-libs/lib-2",
+                                   "use dev-libs/lib-2 gtk <- dev-libs/lib[gtk]"});
+}

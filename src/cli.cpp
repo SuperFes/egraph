@@ -14,6 +14,7 @@
 #include "human.hpp"
 #include "json.hpp"
 #include "os.hpp"
+#include "package_use.hpp"
 #include "pressure.hpp"
 #include "request.hpp"
 #include "session.hpp"
@@ -536,7 +537,8 @@ Exit verify(const Invocation& invocation, std::string_view command, const Emerge
     // emerge prints the list before refusing it for blockers it cannot resolve, and names what
     // it cannot satisfy.
     const auto listed = parse_pretend(printed ? *printed : printed.error(), !printed);
-    if (!printed && listed.blocks.empty() && listed.unsatisfied.empty() && listed.unmet.empty()) {
+    if (!printed && listed.blocks.empty() && listed.unsatisfied.empty() && listed.unmet.empty() &&
+        listed.use_changes.empty()) {
         // emerge explains itself at length; its last lines say why.
         constexpr std::size_t shown = 20;
         std::string_view text = printed.error();
@@ -747,6 +749,31 @@ Exit execute(const Orphans& command, Session& session, const Invocation& invocat
     return Exit::failure;
 }
 
+// When the invocation may ask, offers to write the plan's USE changes to package.use; once they
+// are, replan runs the command again, asking nothing, on stores refreshed for them.
+template <typename Replan>
+Exit offer_use_changes(Exit status, const Plan& plan, const Store& store,
+                       const Evaluated& evaluated, Session& session, const Invocation& invocation,
+                       std::ostream& out, std::ostream& err, const Replan& replan) {
+    if (!invocation.ask || plan.use_changes.empty() || !output(invocation).human) {
+        return status;
+    }
+    const auto path = package_use_path(
+        invocation.config_root.value_or(invocation.eprefix.value_or(std::filesystem::path{"/"})));
+    if (!answered_yes(std::cin, out, std::format("Write the USE changes to {}?", path.string()))) {
+        return status;
+    }
+    if (const auto error = append_to_file(path, package_use_text(store, evaluated, plan))) {
+        err << "egraph: " << *error << '\n';
+        return Exit::failure;
+    }
+    out << "Wrote " << path.string() << "; planning again.\n";
+    session.reload();
+    auto again = invocation;
+    again.ask = false;
+    return replan(again);
+}
+
 Exit execute(const Updates& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     // Both stores first, so that the dependencies are read from the same build.
@@ -771,6 +798,9 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
                                  : Targets{.scope = {}, .roots = false, .deep = command.deep};
     targets.running_root = running_root(invocation);
     const auto plan = plan_updates(*store, evaluated, command.rebuilds, targets);
+    const auto replan = [&](const Invocation& again) {
+        return execute(command, session, again, out, err);
+    };
     const auto verified = [&] {
         const EmergeRequest request{.targets = {command.world ? "@world" : "@installed"},
                                     .update = true,
@@ -791,7 +821,8 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
         } else {
             write_lines(out, tree);
         }
-        return verified();
+        return offer_use_changes(verified(), plan, *store, evaluated, session, invocation, out, err,
+                                 replan);
     }
     std::optional<RemedyInputs> remedies;
     if (command.held) {
@@ -816,7 +847,8 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
     } else {
         write_lines(out, lines);
     }
-    return verified();
+    return offer_use_changes(verified(), plan, *store, evaluated, session, invocation, out, err,
+                             replan);
 }
 
 // The request the targets name, the cps only the repositories know evaluated first.
@@ -910,8 +942,12 @@ Exit execute(const PlanCommand& command, Session& session, const Invocation& inv
     } else {
         write_lines(out, lines);
     }
+    const auto replan = [&](const Invocation& again) {
+        return execute(command, session, again, out, err);
+    };
     if (!command.verify) {
-        return finish(Exit::ok, plan);
+        return offer_use_changes(finish(Exit::ok, plan), plan, *store, evaluated, session,
+                                 invocation, out, err, replan);
     }
     const EmergeRequest emerge_request{.targets = command.targets,
                                        .update = command.update,
@@ -919,9 +955,10 @@ Exit execute(const PlanCommand& command, Session& session, const Invocation& inv
                                        .noreplace = command.noreplace,
                                        .rebuilds = command.rebuilds,
                                        .dynamic_deps = invocation.dynamic_deps};
-    return finish(
-        verify(invocation, PlanCommand::name, emerge_request, *store, evaluated, plan, out, err),
-        plan);
+    return offer_use_changes(finish(verify(invocation, PlanCommand::name, emerge_request, *store,
+                                           evaluated, plan, out, err),
+                                    plan),
+                             plan, *store, evaluated, session, invocation, out, err, replan);
 }
 
 Exit execute(const Why& command, Session& session, const Invocation& invocation, std::ostream& out,
@@ -1529,9 +1566,10 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
     if (line == "quit" || line == "exit" || (context == Context::interface && line == "q")) {
         return {.quit = true};
     }
-    // Each line starts from the session's own options and facts.
+    // Each line starts from the session's own options and facts, and asks nothing.
     auto command = invocation;
     command.command = std::monostate{};
+    command.ask = false;
     CLI::App app{"", "egraph"};
     configure(app, command);
     if (line == "help") {
@@ -1601,9 +1639,22 @@ Exit shell(const Invocation& invocation, std::istream& in, std::ostream& out, st
     return run_shell(session, invocation, in, out, err, prompt);
 }
 
+bool answered_yes(std::istream& in, std::ostream& out, std::string_view question) {
+    out << question << " [y/N] " << std::flush;
+    std::string answer;
+    if (!std::getline(in, answer)) {
+        out << '\n';
+        return false;
+    }
+    const auto word = trimmed(answer);
+    return word == "y" || word == "Y" || word == "yes" || word == "Yes" || word == "YES";
+}
+
 Exit run(const Invocation& invocation, std::ostream& out, std::ostream& err) {
     Session session{invocation, err};
-    return dispatch(session, invocation, out, err);
+    auto asking = invocation;
+    asking.ask = invocation.terminal && invocation.input_terminal;
+    return dispatch(session, asking, out, err);
 }
 
 } // namespace egraph

@@ -198,7 +198,17 @@ change must meet. A USE dependency no version meets as it would be built takes t
 emerge's autounmask asks for, on the best version that can take it: the plan is made with it
 and ends with the
 .I package.use
-lines, each with what requires it, and emerge refuses it until they are written.
+lines, each with what requires it, and emerge refuses it until they are written. Run from a
+terminal, with the human layout,
+.BR plan " and " updates
+offer to write them: on yes they are appended to
+.I package.use
+under the configuration root (to
+.I package.use/zz-autounmask
+when that is a directory), and the plan is made again on stores refreshed for them.
+.B \-\-verify
+compares the USE changes emerge asks for, and only them: its merge list then is made before
+some of them.
 .TP
 .B \-\-dynamic\-deps
 .TP

@@ -99,9 +99,14 @@ def test_verified_updates_agree_with_emerge(playgrounds, tmp_path, name, mode):
     )
     if expected.success:
         assert result.returncode == 0, result.stderr
-    elif expected.blocked or expected.unsatisfied or expected.unmet:
+    elif (
+        expected.blocked
+        or expected.unsatisfied
+        or expected.unmet
+        or expected.use_changes
+    ):
         # Refused alike, for the same blockers after the same merge list, for what nothing
-        # satisfies, or for REQUIRED_USE unmet.
+        # satisfies, for REQUIRED_USE unmet, or for the same USE changes.
         assert result.returncode == EXIT_REFUSED, result.stderr
     else:
         assert result.returncode == 1
@@ -182,6 +187,33 @@ def test_verified_required_use_agrees_with_emerge(
     """emerge refuses, for REQUIRED_USE unmet, the version egraph refuses, wherever it selects
     one."""
     system = playgrounds("required")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path, request_all=True)
+    result = egraph(
+        path, "plan", *flags, "--verify", target, emerge=real_emerge(system, tmp_path)
+    )
+    assert result.returncode == status, result.stderr
+
+
+@pytest.mark.parametrize(
+    "flags, target, status",
+    [
+        ([], "app-misc/wantgtk", EXIT_REFUSED),
+        ([], "app-misc/wantnoqt", EXIT_REFUSED),
+        ([], "app-misc/anyof", 0),
+        ([], "app-misc/anyof2", EXIT_REFUSED),
+        ([], "app-misc/wantx", EXIT_REFUSED),
+        ([], "app-misc/wantold", EXIT_REFUSED),
+        ([], "dev-libs/lib[gtk]", EXIT_REFUSED),
+        (["-u"], "app-misc/user", EXIT_REFUSED),
+        (["-u", "-D"], "@world", EXIT_REFUSED),
+    ],
+)
+def test_verified_use_changes_agree_with_emerge(
+    playgrounds, tmp_path, flags, target, status
+):
+    """emerge asks for the USE changes egraph refuses the plan for, written alike."""
+    system = playgrounds("usechange")
     path = tmp_path / "installed.egraph"
     write_stores(system, path, request_all=True)
     result = egraph(

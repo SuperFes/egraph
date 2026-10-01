@@ -112,6 +112,12 @@ std::optional<std::string> refusal(const Store& store, const Evaluated& evaluate
     if (installed || matches_any(store, evaluated, *atom, true)) {
         return std::nullopt;
     }
+    // A USE change can meet its USE dependencies, as emerge's autounmask asks.
+    auto plain = *atom;
+    plain.use.clear();
+    if (!atom->use.empty() && matches_any(store, evaluated, plain, true)) {
+        return std::nullopt;
+    }
     if (matches_any(store, evaluated, *atom, false)) {
         return std::format("{}: every ebuild that matches is masked", text);
     }
@@ -183,6 +189,8 @@ std::vector<bool> request_reach(const Store& store, const Evaluated& evaluated,
     std::set<std::string, std::less<>> cps;
     for (const auto& argument : request.arguments) {
         if (auto atom = parse_atom(argument.atom)) {
+            // What a USE change could have it merge reaches too.
+            atom->use.clear();
             cps.insert(atom->cp);
             atoms.push_back(std::move(*atom));
         }

@@ -18,7 +18,7 @@ egraph::test::System sample() {
                         {.cpv = "dev-libs/apart-1"}},
                        {{.cpv = "app-misc/tool-1"},
                         {.cpv = "app-misc/tool-2"},
-                        {.cpv = "app-misc/fresh-1"},
+                        {.cpv = "app-misc/fresh-1", .iuse = "gtk"},
                         {.cpv = "dev-libs/lib-1"},
                         {.cpv = "dev-python/lib-1"},
                         {.cpv = "app-misc/hidden-1", .visible = false}},
@@ -122,6 +122,11 @@ TEST_CASE("an atom nothing installed or visible matches is refused") {
     CHECK(parse(system, {"!app-misc/tool"}).error().starts_with("!app-misc/tool: "));
     // Installed without an ebuild is enough.
     CHECK(parse(system, {"dev-libs/apart"}));
+    // So is what a USE change could meet; a flag outside IUSE no change meets later.
+    CHECK(parse(system, {"app-misc/fresh[gtk]"}));
+    CHECK(parse(system, {"app-misc/fresh[nope]"}));
+    CHECK(parse(system, {">=app-misc/fresh-2[gtk]"}).error() ==
+          ">=app-misc/fresh-2[gtk]: nothing matches");
 }
 
 TEST_CASE("a request reaches its installed packages and what they depend on") {
@@ -157,5 +162,16 @@ TEST_CASE("a request reaches no further than the versions its atoms accept") {
     const auto any = parse(system, {"app-misc/plain"});
     REQUIRE(any);
     CHECK(egraph::request_reach(system.store, system.evaluated, *any) ==
+          std::vector<bool>{true, true});
+}
+
+TEST_CASE("a request reaches what a USE change could have its atoms merge") {
+    const auto system = make_system(
+        {{.cpv = "dev-libs/lib-1", .iuse = "gtk"}, {.cpv = "dev-libs/idle-1"}},
+        {{.cpv = "dev-libs/lib-1", .iuse = "gtk"},
+         {.cpv = "dev-libs/lib-2", .deps = {{"RDEPEND", "dev-libs/idle"}}, .iuse = "gtk"}});
+    const auto request = parse(system, {"dev-libs/lib[gtk]"});
+    REQUIRE(request);
+    CHECK(egraph::request_reach(system.store, system.evaluated, *request) ==
           std::vector<bool>{true, true});
 }

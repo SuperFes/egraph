@@ -202,6 +202,35 @@ std::optional<std::string> parse_unsatisfied(std::string_view line) {
     return std::nullopt;
 }
 
+// "cpv flags", the flags by name, of a package.use line ">=cpv flags", ">=cpv:slot flags" or
+// "=cpv flags".
+std::optional<std::string> parse_use_change(std::string_view line) {
+    const auto space = line.find(' ');
+    if (space == std::string_view::npos) {
+        return std::nullopt;
+    }
+    auto atom = line.substr(0, space);
+    atom.remove_prefix(atom.starts_with(">=") ? 2 : atom.starts_with('=') ? 1 : 0);
+    atom = atom.substr(0, std::min(atom.find(':'), atom.size()));
+    std::vector<std::string_view> flags;
+    for (auto rest = line.substr(space + 1); !rest.empty();) {
+        const auto end = std::min(rest.find(' '), rest.size());
+        if (end > 0) {
+            flags.push_back(rest.substr(0, end));
+        }
+        rest.remove_prefix(std::min(end + 1, rest.size()));
+    }
+    // emerge lists them in a set's order.
+    std::ranges::sort(flags, [](std::string_view a, std::string_view b) {
+        return a.substr(a.starts_with('-') ? 1 : 0) < b.substr(b.starts_with('-') ? 1 : 0);
+    });
+    std::string change{atom};
+    for (const auto flag : flags) {
+        change += std::format(" {}", flag);
+    }
+    return change;
+}
+
 template <typename T> void sort_unique(std::vector<T>& values) {
     std::ranges::sort(values);
     const auto [first, last] = std::ranges::unique(values);
@@ -214,11 +243,22 @@ Pretend parse_pretend(std::string_view output, bool failed) {
     Pretend found;
     // The line after an unmet requirements message: "- cpv::repo USE=...".
     bool unmet_next = false;
+    // Inside the USE changes block, up to the blank line ending it.
+    bool in_use_changes = false;
     while (!output.empty()) {
         const auto newline = std::min(output.find('\n'), output.size());
         const auto line = output.substr(0, newline);
         const bool unmet_line = std::exchange(unmet_next, false);
-        if (unmet_line && failed && line.starts_with("- ")) {
+        if (in_use_changes) {
+            in_use_changes = !line.empty();
+            if (in_use_changes && !line.starts_with('#') && !line.starts_with(' ')) {
+                if (auto change = parse_use_change(line)) {
+                    found.use_changes.push_back(std::move(*change));
+                }
+            }
+        } else if (line == "The following USE changes are necessary to proceed:") {
+            in_use_changes = true;
+        } else if (unmet_line && failed && line.starts_with("- ")) {
             const auto key = line.substr(2);
             found.unmet.emplace_back(key.substr(0, std::min(key.find(' '), key.size())));
         } else if (line.starts_with("!!! The ebuild selected to satisfy \"") &&
@@ -238,6 +278,7 @@ Pretend parse_pretend(std::string_view output, bool failed) {
     sort_unique(found.blocks);
     sort_unique(found.unsatisfied);
     sort_unique(found.unmet);
+    sort_unique(found.use_changes);
     return found;
 }
 
@@ -277,13 +318,38 @@ Pretend planned_merges(const Store& store, const Evaluated& original, const Plan
         found.unmet.push_back(std::format("{}::{}", evaluated.string(candidate.cpv),
                                           evaluated.string(candidate.repo)));
     }
+    for (const auto& needed : plan.use_changes) {
+        if (auto change = parse_use_change(package_use_line(store, evaluated, needed.change))) {
+            found.use_changes.push_back(std::move(*change));
+        }
+    }
     sort_unique(found.blocks);
     sort_unique(found.unsatisfied);
     sort_unique(found.unmet);
+    sort_unique(found.use_changes);
     return found;
 }
 
 std::vector<std::string> merge_differences(const Pretend& our_list, const Pretend& their_list) {
+    if (!their_list.use_changes.empty()) {
+        // Both sorted.
+        std::vector<std::string> lines;
+        for (const auto& [from, against, side] :
+             {std::tuple{&their_list.use_changes, &our_list.use_changes,
+                         std::string_view{"emerge"}},
+              std::tuple{&our_list.use_changes, &their_list.use_changes,
+                         std::string_view{"egraph"}}}) {
+            std::vector<std::string> only;
+            std::ranges::set_difference(*from, *against, std::back_inserter(only));
+            for (const auto& change : only) {
+                const auto space = std::min(change.find(' '), change.size());
+                lines.push_back(std::format("{}\t{}\tuse-change {}", change.substr(0, space), side,
+                                            change.substr(std::min(space + 1, change.size()))));
+            }
+        }
+        std::ranges::sort(lines);
+        return lines;
+    }
     if (!their_list.unsatisfied.empty() || !their_list.unmet.empty()) {
         // Both sorted.
         std::vector<std::string> lines;

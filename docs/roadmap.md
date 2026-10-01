@@ -417,8 +417,9 @@ use, egraph schedules the merges itself.
   slot the best version blocks. Uninstalls and blocks follow the merges in `updates` and `plan`,
   a block makes the exit status 6, and `--verify` compares both. Two scenarios, `blockers` and
   `blocked`, give 60 requests emerge resolves with uninstalls and 106 it refuses, all equal.
-- 16e: what makes emerge refuse: REQUIRED_USE and invalid metadata on candidates; a needed USE
-  change explained as autounmask would, the `package.use` line offered and written only on yes.
+- 16e (done): what makes emerge refuse: REQUIRED_USE and invalid metadata on candidates; a
+  needed USE change explained as autounmask would, the `package.use` line offered and written
+  only on yes.
   The candidates' REQUIRED_USE tokens and conditional dependency trees are stored as portage
   splits and parses them and evaluated by egraph, shadow-tested against portage, rather than
   precomputed for the current USE.
@@ -444,7 +445,10 @@ use, egraph schedules the merges itself.
       "required by" chains, and is refused. The builder reaches what the changes could pull in.
       A `usechange` scenario holds the cases, and each plan is held to what emerge merges once
       package.use makes the changes.
-  - 16e4: `--verify` over the new refusals; the `package.use` line offered and written.
+  - 16e4 (done): `--verify` over the new refusals (REQUIRED_USE since 16e2, the USE changes as
+    sets of flags); on a terminal the `package.use` lines are offered and, on yes, written, the
+    stores refreshed and the plan made again. An argument whose USE dependencies only a change
+    meets is planned, as emerge's autounmask does.
 - 16f: actions: `update`, `install` (`--oneshot`, or the targets selected), `remove` (through
   `emerge --depclean` with atoms), `select`, `deselect`: the plan shown, a yes asked for, emerge
   run on the plan, the stores refreshed at once.
