@@ -30,6 +30,10 @@ EBUILDS = {
     "app-misc/blocker-1": {"EAPI": "8", "KEYWORDS": "x86", "RDEPEND": "!!app-misc/a"},
 }
 INSTALLED = {"app-misc/a-1": {"EAPI": "8", "KEYWORDS": "x86"}}
+# For remove: user needs lib, leaf needs nothing; both selected.
+USER = {"EAPI": "8", "KEYWORDS": "x86", "RDEPEND": "app-misc/lib"}
+PLAIN = {"EAPI": "8", "KEYWORDS": "x86"}
+REMOVABLE = {"app-misc/user-1": USER, "app-misc/lib-1": PLAIN, "app-misc/leaf-1": PLAIN}
 
 
 def script(path, body):
@@ -68,6 +72,8 @@ class System:
             "PORTAGE_PYTHON": sys.executable,
             "PORTAGE_INST_GID": str(os.getgid()),
             "PORTAGE_INST_UID": str(os.getuid()),
+            # Sandbox forbids writing bytecode beside an installed portage.
+            "PYTHONDONTWRITEBYTECODE": "1",
         }
         exports = "".join(
             f"export {name}={shlex.quote(value)}\n"
@@ -143,11 +149,15 @@ def system(gnupg_home, tmp_path):
 
     made = []
 
-    def make(pretend=None):
+    def make(pretend=None, removable=False):
         playground = ResolverPlayground(
-            ebuilds=EBUILDS,
-            installed=INSTALLED,
-            world=["app-misc/a"],
+            ebuilds={**EBUILDS, **REMOVABLE},
+            installed={**INSTALLED, **REMOVABLE} if removable else INSTALLED,
+            world=(
+                ["app-misc/a", "app-misc/user", "app-misc/leaf"]
+                if removable
+                else ["app-misc/a"]
+            ),
             user_config={"make.conf": ('EMERGE_DEFAULT_OPTS="--jobs 2 --ask --deep"',)},
         )
         made.append(playground)
@@ -199,7 +209,10 @@ def test_nothing_to_merge_asks_emerge_nothing(system):
     machine = system()
     result = machine.egraph("install", "--yes", "--noreplace", "app-misc/a")
     assert result.returncode == 0, result.stderr
-    assert "Nothing to merge." in result.stdout
+    assert result.stdout == ""
+    assert not machine.asked()
+    human = machine.egraph("--layout", "human", "install", "-yn", "app-misc/a")
+    assert "Nothing to merge." in human.stdout
     assert not machine.asked()
 
 
@@ -257,3 +270,58 @@ def test_on_a_terminal_emerge_runs_on_yes(system, answer):
         return
     assert status == 0, printed
     assert machine.installed("app-misc/a-2")
+
+
+def test_remove_removes_through_depclean_and_deselects(system):
+    machine = system(removable=True)
+    result = machine.egraph("remove", "--yes", "app-misc/leaf")
+    assert result.returncode == 0, result.stdout + result.stderr
+    [run] = machine.emerged()
+    assert run[run.index("--depclean") :] == [
+        "--depclean",
+        "--ignore-default-opts",
+        "--ask=n",
+        "--jobs=2",
+        "app-misc/leaf",
+    ]
+    assert not machine.installed("app-misc/leaf-1")
+    assert "app-misc/leaf" not in machine.world()
+    again = machine.egraph("--no-refresh", "orphans")
+    assert again.returncode == 0, again.stderr
+    assert again.stdout == ""
+
+
+def test_what_something_needs_is_kept_and_nothing_is_asked(system):
+    machine = system(removable=True)
+    result = machine.egraph("--layout", "human", "remove", "--yes", "app-misc/lib")
+    assert result.returncode == 0, result.stderr
+    assert "needed by app-misc/user-1" in result.stdout
+    assert "Nothing to remove." in result.stdout
+    assert not machine.asked()
+    assert machine.installed("app-misc/lib-1")
+
+
+def test_removing_a_package_with_what_it_needs(system):
+    machine = system(removable=True)
+    result = machine.egraph("remove", "--yes", "app-misc/user", "=app-misc/lib-1")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert machine.emerged()[-1][-2:] == ["app-misc/user", "=app-misc/lib-1"]
+    assert not machine.installed("app-misc/user-1")
+    assert not machine.installed("app-misc/lib-1")
+
+
+def test_a_removal_emerge_would_make_otherwise_is_not_made(system):
+    machine = system(pretend="exit 0", removable=True)
+    result = machine.egraph("remove", "--yes", "app-misc/leaf")
+    assert result.returncode == 5, result.stdout + result.stderr
+    assert "nothing was removed" in result.stderr
+    assert machine.emerged() == []
+    assert machine.installed("app-misc/leaf-1")
+
+
+def test_removing_what_is_not_installed_fails_before_emerge(system):
+    machine = system(removable=True)
+    result = machine.egraph("remove", "--yes", "app-misc/b")
+    assert result.returncode == 1
+    assert "no installed package matches" in result.stderr
+    assert not machine.asked()

@@ -5,24 +5,35 @@ from egraph_build import installed, roots
 
 def test_roots_scenario_sets(playgrounds):
     layer = installed.build(playgrounds("roots").vardb)
-    assert [(r.set, r.atom, r.matches) for r in layer.roots()] == [
-        ("selected", "app-misc/set-member", ("app-misc/set-member-1",)),
-        ("selected", "app-misc/world", ("app-misc/world-1",)),
+    assert [tuple(root) for root in layer.roots()] == [
+        ("selected", "app-misc/set-member", ("app-misc/set-member-1",), "myset"),
+        ("selected", "app-misc/world", ("app-misc/world-1",), ""),
         (
             "selected",
             "sys-kernel/sources",
             ("sys-kernel/sources-1", "sys-kernel/sources-2"),
+            "",
         ),
-        ("system", "sys-apps/base", ("sys-apps/base-1",)),
-        ("profile", "app-misc/prof", ("app-misc/prof-1",)),
+        ("system", "sys-apps/base", ("sys-apps/base-1",), ""),
+        ("profile", "app-misc/prof", ("app-misc/prof-1",), ""),
     ]
 
 
 def test_roots_are_emerges_sets(scenario):
-    """The sets depclean starts from, read through emerge's own root_config."""
-    setconfig = scenario.trees[scenario.eroot]["root_config"].setconfig
+    """The sets depclean starts from, read through emerge's own root_config; an atom of
+    @selected through a set world_sets names, with the first such set."""
+    root_config = scenario.trees[scenario.eroot]["root_config"]
+    setconfig = root_config.setconfig
+    nested = sorted(name[1:] for name in root_config.sets["selected"].getNonAtoms())
+
+    def via(name, atom):
+        if name != "selected":
+            return ""
+        found = (s for s in nested if atom in setconfig.getSetAtoms(s))
+        return next(found, "")
+
     expected = [
-        (name, str(atom), tuple(sorted(scenario.vardb.match(atom))))
+        (name, str(atom), tuple(sorted(scenario.vardb.match(atom))), via(name, atom))
         for name in roots.ROOT_SETS
         for atom in sorted(setconfig.getSetAtoms(name), key=str)
     ]

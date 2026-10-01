@@ -311,7 +311,7 @@ std::vector<Row> held_rows(const Store& store, const Graph& graph, const Evaluat
         for (const auto root : holder.roots) {
             const auto& atom = store.roots.at(root);
             sets.push_back(std::format("@{}", store.string(atom.set)));
-            if (store.string(atom.set) == "selected") {
+            if (store.string(atom.set) == "selected" && store.string(atom.via).empty()) {
                 deselect.push_back(store.string(atom.atom));
             }
         }
@@ -857,7 +857,11 @@ std::optional<std::uint32_t> App::link_of(const std::vector<std::string>& fields
 }
 
 void App::recompute() {
-    kept_ = keep(store(), {.build_deps = build_deps_, .masking = masking_, .removed = {}});
+    kept_ = keep(store(), {.build_deps = build_deps_,
+                           .masking = masking_,
+                           .removed = {},
+                           .protect = {},
+                           .without_selected = false});
     root_of_.assign(store().packages.size(), std::nullopt);
     for (const auto& pull : kept_.roots) {
         auto& root = root_of_.at(pull.child);

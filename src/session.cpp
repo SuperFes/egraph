@@ -208,7 +208,11 @@ Loaded<Session::Depclean> Session::depclean(bool build_deps, bool dynamic) {
             masking.push_back(
                 {.masked = dynamic ? pkg.masked : pkg.vdb_masked, .visible = pkg.visible});
         }
-        KeepOptions options{.build_deps = build_deps, .masking = std::move(masking), .removed = {}};
+        KeepOptions options{.build_deps = build_deps,
+                            .masking = std::move(masking),
+                            .removed = {},
+                            .protect = {},
+                            .without_selected = false};
         auto kept = keep(store->get(), options);
         depclean =
             Depclean{.store = *store, .options = std::move(options), .kept = std::move(kept)};

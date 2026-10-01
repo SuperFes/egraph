@@ -458,9 +458,12 @@ use, egraph schedules the merges itself.
     no terminal to ask on; EMERGE_DEFAULT_OPTS ignored but for its execution options (`--jobs`,
     `--keep-going`, ...), read through `egraph-build --emerge-options`. `test_actions.py` merges
     for real on a playground through the real emerge, the stores refreshed after.
-  - 16f2: `remove`: `emerge --depclean` with atoms, planned as depclean weighs arguments (the
-    selected set emptied, every installed package not matched protected) and verified against
-    its pretend output.
+  - 16f2 (done): `remove`: `emerge --depclean` with atoms, planned as depclean weighs
+    arguments (the world file's atoms left out, every installed package not matched kept) and
+    verified against its pretend output; what stays is listed with what keeps it. The store
+    records the world_sets set an atom of @selected comes through (format 5), which depclean
+    keeps; remedies no longer offer to deselect such an atom. Equal to `_calc_depclean` for
+    every installed cp on every scenario.
   - 16f3: `select` (`emerge --select --noreplace`) and `deselect` (`emerge --deselect`), with
     what a deselect leaves for depclean.
 - 16g: after a merge: the elog summary, pending `._cfg` files (`dispatch-conf` a key away),

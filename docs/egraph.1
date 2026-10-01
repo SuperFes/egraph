@@ -400,6 +400,30 @@ does.
 .TP
 .BR \-y ", " \-\-yes
 Run emerge without asking, and offer no USE changes.
+.SS remove \fIpackage\fR...
+What
+.B emerge \-\-depclean
+would remove of the installed packages the atoms (or exact cpvs) match: each one nothing else
+keeps, as depclean weighs arguments, keeping every installed package they do not match and
+leaving
+.B @selected
+out, since it deselects them. A package that stays is listed with the packages that need it and
+the sets that keep it. Then, as
+.B update
+does, the request goes to
+.B emerge \-\-pretend \-\-depclean
+first, nothing is removed if it would remove otherwise (exit status 5), and on yes
+.B emerge \-\-depclean
+removes them and the stores are refreshed.
+.TP
+.B \-\-dynamic\-deps
+.TP
+.BR \-\-with\-bdeps " y|n"
+Whether build-time dependencies keep packages, as emerge's option (default
+.BR y ).
+.TP
+.BR \-y ", " \-\-yes
+Run emerge without asking.
 .SS export \fR[\fIpackage\fR...]
 Part of the graph, or all of it without packages, for other tools.
 .TP
@@ -504,7 +528,7 @@ found the store differing from a fresh build.
 .TP
 .B 5
 .B \-\-verify
-found emerge merging otherwise, or an action found it before merging.
+found emerge merging otherwise, or an action found it merging or removing otherwise.
 .TP
 .B 6
 emerge would refuse the plan of

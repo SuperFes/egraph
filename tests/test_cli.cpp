@@ -192,6 +192,19 @@ TEST_CASE("install takes plan's options, --oneshot and --yes") {
     CHECK_THROWS(parse("install --verify a/b"));
 }
 
+TEST_CASE("remove takes atoms, emerge's --with-bdeps and --yes") {
+    const auto remove =
+        std::get<egraph::Remove>(parse("remove -y --with-bdeps n a/b =c/d-1").command);
+    CHECK(remove.packages == std::vector<std::string>{"a/b", "=c/d-1"});
+    CHECK_FALSE(remove.build_deps);
+    CHECK(remove.yes);
+    const auto plain = std::get<egraph::Remove>(parse("remove a/b").command);
+    CHECK(plain.build_deps);
+    CHECK_FALSE(plain.yes);
+    CHECK_FALSE(parse("remove --dynamic-deps n a/b").dynamic_deps);
+    CHECK_THROWS(parse("remove"));
+}
+
 TEST_CASE("emerge runs, and EMERGE_DEFAULT_OPTS is read, under the same roots") {
     egraph::Invocation invocation;
     invocation.builder = "egraph-build";

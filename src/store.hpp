@@ -21,7 +21,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t store_format_version = 4;
+inline constexpr std::uint32_t store_format_version = 5;
 inline constexpr std::array<std::string_view, 5> dep_kinds{"BDEPEND", "DEPEND", "IDEPEND",
                                                            "PDEPEND", "RDEPEND"};
 
@@ -90,6 +90,9 @@ struct Root {
     // String ids.
     std::uint32_t set = 0;
     std::uint32_t atom = 0;
+    // For an atom of @selected, the set world_sets names that holds it, which depclean keeps when
+    // its arguments empty @selected; the empty string for any other.
+    std::uint32_t via = 0;
     // Package ids in Store::ids.
     Range matches;
 };

@@ -318,8 +318,13 @@ def to_json(layer):
             }
         )
     roots = [
-        {"set": root.set, "atom": root.atom, "matches": list(root.matches)}
+        {
+            "set": root.set,
+            "atom": root.atom,
+            "matches": list(root.matches),
+            "via": root.via,
+        }
         for root in layer.roots()
     ]
-    document = {"format": 2, "packages": packages, "roots": roots}
+    document = {"format": 3, "packages": packages, "roots": roots}
     return json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"

@@ -406,8 +406,10 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& origi
                                             package(holder.dependents.at(i)));
                     }
                     for (const auto root : holder.roots) {
+                        // A set world_sets names, rather than the @selected it is part of.
                         const auto& atom = store.roots.at(root);
-                        line += std::format("\t@{} {}", store.string(atom.set),
+                        const auto via = store.string(atom.via);
+                        line += std::format("\t@{} {}", via.empty() ? store.string(atom.set) : via,
                                             store.string(atom.atom));
                     }
                     group.push_back(std::move(line));

@@ -12,7 +12,7 @@ from egraph_build.profile import ImplicitIuse, has_iuse_effective
 from egraph_build.roots import Root
 
 MAGIC = b"EGRAPH\0\0"
-FORMAT_VERSION = 4
+FORMAT_VERSION = 5
 (
     SECTION_META,
     SECTION_INPUTS,
@@ -227,6 +227,7 @@ def encode(layer, meta, inputs=()):
     for root in roots:
         w.varint(strings(root.set))
         w.varint(strings(root.atom))
+        w.varint(strings(root.via))
         w.ids([index[cpv] for cpv in root.matches])
     sections[SECTION_ROOTS] = w.out
 
@@ -491,7 +492,7 @@ def decode(data):
     r = _Reader(sections[SECTION_ROOTS], "roots")
     raw_roots = []
     for _ in range(r.count()):
-        raw_roots.append((s(), s(), r.ids(count)))
+        raw_roots.append((s(), s(), s(), r.ids(count)))
     r.done()
 
     cpvs = [fields[0] for fields, *_ in raw]
@@ -509,8 +510,8 @@ def decode(data):
             )
         )
     roots = tuple(
-        Root(name, atom, tuple(cpvs[i] for i in matches))
-        for name, atom, matches in raw_roots
+        Root(name, atom, tuple(cpvs[i] for i in matches), via)
+        for name, atom, via, matches in raw_roots
     )
     return meta, inputs, InstalledLayer(packages, roots)
 

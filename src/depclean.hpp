@@ -25,6 +25,12 @@ struct KeepOptions {
     std::vector<Masking> masking;
     // Per installed package, whether to take it as gone; empty for none.
     std::vector<bool> removed;
+    // Per installed package, whether to keep it whatever depends on it, as emerge --depclean
+    // keeps every package its arguments do not match; empty for none.
+    std::vector<bool> protect;
+    // Leave the world file's atoms out of the roots, but not those of the sets world_sets names,
+    // as emerge --depclean with arguments does.
+    bool without_selected = false;
 };
 
 // A root atom keeping the installed package it selects.

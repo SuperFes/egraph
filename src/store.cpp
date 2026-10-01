@@ -93,6 +93,7 @@ std::optional<StoreError> read_roots(std::span<const std::byte> section, Store& 
         Root root;
         root.set = r.index(strings, "string");
         root.atom = r.index(strings, "string");
+        root.via = r.index(strings, "string");
         root.matches = read_ids(r, store.ids, packages, "package");
         store.roots.push_back(root);
     }

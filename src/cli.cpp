@@ -17,6 +17,7 @@
 #include "os.hpp"
 #include "package_use.hpp"
 #include "pressure.hpp"
+#include "remove.hpp"
 #include "request.hpp"
 #include "session.hpp"
 #include "steve.hpp"
@@ -1096,67 +1097,68 @@ std::expected<std::vector<std::string>, std::string> passed_options(const Invoca
 
 // An action: the plan show() shows, verified against emerge --pretend, confirmed, and emerge run
 // on it, the stores refreshed after; act runs the action again once USE changes are written.
-template <class Show, class Act>
-Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
-                const Invocation& invocation, std::ostream& out, std::ostream& err,
-                const Show& show, const Act& act) {
-    const auto shown = show();
-    if (!shown) {
-        return shown.error();
+// How an action speaks of what it does: "merge", "merging", "merged", or the same of removing.
+struct ActionWords {
+    std::string_view verb;
+    std::string_view gerund;
+    std::string_view past;
+};
+constexpr ActionWords merge_words{.verb = "merge", .gerund = "merging", .past = "merged"};
+constexpr ActionWords remove_words{.verb = "remove", .gerund = "removing", .past = "removed"};
+
+// The exit status when an action stops before asking emerge, saying why.
+std::optional<Exit> stopped(std::optional<Stop> stop, std::string_view name,
+                            const ActionWords& words, const std::filesystem::path& vdb, bool human,
+                            std::ostream& out, std::ostream& err) {
+    if (!stop) {
+        return std::nullopt;
     }
-    const auto& [plan, request, store, evaluated] = *shown;
-    if (!yes && !plan.use_changes.empty()) {
-        const auto status = offer_use_changes(Exit::refused, plan, store, evaluated, session,
-                                              invocation, out, err, act);
-        if (status != Exit::refused) {
-            return status;
-        }
-    }
-    const auto vdb = std::filesystem::path{store.get().meta.eroot} / "var/db/pkg";
-    const auto stop =
-        stop_before_verifying({.refused = plan.refused(),
-                               .empty = plan.merges.empty() && plan.uninstalls.empty(),
-                               .writable = os::can_create(vdb / "egraph"),
-                               .yes = yes,
-                               .can_ask = invocation.ask});
-    switch (stop.value_or(Stop::refused)) {
+    switch (*stop) {
     case Stop::refused:
-        if (stop) {
-            err << "egraph: " << name << ": emerge would refuse the plan; nothing was merged\n";
-            return Exit::refused;
-        }
-        break;
+        err << "egraph: " << name << ": emerge would refuse the plan; nothing was " << words.past
+            << '\n';
+        return Exit::refused;
     case Stop::nothing:
-        out << "Nothing to merge.\n";
+        // In the lines layout, no lines say it.
+        if (human) {
+            out << "Nothing to " << words.verb << ".\n";
+        }
         return Exit::ok;
     case Stop::unprivileged:
-        err << "egraph: " << name << ": merging needs write access to " << vdb.string()
-            << "; run egraph as root\n";
+        err << "egraph: " << name << ": " << words.gerund << " needs write access to "
+            << vdb.string() << "; run egraph as root\n";
         return Exit::failure;
     case Stop::unconfirmed:
-        err << "egraph: " << name
-            << ": no terminal to ask on; give --yes to have emerge merge without asking\n";
+        err << "egraph: " << name << ": no terminal to ask on; give --yes to have emerge "
+            << words.verb << " without asking\n";
         return Exit::usage;
     }
-    if (const auto status = verify(invocation, name, request, store, evaluated, plan, out, err);
-        status != Exit::ok) {
-        if (status == Exit::differs) {
-            err << "egraph: " << name << ": emerge would merge otherwise; nothing was merged\n";
-        }
-        return status;
-    }
+    return Exit::failure;
+}
+
+// The installed packages' database under the store's EROOT.
+std::filesystem::path vdb_of(const Store& store) {
+    return std::filesystem::path{store.meta.eroot} / "var/db/pkg";
+}
+
+// An action once verified: asks unless yes, runs emerge with arguments(passed), passed being
+// EMERGE_DEFAULT_OPTS' execution options, and refreshes the stores after.
+template <class Arguments>
+Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
+                     const Arguments& arguments, Session& session, const Invocation& invocation,
+                     std::ostream& out, std::ostream& err) {
     const auto passed = passed_options(invocation);
     if (!passed) {
         err << "egraph: " << name << ": EMERGE_DEFAULT_OPTS could not be read: " << passed.error()
             << '\n';
         return Exit::failure;
     }
-    if (!yes && !answered_yes(std::cin, out, "Have emerge merge this plan?")) {
+    if (!yes && !answered_yes(std::cin, out, question)) {
         return Exit::failure;
     }
     out << std::flush;
-    const auto ran = os::run(emerge_command(invocation, run_arguments(request, oneshot, *passed)));
-    // What emerge merged, before it failed too.
+    const auto ran = os::run(emerge_command(invocation, arguments(*passed)));
+    // What emerge did before it failed counts too.
     session.reload();
     if (const auto stores = session.stores(); !stores) {
         err << "egraph: " << name << ": the stores could not be refreshed: " << stores.error()
@@ -1173,6 +1175,49 @@ Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
     return Exit::ok;
 }
 
+// An action merging a plan: the plan show() shows, verified against emerge --pretend, confirmed,
+// and emerge run on it; act runs the action again once USE changes are written.
+template <class Show, class Act>
+Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
+                const Invocation& invocation, std::ostream& out, std::ostream& err,
+                const Show& show, const Act& act) {
+    const auto shown = show();
+    if (!shown) {
+        return shown.error();
+    }
+    const auto& [plan, request, store, evaluated] = *shown;
+    if (!yes && !plan.use_changes.empty()) {
+        const auto status = offer_use_changes(Exit::refused, plan, store, evaluated, session,
+                                              invocation, out, err, act);
+        if (status != Exit::refused) {
+            return status;
+        }
+    }
+    const auto vdb = vdb_of(store);
+    if (const auto status =
+            stopped(stop_before_verifying({.refused = plan.refused(),
+                                           .empty = plan.merges.empty() && plan.uninstalls.empty(),
+                                           .writable = os::can_create(vdb / "egraph"),
+                                           .yes = yes,
+                                           .can_ask = invocation.ask}),
+                    name, merge_words, vdb, output(invocation).human, out, err)) {
+        return *status;
+    }
+    if (const auto status = verify(invocation, name, request, store, evaluated, plan, out, err);
+        status != Exit::ok) {
+        if (status == Exit::differs) {
+            err << "egraph: " << name << ": emerge would merge otherwise; nothing was merged\n";
+        }
+        return status;
+    }
+    return confirm_and_run(
+        name, yes, "Have emerge merge this plan?",
+        [&](const std::vector<std::string>& passed) {
+            return run_arguments(request, oneshot, passed);
+        },
+        session, invocation, out, err);
+}
+
 Exit execute(const Update& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     return run_action(
@@ -1187,6 +1232,89 @@ Exit execute(const Install& command, Session& session, const Invocation& invocat
         Install::name, command.oneshot, command.yes, session, invocation, out, err,
         [&] { return show_plan(command, Install::name, session, invocation, out, err); },
         [&](const Invocation& again) { return execute(command, session, again, out, err); });
+}
+
+// A remove's targets as emerge takes them: an exact cpv as =cpv.
+std::vector<std::string> depclean_targets(const Store& store,
+                                          const std::vector<std::string>& packages) {
+    std::vector<std::string> targets;
+    targets.reserve(packages.size());
+    for (const auto& package : packages) {
+        const auto exact = std::ranges::any_of(
+            store.packages, [&](const Package& pkg) { return store.string(pkg.cpv) == package; });
+        targets.push_back(exact ? "=" + package : package);
+    }
+    return targets;
+}
+
+Exit execute(const Remove& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    const auto depclean = session.depclean(command.build_deps, invocation.dynamic_deps);
+    if (!depclean) {
+        return fail(err, depclean.error());
+    }
+    const Store& store = depclean->get().store;
+    // depclean refuses to run without one.
+    if (store.roots.empty()) {
+        err << "egraph: remove: the @world set is empty\n";
+        return Exit::failure;
+    }
+    const auto matched = resolve_all(store, command.packages, err);
+    if (!matched) {
+        return Exit::failure;
+    }
+    const auto removal = plan_removal(store, depclean->get().options, *matched);
+    const auto lines = removal_lines(store, removal);
+    const auto style = output(invocation);
+    if (style.human) {
+        human_removal(out, lines, style.theme);
+    } else {
+        write_lines(out, lines);
+    }
+    const auto vdb = vdb_of(store);
+    if (const auto status =
+            stopped(stop_before_verifying({.refused = false,
+                                           .empty = removal.removed.empty(),
+                                           .writable = os::can_create(vdb / "egraph"),
+                                           .yes = command.yes,
+                                           .can_ask = invocation.ask}),
+                    Remove::name, remove_words, vdb, style.human, out, err)) {
+        return *status;
+    }
+    auto options = depclean_options(command.build_deps, invocation.dynamic_deps);
+    const auto targets = depclean_targets(store, command.packages);
+    std::vector<std::string> pretend{"--pretend", "--depclean", "--color=n", "--nospinner",
+                                     "--ignore-default-opts"};
+    pretend.insert(pretend.end(), options.begin(), options.end());
+    pretend.insert(pretend.end(), targets.begin(), targets.end());
+    out << std::flush;
+    const auto printed = output_of(emerge_command(invocation, pretend));
+    if (!printed) {
+        err << "egraph: remove: emerge --pretend --depclean failed:\n" << printed.error() << '\n';
+        return Exit::failure;
+    }
+    const auto differences = removal_differences(store, removal, parse_depclean(*printed));
+    if (style.human) {
+        human_verification(out, differences, style.theme, "removes");
+    }
+    if (!differences.empty()) {
+        if (!style.human) {
+            err << "egraph: remove: emerge --pretend --depclean removes otherwise:\n";
+            write_lines(err, differences);
+        }
+        err << "egraph: remove: emerge would remove otherwise; nothing was removed\n";
+        return Exit::differs;
+    }
+    return confirm_and_run(
+        Remove::name, command.yes, "Have emerge remove these packages?",
+        [&](const std::vector<std::string>& passed) {
+            std::vector<std::string> arguments{"--depclean", "--ignore-default-opts", "--ask=n"};
+            arguments.insert(arguments.end(), passed.begin(), passed.end());
+            arguments.insert(arguments.end(), options.begin(), options.end());
+            arguments.insert(arguments.end(), targets.begin(), targets.end());
+            return arguments;
+        },
+        session, invocation, out, err);
 }
 
 Exit execute(const Why& command, Session& session, const Invocation& invocation, std::ostream& out,
@@ -1544,6 +1672,18 @@ void configure(CLI::App& app, Invocation& invocation) {
         "-1,--oneshot", [&invocation] { std::get<Install>(invocation.command).oneshot = true; },
         "Add the targets to no set, as emerge --oneshot");
     add_yes<Install>(install_cmd, invocation);
+    CLI::App* remove_cmd = add_dynamic_deps(add_command<Remove>(
+        app, invocation,
+        "Show what emerge --depclean would remove of the packages, then have it remove them once "
+        "confirmed"));
+    add_field(remove_cmd, invocation, "packages", &Remove::packages,
+              "Portage atoms or installed cpvs; what they match goes unless something keeps it")
+        ->type_name("PACKAGE")
+        ->required();
+    add_field(remove_cmd, invocation, "--with-bdeps", &Remove::build_deps,
+              "Whether build-time dependencies keep packages, as emerge's option (default y)")
+        ->transform(yes_no);
+    add_yes<Remove>(remove_cmd, invocation);
 
     CLI::App* export_cmd = add_command<Export>(app, invocation, "Export part of the graph");
     add_field(export_cmd, invocation, "--format", &Export::format, "Output format")
@@ -1793,7 +1933,8 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
     }
     // emerge would write over the interface's screen.
     if (context == Context::interface && (std::holds_alternative<Update>(command.command) ||
-                                          std::holds_alternative<Install>(command.command))) {
+                                          std::holds_alternative<Install>(command.command) ||
+                                          std::holds_alternative<Remove>(command.command))) {
         return usage("actions run from the command line or the shell");
     }
     if (context == Context::interface) {

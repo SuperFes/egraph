@@ -1,10 +1,12 @@
 #include "graph.hpp"
 #include "plan.hpp"
+#include "query.hpp"
 #include "remedy.hpp"
 #include "system_builder.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <format>
 #include <string>
 #include <vector>
@@ -72,6 +74,28 @@ TEST_CASE("a holder only world keeps can be removed for the update") {
     CHECK(remedies(orphan) ==
           std::vector<std::string>{
               "dev-libs/astroid-4.0: app-misc/pylint-1 [] []; nodeps; removable"});
+}
+
+TEST_CASE("a holder a set world_sets names keeps is only named: deselecting cannot drop it") {
+    auto system = make_system(
+        {{.cpv = "app-misc/pylint-1", .deps = {{"RDEPEND", "<dev-libs/astroid-4.1"}}},
+         {.cpv = "dev-libs/astroid-4.0"}},
+        {{.cpv = "dev-libs/astroid-4.0"}, {.cpv = "dev-libs/astroid-4.3"}}, {"app-misc/pylint"});
+    auto& store = system.store;
+    const auto via = static_cast<std::uint32_t>(store.strings.size());
+    store.strings.push_back({.first = static_cast<std::uint32_t>(store.pool.size()), .count = 5});
+    store.pool += "myset";
+    store.roots.front().via = via;
+    CHECK(remedies(system) == std::vector<std::string>{"dev-libs/astroid-4.0: app-misc/pylint-1 "
+                                                       "[] [selected app-misc/pylint]; nodeps"});
+    // Named by that set, not the @selected it is part of.
+    const auto graph = egraph::build_graph(store);
+    const auto lines =
+        egraph::update_lines(store, system.evaluated, egraph::UseRebuilds::none, true, false, {},
+                             egraph::RemedyInputs{.graph = graph, .rescope = {}});
+    CHECK(std::ranges::contains(
+        lines, std::string{"dev-libs/astroid-4.0\tholder\tapp-misc/pylint-1\t\t@myset "
+                           "app-misc/pylint"}));
 }
 
 TEST_CASE("a holder something else needs, or another set keeps, is only named") {
@@ -156,7 +180,11 @@ TEST_CASE("from the root sets, the scope without the holders is depclean's") {
         {"app-misc/pylint", "app-misc/tool"});
     const egraph::Targets world{.scope = egraph::keep(system.store, {}).packages, .roots = true};
     const egraph::Rescope rescope = [&system](const std::vector<bool>& removed) {
-        return egraph::keep(system.store, {.build_deps = true, .masking = {}, .removed = removed})
+        return egraph::keep(system.store, {.build_deps = true,
+                                           .masking = {},
+                                           .removed = removed,
+                                           .protect = {},
+                                           .without_selected = false})
             .packages;
     };
     CHECK(remedies(system, world, rescope) ==

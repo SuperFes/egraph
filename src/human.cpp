@@ -563,17 +563,17 @@ void human_orphans(std::ostream& out, std::span<const std::string> records, cons
         << '\n';
 }
 
-void human_verification(std::ostream& out, std::span<const std::string> records,
-                        const Theme& theme) {
+void human_verification(std::ostream& out, std::span<const std::string> records, const Theme& theme,
+                        std::string_view verb) {
     const auto& paint = theme.paint;
     out << '\n';
     if (records.empty()) {
         out << paint(theme.glyph().good, Tone::good) << ' '
-            << paint("emerge --pretend merges the same.", Tone::good) << '\n';
+            << paint(std::format("emerge --pretend {} the same.", verb), Tone::good) << '\n';
         return;
     }
     out << paint(theme.glyph().broken, Tone::bad) << ' '
-        << paint("emerge --pretend merges otherwise:", Tone::bad) << '\n';
+        << paint(std::format("emerge --pretend {} otherwise:", verb), Tone::bad) << '\n';
     const auto rows = split_all(records);
     std::size_t width = 0;
     for (const auto& row : rows) {
@@ -599,6 +599,47 @@ void human_verification(std::ostream& out, std::span<const std::string> records,
         }
         out << '\n';
     }
+}
+
+void human_removal(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto rows = split_all(records);
+    std::size_t width = 0;
+    std::size_t removed = 0;
+    for (const auto& row : rows) {
+        if (row.at(1) == "kept") {
+            width = std::max(width, row.front().size());
+        }
+    }
+    for (const auto& row : rows) {
+        const auto cpv = row.front();
+        if (row.at(1) == "remove") {
+            ++removed;
+            out << paint(theme.glyph().orphan, Tone::bad) << ' ' << paint_cpv(cpv, paint) << '\n';
+            continue;
+        }
+        std::vector<std::string_view> dependents;
+        std::vector<std::string_view> sets;
+        for (const auto by : std::span{row}.subspan(2)) {
+            (by.starts_with('@') ? sets : dependents).push_back(by);
+        }
+        out << paint(theme.glyph().held, Tone::note) << ' ' << paint_cpv(cpv, paint)
+            << std::string(width - cpv.size() + 2, ' ')
+            << paint(holder_note(dependents, sets), Tone::note) << '\n';
+    }
+    const auto kept = rows.size() - removed;
+    out << '\n';
+    if (removed == 0) {
+        out << paint("Nothing to remove", Tone::note);
+    } else {
+        out << paint(std::to_string(removed), Tone::count)
+            << paint(removed == 1 ? " package to remove" : " packages to remove", Tone::note);
+    }
+    if (kept > 0) {
+        out << paint(", ", Tone::note) << paint(std::to_string(kept), Tone::count)
+            << paint(" kept", Tone::note);
+    }
+    out << '\n';
 }
 
 std::string holder_note(std::span<const std::string_view> dependents,

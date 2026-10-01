@@ -343,13 +343,15 @@ void write_root(std::ostream& out, const Store& store, const Root& root) {
     }
     out << "],\"set\":";
     write_string(out, store, root.set);
+    out << ",\"via\":";
+    write_string(out, store, root.via);
     out << '}';
 }
 
 // Roots go out whole, and with only_matching, only those matching one of the packages.
 void write_document(std::ostream& out, const Store& store, std::span<const std::uint32_t> packages,
                     bool only_matching) {
-    out << R"({"format":2,"packages":[)";
+    out << R"({"format":3,"packages":[)";
     std::vector<bool> chosen(store.packages.size(), false);
     bool first = true;
     for (const auto id : packages) {

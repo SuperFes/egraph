@@ -14,7 +14,7 @@ class Depclean(NamedTuple):
     returncode: int
     # Installed cpvs depclean keeps.
     kept: frozenset
-    # Installed cpvs it would remove, sorted.
+    # Installed cpvs it would remove, sorted: with arguments, those of their matches it removes.
     orphans: tuple
     # (parent cpv, atom) for each runtime dependency it could not resolve; any makes it refuse.
     unresolved: frozenset
@@ -23,8 +23,9 @@ class Depclean(NamedTuple):
     parents: dict
 
 
-def depclean(trees, eroot, with_bdeps=True, dynamic_deps=False):
-    """depclean's answer, with --dynamic-deps=n unless dynamic_deps."""
+def depclean(trees, eroot, with_bdeps=True, dynamic_deps=False, args=()):
+    """depclean's answer, with --dynamic-deps=n unless dynamic_deps; with args, the atoms
+    emerge --depclean is given, whose removals orphans then holds."""
     import _emerge.emergelog
     from _emerge.actions import _calc_depclean
     from _emerge.Package import Package
@@ -44,7 +45,13 @@ def depclean(trees, eroot, with_bdeps=True, dynamic_deps=False):
     _emerge.emergelog._disable = True
     try:
         result = _calc_depclean(
-            settings, trees, None, options, "depclean", InternalPackageSet(), None
+            settings,
+            trees,
+            None,
+            options,
+            "depclean",
+            InternalPackageSet(initial_atoms=args, allow_repo=True),
+            None,
         )
     finally:
         portage.util.noiselimit = noiselimit
@@ -75,10 +82,13 @@ def depclean(trees, eroot, with_bdeps=True, dynamic_deps=False):
             else:
                 continue
             parents.setdefault(child.cpv, set()).add((name, str(atom)))
+    orphans = tuple(cpv for cpv in installed if cpv not in kept)
+    if args:
+        orphans = tuple(sorted(str(cpv) for cpv in result.cleanlist))
     return Depclean(
         result.returncode,
         kept,
-        tuple(cpv for cpv in installed if cpv not in kept),
+        orphans,
         unresolved,
         parents,
     )

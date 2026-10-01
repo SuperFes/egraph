@@ -267,6 +267,7 @@ inline System make_system(const std::vector<Installed>& installed, std::vector<A
         const auto ids = match(atom);
         store.roots.push_back({.set = store_intern(set),
                                .atom = store_intern(atom),
+                               .via = store_intern(""),
                                .matches = {.first = static_cast<std::uint32_t>(store.ids.size()),
                                            .count = static_cast<std::uint32_t>(ids.size())}});
         store.ids.insert(store.ids.end(), ids.begin(), ids.end());

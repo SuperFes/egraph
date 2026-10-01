@@ -10,7 +10,9 @@ namespace egraph {
 
 bool leaf(const Store& store, const Holder& holder) {
     return holder.dependents.empty() && std::ranges::all_of(holder.roots, [&](std::uint32_t root) {
-               return store.string(store.roots.at(root).set) == "selected";
+               // emerge --deselect drops world file atoms, not a set world_sets names.
+               const auto& found = store.roots.at(root);
+               return store.string(found.set) == "selected" && store.string(found.via).empty();
            });
 }
 

@@ -1,6 +1,6 @@
 # Store format
 
-Status: format version 4 (evaluated store: 5), implemented by `builder/egraph_build/store.py`
+Status: format version 5 (evaluated store: 8), implemented by `builder/egraph_build/store.py`
 (writer and a Python reader) and `src/store.cpp` and `src/evaluated.cpp` (C++ readers). Any
 layout change bumps the version.
 
@@ -29,7 +29,9 @@ layout change bumps the version.
 7. **Sonames.** Per package, provides and requires with multilib category, plus the resolved
    requires-to-provider edges.
 8. **Roots.** The atoms of @selected (world and world_sets), @system and @profile, nested sets
-   expanded, each with the installed packages it matches.
+   expanded, each with the installed packages it matches, and for an atom of @selected the first
+   set world_sets names that holds it (format 5): `emerge --depclean` with arguments empties
+   @selected but keeps those sets.
 
 ## Encoding
 
@@ -60,7 +62,7 @@ Debugging goes through `egraph export --json` and `egraph-build --json`.
 | 2 | Inputs | count, then `(path, kind, mtime_ns, size)`; path length-prefixed |
 | 3 | Strings | count, then length-prefixed bytes; string 0 is empty |
 | 4 | Packages | count, then the records below |
-| 5 | Roots | count, then `(set, atom, matches)`: set and atom string ids, sets in the order selected, system, profile and atoms sorted within each |
+| 5 | Roots | count, then `(set, atom, via, matches)`: set, atom and via string ids (via the world_sets set holding an atom of selected, else the empty string), sets in the order selected, system, profile and atoms sorted within each |
 | 6 | Profile | implicit IUSE: `IUSE_EFFECTIVE`, then implicit literal flags, then implicit prefixes, each a count and length-prefixed strings |
 
 All six sections are required.

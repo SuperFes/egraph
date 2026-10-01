@@ -136,6 +136,16 @@ struct Install : PlanCommand {
     bool yes = false;
 };
 
+// emerge --depclean run on packages once shown, verified and confirmed.
+struct Remove {
+    static constexpr std::string_view name = "remove";
+    std::vector<std::string> packages;
+    // emerge --with-bdeps: whether build-time dependencies keep packages.
+    bool build_deps = true;
+    // Run without asking.
+    bool yes = false;
+};
+
 enum class ExportFormat : std::uint8_t { dot, json };
 
 struct Export {
@@ -182,8 +192,8 @@ struct Affected {
 };
 
 using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Blockers,
-                             Orphans, Updates, PlanCommand, Update, Install, Export, Stats, Rebuild,
-                             Refresh, Check, Tui, Shell, Affected>;
+                             Orphans, Updates, PlanCommand, Update, Install, Remove, Export, Stats,
+                             Rebuild, Refresh, Check, Tui, Shell, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

@@ -70,9 +70,20 @@ class Depclean {
 
     Kept run() {
         for (std::uint32_t root = 0; root < store().roots.size(); ++root) {
-            if (const auto child = select(store().ids_in(store().roots.at(root).matches))) {
+            const auto& found = store().roots.at(root);
+            // A set world_sets names stays, with its atoms.
+            if (options_.without_selected && store().string(found.set) == "selected" &&
+                store().string(found.via).empty()) {
+                continue;
+            }
+            if (const auto child = select(store().ids_in(found.matches))) {
                 kept_.roots.push_back({.root = root, .child = *child});
                 add(*child);
+            }
+        }
+        for (std::uint32_t pkg = 0; pkg < options_.protect.size(); ++pkg) {
+            if (options_.protect.at(pkg) && !gone(pkg)) {
+                add(pkg);
             }
         }
         // Like emerge: a queued package is read before any queued || group is resolved, so

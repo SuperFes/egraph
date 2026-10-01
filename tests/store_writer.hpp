@@ -133,8 +133,9 @@ inline std::vector<Section> sample_sections() {
     packages.varint(1).varint(11).varint(12).varint(0);
 
     Bytes roots;
-    roots.varint(2).varint(15).varint(2).list({0});
-    roots.varint(16).varint(14).list({});
+    // set, atom, via (none), matches.
+    roots.varint(2).varint(15).varint(2).varint(0).list({0});
+    roots.varint(16).varint(14).varint(0).list({});
 
     Bytes profile;
     profile.varint(2).text("amd64").text("elibc_glibc");

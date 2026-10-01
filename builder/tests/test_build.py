@@ -160,7 +160,7 @@ def test_world_edit_only_reads_roots_again(system):
     result = rebuild(playground, meta, first)
     assert not result.full
     assert result.evaluated == frozenset()
-    assert ("selected", "app-misc/old", ("app-misc/old-1",)) in result.layer.roots()
+    assert ("selected", "app-misc/old", ("app-misc/old-1",), "") in result.layer.roots()
 
 
 def test_package_added_rematches_roots(system):
@@ -172,6 +172,7 @@ def test_package_added_rematches_roots(system):
         "selected",
         "app-misc/user",
         ("app-misc/user-1", "app-misc/user-2"),
+        "",
     ) in result.layer.roots()
 
 
@@ -183,7 +184,8 @@ def test_new_user_set_only_reads_roots_again(system):
         f.write("@extra\n")
     result = rebuild(playground, meta, first)
     assert not result.full
-    assert ("selected", "dev-libs/cond", ("dev-libs/cond-1",)) in result.layer.roots()
+    root = ("selected", "dev-libs/cond", ("dev-libs/cond-1",), "extra")
+    assert root in result.layer.roots()
 
 
 def test_profile_edit_forces_a_full_build(system):

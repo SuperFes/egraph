@@ -127,6 +127,32 @@ TEST_CASE("orphans end with a count") {
     CHECK(none.str() == "+ Nothing to remove.\n");
 }
 
+TEST_CASE("a removal lists what goes, then what is kept and why") {
+    std::ostringstream out;
+    egraph::human_removal(out,
+                          std::vector<std::string>{"a/b-1\tremove", "a/lib-1\tkept\ta/user-1",
+                                                   "a/base-1\tkept\t@system"},
+                          plain);
+    CHECK(out.str() == "- a/b-1\n"
+                       "H a/lib-1   needed by a/user-1\n"
+                       "H a/base-1  kept by @system\n"
+                       "\n1 package to remove, 2 kept\n");
+    std::ostringstream kept;
+    egraph::human_removal(kept, std::vector<std::string>{"a/lib-1\tkept\ta/user-1"}, plain);
+    CHECK(kept.str() == "H a/lib-1  needed by a/user-1\n\nNothing to remove, 1 kept\n");
+}
+
+TEST_CASE("a verified removal says emerge removes the same") {
+    std::ostringstream same;
+    egraph::human_verification(same, {}, plain, "removes");
+    CHECK(same.str() == "\n+ emerge --pretend removes the same.\n");
+    std::ostringstream differ;
+    egraph::human_verification(differ, std::vector<std::string>{"a/b-1\temerge\tremove"}, plain,
+                               "removes");
+    CHECK(differ.str() ==
+          "\n! emerge --pretend removes otherwise:\n  a/b-1  only in emerge (remove)\n");
+}
+
 TEST_CASE("a verified plan's blocker and refusal differences have no repository") {
     std::ostringstream differ;
     egraph::human_verification(differ,

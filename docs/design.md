@@ -494,6 +494,14 @@ egraph's terminal; afterwards the session reloads, refreshing the stores whether
 succeeded. A plan needing USE changes offers to write them first and acts again on the new
 plan. The interface refuses actions until it can show emerge's run itself (16j).
 
+`remove` is `emerge --depclean` with atoms, planned as `_calc_depclean` weighs arguments
+(`plan_removal`): every installed package they do not match is kept as a root, and the world
+file's atoms are left out, since depclean deselects them, while a set world_sets names stays
+(the store records which, `Root::via`). A matched package depclean still keeps is listed with
+its kept dependents and root sets. Verification reads the cpvs of emerge's "All selected
+packages:" line; `test_remove.py` holds the plan to `_calc_depclean` for every installed cp
+(and each version of a slotted one) on every scenario.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

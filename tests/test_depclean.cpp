@@ -94,8 +94,11 @@ std::vector<std::byte> three(std::string_view cp, std::string_view third,
 
 std::vector<std::uint32_t> orphaned(const egraph::Store& store,
                                     std::vector<egraph::Masking> masking) {
-    return egraph::orphans(
-        egraph::keep(store, {.build_deps = true, .masking = std::move(masking), .removed = {}}));
+    return egraph::orphans(egraph::keep(store, {.build_deps = true,
+                                                .masking = std::move(masking),
+                                                .removed = {},
+                                                .protect = {},
+                                                .without_selected = false}));
 }
 
 } // namespace
@@ -145,7 +148,10 @@ TEST_CASE("a removed package is kept by nothing, nor what only it kept") {
          {.cpv = "dev-lang/py-3.14", .slot = "3.14"}},
         {}, {"app-misc/pylint", "dev-lang/py"});
     CHECK(egraph::keep(system.store, {}).packages == std::vector<bool>{true, true, false, true});
-    CHECK(egraph::keep(system.store,
-                       {.build_deps = true, .masking = {}, .removed = {true, false, false, true}})
+    CHECK(egraph::keep(system.store, {.build_deps = true,
+                                      .masking = {},
+                                      .removed = {true, false, false, true},
+                                      .protect = {},
+                                      .without_selected = false})
               .packages == std::vector<bool>{false, false, true, false});
 }

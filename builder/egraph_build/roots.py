@@ -22,6 +22,9 @@ class Root(NamedTuple):
     atom: str
     # Installed cpvs the atom matches.
     matches: tuple
+    # For an atom of @selected, the first set world_sets names that holds it, which depclean
+    # keeps when its arguments empty @selected; "" for any other.
+    via: str = ""
 
 
 def _set_config(vardb):
@@ -43,15 +46,24 @@ def _set_config(vardb):
 
 
 def root_atoms(vardb):
-    """Set name -> atoms, nested sets expanded."""
+    """Set name -> {atom: via}, nested sets expanded."""
     config = _set_config(vardb)
     atoms = {}
     for name in ROOT_SETS:
         try:
-            atoms[name] = config.getSetAtoms(name)
+            atoms[name] = dict.fromkeys(config.getSetAtoms(name), "")
         except PackageSetNotFound:
             # As depclean: a set naming a missing set keeps its own atoms.
-            atoms[name] = config.getSets()[name].getAtoms()
+            atoms[name] = dict.fromkeys(config.getSets()[name].getAtoms(), "")
+            continue
+        if name != "selected":
+            continue
+        nested = sorted(
+            set_name[1:] for set_name in config.getSets()[name].getNonAtoms()
+        )
+        for set_name in reversed(nested):
+            for atom in config.getSetAtoms(set_name):
+                atoms[name][atom] = set_name
     return atoms
 
 
@@ -59,7 +71,7 @@ def read_roots(vardb, match):
     """Every root atom with the installed packages it matches, sets in ROOT_SETS order."""
     atoms = root_atoms(vardb)
     return tuple(
-        Root(name, str(atom), match(atom))
+        Root(name, str(atom), match(atom), atoms[name][atom])
         for name in ROOT_SETS
         for atom in sorted(atoms[name], key=str)
     )

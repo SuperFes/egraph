@@ -133,7 +133,7 @@ def test_json_is_canonical(layers, playgrounds):
     assert text == installed.to_json(installed.build(playgrounds("any-of").vardb))
     assert text.endswith("}\n") and "\n" not in text[:-1]
     document = json.loads(text)
-    assert document["format"] == 2
+    assert document["format"] == 3
     cpvs = [pkg["cpv"] for pkg in document["packages"]]
     assert cpvs == sorted(cpvs)
 
