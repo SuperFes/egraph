@@ -424,6 +424,42 @@ Whether build-time dependencies keep packages, as emerge's option (default
 .TP
 .BR \-y ", " \-\-yes
 Run emerge without asking.
+.SS select \fIpackage\fR...
+Adds the atoms and sets to
+.BR @selected ,
+as
+.B emerge \-\-select \-\-noreplace
+does: shows the plan for what is not installed yet as
+.B plan \-n
+does, then, as
+.B update
+does, verifies it, asks, and runs
+.BR emerge .
+emerge decides the atom it records; once the stores are refreshed, the atoms that joined
+.B @selected
+are listed. After any action, so are the atoms that joined or left it.
+.TP
+.B \-\-dynamic\-deps
+.TP
+.BR \-y ", " \-\-yes
+Run emerge without asking.
+.SS deselect \fIpackage\fR...
+What
+.B emerge \-\-deselect
+would remove from the world file, and from
+.I world_sets
+for a set, as
+.B emerge \-\-pretend \-\-deselect
+says, followed by the installed packages
+.B emerge \-\-depclean
+would then remove that it would not remove now. On yes, as
+.B update
+does,
+.B emerge \-\-deselect
+removes them; nothing is merged or removed.
+.TP
+.BR \-y ", " \-\-yes
+Run emerge without asking.
 .SS export \fR[\fIpackage\fR...]
 Part of the graph, or all of it without packages, for other tools.
 .TP

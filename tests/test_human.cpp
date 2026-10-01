@@ -142,6 +142,28 @@ TEST_CASE("a removal lists what goes, then what is kept and why") {
     CHECK(kept.str() == "H a/lib-1  needed by a/user-1\n\nNothing to remove, 1 kept\n");
 }
 
+TEST_CASE("a deselect lists the atoms leaving, then what depclean would remove after") {
+    std::ostringstream out;
+    egraph::human_deselect(
+        out, std::vector<std::string>{"a/user\tdeselect", "@myset\tdeselect", "a/user-1\torphan"},
+        plain);
+    CHECK(out.str() == "- a/user\n- @myset\n\n2 atoms leave @selected; then emerge --depclean "
+                       "would remove:\n- a/user-1\n");
+    std::ostringstream alone;
+    egraph::human_deselect(alone, std::vector<std::string>{"a/leaf\tdeselect"}, plain);
+    CHECK(alone.str() == "- a/leaf\n\n1 atom leaves @selected\n");
+}
+
+TEST_CASE("an action's changes to @selected follow it") {
+    std::ostringstream none;
+    egraph::human_selection(none, {}, plain);
+    CHECK(none.str().empty());
+    std::ostringstream out;
+    egraph::human_selection(out, std::vector<std::string>{"a/b\tdeselected", "c/d\tselected"},
+                            plain);
+    CHECK(out.str() == "\n+ c/d joined @selected\n- a/b left @selected\n");
+}
+
 TEST_CASE("a verified removal says emerge removes the same") {
     std::ostringstream same;
     egraph::human_verification(same, {}, plain, "removes");

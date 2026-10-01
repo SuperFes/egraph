@@ -642,6 +642,56 @@ void human_removal(std::ostream& out, std::span<const std::string> records, cons
     out << '\n';
 }
 
+void human_deselect(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto rows = split_all(records);
+    std::size_t atoms = 0;
+    for (const auto& row : rows) {
+        if (row.at(1) == "deselect") {
+            ++atoms;
+            const auto atom = row.front();
+            out << paint(theme.glyph().orphan, Tone::bad) << ' '
+                << (atom.starts_with('@') ? paint(atom, Tone::root) : paint_cpv(atom, paint))
+                << '\n';
+        }
+    }
+    out << '\n'
+        << paint(std::to_string(atoms), Tone::count)
+        << paint(atoms == 1 ? " atom leaves @selected" : " atoms leave @selected", Tone::note);
+    if (atoms == rows.size()) {
+        out << '\n';
+        return;
+    }
+    out << paint("; then emerge --depclean would remove:", Tone::note) << '\n';
+    for (const auto& row : rows) {
+        if (row.at(1) == "orphan") {
+            out << paint(theme.glyph().orphan, Tone::bad) << ' ' << paint_cpv(row.front(), paint)
+                << '\n';
+        }
+    }
+}
+
+void human_selection(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    if (records.empty()) {
+        return;
+    }
+    const auto& paint = theme.paint;
+    const auto rows = split_all(records);
+    out << '\n';
+    for (const auto* change : {"selected", "deselected"}) {
+        for (const auto& row : rows) {
+            if (row.at(1) != change) {
+                continue;
+            }
+            const bool joined = row.at(1) == "selected";
+            out << paint(joined ? theme.glyph().good : theme.glyph().orphan,
+                         joined ? Tone::good : Tone::bad)
+                << ' ' << paint_cpv(row.front(), paint)
+                << paint(joined ? " joined @selected" : " left @selected", Tone::note) << '\n';
+        }
+    }
+}
+
 std::string holder_note(std::span<const std::string_view> dependents,
                         std::span<const std::string_view> sets) {
     std::vector<std::string_view> others;

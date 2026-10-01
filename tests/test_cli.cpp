@@ -205,6 +205,19 @@ TEST_CASE("remove takes atoms, emerge's --with-bdeps and --yes") {
     CHECK_THROWS(parse("remove"));
 }
 
+TEST_CASE("select and deselect take atoms and --yes") {
+    const auto select = std::get<egraph::Select>(parse("select -y a/b @set").command);
+    CHECK(select.packages == std::vector<std::string>{"a/b", "@set"});
+    CHECK(select.yes);
+    const auto deselect = std::get<egraph::Deselect>(parse("deselect a/b").command);
+    CHECK(deselect.packages == std::vector<std::string>{"a/b"});
+    CHECK_FALSE(deselect.yes);
+    CHECK_THROWS(parse("select"));
+    CHECK_THROWS(parse("deselect"));
+    // deselect follows no dependencies of its own.
+    CHECK_THROWS(parse("deselect --dynamic-deps n a/b"));
+}
+
 TEST_CASE("emerge runs, and EMERGE_DEFAULT_OPTS is read, under the same roots") {
     egraph::Invocation invocation;
     invocation.builder = "egraph-build";

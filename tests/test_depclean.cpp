@@ -98,6 +98,7 @@ std::vector<std::uint32_t> orphaned(const egraph::Store& store,
                                                 .masking = std::move(masking),
                                                 .removed = {},
                                                 .protect = {},
+                                                .dropped = {},
                                                 .without_selected = false}));
 }
 
@@ -152,6 +153,7 @@ TEST_CASE("a removed package is kept by nothing, nor what only it kept") {
                                       .masking = {},
                                       .removed = {true, false, false, true},
                                       .protect = {},
+                                      .dropped = {},
                                       .without_selected = false})
               .packages == std::vector<bool>{false, false, true, false});
 }

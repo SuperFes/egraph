@@ -28,6 +28,8 @@ struct KeepOptions {
     // Per installed package, whether to keep it whatever depends on it, as emerge --depclean
     // keeps every package its arguments do not match; empty for none.
     std::vector<bool> protect;
+    // Per root, whether to leave it out, as after emerge --deselect; empty for none.
+    std::vector<bool> dropped;
     // Leave the world file's atoms out of the roots, but not those of the sets world_sets names,
     // as emerge --depclean with arguments does.
     bool without_selected = false;

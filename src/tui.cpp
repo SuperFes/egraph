@@ -861,6 +861,7 @@ void App::recompute() {
                            .masking = masking_,
                            .removed = {},
                            .protect = {},
+                           .dropped = {},
                            .without_selected = false});
     root_of_.assign(store().packages.size(), std::nullopt);
     for (const auto& pull : kept_.roots) {

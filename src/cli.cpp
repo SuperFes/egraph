@@ -19,6 +19,7 @@
 #include "pressure.hpp"
 #include "remove.hpp"
 #include "request.hpp"
+#include "selection.hpp"
 #include "session.hpp"
 #include "steve.hpp"
 #include "store.hpp"
@@ -1145,8 +1146,10 @@ std::filesystem::path vdb_of(const Store& store) {
 // EMERGE_DEFAULT_OPTS' execution options, and refreshes the stores after.
 template <class Arguments>
 Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
-                     const Arguments& arguments, Session& session, const Invocation& invocation,
-                     std::ostream& out, std::ostream& err) {
+                     const Arguments& arguments, const Store& store, Session& session,
+                     const Invocation& invocation, std::ostream& out, std::ostream& err) {
+    // Copied before the session reloads, which takes store with it.
+    const auto selected = world_atoms(store);
     const auto passed = passed_options(invocation);
     if (!passed) {
         err << "egraph: " << name << ": EMERGE_DEFAULT_OPTS could not be read: " << passed.error()
@@ -1163,6 +1166,13 @@ Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
     if (const auto stores = session.stores(); !stores) {
         err << "egraph: " << name << ": the stores could not be refreshed: " << stores.error()
             << '\n';
+    } else {
+        const auto changes = selection_changes(selected, world_atoms(stores->get().installed));
+        if (const auto style = output(invocation); style.human) {
+            human_selection(out, changes, style.theme);
+        } else {
+            write_lines(out, changes);
+        }
     }
     if (!ran) {
         err << "egraph: " << name << ": " << ran.error().message << '\n';
@@ -1180,7 +1190,9 @@ Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
 template <class Show, class Act>
 Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
                 const Invocation& invocation, std::ostream& out, std::ostream& err,
-                const Show& show, const Act& act) {
+                const Show& show, const Act& act,
+                std::string_view question = "Have emerge merge this plan?",
+                bool selecting = false) {
     const auto shown = show();
     if (!shown) {
         return shown.error();
@@ -1195,11 +1207,13 @@ Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
     }
     const auto vdb = vdb_of(store);
     if (const auto status =
-            stopped(stop_before_verifying({.refused = plan.refused(),
-                                           .empty = plan.merges.empty() && plan.uninstalls.empty(),
-                                           .writable = os::can_create(vdb / "egraph"),
-                                           .yes = yes,
-                                           .can_ask = invocation.ask}),
+            stopped(stop_before_verifying(
+                        {.refused = plan.refused(),
+                         // Selecting needs no merge.
+                         .empty = !selecting && plan.merges.empty() && plan.uninstalls.empty(),
+                         .writable = os::can_create(vdb / "egraph"),
+                         .yes = yes,
+                         .can_ask = invocation.ask}),
                     name, merge_words, vdb, output(invocation).human, out, err)) {
         return *status;
     }
@@ -1211,11 +1225,11 @@ Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
         return status;
     }
     return confirm_and_run(
-        name, yes, "Have emerge merge this plan?",
+        name, yes, question,
         [&](const std::vector<std::string>& passed) {
             return run_arguments(request, oneshot, passed);
         },
-        session, invocation, out, err);
+        store, session, invocation, out, err);
 }
 
 Exit execute(const Update& command, Session& session, const Invocation& invocation,
@@ -1314,7 +1328,68 @@ Exit execute(const Remove& command, Session& session, const Invocation& invocati
             arguments.insert(arguments.end(), targets.begin(), targets.end());
             return arguments;
         },
-        session, invocation, out, err);
+        store, session, invocation, out, err);
+}
+
+Exit execute(const Select& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    PlanCommand plan;
+    plan.targets = command.packages;
+    plan.noreplace = true;
+    return run_action(
+        Select::name, false, command.yes, session, invocation, out, err,
+        [&] { return show_plan(plan, Select::name, session, invocation, out, err); },
+        [&](const Invocation& again) { return execute(command, session, again, out, err); },
+        "Have emerge add these to @selected, merging what is not installed?", true);
+}
+
+Exit execute(const Deselect& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    const auto depclean = session.depclean(true, invocation.dynamic_deps);
+    if (!depclean) {
+        return fail(err, depclean.error());
+    }
+    const Store& store = depclean->get().store;
+    // What emerge would remove is its own to say: it matches world atoms its own way.
+    std::vector<std::string> pretend{"--pretend", "--deselect", "--color=n", "--nospinner",
+                                     "--ignore-default-opts"};
+    pretend.insert(pretend.end(), command.packages.begin(), command.packages.end());
+    out << std::flush;
+    const auto printed = output_of(emerge_command(invocation, pretend));
+    if (!printed) {
+        err << "egraph: deselect: emerge --pretend --deselect failed:\n" << printed.error() << '\n';
+        return Exit::failure;
+    }
+    const auto atoms = parse_deselect(*printed);
+    const auto lines = deselect_lines(store, depclean->get().options, atoms);
+    const auto style = output(invocation);
+    if (!atoms.empty()) {
+        if (style.human) {
+            human_deselect(out, lines, style.theme);
+        } else {
+            write_lines(out, lines);
+        }
+    }
+    const auto world = std::filesystem::path{store.meta.eroot} / "var/lib/portage/world";
+    constexpr ActionWords deselect_words{
+        .verb = "deselect", .gerund = "deselecting", .past = "deselected"};
+    if (const auto status = stopped(stop_before_verifying({.refused = false,
+                                                           .empty = atoms.empty(),
+                                                           .writable = os::can_create(world),
+                                                           .yes = command.yes,
+                                                           .can_ask = invocation.ask}),
+                                    Deselect::name, deselect_words, world, style.human, out, err)) {
+        return *status;
+    }
+    return confirm_and_run(
+        Deselect::name, command.yes, "Have emerge remove these from @selected?",
+        [&](const std::vector<std::string>& passed) {
+            std::vector<std::string> arguments{"--deselect", "--ignore-default-opts", "--ask=n"};
+            arguments.insert(arguments.end(), passed.begin(), passed.end());
+            arguments.insert(arguments.end(), command.packages.begin(), command.packages.end());
+            return arguments;
+        },
+        store, session, invocation, out, err);
 }
 
 Exit execute(const Why& command, Session& session, const Invocation& invocation, std::ostream& out,
@@ -1684,6 +1759,22 @@ void configure(CLI::App& app, Invocation& invocation) {
               "Whether build-time dependencies keep packages, as emerge's option (default y)")
         ->transform(yes_no);
     add_yes<Remove>(remove_cmd, invocation);
+    CLI::App* select_cmd = add_dynamic_deps(add_command<Select>(
+        app, invocation,
+        "Have emerge add packages to @selected once confirmed, merging those not installed"));
+    add_field(select_cmd, invocation, "packages", &Select::packages, "Atoms and sets, as emerge's")
+        ->type_name("PACKAGE")
+        ->required();
+    add_yes<Select>(select_cmd, invocation);
+    CLI::App* deselect_cmd = add_command<Deselect>(
+        app, invocation,
+        "Show what emerge --deselect would remove from @selected and what depclean would then "
+        "remove, then have it deselect them once confirmed");
+    add_field(deselect_cmd, invocation, "packages", &Deselect::packages,
+              "Atoms and sets, as emerge's")
+        ->type_name("PACKAGE")
+        ->required();
+    add_yes<Deselect>(deselect_cmd, invocation);
 
     CLI::App* export_cmd = add_command<Export>(app, invocation, "Export part of the graph");
     add_field(export_cmd, invocation, "--format", &Export::format, "Output format")
@@ -1934,7 +2025,9 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
     // emerge would write over the interface's screen.
     if (context == Context::interface && (std::holds_alternative<Update>(command.command) ||
                                           std::holds_alternative<Install>(command.command) ||
-                                          std::holds_alternative<Remove>(command.command))) {
+                                          std::holds_alternative<Remove>(command.command) ||
+                                          std::holds_alternative<Select>(command.command) ||
+                                          std::holds_alternative<Deselect>(command.command))) {
         return usage("actions run from the command line or the shell");
     }
     if (context == Context::interface) {

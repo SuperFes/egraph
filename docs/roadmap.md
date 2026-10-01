@@ -449,7 +449,7 @@ use, egraph schedules the merges itself.
     sets of flags); on a terminal the `package.use` lines are offered and, on yes, written, the
     stores refreshed and the plan made again. An argument whose USE dependencies only a change
     meets is planned, as emerge's autounmask does.
-- 16f: actions: `update`, `install` (`--oneshot`, or the targets selected), `remove` (through
+- 16f (done): actions: `update`, `install` (`--oneshot`, or the targets selected), `remove` (through
   `emerge --depclean` with atoms), `select`, `deselect`: the plan shown, a yes asked for, emerge
   run on the plan, the stores refreshed at once. emerge resolves the request again itself, so
   each plan is verified against `emerge --pretend` first and nothing runs when they differ.
@@ -464,8 +464,11 @@ use, egraph schedules the merges itself.
     records the world_sets set an atom of @selected comes through (format 5), which depclean
     keeps; remedies no longer offer to deselect such an atom. Equal to `_calc_depclean` for
     every installed cp on every scenario.
-  - 16f3: `select` (`emerge --select --noreplace`) and `deselect` (`emerge --deselect`), with
-    what a deselect leaves for depclean.
+  - 16f3 (done): `select` (`emerge --select --noreplace`, the plan for what is not installed
+    verified) and `deselect` (`emerge --deselect`, the atoms as emerge's pretend names them),
+    with the packages depclean would then remove. Which atom emerge records is its own
+    (`create_world_atom` reads the repositories' slots), so after every action the atoms that
+    joined or left @selected are read back from the refreshed stores.
 - 16g: after a merge: the elog summary, pending `._cfg` files (`dispatch-conf` a key away),
   preserved libraries planned as their consumers' rebuilds, unread news.
 - 16h: `sync`: `emaint sync -a`, then what the sync brought: new updates, news.

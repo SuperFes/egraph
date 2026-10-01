@@ -184,6 +184,7 @@ TEST_CASE("from the root sets, the scope without the holders is depclean's") {
                                            .masking = {},
                                            .removed = removed,
                                            .protect = {},
+                                           .dropped = {},
                                            .without_selected = false})
             .packages;
     };

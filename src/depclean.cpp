@@ -71,6 +71,9 @@ class Depclean {
     Kept run() {
         for (std::uint32_t root = 0; root < store().roots.size(); ++root) {
             const auto& found = store().roots.at(root);
+            if (!options_.dropped.empty() && options_.dropped.at(root)) {
+                continue;
+            }
             // A set world_sets names stays, with its atoms.
             if (options_.without_selected && store().string(found.set) == "selected" &&
                 store().string(found.via).empty()) {

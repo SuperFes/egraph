@@ -220,6 +220,12 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
 void human_verification(std::ostream& out, std::span<const std::string> records, const Theme& theme,
                         std::string_view verb = "merges");
 
+// deselect_lines' records: the atoms leaving @selected, then what depclean would remove after.
+void human_deselect(std::ostream& out, std::span<const std::string> records, const Theme& theme);
+
+// selection_changes' records, after an action: what joined @selected, then what left it.
+void human_selection(std::ostream& out, std::span<const std::string> records, const Theme& theme);
+
 // removal_lines' records: what goes, then what is kept with what keeps it, and a count.
 void human_removal(std::ostream& out, std::span<const std::string> records, const Theme& theme);
 

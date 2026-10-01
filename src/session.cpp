@@ -212,6 +212,7 @@ Loaded<Session::Depclean> Session::depclean(bool build_deps, bool dynamic) {
                             .masking = std::move(masking),
                             .removed = {},
                             .protect = {},
+                            .dropped = {},
                             .without_selected = false};
         auto kept = keep(store->get(), options);
         depclean =

@@ -502,6 +502,14 @@ its kept dependents and root sets. Verification reads the cpvs of emerge's "All 
 packages:" line; `test_remove.py` holds the plan to `_calc_depclean` for every installed cp
 (and each version of a slotted one) on every scenario.
 
+`select` is `install --noreplace` that runs even with nothing to merge. Neither `--pretend`
+says which atom emerge would record (`create_world_atom` weighs the repositories' slots and the
+system set), so egraph does not guess: after any action it compares the world file's atoms
+(`world_atoms`: @selected's roots without a world_sets set) in the stores before and after, and
+lists what joined or left. `deselect` shows the atoms `emerge --pretend --deselect` names, which
+its own matching (`Atom.intersects`, slot and repository rules) decides, and adds what depclean
+would remove once they are gone (`deselect_lines`, the roots dropped as `KeepOptions::dropped`).
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

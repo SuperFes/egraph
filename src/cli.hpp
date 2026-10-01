@@ -146,6 +146,20 @@ struct Remove {
     bool yes = false;
 };
 
+// emerge --select --noreplace run on packages once shown and confirmed.
+struct Select {
+    static constexpr std::string_view name = "select";
+    std::vector<std::string> packages;
+    bool yes = false;
+};
+
+// emerge --deselect run on packages once shown and confirmed.
+struct Deselect {
+    static constexpr std::string_view name = "deselect";
+    std::vector<std::string> packages;
+    bool yes = false;
+};
+
 enum class ExportFormat : std::uint8_t { dot, json };
 
 struct Export {
@@ -191,9 +205,10 @@ struct Affected {
     std::string request = "-";
 };
 
-using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Blockers,
-                             Orphans, Updates, PlanCommand, Update, Install, Remove, Export, Stats,
-                             Rebuild, Refresh, Check, Tui, Shell, Affected>;
+using Command =
+    std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Blockers, Orphans,
+                 Updates, PlanCommand, Update, Install, Remove, Select, Deselect, Export, Stats,
+                 Rebuild, Refresh, Check, Tui, Shell, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

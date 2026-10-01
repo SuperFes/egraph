@@ -198,6 +198,7 @@ def test_install_selects_its_targets_unless_oneshot(system):
     assert result.returncode == 0, result.stdout + result.stderr
     assert machine.installed("app-misc/b-1")
     assert "app-misc/b" in machine.world()
+    assert result.stdout.splitlines()[-1] == "app-misc/b\tselected"
     result = machine.egraph("install", "--yes", "--oneshot", "app-misc/c")
     assert result.returncode == 0, result.stdout + result.stderr
     assert machine.installed("app-misc/c-1")
@@ -286,6 +287,7 @@ def test_remove_removes_through_depclean_and_deselects(system):
     ]
     assert not machine.installed("app-misc/leaf-1")
     assert "app-misc/leaf" not in machine.world()
+    assert result.stdout.splitlines()[-1] == "app-misc/leaf\tdeselected"
     again = machine.egraph("--no-refresh", "orphans")
     assert again.returncode == 0, again.stderr
     assert again.stdout == ""
@@ -325,3 +327,53 @@ def test_removing_what_is_not_installed_fails_before_emerge(system):
     assert result.returncode == 1
     assert "no installed package matches" in result.stderr
     assert not machine.asked()
+
+
+def test_select_records_an_installed_package_and_says_so(system):
+    machine = system(removable=True)
+    result = machine.egraph("--layout", "human", "select", "--yes", "app-misc/lib")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "app-misc/lib" in machine.world()
+    assert machine.emerged()[-1][-2:] == ["--noreplace", "app-misc/lib"]
+    assert "app-misc/lib joined @selected" in result.stdout
+    assert not machine.installed("app-misc/b-1")
+
+
+def test_select_merges_what_is_not_installed(system):
+    machine = system()
+    result = machine.egraph("select", "--yes", "app-misc/b")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert machine.installed("app-misc/b-1")
+    assert "app-misc/b" in machine.world()
+    assert result.stdout.splitlines()[-1] == "app-misc/b\tselected"
+
+
+def test_deselect_lists_what_depclean_would_then_remove(system):
+    machine = system(removable=True)
+    result = machine.egraph("deselect", "--yes", "app-misc/user")
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.splitlines()
+    assert lines[:3] == [
+        "app-misc/user\tdeselect",
+        "app-misc/lib-1\torphan",
+        "app-misc/user-1\torphan",
+    ]
+    assert lines[-1] == "app-misc/user\tdeselected"
+    run = machine.emerged()[-1]
+    assert run[run.index("--deselect") :] == [
+        "--deselect",
+        "--ignore-default-opts",
+        "--ask=n",
+        "--jobs=2",
+        "app-misc/user",
+    ]
+    assert "app-misc/user" not in machine.world()
+    assert machine.installed("app-misc/user-1")
+
+
+def test_deselecting_what_is_not_selected_does_nothing(system):
+    machine = system(removable=True)
+    result = machine.egraph("--layout", "human", "deselect", "--yes", "app-misc/lib")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Nothing to deselect." in result.stdout
+    assert machine.emerged() == []

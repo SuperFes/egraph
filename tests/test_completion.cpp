@@ -63,7 +63,7 @@ TEST_CASE("completions follow the command line's options, commands and what each
     // Positional arguments belong to commands, not to the options.
     CHECK(std::ranges::none_of(found.options, [](const auto& each) { return each.names.empty(); }));
 
-    REQUIRE(found.commands.size() == 21);
+    REQUIRE(found.commands.size() == 23);
     CHECK(found.commands.front().name == "deps");
     const auto* updates = command(found, "updates");
     REQUIRE(updates != nullptr);
