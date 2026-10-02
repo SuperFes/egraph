@@ -1,7 +1,12 @@
 #include "os.hpp"
 
+#include "helpers.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
+#include <format>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -12,6 +17,12 @@ egraph::os::Talk talk(const std::string& script) {
     auto started = egraph::os::start_talking({"sh", "-c", script});
     REQUIRE(started.has_value());
     return std::move(*started);
+}
+
+std::optional<std::byte> taken(egraph::os::Jobserver& jobserver) {
+    auto token = jobserver.take();
+    REQUIRE(token.has_value());
+    return *token;
 }
 
 } // namespace
@@ -44,4 +55,63 @@ TEST_CASE("sending to a child that has ended fails without a signal") {
 TEST_CASE("a talking child that cannot start is an error") {
     CHECK_FALSE(egraph::os::start_talking({"/nonexistent/egraph-test"}).has_value());
     CHECK_FALSE(egraph::os::start_talking({}).has_value());
+}
+
+TEST_CASE("waiting on talking children finds those with a line or an end") {
+    std::vector<egraph::os::Talk> talks;
+    talks.push_back(talk(R"(read -r line; sleep 0.3; echo slow)"));
+    talks.push_back(talk(R"(read -r line; printf 'qu'; sleep 0.1; echo ick)"));
+    CHECK(talks.at(0).send("go"));
+    CHECK(talks.at(1).send("go"));
+    auto found = egraph::os::wait_for(talks);
+    REQUIRE(found.has_value());
+    // Not before its whole line has come.
+    CHECK(found->talks == std::vector<std::size_t>{1});
+    CHECK_FALSE(found->token);
+    CHECK(talks.at(1).receive() == "quick");
+    found = egraph::os::wait_for(talks);
+    REQUIRE(found.has_value());
+    CHECK(found->talks == std::vector<std::size_t>{1});
+    CHECK(talks.at(1).receive() == std::nullopt);
+    // An ended talk stays ready.
+    found = egraph::os::wait_for(talks);
+    REQUIRE(found.has_value());
+    CHECK(found->talks == std::vector<std::size_t>{1});
+    CHECK(talks.at(0).ready() == false);
+    CHECK(talks.at(1).finish() == 0);
+    talks.pop_back();
+    found = egraph::os::wait_for(talks);
+    REQUIRE(found.has_value());
+    CHECK(found->talks == std::vector<std::size_t>{0});
+    CHECK(talks.at(0).receive() == "slow");
+    CHECK(talks.at(0).finish() == 0);
+}
+
+TEST_CASE("nothing to wait for finds nothing") {
+    const auto found = egraph::os::wait_for({});
+    REQUIRE(found.has_value());
+    CHECK(found->talks.empty());
+    CHECK_FALSE(found->token);
+}
+
+TEST_CASE("a jobserver's tokens are taken and given back, and waited for") {
+    const egraph::test::TempDir dir;
+    const auto fifo = dir.path() / "jobserver";
+    REQUIRE(egraph::os::run({"mkfifo", fifo.string()}) == 0);
+    auto jobserver = egraph::os::Jobserver::open(fifo);
+    REQUIRE(jobserver.has_value());
+    CHECK(taken(*jobserver) == std::nullopt);
+    // A token another process gives back.
+    std::vector<egraph::os::Talk> talks;
+    talks.push_back(
+        talk(std::format("sleep 0.2; printf + > {}; read -r line; exit 0", fifo.string())));
+    const auto found = egraph::os::wait_for(talks, std::cref(*jobserver));
+    REQUIRE(found.has_value());
+    CHECK(found->token);
+    CHECK(found->talks.empty());
+    CHECK(taken(*jobserver) == std::byte{'+'});
+    CHECK(taken(*jobserver) == std::nullopt);
+    CHECK(jobserver->give(std::byte{'+'}).has_value());
+    CHECK(taken(*jobserver) == std::byte{'+'});
+    CHECK(talks.at(0).finish() == 0);
 }

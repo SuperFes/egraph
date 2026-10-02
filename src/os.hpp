@@ -2,10 +2,13 @@
 
 // The only place egraph calls C APIs directly; everything here returns values.
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -36,6 +39,8 @@ std::expected<int, SpawnError> run(const std::vector<std::string>& argv,
                                    const std::optional<std::filesystem::path>& log = std::nullopt);
 
 class Talk;
+class Jobserver;
+struct Readiness;
 
 // A process start() began. Destroying one that has not ended terminates it and reaps it.
 class Child {
@@ -93,6 +98,8 @@ class Descriptor {
 // standard error ours. Destroying one that has not ended terminates it, as a Child.
 class Talk {
   public:
+    // Whether receive() returns without waiting: a line has come, or the output has ended.
+    [[nodiscard]] bool ready() const;
     // Writes line and a newline to its standard input; false once it reads no more.
     [[nodiscard]] bool send(std::string_view line);
     // The next line it writes, without the newline; none once its output ends.
@@ -102,7 +109,12 @@ class Talk {
 
   private:
     friend std::expected<Talk, SpawnError> start_talking(const std::vector<std::string>& argv);
+    friend std::expected<Readiness, std::error_code>
+    wait_for(std::span<Talk> talks,
+             const std::optional<std::reference_wrapper<const Jobserver>>& jobserver);
     Talk(Child child, Descriptor input, Descriptor output);
+    // Reads what has come, once, without waiting if poll(2) said something has.
+    void fill();
 
     Child child_;
     Descriptor input_;
@@ -115,6 +127,40 @@ class Talk {
 // a line at a time. Its standard input is a socket, so that writing to one that has ended fails
 // rather than raising SIGPIPE.
 std::expected<Talk, SpawnError> start_talking(const std::vector<std::string>& argv);
+
+// A make jobserver's named pipe, as emerge's FEATURES=jobserver-token uses one: a byte read from
+// it is a token to run one job, written back when the job ends.
+class Jobserver {
+  public:
+    // Opens the pipe at path for reading and writing without blocking, as emerge opens it.
+    [[nodiscard]] static std::expected<Jobserver, std::error_code>
+    open(const std::filesystem::path& path);
+    // A token, if one is free now.
+    [[nodiscard]] std::expected<std::optional<std::byte>, std::error_code> take();
+    [[nodiscard]] std::expected<void, std::error_code> give(std::byte token);
+
+  private:
+    friend std::expected<Readiness, std::error_code>
+    wait_for(std::span<Talk> talks,
+             const std::optional<std::reference_wrapper<const Jobserver>>& jobserver);
+    explicit Jobserver(Descriptor fd) : fd_{std::move(fd)} {}
+
+    Descriptor fd_;
+};
+
+// What wait_for() found.
+struct Readiness {
+    // Indices of the talks that are ready().
+    std::vector<std::size_t> talks;
+    // The jobserver may have a token.
+    bool token = false;
+};
+
+// Waits until a talk is ready() or, given one, the jobserver may have a token; nothing found
+// when there is nothing to wait for.
+std::expected<Readiness, std::error_code>
+wait_for(std::span<Talk> talks,
+         const std::optional<std::reference_wrapper<const Jobserver>>& jobserver = std::nullopt);
 
 // Whether this process could create or replace a file at path by renaming a new one over it:
 // the nearest existing directory above it is writable.

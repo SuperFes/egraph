@@ -8,7 +8,9 @@
 #include <fcntl.h>
 #include <format>
 #include <langinfo.h>
+#include <poll.h>
 #include <random>
+#include <ranges>
 #include <span>
 #include <spawn.h>
 #include <string_view>
@@ -232,6 +234,111 @@ std::optional<std::string> Talk::receive() {
             return std::exchange(pending_, {});
         }
         pending_.append_range(std::span{buffer}.first(static_cast<std::size_t>(got)));
+    }
+}
+
+bool Talk::ready() const {
+    return output_.get() < 0 || pending_.contains('\n');
+}
+
+void Talk::fill() {
+    std::array<char, 4096> buffer{};
+    for (;;) {
+        const auto got = ::read(output_.get(), buffer.data(), buffer.size());
+        if (got < 0 && errno == EINTR) {
+            continue;
+        }
+        if (got <= 0) {
+            output_.close();
+            return;
+        }
+        pending_.append_range(std::span{buffer}.first(static_cast<std::size_t>(got)));
+        return;
+    }
+}
+
+std::expected<Jobserver, std::error_code> Jobserver::open(const std::filesystem::path& path) {
+    const int fd = ::open(path.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) {
+        return std::unexpected(std::error_code(errno, std::generic_category()));
+    }
+    return Jobserver{Descriptor{fd}};
+}
+
+std::expected<std::optional<std::byte>, std::error_code> Jobserver::take() {
+    std::array<std::byte, 1> token{};
+    for (;;) {
+        const auto got = ::read(fd_.get(), token.data(), token.size());
+        if (got == 1) {
+            return token.front();
+        }
+        if (got < 0 && errno == EINTR) {
+            continue;
+        }
+        if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            return std::nullopt;
+        }
+        return std::unexpected(got == 0 ? std::make_error_code(std::errc::broken_pipe)
+                                        : std::error_code(errno, std::generic_category()));
+    }
+}
+
+std::expected<void, std::error_code> Jobserver::give(std::byte token) {
+    const std::array<std::byte, 1> given{token};
+    for (;;) {
+        const auto put = ::write(fd_.get(), given.data(), given.size());
+        if (put == 1) {
+            return {};
+        }
+        if (put < 0 && errno == EINTR) {
+            continue;
+        }
+        return std::unexpected(put == 0 ? std::make_error_code(std::errc::broken_pipe)
+                                        : std::error_code(errno, std::generic_category()));
+    }
+}
+
+std::expected<Readiness, std::error_code>
+wait_for(std::span<Talk> talks,
+         const std::optional<std::reference_wrapper<const Jobserver>>& jobserver) {
+    const auto ready = [&] {
+        std::vector<std::size_t> found;
+        for (const auto& [i, talk] : std::views::enumerate(talks)) {
+            if (talk.ready()) {
+                found.push_back(static_cast<std::size_t>(i));
+            }
+        }
+        return found;
+    };
+    for (;;) {
+        if (auto found = ready(); !found.empty()) {
+            return Readiness{.talks = std::move(found), .token = false};
+        }
+        std::vector<pollfd> watched;
+        watched.reserve(talks.size() + 1);
+        for (const auto& talk : talks) {
+            watched.push_back({.fd = talk.output_.get(), .events = POLLIN, .revents = 0});
+        }
+        if (jobserver) {
+            watched.push_back({.fd = jobserver->get().fd_.get(), .events = POLLIN, .revents = 0});
+        }
+        if (watched.empty()) {
+            return Readiness{};
+        }
+        if (::poll(watched.data(), watched.size(), -1) < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return std::unexpected(std::error_code(errno, std::generic_category()));
+        }
+        for (const auto& [talk, polled] : std::views::zip(talks, watched)) {
+            if (polled.revents != 0) {
+                talk.fill();
+            }
+        }
+        if (jobserver && watched.back().revents != 0) {
+            return Readiness{.talks = ready(), .token = true};
+        }
     }
 }
 

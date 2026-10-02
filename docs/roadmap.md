@@ -594,6 +594,9 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       - 16k4c1 (done): a worker keeps several built packages, merged in any order, as merge-wait
         holds them; each merge and uninstall reads the mtimedb afresh, so workers beside each
         other keep what the others recorded there.
+      - 16k4c2 (done): `os::wait_for` polls several workers' output at once, with a jobserver's
+        pipe when a token is wanted; `os::Jobserver` takes and gives back its tokens as emerge
+        does (read and write, without blocking).
   - 16k5: a failure skipping only what depends on it, compared with what `emerge --keep-going`
     drops.
   - 16k6: the live view in the living app, through the status file the emerge view reads;
