@@ -564,7 +564,9 @@ each build takes a token from the jobserver
 names, as
 .B emerge
 does. A package that fails is named with the phase and its build log; nothing new starts after
-it, but the builds running finish and what built still merges. The targets join
+it, but the builds running finish and what built still merges, and then, with
+.BR \-\-keep\-going ,
+the run goes on without what needs it. The targets join
 .B @selected
 as
 .B emerge
@@ -606,13 +608,27 @@ does; otherwise as many as
 .B EMERGE_DEFAULT_OPTS
 says, one by default.
 .TP
+.BR \-\-keep\-going " [\fBy\fR|\fBn\fR]"
+Go on after a failure, once the builds running have finished and merged, as
+.B emerge \-\-keep\-going
+does: what emerge's resume would drop is skipped, each named with the dependencies it is left
+without. A merge goes when one of its dependencies, or a run-time dependency of an installed
+package it reaches, is satisfied by nothing left to merge or installed and not replaced, and
+what reaches it goes too, unless something installed matches its atom on it. An uninstall goes
+with the merges that needed it. When what is left unsatisfied is already installed, the run
+stops, as emerge's resume does. Without a value, or with
+.BR y ;
+otherwise as
+.B EMERGE_DEFAULT_OPTS
+says, off by default.
+.TP
 .BI \-\-trace " file"
 Write to
 .I file
 a line as each build, merge and uninstall starts and ends: the seconds since the run started,
 what happened
 .RB ( build\-start ", " built ", " build\-failed ", " merge\-start ", " merged ", "
-.BR merge\-failed ", " uninstall\-start ", " uninstalled " or " uninstall\-failed )
+.BR merge\-failed ", " uninstall\-start ", " uninstalled ", " uninstall\-failed " or " skipped )
 and the cpv, separated by tabs.
 .SS remove \fIpackage\fR...
 What

@@ -205,7 +205,7 @@ def holds_the_rules(trace, jobs):
         elif what == "uninstall-start":
             assert merging == 0, (what, cpv)
             merging += 1
-        else:
+        elif what != "skipped":
             merging -= 1
     assert building == merging == 0
     assert builds_at_once(trace) <= jobs
@@ -359,3 +359,99 @@ def test_a_concurrent_emerge_waits_on_the_build_directory_lock(parallel, tmp_pat
     merged = float(marks[2][1])
     assert merged - launched > 4
     assert float(marks[3][1]) > merged
+
+
+FAILS = INSTALL + 'src_compile() { die "fails on purpose"; }\n'
+# fails and lib-2 fail to build: what needs them goes, what the installed lib-1 satisfies stays.
+# broken is installed without what it needs; uses reaches it, building after fails2, which an
+# installed fails2-0 still satisfies once fails2-1 fails.
+DOC = {**PLAIN, "IUSE": "doc"}
+KEEP_GOING = {
+    "app-misc/fails-1": {**DOC, "MISC_CONTENT": FAILS},
+    "app-misc/lib-1": {**DOC, "MISC_CONTENT": INSTALL},
+    "app-misc/lib-2": {**DOC, "MISC_CONTENT": FAILS},
+    "app-misc/user-1": {**DOC, "RDEPEND": "app-misc/lib", "MISC_CONTENT": INSTALL},
+    "app-misc/user2-1": {
+        **DOC,
+        "RDEPEND": ">=app-misc/lib-2",
+        "MISC_CONTENT": INSTALL,
+    },
+    "app-misc/needs-1": {**DOC, "DEPEND": "app-misc/fails", "MISC_CONTENT": INSTALL},
+    "app-misc/top-1": {**DOC, "RDEPEND": "app-misc/needs", "MISC_CONTENT": INSTALL},
+    "app-misc/indep-1": {**DOC, "MISC_CONTENT": INSTALL},
+    "app-misc/broken-1": {**DOC, "RDEPEND": "app-misc/gone", "MISC_CONTENT": INSTALL},
+    "app-misc/uses-1": {
+        **DOC,
+        "BDEPEND": "app-misc/fails2",
+        "RDEPEND": "app-misc/broken",
+        "MISC_CONTENT": INSTALL,
+    },
+    "app-misc/fails2-0": {**DOC, "MISC_CONTENT": INSTALL},
+    "app-misc/fails2-1": {**DOC, "MISC_CONTENT": FAILS},
+}
+
+
+@pytest.fixture
+def keep_going(gnupg_home, tmp_path):
+    """The keep-going ebuilds, with --keep-going configured, whatever the free space."""
+    options = "--keep-going --jobs-tmpdir-require-free-gb=0"
+    config = {"make.conf": (f'EMERGE_DEFAULT_OPTS="{options}"',)}
+    yield from over(KEEP_GOING, tmp_path, user_config=config)
+
+
+def failed_as_install(system, machine, before, args, exec_args=()):
+    """After the emerge commands before: egraph install and egraph exec, given args and --yes,
+    each fail and leave the same system. exec's run."""
+    for command in before:
+        machine.emerge(command)
+    age(system.playground.eroot)
+    machine.save()
+    installed = system.egraph("install", "--yes", *args)
+    assert installed.returncode != 0, installed.stdout + installed.stderr
+    emerged = without_counters(machine.state())
+    machine.restore()
+    forget_stores(system)
+    age(system.playground.eroot)
+    ran = system.egraph("exec", "--yes", *exec_args, *args)
+    assert ran.returncode != 0, ran.stdout + ran.stderr
+    worked = without_counters(machine.state())
+    assert worked == emerged, differences(emerged, worked)
+    return ran
+
+
+@pytest.mark.parametrize("jobs", ["1", "2"])
+def test_keep_going_skips_what_emerge_drops(keep_going, tmp_path, jobs):
+    """What needs a failed package, or what needs that, goes; what an installed version still
+    satisfies stays, as emerge --keep-going resumes."""
+    system, machine = keep_going
+    trace = tmp_path / "trace"
+    ran = failed_as_install(
+        system,
+        machine,
+        ["-1 =app-misc/lib-1"],
+        ["app-misc/top", "app-misc/user", "app-misc/user2", "app-misc/indep"],
+        ["-j", jobs, "--trace", str(trace)],
+    )
+    for cpv in ("app-misc/lib-1", "app-misc/user-1", "app-misc/indep-1"):
+        assert machine.installed(cpv), cpv
+    traced = read_trace(trace)
+    holds_the_rules(traced, int(jobs))
+    skipped = {cpv for what, cpv in traced if what == "skipped"}
+    assert skipped == {"app-misc/needs-1", "app-misc/top-1", "app-misc/user2-1"}
+    assert "app-misc/user2-1\tskipped, needs >=app-misc/lib-2" in ran.stdout
+    assert "app-misc/top-1\tskipped, needs app-misc/needs" in ran.stdout
+    assert "; 1 more failed; 3 skipped" in ran.stderr
+
+
+def test_keep_going_stops_where_emerge_cannot_resume(keep_going):
+    """A merge left that reaches an installed package with a dependency nothing satisfies stops
+    the run, as emerge refuses to resume."""
+    system, machine = keep_going
+    ran = failed_as_install(
+        system,
+        machine,
+        ["-1 =app-misc/fails2-0", "-1 --nodeps =app-misc/broken-1"],
+        ["-1", "app-misc/fails2", "app-misc/uses"],
+    )
+    assert not machine.installed("app-misc/uses-1")
+    assert "cannot go on without app-misc/broken-1: app-misc/gone" in ran.stderr

@@ -43,7 +43,7 @@ bool Schedule::dependent(std::size_t step) const {
         seen.at(merge) = true;
         const auto other = step_of_merge_.at(merge);
         const bool later = other != no_step && other > step && states_.at(other) == State::queued;
-        if (other != no_step && states_.at(other) != State::done && !later) {
+        if (other != no_step && !finished_with(states_.at(other)) && !later) {
             return true;
         }
         follow(merge);
@@ -53,7 +53,7 @@ bool Schedule::dependent(std::size_t step) const {
 
 std::optional<std::size_t> Schedule::next_build() const {
     // Nor while merge-wait's merges are let through, as emerge holds new jobs then.
-    if (failed_ || flushed_ > 0 || (jobs_ && building_ >= *jobs_)) {
+    if (halted_ || flushed_ > 0 || (jobs_ && building_ >= *jobs_)) {
         return std::nullopt;
     }
     std::optional<std::size_t> first;
@@ -88,6 +88,7 @@ void Schedule::build_finished(std::size_t step, bool succeeded) {
     } else {
         states_.at(step) = State::failed;
         failed_ = true;
+        halted_ = true;
     }
     release();
 }
@@ -112,13 +113,14 @@ void Schedule::merge_finished(std::size_t step, bool succeeded) {
     }
     states_.at(step) = succeeded ? State::done : State::failed;
     failed_ = failed_ || !succeeded;
+    halted_ = halted_ || !succeeded;
     release();
 }
 
 void Schedule::release() {
     // Uninstalls whose merges are done go ahead of what waits to merge, unless a step failed.
     std::vector<std::size_t> ready;
-    for (std::size_t i = 0; i < steps_.size() && !failed_; ++i) {
+    for (std::size_t i = 0; i < steps_.size() && !halted_; ++i) {
         const auto* uninstall = std::get_if<UninstallStep>(&steps_.at(i));
         if (uninstall == nullptr || states_.at(i) != State::queued) {
             continue;
@@ -126,7 +128,7 @@ void Schedule::release() {
         const auto& after = plan_.get().uninstalls.at(uninstall->uninstall).after;
         if (std::ranges::all_of(after, [this](std::uint32_t merge) {
                 const auto step = step_of_merge_.at(merge);
-                return step == no_step || states_.at(step) == State::done;
+                return step == no_step || finished_with(states_.at(step));
             })) {
             states_.at(i) = State::built;
             ready.push_back(i);
@@ -148,6 +150,25 @@ bool Schedule::finished() const {
 
 bool Schedule::failed() const {
     return failed_;
+}
+
+std::vector<Standing> Schedule::standing() const {
+    std::vector<Standing> found;
+    found.reserve(states_.size());
+    for (const auto state : states_) {
+        found.push_back(state == State::done   ? Standing::done
+                        : finished_with(state) ? Standing::gone
+                                               : Standing::left);
+    }
+    return found;
+}
+
+void Schedule::resume(std::span<const std::size_t> skipped) {
+    for (const auto step : skipped) {
+        states_.at(step) = State::skipped;
+    }
+    halted_ = false;
+    release();
 }
 
 } // namespace egraph

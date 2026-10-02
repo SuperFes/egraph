@@ -4,6 +4,7 @@
 // --jobs and FEATURES=merge-wait.
 
 #include "exec.hpp"
+#include "keep_going.hpp"
 #include "plan.hpp"
 
 #include <algorithm>
@@ -55,13 +56,24 @@ class Schedule {
     [[nodiscard]] bool finished() const;
     // A step failed.
     [[nodiscard]] bool failed() const;
+    // A step failed since the run last went on, so no build starts.
+    [[nodiscard]] bool halted() const { return halted_; }
+    // Each step's standing, once finished.
+    [[nodiscard]] std::vector<Standing> standing() const;
+    // Goes on after a failure, as emerge --keep-going does once what ran has finished: skipped
+    // steps never run, and what failed or was skipped holds nothing back.
+    void resume(std::span<const std::size_t> skipped);
 
     [[nodiscard]] std::span<const Step> steps() const { return steps_; }
     [[nodiscard]] const Step& step(std::size_t index) const { return steps_.at(index); }
 
   private:
-    enum class State : std::uint8_t { queued, building, built, merging, done, failed };
+    enum class State : std::uint8_t { queued, building, built, merging, done, failed, skipped };
 
+    // Done, failed or skipped: holding nothing back.
+    [[nodiscard]] static bool finished_with(State state) {
+        return state == State::done || state == State::failed || state == State::skipped;
+    }
     // Whether step's build reaches, through what merges wait for, a merge yet to finish that
     // is not queued after it.
     [[nodiscard]] bool dependent(std::size_t step) const;
@@ -83,6 +95,7 @@ class Schedule {
     std::uint32_t building_ = 0;
     bool merge_running_ = false;
     bool failed_ = false;
+    bool halted_ = false;
 };
 
 // What a run reports of its steps as they go, beside each worker event.
@@ -92,7 +105,8 @@ enum class Traced : std::uint8_t {
     build_failed,
     merge_started,
     merged,
-    merge_failed
+    merge_failed,
+    skipped
 };
 
 // How a run over a pool went.
@@ -106,6 +120,9 @@ struct PoolOutcome {
     std::size_t done = 0;
     // The first failure: what the worker reported, or what went wrong talking to it.
     std::optional<Stop> stopped;
+    // Under keep-going: the failures after it, and the steps skipped for them.
+    std::vector<Stop> also_failed;
+    std::vector<std::size_t> skipped;
 };
 
 // What Pool::next() heard.
@@ -122,16 +139,18 @@ struct Heard {
 // merge on the worker that built it, an uninstall on any idle worker; a worker is added when none
 // is idle. Calls report(step, event) for each event a worker reports and trace(step, what) as each
 // step goes; after a failure, what runs still finishes and what built still merges, as the schedule
-// says. Pool: add() -> std::expected<std::size_t, std::string>, the new worker's index;
+// says, and then resume(schedule) -> std::optional<std::vector<std::size_t>> names the steps to
+// skip as the run goes on, or none to end it, as emerge --keep-going decides. Pool: add() ->
+// std::expected<std::size_t, std::string>, the new worker's index;
 //   send(worker, line) -> bool; take_token(step) -> std::expected<bool, std::string>, false when
 //   none is free yet; give_token(step) -> std::expected<void, std::string>; next(for_token) ->
 //   std::expected<Heard, std::string>, waiting for a line or end from a worker, or with for_token,
 //   a token perhaps freed; room_for(running) -> bool, whether a build may start beside those
 //   running.
 // Requests: build(step), merge(step) -> std::string, written as each is sent; done(step).
-template <class Pool, class Requests, class Report, class Trace>
+template <class Pool, class Requests, class Report, class Trace, class Resume>
 PoolOutcome run_schedule(Schedule& schedule, Pool& pool, Requests& requests, const Report& report,
-                         const Trace& trace) {
+                         const Trace& trace, const Resume& resume) {
     struct Running {
         std::size_t step = 0;
         bool merging = false;
@@ -146,8 +165,11 @@ PoolOutcome run_schedule(Schedule& schedule, Pool& pool, Requests& requests, con
     // By step, the worker that built it.
     std::vector<std::size_t> builder(schedule.steps().size(), nobody);
     const auto stop = [&](std::optional<std::size_t> step, std::string why) {
+        PoolOutcome::Stop failure{.step = step, .why = std::move(why)};
         if (!outcome.stopped) {
-            outcome.stopped = PoolOutcome::Stop{.step = step, .why = std::move(why)};
+            outcome.stopped = std::move(failure);
+        } else {
+            outcome.also_failed.push_back(std::move(failure));
         }
     };
     const auto idle = [&]() -> std::expected<std::size_t, std::string> {
@@ -257,7 +279,21 @@ PoolOutcome run_schedule(Schedule& schedule, Pool& pool, Requests& requests, con
             }
         }
         if (schedule.finished()) {
-            return outcome;
+            if (!schedule.halted() || std::ranges::none_of(schedule.standing(), [](Standing each) {
+                    return each == Standing::left;
+                })) {
+                return outcome;
+            }
+            const auto skipped = resume(std::as_const(schedule));
+            if (!skipped) {
+                return outcome;
+            }
+            for (const auto step : *skipped) {
+                trace(step, Traced::skipped);
+            }
+            outcome.skipped.insert(outcome.skipped.end(), skipped->begin(), skipped->end());
+            schedule.resume(*skipped);
+            continue;
         }
         if (!for_token &&
             std::ranges::none_of(workers, [](const Worker& w) { return w.running.has_value(); })) {

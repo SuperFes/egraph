@@ -633,7 +633,12 @@ merge is sent to the same worker; uninstalls go to any idle worker. A merge's re
 written as it starts, its blockers as emerge's scheduler finds them at that moment
 (`InstalledBlockers`, after the steps done so far), since merges follow the order builds
 finish rather than the plan's. After a failure nothing new starts, what runs finishes and what
-built still merges. With more than one job the workers run `--background`, what the builds
+built still merges. Then, with `--keep-going` (else EMERGE_DEFAULT_OPTS'), `keep_going.cpp`
+works out what emerge's resume depgraph would drop: the merges left and what is installed now
+(where no merge left replaces it) satisfy each merge's dependencies and the run-time ones of
+each installed package a merge reaches; whatever has one unsatisfied goes with what reaches it,
+unless something installed matches the atom, until nothing more goes; the run then goes on
+without them, or stops where emerge refuses to resume. With more than one job the workers run `--background`, what the builds
 print going only to their logs, as in emerge's background mode, and a build starts beside
 others only with the free space in PORTAGE_TMPDIR emerge's `_can_add_job` wants. Under FEATURES=jobserver-token
 each build takes a byte from MAKEFLAGS' jobserver pipe (steve's `/dev/steve`, or make's) and

@@ -67,6 +67,8 @@ class InstalledBlockers {
     void uninstalled(std::uint32_t package);
     // The step merged or uninstalled.
     void done(const Step& step);
+    // Whether the installed package is still counted installed.
+    [[nodiscard]] bool present(std::uint32_t package) const { return present_.at(package); }
 
   private:
     [[nodiscard]] const Store& store() const { return store_ref_.get(); }

@@ -184,6 +184,58 @@ TEST_CASE("a failed merge stops the run as a failed build does") {
     CHECK(schedule.finished());
 }
 
+TEST_CASE("after a failure the schedule goes on without the steps skipped") {
+    auto [plan, steps] = planned({{}, {0}, {}});
+    egraph::Schedule schedule{plan, steps, 1};
+    build(schedule, 0);
+    schedule.build_finished(0, false);
+    CHECK(schedule.halted());
+    CHECK(schedule.finished());
+    using egraph::Standing;
+    CHECK(schedule.standing() ==
+          std::vector<Standing>{Standing::gone, Standing::left, Standing::left});
+    schedule.resume(std::vector<std::size_t>{1});
+    CHECK_FALSE(schedule.halted());
+    CHECK(schedule.failed());
+    CHECK_FALSE(schedule.finished());
+    build(schedule, 2);
+    schedule.build_finished(2, true);
+    merge(schedule, 2);
+    CHECK(schedule.finished());
+    CHECK(schedule.standing() ==
+          std::vector<Standing>{Standing::gone, Standing::gone, Standing::done});
+}
+
+TEST_CASE("once gone on, a failed merge holds back no build waiting for it") {
+    auto [plan, steps] = planned({{}, {}, {0}});
+    egraph::Schedule schedule{plan, steps, 2};
+    build(schedule, 0);
+    build(schedule, 1);
+    schedule.build_finished(0, false);
+    schedule.build_finished(1, true);
+    merge(schedule, 1);
+    CHECK(schedule.finished());
+    schedule.resume({});
+    build(schedule, 2);
+}
+
+TEST_CASE("once gone on, an uninstall goes after its merges done and failed") {
+    auto [plan, steps] = planned({{}, {}});
+    plan.uninstalls.push_back({.package = 0, .why = {}, .after = {0, 1}});
+    steps.emplace_back(egraph::UninstallStep{.uninstall = 0, .clean_world = false});
+    egraph::Schedule schedule{plan, steps, 2};
+    build(schedule, 0);
+    build(schedule, 1);
+    schedule.build_finished(0, false);
+    schedule.build_finished(1, true);
+    merge(schedule, 1);
+    CHECK(schedule.next_merge() == std::nullopt);
+    CHECK(schedule.finished());
+    schedule.resume({});
+    merge(schedule, 2);
+    CHECK(schedule.finished());
+}
+
 namespace {
 
 // Workers that answer the requests sent to them in the order sent: a build with a phase and then
@@ -310,7 +362,14 @@ struct Ran {
     std::vector<std::size_t> done;
 };
 
-Ran run(const Planned& planned, std::optional<std::uint32_t> jobs, FakePool& pool) {
+// What a run without keep-going does once drained after a failure.
+std::optional<std::vector<std::size_t>> stop_at_failure(const egraph::Schedule& /*drained*/) {
+    return std::nullopt;
+}
+
+template <class Resume = decltype(&stop_at_failure)>
+Ran run(const Planned& planned, std::optional<std::uint32_t> jobs, FakePool& pool,
+        const Resume& resume = &stop_at_failure) {
     egraph::Schedule schedule{planned.plan, planned.steps, jobs};
     FakeRequests requests{.steps = planned.steps, .done_steps = {}};
     Ran ran;
@@ -322,10 +381,12 @@ Ran run(const Planned& planned, std::optional<std::uint32_t> jobs, FakePool& poo
         },
         [&](std::size_t step, egraph::Traced what) {
             constexpr std::array names{"build_started", "built",  "build_failed",
-                                       "merge_started", "merged", "merge_failed"};
+                                       "merge_started", "merged", "merge_failed",
+                                       "skipped"};
             ran.trace.push_back(std::format("{} {}", names.at(static_cast<std::size_t>(what)),
                                             requests.name(step)));
-        });
+        },
+        resume);
     ran.done = requests.done_steps;
     CHECK(schedule.finished());
     return ran;
@@ -442,4 +503,49 @@ TEST_CASE("without room for another job, builds run one at a time") {
     // Asked only beside a running build.
     CHECK_FALSE(pool.asked_room.empty());
     CHECK(std::ranges::all_of(pool.asked_room, [](std::uint32_t running) { return running == 1; }));
+}
+
+TEST_CASE("under keep-going a drained run goes on without the steps skipped") {
+    FakePool pool;
+    pool.failing = {"build a", "build c"};
+    std::vector<std::vector<egraph::Standing>> asked;
+    const auto ran = run(planned({{}, {0}, {}, {}}), 1, pool, [&](const egraph::Schedule& drained) {
+        asked.push_back(drained.standing());
+        return std::optional{asked.size() == 1 ? std::vector<std::size_t>{1}
+                                               : std::vector<std::size_t>{}};
+    });
+    using egraph::Standing;
+    CHECK(asked == std::vector<std::vector<Standing>>{
+                       {Standing::gone, Standing::left, Standing::left, Standing::left},
+                       {Standing::gone, Standing::gone, Standing::gone, Standing::left}});
+    CHECK(ran.trace == std::vector<std::string>{"build_started a", "build_failed a", "skipped b",
+                                                "build_started c", "build_failed c",
+                                                "build_started d", "built d", "merge_started d",
+                                                "merged d"});
+    CHECK(ran.outcome.done == 1);
+    REQUIRE(ran.outcome.stopped);
+    CHECK(ran.outcome.stopped->step == 0);
+    REQUIRE(ran.outcome.also_failed.size() == 1);
+    CHECK(ran.outcome.also_failed.front().step == 2);
+    CHECK(ran.outcome.skipped == std::vector<std::size_t>{1});
+}
+
+TEST_CASE("keep-going is asked only once a failure leaves steps to run, and may end the run") {
+    int asked = 0;
+    const auto count = [&](const egraph::Schedule& /*drained*/) {
+        ++asked;
+        return std::optional<std::vector<std::size_t>>{};
+    };
+    FakePool fine;
+    run(planned({{}, {}}), 1, fine, count);
+    FakePool last;
+    last.failing = {"build b"};
+    run(planned({{}, {}}), 1, last, count);
+    CHECK(asked == 0);
+    FakePool first;
+    first.failing = {"build a"};
+    const auto ran = run(planned({{}, {}}), 1, first, count);
+    CHECK(asked == 1);
+    CHECK(ran.outcome.done == 0);
+    CHECK(ran.trace == std::vector<std::string>{"build_started a", "build_failed a"});
 }

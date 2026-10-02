@@ -23,6 +23,10 @@ namespace egraph {
 // --jobs decides, one without a number allowing any; one without --jobs.
 [[nodiscard]] std::optional<std::uint32_t> jobs_of(std::span<const std::string> passed);
 
+// Whether emerge goes on after a failure under passed: the last --keep-going decides, without a
+// value or with y; off without one.
+[[nodiscard]] bool keep_going_of(std::span<const std::string> passed);
+
 // The GiB PORTAGE_TMPDIR must have free, beside 1 GiB per running build, before emerge starts
 // another beside them, under passed: the last --jobs-tmpdir-require-free-gb, 18 by default; 0
 // for no check.

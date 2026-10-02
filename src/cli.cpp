@@ -16,6 +16,7 @@
 #include "graph.hpp"
 #include "human.hpp"
 #include "json.hpp"
+#include "keep_going.hpp"
 #include "notices.hpp"
 #include "os.hpp"
 #include "package_use.hpp"
@@ -1571,6 +1572,8 @@ std::string_view traced_name(Traced what, bool uninstall) {
         return uninstall ? "uninstall-start" : "merge-start";
     case Traced::merged:
         return uninstall ? "uninstalled" : "merged";
+    case Traced::skipped:
+        return "skipped";
     case Traced::merge_failed:
         break;
     }
@@ -1578,12 +1581,16 @@ std::string_view traced_name(Traced what, bool uninstall) {
 }
 
 // Runs the steps over a pool of workers, as many builds at once as command or else the settings
-// allow, reporting each event on out: the workers' exit status, or why the run stopped short.
+// allow, going on after a failure as either says, reporting each event on out: the workers' exit
+// status, or why the run stopped short.
 std::expected<int, std::string> run_pool(const Invocation& invocation, const RunSettings& settings,
-                                         const Exec& command, const Plan& plan,
+                                         const Exec& command, const Shown& shown,
                                          StepRequests& requests, const std::vector<Step>& steps,
                                          const std::vector<std::string>& names, std::ostream& out) {
+    const auto& plan = shown.plan;
     const auto jobs = command.jobs ? command.jobs : jobs_of(execution_options(settings.defaults));
+    const bool keep_going =
+        command.keep_going.value_or(keep_going_of(execution_options(settings.defaults)));
     std::optional<os::Jobserver> jobserver;
     if (settings.jobserver) {
         auto opened = os::Jobserver::open(*settings.jobserver);
@@ -1614,18 +1621,19 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     Schedule schedule{plan, steps, jobs};
     const bool human = output(invocation).human;
     const auto start = std::chrono::steady_clock::now();
+    const auto say = [&](std::size_t step, std::string_view what) {
+        const auto& name = names.at(step);
+        if (human) {
+            out << std::format("({} of {}) {}: {}\n", step + 1, steps.size(), name, what);
+        } else {
+            out << std::format("{}\t{}\t{}\n", step + 1, name, what);
+        }
+        out << std::flush;
+    };
+    std::optional<std::string> stuck;
     const auto outcome = run_schedule(
         schedule, pool, requests,
-        [&](std::size_t step, const WorkerEvent& event) {
-            const auto& name = names.at(step);
-            if (human) {
-                out << std::format("({} of {}) {}: {}\n", step + 1, steps.size(), name,
-                                   describe_event(event));
-            } else {
-                out << std::format("{}\t{}\t{}\n", step + 1, name, describe_event(event));
-            }
-            out << std::flush;
-        },
+        [&](std::size_t step, const WorkerEvent& event) { say(step, describe_event(event)); },
         [&](std::size_t step, Traced what) {
             if (command.trace) {
                 const std::chrono::duration<double> since =
@@ -1636,11 +1644,38 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                                      names.at(step))
                       << std::flush;
             }
+        },
+        [&](const Schedule& drained) -> std::optional<std::vector<std::size_t>> {
+            if (!keep_going) {
+                return std::nullopt;
+            }
+            auto resumed = egraph::keep_going(shown.store.get(), shown.evaluated.get(), plan, steps,
+                                              drained.standing());
+            if (resumed.stuck) {
+                stuck = std::move(resumed.stuck);
+                return std::nullopt;
+            }
+            std::vector<std::size_t> skipped;
+            for (const auto& skip : resumed.skipped) {
+                say(skip.step, "skipped, " + describe_skip(skip));
+                skipped.push_back(skip.step);
+            }
+            return skipped;
         });
     const auto ended = pool.finish();
     if (outcome.stopped) {
         const auto& [step, why] = *outcome.stopped;
-        return std::unexpected(step ? std::format("{}: {}", names.at(*step), why) : why);
+        auto message = step ? std::format("{}: {}", names.at(*step), why) : why;
+        if (!outcome.also_failed.empty()) {
+            message += std::format("; {} more failed", outcome.also_failed.size());
+        }
+        if (!outcome.skipped.empty()) {
+            message += std::format("; {} skipped", outcome.skipped.size());
+        }
+        if (stuck) {
+            message += std::format("; cannot go on without {}, which nothing satisfies", *stuck);
+        }
+        return std::unexpected(std::move(message));
     }
     if (!ended) {
         return std::unexpected(ended.error());
@@ -1667,7 +1702,7 @@ Exit execute(const Exec& command, Session& session, const Invocation& invocation
                 Exec::name, command.yes, "Have egraph-build --worker merge this plan?",
                 "egraph-build --worker", false,
                 [&](const RunSettings& settings) {
-                    return run_pool(invocation, settings, command, plan, requests, steps, names,
+                    return run_pool(invocation, settings, command, shown, requests, steps, names,
                                     out);
                 },
                 store, session, invocation, out, err);
@@ -2211,6 +2246,17 @@ void configure(CLI::App& app, Invocation& invocation) {
             "Write to FILE when each build, merge and uninstall starts and ends, seconds from the "
             "start, a line each")
         ->type_name("FILE");
+    exec_cmd
+        ->add_option_function<bool>(
+            "--keep-going",
+            [&invocation](const bool& value) {
+                std::get<Exec>(invocation.command).keep_going = value;
+            },
+            "Go on after a failure without what needs the failed package, as emerge's option "
+            "(y without a value); EMERGE_DEFAULT_OPTS' otherwise")
+        ->expected(0, 1)
+        ->default_str("y")
+        ->transform(yes_no);
     CLI::App* remove_cmd = add_dynamic_deps(add_command<Remove>(
         app, invocation,
         "Show what emerge --depclean would remove of the packages, then have it remove them once "

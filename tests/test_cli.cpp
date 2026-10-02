@@ -232,6 +232,11 @@ TEST_CASE("exec takes install's options, and its worker runs under the same root
     CHECK(parallel.jobs == 4U);
     CHECK(parallel.trace == "/t");
     CHECK(std::get<egraph::Exec>(parse("exec --jobs 2 a/b").command).jobs == 2U);
+    CHECK_FALSE(exec.keep_going);
+    CHECK(std::get<egraph::Exec>(parse("exec --keep-going a/b").command).keep_going == true);
+    CHECK(std::get<egraph::Exec>(parse("exec --keep-going=n a/b").command).keep_going == false);
+    CHECK(std::get<egraph::Exec>(parse("exec --keep-going y a/b").command).keep_going == true);
+    CHECK_THROWS(parse("exec --keep-going=maybe a/b"));
     CHECK_THROWS(parse("exec -j0 a/b"));
     CHECK_THROWS(parse("exec -j many a/b"));
     CHECK_THROWS(parse("exec"));

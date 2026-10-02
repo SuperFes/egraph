@@ -621,8 +621,28 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
         Narrower than emerge: pkg_pretend runs with each build rather than for every package
         before the first, and PROPERTIES=interactive does not bring builds back to the
         terminal.
-  - 16k5: a failure skipping only what depends on it, compared with what `emerge --keep-going`
-    drops.
+  - 16k5 (done): a failure skipping only what depends on it, compared with what `emerge
+    --keep-going` drops. `exec --keep-going` (else EMERGE_DEFAULT_OPTS', `keep_going_of`): once
+    what ran after a failure has finished and merged, as emerge's scheduler drains, the steps
+    left that emerge's `_resume_depgraph` drops are skipped (`keep_going.cpp`) and the run goes
+    on (`Schedule::resume`, through `run_schedule`'s resume hook). The merges left, and what is
+    installed now where no merge left replaces it by slot or cpv, satisfy each merge's
+    dependencies (all kinds) and the run-time ones of each installed package reached through
+    them; what has one unsatisfied goes, with what reaches it through the atom that reached it,
+    unless something installed matches that atom; again until nothing more goes. An uninstall
+    goes once none of its merges is done or left. When a pass drops no merge (an installed
+    package a merge reaches lacks a run-time dependency), the run stops, as emerge refuses to
+    resume. Each skip is reported with the atoms it is left without and traced as `skipped`.
+    `test_exec_run.py`: with one and two jobs, the steps skipped are exactly what emerge drops
+    (a dependent of a failed package, its dependent in turn, one needing the failed version)
+    while a dependent an installed version satisfies stays, and the system left is `install`'s;
+    and an installed package with a dependency nothing satisfies stops both.
+    Narrower than emerge: an atom selects the best version among what it matches rather than
+    what emerge's graph holds already; an uninstall whose merge is done still runs after the
+    resume, where emerge weighs the blockers again (not compared).
+    Found: emerge merges a PDEPEND's package before its parent when nothing else orders them,
+    where egraph's plan puts it after (`plan --verify` compares sets, not order); for a step of
+    its own.
   - 16k6: the live view in the living app, through the status file the emerge view reads;
     `emerge.log` written in emerge's format, so `qlop` still works.
   - 16k7: portage updating itself mid-run, and a narrower merge-wait barrier offered as an

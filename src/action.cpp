@@ -151,6 +151,18 @@ std::optional<std::uint32_t> jobs_of(std::span<const std::string> passed) {
     return jobs;
 }
 
+bool keep_going_of(std::span<const std::string> passed) {
+    bool keep_going = false;
+    for (const std::string_view option : passed) {
+        if (option == "--keep-going" || option == "--keep-going=y") {
+            keep_going = true;
+        } else if (option == "--keep-going=n") {
+            keep_going = false;
+        }
+    }
+    return keep_going;
+}
+
 std::uint64_t tmpdir_free_gb_of(std::span<const std::string> passed) {
     constexpr std::string_view prefix = "--jobs-tmpdir-require-free-gb=";
     std::uint64_t gb = 18;

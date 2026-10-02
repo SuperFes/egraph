@@ -66,6 +66,16 @@ TEST_CASE("the jobs emerge runs at once come from the last --jobs") {
     CHECK(egraph::jobs_of(egraph::execution_options(Words{"-aj8"})) == 8);
 }
 
+TEST_CASE("emerge goes on after a failure by the last --keep-going") {
+    using Words = std::vector<std::string>;
+    CHECK_FALSE(egraph::keep_going_of(Words{}));
+    CHECK(egraph::keep_going_of(Words{"--keep-going"}));
+    CHECK(egraph::keep_going_of(Words{"--keep-going=y"}));
+    CHECK_FALSE(egraph::keep_going_of(Words{"--keep-going=y", "--keep-going=n"}));
+    CHECK(egraph::keep_going_of(Words{"--keep-going=n", "--keep-going"}));
+    CHECK(egraph::keep_going_of(egraph::execution_options(Words{"--keep-going", "y"})));
+}
+
 TEST_CASE("the free space a second job needs comes from the last --jobs-tmpdir-require-free-gb") {
     using Words = std::vector<std::string>;
     CHECK(egraph::tmpdir_free_gb_of(Words{}) == 18);
