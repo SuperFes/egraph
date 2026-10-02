@@ -179,6 +179,38 @@ TEST_CASE("each uninstall follows the merges it waits for, gone for the merges a
     CHECK(oneshot.at(2) == Json::parse(R"({"uninstall": "app-misc/old-1"})"));
 }
 
+TEST_CASE("a build and its merge are requested apart, the merge's blockers as the run stands") {
+    auto system = make_system({{.cpv = "app-misc/old-1"}, {.cpv = "app-misc/lib-1"}},
+                              {{.cpv = "app-misc/new-1", .deps = {{"RDEPEND", "!app-misc/old"}}},
+                               {.cpv = "app-misc/also-1", .deps = {{"RDEPEND", "!app-misc/old"}}},
+                               {.cpv = "app-misc/lib-2", .deps = {{"RDEPEND", "!app-misc/old"}}}});
+    egraph::Plan plan;
+    plan.merges = {merge(candidate(system, "app-misc/new-1")),
+                   merge(candidate(system, "app-misc/also-1")),
+                   merge(candidate(system, "app-misc/lib-2"), installed(system, "app-misc/lib-1"))};
+    plan.order = {1, 0, 2};
+    plan.uninstalls = {
+        {.package = installed(system, "app-misc/old-1"), .why = {}, .after = {0, 1}}};
+    const auto arguments = atoms({"app-misc/new", "app-misc/old"});
+    egraph::StepRequests requests{
+        system.store, system.evaluated, plan,
+        egraph::run_steps(system.store, system.evaluated, plan, arguments, false)};
+    CHECK(Json::parse(requests.build(0)) ==
+          Json::parse(R"({"build": "app-misc/also-1", "repo": "test_repo"})"));
+    CHECK(Json::parse(requests.merge(1)) ==
+          Json::parse(R"({"merge": "app-misc/new-1", "blockers": ["app-misc/old-1"],
+                          "world": "app-misc/new"})"));
+    CHECK(Json::parse(requests.merge(2)) ==
+          Json::parse(R"({"uninstall": "app-misc/old-1", "clean_world": true})"));
+    // Merging before old-1 goes, unlike in the steps' order, lib-2 takes it as a blocker.
+    CHECK(Json::parse(requests.merge(3)) ==
+          Json::parse(R"({"merge": "app-misc/lib-2", "blockers": ["app-misc/old-1"]})"));
+    requests.done(1);
+    requests.done(0);
+    requests.done(2);
+    CHECK(Json::parse(requests.merge(3)) == Json::parse(R"({"merge": "app-misc/lib-2"})"));
+}
+
 TEST_CASE("what a merge replaces no longer blocks the merges after it") {
     auto system = make_system({{.cpv = "app-misc/old-1", .deps = {{"RDEPEND", "!app-misc/b"}}}},
                               {{.cpv = "app-misc/old-2"}, {.cpv = "app-misc/b-1"}});
@@ -195,6 +227,8 @@ TEST_CASE("the worker's events are read from its lines") {
     using Kind = egraph::WorkerEvent::Kind;
     CHECK(egraph::parse_event(R"({"phase": "compile"})") ==
           egraph::WorkerEvent{.kind = Kind::phase, .text = "compile", .status = 0, .log = ""});
+    CHECK(egraph::parse_event(R"({"built": "a/b-1"})") ==
+          egraph::WorkerEvent{.kind = Kind::built, .text = "a/b-1", .status = 0, .log = ""});
     CHECK(egraph::parse_event(R"({"merged": "a/b-1"})") ==
           egraph::WorkerEvent{.kind = Kind::merged, .text = "a/b-1", .status = 0, .log = ""});
     CHECK(egraph::parse_event(R"({"uninstalled": "a/b-1"})") ==
@@ -214,7 +248,8 @@ TEST_CASE("the worker's events are read from its lines") {
 TEST_CASE("only a phase leaves its request going") {
     using Kind = egraph::WorkerEvent::Kind;
     CHECK_FALSE(egraph::final_event({.kind = Kind::phase, .text = "x", .status = 0, .log = ""}));
-    for (const auto kind : {Kind::merged, Kind::uninstalled, Kind::failed, Kind::error}) {
+    for (const auto kind :
+         {Kind::built, Kind::merged, Kind::uninstalled, Kind::failed, Kind::error}) {
         CHECK(egraph::final_event({.kind = kind, .text = "x", .status = 0, .log = ""}));
     }
     CHECK(egraph::describe_event(
@@ -222,6 +257,8 @@ TEST_CASE("only a phase leaves its request going") {
           "compile failed with status 1 (log: /l)");
     CHECK(egraph::describe_event(
               {.kind = Kind::phase, .text = "compile", .status = 0, .log = ""}) == "compile");
+    CHECK(egraph::describe_event({.kind = Kind::built, .text = "a/b-1", .status = 0, .log = ""}) ==
+          "built");
     CHECK(egraph::describe_event(
               {.kind = Kind::error, .text = "no ebuild", .status = 0, .log = ""}) == "no ebuild");
 }

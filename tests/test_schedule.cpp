@@ -2,12 +2,23 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <array>
+#include <deque>
+#include <expected>
+#include <format>
+#include <functional>
 #include <optional>
+#include <set>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <variant>
 #include <vector>
 
 namespace {
 
-egraph::Merge merge_waiting_for(std::vector<std::uint32_t> waited) {
+egraph::Merge merge_waiting_for(const std::vector<std::uint32_t>& waited) {
     egraph::Merge merge;
     for (const auto other : waited) {
         egraph::WaitKinds kinds;
@@ -155,4 +166,213 @@ TEST_CASE("a failed merge stops the run as a failed build does") {
     CHECK(schedule.failed());
     CHECK(schedule.next_build() == std::nullopt);
     CHECK(schedule.finished());
+}
+
+namespace {
+
+// Workers that answer the requests sent to them in the order sent: a build with a phase and then
+// built, a merge or uninstall with done, but those set to fail or to end their worker.
+struct FakePool {
+    // By worker, the lines sent to it.
+    std::vector<std::vector<std::string>> sent;
+    std::deque<std::pair<std::size_t, std::string>> running;
+    std::deque<egraph::Heard> heard;
+    std::set<std::string, std::less<>> failing;
+    std::set<std::string, std::less<>> ending;
+    // Free tokens, with a jobserver; and those another holder gives back once asked for.
+    std::optional<int> tokens;
+    int freed_later = 0;
+
+    std::expected<std::size_t, std::string> add() {
+        sent.emplace_back();
+        return sent.size() - 1;
+    }
+
+    bool send(std::size_t worker, std::string_view line) {
+        REQUIRE(
+            std::ranges::none_of(running, [&](const auto& run) { return run.first == worker; }));
+        sent.at(worker).emplace_back(line);
+        running.emplace_back(worker, line);
+        return true;
+    }
+
+    std::expected<bool, std::string> take_token(std::size_t /*step*/) {
+        if (!tokens) {
+            return true;
+        }
+        if (*tokens == 0) {
+            return false;
+        }
+        --*tokens;
+        return true;
+    }
+
+    void give_token(std::size_t /*step*/) {
+        if (tokens) {
+            ++*tokens;
+        }
+    }
+
+    std::expected<egraph::Heard, std::string> next(bool for_token) {
+        if (heard.empty()) {
+            if (running.empty()) {
+                if (for_token && freed_later > 0) {
+                    --freed_later;
+                    ++*tokens;
+                    return egraph::Heard{.worker = std::nullopt, .line = std::nullopt};
+                }
+                return std::unexpected("nothing to hear");
+            }
+            const auto [worker, line] = running.front();
+            running.pop_front();
+            const auto space = line.find(' ');
+            const auto kind = line.substr(0, space);
+            const auto name = line.substr(space + 1);
+            if (kind == "build") {
+                heard.push_back({.worker = worker, .line = R"({"phase": "compile"})"});
+            }
+            if (ending.contains(line)) {
+                heard.push_back({.worker = worker, .line = std::nullopt});
+            } else if (failing.contains(line)) {
+                heard.push_back({.worker = worker,
+                                 .line = R"({"failed": "compile", "status": 1, "log": "/l"})"});
+            } else {
+                const auto* done = kind == "build"   ? "built"
+                                   : kind == "merge" ? "merged"
+                                                     : "uninstalled";
+                heard.push_back(
+                    {.worker = worker, .line = std::format(R"({{"{}": "{}"}})", done, name)});
+            }
+        }
+        auto next = heard.front();
+        heard.pop_front();
+        return next;
+    }
+};
+
+// Requests named for their steps: "build a", "merge a", "uninstall b".
+struct FakeRequests {
+    std::vector<egraph::Step> steps;
+    std::vector<std::size_t> done_steps;
+
+    [[nodiscard]] std::string name(std::size_t step) const {
+        return std::string(1, static_cast<char>('a' + step));
+    }
+    [[nodiscard]] std::string build(std::size_t step) const { return "build " + name(step); }
+    [[nodiscard]] std::string merge(std::size_t step) const {
+        return (std::holds_alternative<egraph::MergeStep>(steps.at(step)) ? "merge "
+                                                                          : "uninstall ") +
+               name(step);
+    }
+    void done(std::size_t step) { done_steps.push_back(step); }
+};
+
+struct Ran {
+    egraph::PoolOutcome outcome;
+    std::vector<std::string> trace;
+    std::vector<std::string> events;
+    std::vector<std::size_t> done;
+};
+
+Ran run(const Planned& planned, std::optional<std::uint32_t> jobs, FakePool& pool) {
+    egraph::Schedule schedule{planned.plan, planned.steps, jobs};
+    FakeRequests requests{.steps = planned.steps, .done_steps = {}};
+    Ran ran;
+    ran.outcome = egraph::run_schedule(
+        schedule, pool, requests,
+        [&](std::size_t step, const egraph::WorkerEvent& event) {
+            ran.events.push_back(
+                std::format("{} {}", requests.name(step), egraph::describe_event(event)));
+        },
+        [&](std::size_t step, egraph::Traced what) {
+            constexpr std::array names{"build_started", "built",  "build_failed",
+                                       "merge_started", "merged", "merge_failed"};
+            ran.trace.push_back(std::format("{} {}", names.at(static_cast<std::size_t>(what)),
+                                            requests.name(step)));
+        });
+    ran.done = requests.done_steps;
+    CHECK(schedule.finished());
+    return ran;
+}
+
+} // namespace
+
+TEST_CASE(
+    "a pool builds beside each other up to the jobs, each merge on the worker that built it") {
+    FakePool pool;
+    const auto ran = run(planned({{}, {}, {}}), 2, pool);
+    CHECK(ran.outcome.done == 3);
+    CHECK_FALSE(ran.outcome.stopped);
+    CHECK(ran.trace == std::vector<std::string>{"build_started a", "build_started b", "built a",
+                                                "build_started c", "built b", "built c",
+                                                "merge_started a", "merged a", "merge_started b",
+                                                "merged b", "merge_started c", "merged c"});
+    CHECK(pool.sent == std::vector<std::vector<std::string>>{
+                           {"build a", "build c", "merge a", "merge c"}, {"build b", "merge b"}});
+    CHECK(ran.done == std::vector<std::size_t>{0, 1, 2});
+    CHECK(ran.events.front() == "a compile");
+    CHECK(ran.events.back() == "c merged");
+}
+
+TEST_CASE("each build takes a jobserver's token, given back as it ends") {
+    FakePool pool;
+    pool.tokens = 1;
+    const auto ran = run(planned({{}, {}}), std::nullopt, pool);
+    CHECK(ran.outcome.done == 2);
+    CHECK(ran.trace == std::vector<std::string>{"build_started a", "built a", "merge_started a",
+                                                "merged a", "build_started b", "built b",
+                                                "merge_started b", "merged b"});
+    CHECK(pool.tokens == 1);
+    CHECK(pool.sent.size() == 1);
+}
+
+TEST_CASE("a token another holder gives back lets the run go on") {
+    FakePool pool;
+    pool.tokens = 0;
+    pool.freed_later = 1;
+    const auto ran = run(planned({{}}), std::nullopt, pool);
+    CHECK(ran.outcome.done == 1);
+    CHECK(pool.tokens == 1);
+}
+
+TEST_CASE("after a failed build what runs finishes and what built merges, nothing more") {
+    FakePool pool;
+    pool.failing = {"build a"};
+    const auto ran = run(planned({{}, {}, {}}), 2, pool);
+    CHECK(ran.outcome.done == 1);
+    REQUIRE(ran.outcome.stopped);
+    CHECK(ran.outcome.stopped->step == 0);
+    CHECK(ran.outcome.stopped->why == "compile failed with status 1 (log: /l)");
+    CHECK(ran.trace == std::vector<std::string>{"build_started a", "build_started b",
+                                                "build_failed a", "built b", "merge_started b",
+                                                "merged b"});
+}
+
+TEST_CASE("a worker that ends fails its request and what it built") {
+    FakePool pool;
+    pool.ending = {"build c"};
+    const auto ran = run(planned({{}, {}, {}}), 2, pool);
+    REQUIRE(ran.outcome.stopped);
+    CHECK(ran.outcome.stopped->step == 2);
+    CHECK(ran.outcome.stopped->why == "the worker ended before the request was done");
+    CHECK(ran.outcome.done == 1);
+    CHECK(ran.trace == std::vector<std::string>{"build_started a", "build_started b", "built a",
+                                                "build_started c", "built b", "build_failed c",
+                                                "merge_failed a", "merge_started b", "merged b"});
+}
+
+TEST_CASE("an uninstall runs on an idle worker, beside a build") {
+    auto planned_run = planned({{}, {}});
+    planned_run.plan.uninstalls.push_back({.package = 0, .why = {}, .after = {0}});
+    planned_run.steps.insert(planned_run.steps.begin() + 1,
+                             egraph::UninstallStep{.uninstall = 0, .clean_world = false});
+    FakePool pool;
+    const auto ran = run(planned_run, 1, pool);
+    CHECK(ran.outcome.done == 3);
+    CHECK(ran.trace == std::vector<std::string>{"build_started a", "built a", "merge_started a",
+                                                "merged a", "merge_started b", "build_started c",
+                                                "merged b", "built c", "merge_started c",
+                                                "merged c"});
+    CHECK(pool.sent == std::vector<std::vector<std::string>>{{"build a", "merge a", "uninstall b"},
+                                                             {"build c", "merge c"}});
 }

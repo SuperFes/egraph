@@ -597,6 +597,11 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       - 16k4c2 (done): `os::wait_for` polls several workers' output at once, with a jobserver's
         pipe when a token is wanted; `os::Jobserver` takes and gives back its tokens as emerge
         does (read and write, without blocking).
+      - 16k4c3 (done): `run_schedule` runs the schedule over a pool (a template, tested with a
+        fake one): a build on an idle worker once a token is had, its merge on the worker that
+        built it, an uninstall on any idle one, workers added when none is idle; a merge's
+        request is written as it starts, its blockers as emerge's scheduler finds them then
+        (`InstalledBlockers` after the steps done, since merges go in the order builds finish).
   - 16k5: a failure skipping only what depends on it, compared with what `emerge --keep-going`
     drops.
   - 16k6: the live view in the living app, through the status file the emerge view reads;

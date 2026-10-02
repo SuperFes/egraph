@@ -128,101 +128,94 @@ bool slotted(const std::set<std::string, std::less<>>& slots) {
     return slots.size() > 1 || (slots.size() == 1 && !slots.contains("0"));
 }
 
-class Run {
-  public:
-    Run(const Store& store EGRAPH_KEPT_BY_THIS, const Evaluated& evaluated EGRAPH_KEPT_BY_THIS,
-        const Plan& plan EGRAPH_KEPT_BY_THIS)
-        : store_ref_(store), evaluated_ref_(evaluated), plan_ref_(plan),
-          present_(store.packages.size(), true) {}
-
-    // The installed packages still present that the merge blocks or that block it, but for its
-    // own slot and cpv, as emerge's BlockerDB.findInstalledBlockers and its scheduler find them.
-    [[nodiscard]] std::vector<std::uint32_t> blockers(std::uint32_t merge) const {
-        const auto& candidate = this->candidate(merge);
-        std::set<std::uint32_t> found;
-        for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
-            if (!runtime_kind(kind)) {
-                continue;
-            }
-            const auto list = evaluated().nodes_in(candidate.deps.at(kind));
-            for (std::size_t i = 0; i < list.size(); ++i) {
-                if (is_blocker(element(list, i)) && outside_any_of(list, i)) {
-                    const auto ids = evaluated().ids_in(element(list, i).matches);
-                    found.insert(ids.begin(), ids.end());
-                }
-            }
-        }
-        const auto cp = evaluated().string(candidate.cp);
-        for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
-            if (present_.at(id) && blocks(store().packages.at(id), candidate, cp)) {
-                found.insert(id);
-            }
-        }
-        std::vector<std::uint32_t> kept;
-        for (const auto id : found) {
-            const auto& pkg = store().packages.at(id);
-            const bool own = store().string(pkg.cp) == cp &&
-                             (store().string(pkg.slot) == evaluated().string(candidate.slot) ||
-                              store().string(pkg.cpv) == evaluated().string(candidate.cpv));
-            if (present_.at(id) && !own) {
-                kept.push_back(id);
-            }
-        }
-        return kept;
-    }
-
-    // Once merged, what it replaces in its cpv or slot is gone.
-    void merged(std::uint32_t merge) {
-        const auto& candidate = this->candidate(merge);
-        for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
-            const auto& pkg = store().packages.at(id);
-            if (store().string(pkg.cp) == evaluated().string(candidate.cp) &&
-                (store().string(pkg.cpv) == evaluated().string(candidate.cpv) ||
-                 store().string(pkg.slot) == evaluated().string(candidate.slot))) {
-                present_.at(id) = false;
-            }
-        }
-    }
-
-    void uninstalled(std::uint32_t package) { present_.at(package) = false; }
-
-  private:
-    std::reference_wrapper<const Store> store_ref_;
-    std::reference_wrapper<const Evaluated> evaluated_ref_;
-    std::reference_wrapper<const Plan> plan_ref_;
-    // Per installed package, whether emerge's scheduler still counts it installed.
-    std::vector<bool> present_;
-
-    [[nodiscard]] const Store& store() const { return store_ref_.get(); }
-    [[nodiscard]] const Evaluated& evaluated() const { return evaluated_ref_.get(); }
-
-    [[nodiscard]] const Candidate& candidate(std::uint32_t merge) const {
-        return evaluated().candidates.at(plan_ref_.get().merges.at(merge).candidate);
-    }
-
-    // One of pkg's run-time blockers matches candidate.
-    [[nodiscard]] bool blocks(const Package& pkg, const Candidate& candidate,
-                              std::string_view cp) const {
-        for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
-            if (!runtime_kind(kind)) {
-                continue;
-            }
-            const auto list = store().nodes_in(pkg.deps.at(kind));
-            for (std::size_t i = 0; i < list.size(); ++i) {
-                if (!is_blocker(element(list, i)) || !outside_any_of(list, i)) {
-                    continue;
-                }
-                const auto atom = blocker_atom(store().string(element(list, i).atom));
-                if (atom && atom->cp == cp && matches(store(), evaluated(), candidate, *atom)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-};
-
 } // namespace
+
+InstalledBlockers::InstalledBlockers(const Store& store, const Evaluated& evaluated,
+                                     const Plan& plan)
+    : store_ref_(store), evaluated_ref_(evaluated), plan_ref_(plan),
+      present_(store.packages.size(), true) {}
+
+std::vector<std::uint32_t> InstalledBlockers::blockers(std::uint32_t merge) const {
+    const auto& candidate = this->candidate(merge);
+    std::set<std::uint32_t> found;
+    for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+        if (!runtime_kind(kind)) {
+            continue;
+        }
+        const auto list = evaluated().nodes_in(candidate.deps.at(kind));
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            if (is_blocker(element(list, i)) && outside_any_of(list, i)) {
+                const auto ids = evaluated().ids_in(element(list, i).matches);
+                found.insert(ids.begin(), ids.end());
+            }
+        }
+    }
+    const auto cp = evaluated().string(candidate.cp);
+    for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
+        if (present_.at(id) && blocks(store().packages.at(id), candidate, cp)) {
+            found.insert(id);
+        }
+    }
+    std::vector<std::uint32_t> kept;
+    for (const auto id : found) {
+        const auto& pkg = store().packages.at(id);
+        const bool own = store().string(pkg.cp) == cp &&
+                         (store().string(pkg.slot) == evaluated().string(candidate.slot) ||
+                          store().string(pkg.cpv) == evaluated().string(candidate.cpv));
+        if (present_.at(id) && !own) {
+            kept.push_back(id);
+        }
+    }
+    return kept;
+}
+
+void InstalledBlockers::merged(std::uint32_t merge) {
+    const auto& candidate = this->candidate(merge);
+    for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
+        const auto& pkg = store().packages.at(id);
+        if (store().string(pkg.cp) == evaluated().string(candidate.cp) &&
+            (store().string(pkg.cpv) == evaluated().string(candidate.cpv) ||
+             store().string(pkg.slot) == evaluated().string(candidate.slot))) {
+            present_.at(id) = false;
+        }
+    }
+}
+
+void InstalledBlockers::uninstalled(std::uint32_t package) {
+    present_.at(package) = false;
+}
+
+void InstalledBlockers::done(const Step& step) {
+    if (const auto* merge = std::get_if<MergeStep>(&step)) {
+        merged(merge->merge);
+    } else {
+        uninstalled(plan_ref_.get().uninstalls.at(std::get<UninstallStep>(step).uninstall).package);
+    }
+}
+
+const Candidate& InstalledBlockers::candidate(std::uint32_t merge) const {
+    return evaluated().candidates.at(plan_ref_.get().merges.at(merge).candidate);
+}
+
+bool InstalledBlockers::blocks(const Package& pkg, const Candidate& candidate,
+                               std::string_view cp) const {
+    for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+        if (!runtime_kind(kind)) {
+            continue;
+        }
+        const auto list = store().nodes_in(pkg.deps.at(kind));
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            if (!is_blocker(element(list, i)) || !outside_any_of(list, i)) {
+                continue;
+            }
+            const auto atom = blocker_atom(store().string(element(list, i).atom));
+            if (atom && atom->cp == cp && matches(store(), evaluated(), candidate, *atom)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
 
 std::optional<std::string> world_atom(const Store& store, const Evaluated& evaluated,
                                       const Candidate& candidate,
@@ -303,7 +296,7 @@ std::vector<Step> run_steps(const Store& store, const Evaluated& original, const
                             std::span<const Argument> arguments, bool oneshot) {
     const auto& evaluated = plan.evaluated_or(original);
     const auto atoms = argument_atoms(arguments);
-    Run run{store, evaluated, plan};
+    InstalledBlockers run{store, evaluated, plan};
     std::vector<bool> merged(plan.merges.size(), false);
     std::vector<bool> uninstalled(plan.uninstalls.size(), false);
     std::vector<Step> steps;
@@ -334,33 +327,81 @@ std::vector<Step> run_steps(const Store& store, const Evaluated& original, const
     return steps;
 }
 
+namespace {
+
+// A merge's blockers and world atom among its request's fields.
+void add_merge_fields(Json& request, const Store& store, std::span<const std::uint32_t> blockers,
+                      const std::optional<std::string>& world) {
+    if (!blockers.empty()) {
+        auto cpvs = Json::array();
+        for (const auto id : blockers) {
+            cpvs.push_back(store.string(store.packages.at(id).cpv));
+        }
+        request.emplace("blockers", std::move(cpvs));
+    }
+    if (world) {
+        request.emplace("world", *world);
+    }
+}
+
+std::string uninstall_request(const Store& store, const Plan& plan, const UninstallStep& step) {
+    Json request{{"uninstall",
+                  store.string(store.packages.at(plan.uninstalls.at(step.uninstall).package).cpv)}};
+    if (step.clean_world) {
+        request.emplace("clean_world", true);
+    }
+    return request.dump();
+}
+
+const Candidate& merged_candidate(const Evaluated& evaluated, const Plan& plan,
+                                  const MergeStep& step) {
+    return evaluated.candidates.at(plan.merges.at(step.merge).candidate);
+}
+
+} // namespace
+
 std::string worker_request(const Store& store, const Evaluated& original, const Plan& plan,
                            const Step& step) {
     const auto& evaluated = plan.evaluated_or(original);
     if (const auto* merge = std::get_if<MergeStep>(&step)) {
-        const auto& candidate = evaluated.candidates.at(plan.merges.at(merge->merge).candidate);
+        const auto& candidate = merged_candidate(evaluated, plan, *merge);
         Json request{{"cpv", evaluated.string(candidate.cpv)},
                      {"repo", evaluated.string(candidate.repo)}};
-        if (!merge->blockers.empty()) {
-            auto blockers = Json::array();
-            for (const auto id : merge->blockers) {
-                blockers.push_back(store.string(store.packages.at(id).cpv));
-            }
-            request.emplace("blockers", std::move(blockers));
-        }
-        if (merge->world) {
-            request.emplace("world", *merge->world);
-        }
+        add_merge_fields(request, store, merge->blockers, merge->world);
         return request.dump();
     }
-    const auto& uninstall = std::get<UninstallStep>(step);
-    Json request{
-        {"uninstall",
-         store.string(store.packages.at(plan.uninstalls.at(uninstall.uninstall).package).cpv)}};
-    if (uninstall.clean_world) {
-        request.emplace("clean_world", true);
+    return uninstall_request(store, plan, std::get<UninstallStep>(step));
+}
+
+StepRequests::StepRequests(const Store& store, const Evaluated& evaluated, const Plan& plan,
+                           std::vector<Step> steps)
+    : store_ref_(store), evaluated_ref_(plan.evaluated_or(evaluated)), plan_ref_(plan),
+      steps_(std::move(steps)), blockers_(store, plan.evaluated_or(evaluated), plan) {}
+
+std::string StepRequests::build(std::size_t step) const {
+    const auto& evaluated = evaluated_ref_.get();
+    const auto& candidate =
+        merged_candidate(evaluated, plan_ref_.get(), std::get<MergeStep>(steps_.at(step)));
+    return Json{{"build", evaluated.string(candidate.cpv)},
+                {"repo", evaluated.string(candidate.repo)}}
+        .dump();
+}
+
+std::string StepRequests::merge(std::size_t step) const {
+    const auto* merge = std::get_if<MergeStep>(&steps_.at(step));
+    if (merge == nullptr) {
+        return uninstall_request(store_ref_.get(), plan_ref_.get(),
+                                 std::get<UninstallStep>(steps_.at(step)));
     }
+    const auto& evaluated = evaluated_ref_.get();
+    Json request{
+        {"merge", evaluated.string(merged_candidate(evaluated, plan_ref_.get(), *merge).cpv)}};
+    add_merge_fields(request, store_ref_.get(), blockers_.blockers(merge->merge), merge->world);
     return request.dump();
+}
+
+void StepRequests::done(std::size_t step) {
+    blockers_.done(steps_.at(step));
 }
 
 std::string step_cpv(const Store& store, const Evaluated& original, const Plan& plan,
@@ -381,6 +422,7 @@ std::expected<WorkerEvent, std::string> parse_event(std::string_view line) {
         return std::unexpected(std::format("not a JSON object: {}", line));
     }
     for (const auto& [name, kind] : {std::pair{"phase", Kind::phase},
+                                     {"built", Kind::built},
                                      {"merged", Kind::merged},
                                      {"uninstalled", Kind::uninstalled},
                                      {"failed", Kind::failed},
@@ -415,6 +457,8 @@ bool final_event(const WorkerEvent& event) {
 std::string describe_event(const WorkerEvent& event) {
     using Kind = WorkerEvent::Kind;
     switch (event.kind) {
+    case Kind::built:
+        return "built";
     case Kind::merged:
         return "merged";
     case Kind::uninstalled:

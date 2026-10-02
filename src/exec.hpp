@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -49,6 +50,39 @@ using Step = std::variant<MergeStep, UninstallStep>;
                                                     const Candidate& candidate,
                                                     std::span<const Argument> arguments);
 
+// What emerge's scheduler still counts installed as a run goes, for the blockers a merge takes as
+// it merges: what an uninstall removed or a merge replaced (by cpv or slot) is gone, and nothing
+// the run merged counts.
+class InstalledBlockers {
+  public:
+    // evaluated: the plan's own (Plan::evaluated_or).
+    InstalledBlockers(const Store& store EGRAPH_KEPT_BY_THIS,
+                      const Evaluated& evaluated EGRAPH_KEPT_BY_THIS,
+                      const Plan& plan EGRAPH_KEPT_BY_THIS);
+
+    // Installed package ids, sorted: those still present that the merge blocks or that block it,
+    // at run time, but for its own slot and cpv, as BlockerDB.findInstalledBlockers finds them.
+    [[nodiscard]] std::vector<std::uint32_t> blockers(std::uint32_t merge) const;
+    void merged(std::uint32_t merge);
+    void uninstalled(std::uint32_t package);
+    // The step merged or uninstalled.
+    void done(const Step& step);
+
+  private:
+    [[nodiscard]] const Store& store() const { return store_ref_.get(); }
+    [[nodiscard]] const Evaluated& evaluated() const { return evaluated_ref_.get(); }
+    [[nodiscard]] const Candidate& candidate(std::uint32_t merge) const;
+    // One of pkg's run-time blockers matches candidate.
+    [[nodiscard]] bool blocks(const Package& pkg, const Candidate& candidate,
+                              std::string_view cp) const;
+
+    std::reference_wrapper<const Store> store_ref_;
+    std::reference_wrapper<const Evaluated> evaluated_ref_;
+    std::reference_wrapper<const Plan> plan_ref_;
+    // Per installed package, whether emerge's scheduler still counts it installed.
+    std::vector<bool> present_;
+};
+
 // The plan's steps in the order one worker runs them: its merges in Plan::order, each uninstall
 // straight after the last merge it waits for. A merge's blockers are as emerge's scheduler finds
 // them as it merges: the run-time blockers between it and what is installed, but for its own
@@ -63,15 +97,41 @@ using Step = std::variant<MergeStep, UninstallStep>;
 [[nodiscard]] std::string worker_request(const Store& store, const Evaluated& evaluated,
                                          const Plan& plan, const Step& step);
 
+// The worker's requests for a run's steps when they run apart, a merge step's build and then its
+// merge: the merge's blockers as emerge's scheduler finds them when it merges, after the steps
+// done by then.
+class StepRequests {
+  public:
+    StepRequests(const Store& store EGRAPH_KEPT_BY_THIS,
+                 const Evaluated& evaluated EGRAPH_KEPT_BY_THIS,
+                 const Plan& plan EGRAPH_KEPT_BY_THIS, std::vector<Step> steps);
+
+    // A merge step's build, {"build": cpv, "repo": repo}.
+    [[nodiscard]] std::string build(std::size_t step) const;
+    // A merge step's merge, {"merge": cpv} with its blockers and world atom, or an uninstall
+    // step's request.
+    [[nodiscard]] std::string merge(std::size_t step) const;
+    // The step merged or uninstalled.
+    void done(std::size_t step);
+
+  private:
+    std::reference_wrapper<const Store> store_ref_;
+    std::reference_wrapper<const Evaluated> evaluated_ref_;
+    std::reference_wrapper<const Plan> plan_ref_;
+    std::vector<Step> steps_;
+    InstalledBlockers blockers_;
+};
+
 // The cpv the step merges or uninstalls.
 [[nodiscard]] std::string step_cpv(const Store& store, const Evaluated& evaluated, const Plan& plan,
                                    const Step& step);
 
 // What egraph-build --worker reports of a request.
 struct WorkerEvent {
-    enum class Kind : std::uint8_t { phase, merged, uninstalled, failed, error };
+    enum class Kind : std::uint8_t { phase, built, merged, uninstalled, failed, error };
     Kind kind = Kind::phase;
-    // The phase starting, the cpv done, the phase that failed, or the error's message.
+    // The phase starting, the cpv built or done, the phase that failed, or the error's
+    // message.
     std::string text;
     // For a failed phase: its exit status and build log.
     int status = 0;
@@ -82,7 +142,7 @@ struct WorkerEvent {
 // The worker's line as an event; an error for anything else.
 [[nodiscard]] std::expected<WorkerEvent, std::string> parse_event(std::string_view line);
 
-// Whether the event ends its request: done, failed or refused.
+// Whether the event ends its request: built, done, failed or refused.
 [[nodiscard]] bool final_event(const WorkerEvent& event);
 
 // The event as a person reads it, after the step it belongs to.
