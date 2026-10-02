@@ -538,6 +538,49 @@ does.
 .TP
 .BR \-y ", " \-\-yes
 Run emerge without asking, and offer no USE changes.
+.SS exec \fItarget\fR...
+Shows the plan for the targets and verifies it as
+.B install
+does, then merges it without
+.BR emerge :
+one
+.BR "egraph\-build \-\-worker" " (" egraph\-build (1))
+builds and merges each package in the plan's order, as
+.B emerge
+would, and uninstalls each package a blocker needs gone straight after the merges that need it
+gone, a line for each phase as it starts. The run stops at the first package that fails, naming
+the phase and its build log; what merged before it stays merged. The targets join
+.B @selected
+as
+.B emerge
+adds them, unless
+.BR \-\-oneshot .
+Also run as
+.BR egraph\-exec .
+.TP
+.B \-\-dynamic\-deps
+.TP
+.BR \-u ", " \-\-update
+.TP
+.BR \-D ", " \-\-deep
+.TP
+.BR \-n ", " \-\-noreplace
+.TP
+.BR \-N ", " \-\-newuse
+.TP
+.BR \-U ", " \-\-changed\-use
+.TP
+.BR \-t ", " \-\-table
+As for
+.BR plan .
+.TP
+.BR \-1 ", " \-\-oneshot
+Add the targets to no set, as
+.B emerge \-\-oneshot
+does.
+.TP
+.BR \-y ", " \-\-yes
+Merge without asking, and offer no USE changes.
 .SS remove \fIpackage\fR...
 What
 .B emerge \-\-depclean

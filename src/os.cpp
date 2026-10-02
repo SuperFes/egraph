@@ -1,5 +1,6 @@
 #include "os.hpp"
 
+#include <array>
 #include <cerrno>
 #include <clocale>
 #include <csignal>
@@ -8,7 +9,10 @@
 #include <format>
 #include <langinfo.h>
 #include <random>
+#include <span>
 #include <spawn.h>
+#include <string_view>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -58,6 +62,18 @@ class Redirections {
         return ::posix_spawn_file_actions_adddup2(&actions_, 1, 2);
     }
 
+    // stdin from input and stdout to output; an errno value on failure.
+    int connect(int input, int output) {
+        if (const int error = ::posix_spawn_file_actions_init(&actions_); error != 0) {
+            return error;
+        }
+        used_ = true;
+        if (const int error = ::posix_spawn_file_actions_adddup2(&actions_, input, 0); error != 0) {
+            return error;
+        }
+        return ::posix_spawn_file_actions_adddup2(&actions_, output, 1);
+    }
+
     [[nodiscard]] const posix_spawn_file_actions_t* get() const {
         return used_ ? &actions_ : nullptr;
     }
@@ -68,6 +84,33 @@ class Redirections {
     std::string log_;
     bool used_ = false;
 };
+
+// Starts argv, not empty, with redirections; its pid.
+std::expected<int, SpawnError> spawn(const std::vector<std::string>& argv,
+                                     const Redirections& redirections) {
+    // posix_spawnp wants char* const[]: pointers into copies we own, then a terminator.
+    std::vector<std::string> args = argv;
+    std::vector<char*> pointers;
+    pointers.reserve(args.size() + 1);
+    for (auto& arg : args) {
+        pointers.push_back(arg.data());
+    }
+    pointers.push_back(nullptr);
+
+    pid_t pid = 0;
+    const int error = ::posix_spawnp(&pid, args.front().c_str(), redirections.get(), nullptr,
+                                     pointers.data(), environ);
+    if (error != 0) {
+        return std::unexpected(SpawnError{std::format(
+            "{}: {}", args.front(), std::error_code(error, std::generic_category()).message())});
+    }
+    return pid;
+}
+
+SpawnError errno_error(std::string_view what) {
+    return SpawnError{
+        std::format("{}: {}", what, std::error_code(errno, std::generic_category()).message())};
+}
 
 std::uint64_t non_negative(std::int64_t value) {
     return value < 0 ? 0 : static_cast<std::uint64_t>(value);
@@ -121,23 +164,110 @@ std::expected<Child, SpawnError> start(const std::vector<std::string>& argv,
                                        std::error_code(error, std::generic_category()).message())});
         }
     }
-    // posix_spawnp wants char* const[]: pointers into copies we own, then a terminator.
-    std::vector<std::string> args = argv;
-    std::vector<char*> pointers;
-    pointers.reserve(args.size() + 1);
-    for (auto& arg : args) {
-        pointers.push_back(arg.data());
-    }
-    pointers.push_back(nullptr);
+    return spawn(argv, redirections).transform([&argv](int pid) {
+        return Child{pid, argv.front()};
+    });
+}
 
-    pid_t pid = 0;
-    const int error = ::posix_spawnp(&pid, args.front().c_str(), redirections.get(), nullptr,
-                                     pointers.data(), environ);
-    if (error != 0) {
-        return std::unexpected(SpawnError{std::format(
-            "{}: {}", args.front(), std::error_code(error, std::generic_category()).message())});
+Descriptor::Descriptor(Descriptor&& other) noexcept : fd_{std::exchange(other.fd_, -1)} {}
+
+Descriptor& Descriptor::operator=(Descriptor&& other) noexcept {
+    if (this != &other) {
+        close();
+        fd_ = std::exchange(other.fd_, -1);
     }
-    return Child{pid, args.front()};
+    return *this;
+}
+
+Descriptor::~Descriptor() {
+    close();
+}
+
+void Descriptor::close() noexcept {
+    if (fd_ >= 0) {
+        ::close(fd_);
+        fd_ = -1;
+    }
+}
+
+Talk::Talk(Child child, Descriptor input, Descriptor output)
+    : child_{std::move(child)}, input_{std::move(input)}, output_{std::move(output)} {}
+
+bool Talk::send(std::string_view line) {
+    if (input_.get() < 0) {
+        return false;
+    }
+    const std::string text = std::string{line} + '\n';
+    for (std::span<const char> rest{text}; !rest.empty();) {
+        const auto sent = ::send(input_.get(), rest.data(), rest.size(), MSG_NOSIGNAL);
+        if (sent < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        rest = rest.subspan(static_cast<std::size_t>(sent));
+    }
+    return true;
+}
+
+std::optional<std::string> Talk::receive() {
+    std::array<char, 4096> buffer{};
+    for (;;) {
+        if (const auto end = pending_.find('\n'); end != std::string::npos) {
+            auto line = pending_.substr(0, end);
+            pending_.erase(0, end + 1);
+            return line;
+        }
+        const auto got =
+            output_.get() < 0 ? 0 : ::read(output_.get(), buffer.data(), buffer.size());
+        if (got < 0 && errno == EINTR) {
+            continue;
+        }
+        if (got <= 0) {
+            output_.close();
+            if (pending_.empty()) {
+                return std::nullopt;
+            }
+            return std::exchange(pending_, {});
+        }
+        pending_.append_range(std::span{buffer}.first(static_cast<std::size_t>(got)));
+    }
+}
+
+std::expected<int, SpawnError> Talk::finish() {
+    input_.close();
+    return child_.wait();
+}
+
+std::expected<Talk, SpawnError> start_talking(const std::vector<std::string>& argv) {
+    if (argv.empty()) {
+        return std::unexpected(SpawnError{"nothing to run"});
+    }
+    std::array<int, 2> input{-1, -1};
+    if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, input.data()) != 0) {
+        return std::unexpected(errno_error("socketpair"));
+    }
+    Descriptor ours_in{input.front()};
+    Descriptor theirs_in{input.back()};
+    std::array<int, 2> output{-1, -1};
+    if (::pipe2(output.data(), O_CLOEXEC) != 0) {
+        return std::unexpected(errno_error("pipe2"));
+    }
+    Descriptor ours_out{output.front()};
+    Descriptor theirs_out{output.back()};
+    // Only the child reads what we send.
+    ::shutdown(ours_in.get(), SHUT_RD);
+    Redirections redirections;
+    if (const auto error = redirections.connect(theirs_in.get(), theirs_out.get()); error != 0) {
+        return std::unexpected(SpawnError{std::format(
+            "{}: {}", argv.front(), std::error_code(error, std::generic_category()).message())});
+    }
+    const auto pid = spawn(argv, redirections);
+    if (!pid) {
+        return std::unexpected(pid.error());
+    }
+    return Talk{Child{*pid, argv.front()}, std::move(ours_in), std::move(ours_out)};
 }
 
 Child::Child(int pid, std::string name) : pid_{pid}, name_{std::move(name)} {}

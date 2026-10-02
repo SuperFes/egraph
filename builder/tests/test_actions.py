@@ -71,7 +71,10 @@ def merge_environment(playground):
     fake_bin = os.path.join(eprefix, "bin")
     os.makedirs(fake_bin, exist_ok=True)
     for name in ("chown", "chgrp"):
-        os.symlink(portage.process.find_binary("true"), os.path.join(fake_bin, name))
+        if not os.path.lexists(os.path.join(fake_bin, name)):
+            os.symlink(
+                portage.process.find_binary("true"), os.path.join(fake_bin, name)
+            )
     edb = os.path.join(eprefix, "var", "cache", "edb")
     os.makedirs(edb, exist_ok=True)
     with open(os.path.join(edb, "counter"), "w") as f:
@@ -115,10 +118,10 @@ class System:
             tmp_path / "emaint", f'{exports}exec {portage_program("emaint")} "$@"\n'
         )
         # Under emerge's EPREFIX, as on a real system: the build root (and so the elog
-        # summary's place) comes from it.
+        # summary's place) comes from it. Its worker merges as emerge does.
         self.builder = script(
             tmp_path / "egraph-build",
-            f"export PORTAGE_OVERRIDE_EPREFIX={shlex.quote(eprefix)}\n"
+            f"{exports}export PORTAGE_OVERRIDE_EPREFIX={shlex.quote(eprefix)}\n"
             f'PYTHONPATH="{BUILDER_DIR}:{PORTAGE_LIB}" '
             f'exec "{sys.executable}" -m egraph_build "$@"\n',
         )

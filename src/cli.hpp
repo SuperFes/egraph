@@ -144,6 +144,12 @@ struct Install : PlanCommand {
     bool yes = false;
 };
 
+// A request carried out by egraph-build --worker, one package at a time, once shown, verified
+// and confirmed, as install has emerge carry it out.
+struct Exec : Install {
+    static constexpr std::string_view name = "exec";
+};
+
 // emerge --depclean run on packages once shown, verified and confirmed.
 struct Remove {
     static constexpr std::string_view name = "remove";
@@ -226,7 +232,7 @@ struct Affected {
 
 using Command =
     std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Blockers, Orphans,
-                 Updates, PlanCommand, Update, Install, Remove, Select, Deselect, Sync,
+                 Updates, PlanCommand, Update, Install, Exec, Remove, Select, Deselect, Sync,
                  NoticesCommand, Export, Stats, Rebuild, Refresh, Check, Tui, Shell, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
@@ -333,6 +339,9 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
                                                        std::string_view mode,
                                                        const std::filesystem::path& path,
                                                        std::span<const std::string> cps = {});
+
+// The egraph-build --worker command line, under the invocation's roots.
+[[nodiscard]] std::vector<std::string> worker_command(const Invocation& invocation);
 
 // The egraph-build command line that writes what each merge list entry ("ebuild:cpv" or
 // "binary:cpv") waits for to output.

@@ -219,6 +219,22 @@ TEST_CASE("install takes plan's options, --oneshot and --yes") {
     CHECK_THROWS(parse("install --verify a/b"));
 }
 
+TEST_CASE("exec takes install's options, and its worker runs under the same roots") {
+    const auto exec = std::get<egraph::Exec>(parse("exec -1y -uD a/b @set").command);
+    CHECK(exec.targets == std::vector<std::string>{"a/b", "@set"});
+    CHECK(exec.update);
+    CHECK(exec.deep);
+    CHECK(exec.oneshot);
+    CHECK(exec.yes);
+    CHECK_THROWS(parse("exec"));
+    egraph::Invocation invocation;
+    invocation.builder = "egraph-build";
+    invocation.eprefix = "/prefix";
+    CHECK(egraph::worker_command(invocation) == std::vector<std::string>{"egraph-build", "--worker",
+                                                                         "--root", "/", "--eprefix",
+                                                                         "/prefix"});
+}
+
 TEST_CASE("remove takes atoms, emerge's --with-bdeps and --yes") {
     const auto remove =
         std::get<egraph::Remove>(parse("remove -y --with-bdeps n a/b =c/d-1").command);

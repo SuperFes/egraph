@@ -58,6 +58,8 @@ def test_install_ships_the_hooks_completions_and_man_pages_but_no_user_file(tmp_
         "share/man/man1/egraph-build.1",
     ]:
         one(suffix)
+    # egraph-exec is egraph, run under the name of its command.
+    assert os.readlink(one("bin/egraph-exec")) == "egraph"
     # portage runs only this one file after an emerge, and it belongs to the user.
     assert not any(path.endswith("etc/portage/bin/post_emerge") for path in installed)
 

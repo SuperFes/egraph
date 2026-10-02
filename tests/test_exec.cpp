@@ -170,6 +170,9 @@ TEST_CASE("each uninstall follows the merges it waits for, gone for the merges a
                                        "blockers": ["app-misc/old-1"], "world": "app-misc/new"})"),
                             Json::parse(R"({"uninstall": "app-misc/old-1", "clean_world": true})"),
                             Json::parse(R"({"cpv": "app-misc/lib-2", "repo": "test_repo"})")});
+    const auto steps = egraph::run_steps(system.store, system.evaluated, plan, {}, true);
+    CHECK(egraph::step_cpv(system.store, system.evaluated, plan, steps.at(2)) == "app-misc/old-1");
+    CHECK(egraph::step_cpv(system.store, system.evaluated, plan, steps.at(3)) == "app-misc/lib-2");
     // Under --oneshot, the world file is left alone.
     const auto oneshot = requests(system, plan, atoms({"app-misc/new", "app-misc/old"}), true);
     CHECK_FALSE(oneshot.at(1).contains("world"));
@@ -186,4 +189,130 @@ TEST_CASE("what a merge replaces no longer blocks the merges after it") {
     CHECK(requests(system, plan, {}, true).at(0).contains("blockers"));
     plan.order = {0, 1};
     CHECK_FALSE(requests(system, plan, {}, true).at(1).contains("blockers"));
+}
+
+TEST_CASE("the worker's events are read from its lines") {
+    using Kind = egraph::WorkerEvent::Kind;
+    CHECK(egraph::parse_event(R"({"phase": "compile"})") ==
+          egraph::WorkerEvent{.kind = Kind::phase, .text = "compile", .status = 0, .log = ""});
+    CHECK(egraph::parse_event(R"({"merged": "a/b-1"})") ==
+          egraph::WorkerEvent{.kind = Kind::merged, .text = "a/b-1", .status = 0, .log = ""});
+    CHECK(egraph::parse_event(R"({"uninstalled": "a/b-1"})") ==
+          egraph::WorkerEvent{.kind = Kind::uninstalled, .text = "a/b-1", .status = 0, .log = ""});
+    CHECK(egraph::parse_event(R"({"failed": "compile", "status": 1, "log": "/l"})") ==
+          egraph::WorkerEvent{.kind = Kind::failed, .text = "compile", .status = 1, .log = "/l"});
+    CHECK(egraph::parse_event(R"({"error": "no ebuild"})") ==
+          egraph::WorkerEvent{.kind = Kind::error, .text = "no ebuild", .status = 0, .log = ""});
+    for (const auto* line :
+         {"not json", "[]", "{}", R"({"phase": 1})", R"({"failed": "x"})",
+          R"({"failed": "x", "status": "1", "log": "/l"})", R"({"other": "x"})"}) {
+        CAPTURE(line);
+        CHECK_FALSE(egraph::parse_event(line).has_value());
+    }
+}
+
+TEST_CASE("only a phase leaves its request going") {
+    using Kind = egraph::WorkerEvent::Kind;
+    CHECK_FALSE(egraph::final_event({.kind = Kind::phase, .text = "x", .status = 0, .log = ""}));
+    for (const auto kind : {Kind::merged, Kind::uninstalled, Kind::failed, Kind::error}) {
+        CHECK(egraph::final_event({.kind = kind, .text = "x", .status = 0, .log = ""}));
+    }
+    CHECK(egraph::describe_event(
+              {.kind = Kind::failed, .text = "compile", .status = 1, .log = "/l"}) ==
+          "compile failed with status 1 (log: /l)");
+    CHECK(egraph::describe_event(
+              {.kind = Kind::phase, .text = "compile", .status = 0, .log = ""}) == "compile");
+    CHECK(egraph::describe_event(
+              {.kind = Kind::error, .text = "no ebuild", .status = 0, .log = ""}) == "no ebuild");
+}
+
+namespace {
+
+// Replies to each line sent with the next of its answers, a list of lines each.
+struct FakeWorker {
+    std::vector<std::vector<std::string>> answers;
+    std::vector<std::string> sent;
+    std::vector<std::string> queued;
+    bool reading = true;
+
+    bool send(const std::string& line) {
+        if (!reading) {
+            return false;
+        }
+        sent.push_back(line);
+        if (sent.size() <= answers.size()) {
+            const auto& next = answers.at(sent.size() - 1);
+            queued.insert(queued.end(), next.begin(), next.end());
+        }
+        return true;
+    }
+
+    std::optional<std::string> receive() {
+        if (queued.empty()) {
+            return std::nullopt;
+        }
+        auto line = queued.front();
+        queued.erase(queued.begin());
+        return line;
+    }
+};
+
+struct Reported {
+    mutable std::vector<std::pair<std::size_t, std::string>> events;
+    void operator()(std::size_t index, const egraph::WorkerEvent& event) const {
+        events.emplace_back(index, egraph::describe_event(event));
+    }
+};
+
+} // namespace
+
+TEST_CASE("requests go to the worker one at a time, each once the one before is done") {
+    FakeWorker worker{.answers = {{R"({"phase": "setup"})", R"({"merged": "a/b-1"})"},
+                                  {R"({"phase": "unmerge"})", R"({"uninstalled": "a/c-1"})"}},
+                      .sent = {},
+                      .queued = {}};
+    const std::vector<std::string> requests{"first", "second"};
+    Reported reported;
+    const auto outcome = egraph::run_requests(worker, requests, reported);
+    CHECK(outcome.done == 2);
+    CHECK_FALSE(outcome.stopped);
+    CHECK(worker.sent == requests);
+    CHECK(reported.events == std::vector<std::pair<std::size_t, std::string>>{
+                                 {0, "setup"}, {0, "merged"}, {1, "unmerge"}, {1, "uninstalled"}});
+}
+
+TEST_CASE("a run stops at the first request the worker does not do") {
+    FakeWorker worker{.answers = {{R"({"merged": "a/b-1"})"},
+                                  {R"({"phase": "compile"})",
+                                   R"({"failed": "compile", "status": 1, "log": "/l"})"},
+                                  {R"({"merged": "a/d-1"})"}},
+                      .sent = {},
+                      .queued = {}};
+    const std::vector<std::string> requests{"first", "second", "third"};
+    Reported reported;
+    const auto outcome = egraph::run_requests(worker, requests, reported);
+    CHECK(outcome.done == 1);
+    CHECK(outcome.stopped == "compile failed with status 1 (log: /l)");
+    CHECK(worker.sent == std::vector<std::string>{"first", "second"});
+
+    FakeWorker refusing{.answers = {{R"({"error": "no ebuild"})"}}, .sent = {}, .queued = {}};
+    CHECK(egraph::run_requests(refusing, requests, reported).stopped == "no ebuild");
+}
+
+TEST_CASE("a worker that ends, stops reading or talks nonsense stops the run") {
+    const std::vector<std::string> requests{"first", "second"};
+    Reported reported;
+    FakeWorker ending{.answers = {{R"({"phase": "setup"})"}}, .sent = {}, .queued = {}};
+    auto outcome = egraph::run_requests(ending, requests, reported);
+    CHECK(outcome.done == 0);
+    CHECK(outcome.stopped == "the worker ended before the request was done");
+
+    FakeWorker deaf{.answers = {}, .sent = {}, .queued = {}, .reading = false};
+    CHECK(egraph::run_requests(deaf, requests, reported).stopped ==
+          "the worker takes no more requests");
+
+    FakeWorker garbled{.answers = {{"garbage"}}, .sent = {}, .queued = {}};
+    CHECK(egraph::run_requests(garbled, requests, reported)
+              .stopped.value_or("")
+              .starts_with("the worker reported what egraph cannot read: "));
 }

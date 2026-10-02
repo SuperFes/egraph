@@ -109,6 +109,8 @@ egraph_dep = declare_dependency(
 )
 
 egraph_exe = executable('egraph', 'src/main.cpp', dependencies: egraph_dep, install: true)
+# egraph run as egraph-<command> runs that command.
+install_symlink('egraph-exec', pointing_to: 'egraph', install_dir: get_option('bindir'))
 
 # Completion scripts, generated from the command line's definition where each shell looks.
 completions_exe = executable(
@@ -239,6 +241,7 @@ unit_tests = executable(
   'tests/test_remove.cpp',
   'tests/test_request.cpp',
   'tests/test_exec.cpp',
+  'tests/test_os.cpp',
   'tests/test_resume.cpp',
   'tests/test_required_use.cpp',
   'tests/test_selection.cpp',

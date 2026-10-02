@@ -12,7 +12,7 @@ import sys
 import pytest
 
 from egraph_build import cli, worker
-from test_actions import BUILDER_DIR, merge_environment, portage_program
+from test_actions import BUILDER_DIR, PORTAGE_LIB, merge_environment, portage_program
 
 INSTALL = """S="${WORKDIR}"
 pkg_pretend() { einfo "pretend ${PF}"; }
@@ -142,11 +142,13 @@ class Machine:
         shutil.copytree(self.snapshot, self.eprefix, symlinks=True)
 
     def emerge(self, *args):
+        # As the user runs it, with no egraph-build to import.
+        environment = dict(self.environment, PYTHONPATH=PORTAGE_LIB)
         result = subprocess.run(
             f"{portage_program('emerge')} --ask=n --color=n --nospinner "
             + " ".join(args),
             shell=True,
-            env=self.environment,
+            env=environment,
             capture_output=True,
             text=True,
         )
@@ -522,3 +524,13 @@ def test_a_request_that_cannot_be_tried_is_an_error(machine):
 
 def test_the_worker_takes_no_entries():
     assert cli.main(["--worker", "app-misc/lib-1"]) == cli.EXIT_USAGE
+
+
+def test_ebuilds_inherit_no_pythonpath_of_the_builders():
+    builder = "/src/egraph/builder"
+    assert worker.without_builder(f"{builder}:/usr/lib/portage", builder) == (
+        "/usr/lib/portage"
+    )
+    assert worker.without_builder(builder + "/", builder) is None
+    assert worker.without_builder("", builder) is None
+    assert worker.without_builder("/a::/b", builder) == "/a:/b"

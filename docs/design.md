@@ -602,6 +602,18 @@ is recorded or cleaned. `test_requests.py` replays egraph's requests on the depg
 resume of the same plan builds, through emerge's own `BlockerDB` and `create_world_atom`, for
 every update mode and plan request on every scenario.
 
+`egraph exec` (also run as `egraph-exec`, a link to `egraph`: run as `egraph-<command>`, egraph
+runs that command, the global options among its own) carries a plan out without emerge. It is
+`install`'s action up to the confirmation (the plan shown, refused as emerge would refuse it,
+verified against `emerge --pretend`); then one worker, talked to over a socket and a pipe
+(`os::Talk`, so that a worker gone away fails a write rather than raising SIGPIPE), takes the
+plan's requests in turn and the run stops at the first that is not done. The elog summary, the
+selection changes and the store refresh are those of an action through emerge. The worker drops
+its own import directory from the `PYTHONPATH` the ebuilds inherit, as the user's emerge would
+not have it (portage's `save-ebuild-env.sh` keeps a `PYTHONPATH` that does not start with its
+own library). `test_exec_run.py` holds `exec` to `install`, with the real emerge, from the same
+playground state.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

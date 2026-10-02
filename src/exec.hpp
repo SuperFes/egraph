@@ -7,10 +7,13 @@
 #include "query.hpp"
 #include "store.hpp"
 
+#include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -59,5 +62,80 @@ using Step = std::variant<MergeStep, UninstallStep>;
 // The step as egraph-build --worker's request, one line of JSON without its newline.
 [[nodiscard]] std::string worker_request(const Store& store, const Evaluated& evaluated,
                                          const Plan& plan, const Step& step);
+
+// The cpv the step merges or uninstalls.
+[[nodiscard]] std::string step_cpv(const Store& store, const Evaluated& evaluated, const Plan& plan,
+                                   const Step& step);
+
+// What egraph-build --worker reports of a request.
+struct WorkerEvent {
+    enum class Kind : std::uint8_t { phase, merged, uninstalled, failed, error };
+    Kind kind = Kind::phase;
+    // The phase starting, the cpv done, the phase that failed, or the error's message.
+    std::string text;
+    // For a failed phase: its exit status and build log.
+    int status = 0;
+    std::string log;
+    auto operator<=>(const WorkerEvent&) const = default;
+};
+
+// The worker's line as an event; an error for anything else.
+[[nodiscard]] std::expected<WorkerEvent, std::string> parse_event(std::string_view line);
+
+// Whether the event ends its request: done, failed or refused.
+[[nodiscard]] bool final_event(const WorkerEvent& event);
+
+// The event as a person reads it, after the step it belongs to.
+[[nodiscard]] std::string describe_event(const WorkerEvent& event);
+
+// How a run of requests went.
+struct RunOutcome {
+    // The requests done, from the first.
+    std::size_t done = 0;
+    // Why the run stopped short of the rest: the failure the worker reported, or what went
+    // wrong talking to it. None when every request was done.
+    std::optional<std::string> stopped;
+};
+
+// Sends the requests to worker one at a time, each once the one before is done, and calls
+// report(index, event) for each event it reports; stops at the first request that is not done.
+// Worker: send(line) -> bool, receive() -> std::optional<std::string>, as os::Talk.
+template <class Worker, class Report>
+RunOutcome run_requests(Worker& worker, std::span<const std::string> requests,
+                        const Report& report) {
+    RunOutcome outcome;
+    std::size_t index = 0;
+    for (const auto& request : requests) {
+        if (!worker.send(request)) {
+            outcome.stopped = "the worker takes no more requests";
+            return outcome;
+        }
+        for (;;) {
+            const auto line = worker.receive();
+            if (!line) {
+                outcome.stopped = "the worker ended before the request was done";
+                return outcome;
+            }
+            const auto event = parse_event(*line);
+            if (!event) {
+                outcome.stopped = "the worker reported what egraph cannot read: " + event.error();
+                return outcome;
+            }
+            report(index, *event);
+            if (!final_event(*event)) {
+                continue;
+            }
+            if (event->kind != WorkerEvent::Kind::merged &&
+                event->kind != WorkerEvent::Kind::uninstalled) {
+                outcome.stopped = describe_event(*event);
+                return outcome;
+            }
+            break;
+        }
+        ++outcome.done;
+        ++index;
+    }
+    return outcome;
+}
 
 } // namespace egraph

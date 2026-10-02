@@ -45,6 +45,7 @@ build/egraph orphans                                  # works in place; store in
 printf 'updates -N\norphans\n' | build/egraph shell      # many commands, one session
 build/egraph updates -D --verify                      # the plan beside emerge --pretend's
 build/egraph blockers                                 # installed packages blocking others
+build/egraph exec -y app-misc/foo                     # merged by egraph's worker, not emerge
 build/egraph                                          # interactive: TUI on a terminal, : for commands
 meson test -C build --print-errorlogs                 # Catch2 + pytest
 meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false ...  # plus the fork options
@@ -99,6 +100,8 @@ pointing it there, for `--verify`.
 `egraph-build --worker` from the same snapshot, and compares the image and vdb entries.
 `test_requests.py` holds the worker requests `--requests` writes (blockers, world atoms) to
 emerge's `BlockerDB` and `create_world_atom`, replayed on the depgraph its resume builds.
+`test_exec_run.py` runs `egraph install` (real emerge) and `egraph exec` from the same snapshot
+and compares the systems they leave.
 Test stores come from `conftest.write_stores`, which writes the evaluated store beside the
 installed one as a builder run does. Scenario packages get an accepted
 KEYWORDS in `conftest.py`, because depclean's `||` choices depend on visibility and egraph assumes

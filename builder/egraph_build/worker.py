@@ -281,6 +281,17 @@ class Worker:
         return False
 
 
+def without_builder(pythonpath, builder_dir):
+    """PYTHONPATH as the ebuilds should inherit it, as from emerge: without the directory
+    egraph-build itself was imported from; None when nothing is left."""
+    kept = [
+        entry
+        for entry in pythonpath.split(os.pathsep)
+        if entry and os.path.realpath(entry) != os.path.realpath(builder_dir)
+    ]
+    return os.pathsep.join(kept) or None
+
+
 def serve(worker, lines, emit):
     """Each request in lines, in turn."""
     for line in lines:
@@ -304,5 +315,11 @@ def main(config_root=None, root=None, eprefix=None):
         events.write(line)
         events.flush()
 
+    builder_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pythonpath = without_builder(os.environ.get("PYTHONPATH", ""), builder_dir)
+    if pythonpath is None:
+        os.environ.pop("PYTHONPATH", None)
+    else:
+        os.environ["PYTHONPATH"] = pythonpath
     serve(Worker(config_root, root, eprefix), sys.stdin, emit)
     return 0

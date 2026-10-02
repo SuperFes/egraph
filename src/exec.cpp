@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <format>
 #include <set>
 #include <string_view>
 #include <utility>
@@ -360,6 +361,72 @@ std::string worker_request(const Store& store, const Evaluated& original, const 
         request.emplace("clean_world", true);
     }
     return request.dump();
+}
+
+std::string step_cpv(const Store& store, const Evaluated& original, const Plan& plan,
+                     const Step& step) {
+    const auto& evaluated = plan.evaluated_or(original);
+    if (const auto* merge = std::get_if<MergeStep>(&step)) {
+        return std::string{
+            evaluated.string(evaluated.candidates.at(plan.merges.at(merge->merge).candidate).cpv)};
+    }
+    const auto& uninstall = plan.uninstalls.at(std::get<UninstallStep>(step).uninstall);
+    return std::string{store.string(store.packages.at(uninstall.package).cpv)};
+}
+
+std::expected<WorkerEvent, std::string> parse_event(std::string_view line) {
+    using Kind = WorkerEvent::Kind;
+    const auto fields = Json::parse(line, nullptr, false);
+    if (!fields.is_object()) {
+        return std::unexpected(std::format("not a JSON object: {}", line));
+    }
+    for (const auto& [name, kind] : {std::pair{"phase", Kind::phase},
+                                     {"merged", Kind::merged},
+                                     {"uninstalled", Kind::uninstalled},
+                                     {"failed", Kind::failed},
+                                     {"error", Kind::error}}) {
+        const auto found = fields.find(name);
+        if (found == fields.end()) {
+            continue;
+        }
+        if (!found->is_string()) {
+            break;
+        }
+        WorkerEvent event{.kind = kind, .text = found->get<std::string>(), .status = 0, .log = ""};
+        if (kind == Kind::failed) {
+            const auto status = fields.find("status");
+            const auto log = fields.find("log");
+            if (status == fields.end() || !status->is_number_integer() || log == fields.end() ||
+                !log->is_string()) {
+                break;
+            }
+            event.status = status->get<int>();
+            event.log = log->get<std::string>();
+        }
+        return event;
+    }
+    return std::unexpected(std::format("not an event: {}", line));
+}
+
+bool final_event(const WorkerEvent& event) {
+    return event.kind != WorkerEvent::Kind::phase;
+}
+
+std::string describe_event(const WorkerEvent& event) {
+    using Kind = WorkerEvent::Kind;
+    switch (event.kind) {
+    case Kind::merged:
+        return "merged";
+    case Kind::uninstalled:
+        return "uninstalled";
+    case Kind::failed:
+        return std::format("{} failed with status {} (log: {})", event.text, event.status,
+                           event.log);
+    case Kind::phase:
+    case Kind::error:
+        break;
+    }
+    return event.text;
 }
 
 } // namespace egraph

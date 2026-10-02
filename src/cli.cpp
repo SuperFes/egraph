@@ -206,10 +206,14 @@ template <class C> void add_plan_options(CLI::App* sub, Invocation& invocation) 
 }
 
 // An action's --yes.
-template <class C> void add_yes(CLI::App* sub, Invocation& invocation) {
+template <class C>
+void add_yes(
+    CLI::App* sub, Invocation& invocation,
+    std::string description =
+        "Run emerge without asking, as scripts must where there is no terminal to ask on") {
     sub->add_flag_callback(
         "-y,--yes", [&invocation] { std::get<C>(invocation.command).yes = true; },
-        "Run emerge without asking, as scripts must where there is no terminal to ask on");
+        std::move(description));
 }
 
 // Where a command line was typed: the shell, or the interface's prompt.
@@ -1385,12 +1389,26 @@ std::filesystem::path vdb_of(const Store& store) {
     return std::filesystem::path{store.meta.eroot} / "var/db/pkg";
 }
 
-// An action once verified: asks unless yes, runs emerge with arguments(passed), passed being
-// EMERGE_DEFAULT_OPTS' execution options, and refreshes the stores after.
-template <class Arguments>
-Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
-                     const Arguments& arguments, const Store& store, Session& session,
-                     const Invocation& invocation, std::ostream& out, std::ostream& err) {
+// Carries a confirmed plan out, under the settings emerge runs under: the exit status of what
+// ran, or why it could not run or stopped short.
+using CarryOut = std::function<std::expected<int, std::string>(const RunSettings&)>;
+
+// argv run with PORTAGE_ELOG_SYSTEM set as the settings want it, egraph showing the summary.
+std::vector<std::string> with_elog_system(std::vector<std::string> argv,
+                                          const RunSettings& settings) {
+    if (settings.elog_system) {
+        argv.insert(argv.begin(), {"env", "PORTAGE_ELOG_SYSTEM=" + *settings.elog_system});
+    }
+    return argv;
+}
+
+// An action once verified: asks unless yes, carries the plan out, then shows the elog summary
+// and the selection changes and refreshes the stores; with follow, also the notices and what
+// to do about them. what names what carried it out.
+Exit confirm_and_carry_out(std::string_view name, bool yes, std::string_view question,
+                           std::string_view what, bool follow, const CarryOut& carry_out,
+                           const Store& store, Session& session, const Invocation& invocation,
+                           std::ostream& out, std::ostream& err) {
     // Copied before the session reloads, which takes store with it.
     const auto selected = world_atoms(store);
     const auto settings = run_settings(invocation);
@@ -1402,14 +1420,9 @@ Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
     if (!yes && !answered_yes(std::cin, out, question)) {
         return Exit::failure;
     }
-    auto argv = emerge_command(invocation, arguments(execution_options(settings->defaults)));
-    // egraph shows the summary, so emerge need not echo it too.
-    if (settings->elog_system) {
-        argv.insert(argv.begin(), {"env", "PORTAGE_ELOG_SYSTEM=" + *settings->elog_system});
-    }
     const auto logged = log_size(settings->elog_summary);
     out << std::flush;
-    const auto ran = os::run(argv);
+    const auto ran = carry_out(*settings);
     if (settings->elog_summary) {
         const auto messages =
             elog_lines(parse_elog_summary(appended(*settings->elog_summary, logged)));
@@ -1419,7 +1432,7 @@ Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
             write_lines(out, messages);
         }
     }
-    // What emerge did before it failed counts too.
+    // What was done before a failure counts too.
     session.reload();
     if (const auto stores = session.stores(); !stores) {
         err << "egraph: " << name << ": the stores could not be refreshed: " << stores.error()
@@ -1432,26 +1445,45 @@ Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
             write_lines(out, changes);
         }
     }
-    follow_up(name, yes, session, invocation, out, err);
+    if (follow) {
+        follow_up(name, yes, session, invocation, out, err);
+    } else {
+        std::ignore = show_notices_after(name, invocation, out, err);
+    }
     if (!ran) {
-        err << "egraph: " << name << ": " << ran.error().message << '\n';
+        err << "egraph: " << name << ": " << ran.error() << '\n';
         return Exit::failure;
     }
     if (*ran != 0) {
-        err << "egraph: " << name << ": emerge exited with status " << *ran << '\n';
+        err << "egraph: " << name << ": " << what << " exited with status " << *ran << '\n';
         return Exit::failure;
     }
     return Exit::ok;
 }
 
-// An action merging a plan: the plan show() shows, verified against emerge --pretend, confirmed,
-// and emerge run on it; act runs the action again once USE changes are written.
-template <class Show, class Act>
-Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
-                const Invocation& invocation, std::ostream& out, std::ostream& err,
-                const Show& show, const Act& act,
-                std::string_view question = "Have emerge merge this plan?",
-                bool selecting = false) {
+// An action once verified: asks unless yes, runs emerge with arguments(passed), passed being
+// EMERGE_DEFAULT_OPTS' execution options, and refreshes the stores after.
+template <class Arguments>
+Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
+                     const Arguments& arguments, const Store& store, Session& session,
+                     const Invocation& invocation, std::ostream& out, std::ostream& err) {
+    return confirm_and_carry_out(
+        name, yes, question, "emerge", true,
+        [&](const RunSettings& settings) -> std::expected<int, std::string> {
+            const auto argv = with_elog_system(
+                emerge_command(invocation, arguments(execution_options(settings.defaults))),
+                settings);
+            return os::run(argv).transform_error([](const os::SpawnError& e) { return e.message; });
+        },
+        store, session, invocation, out, err);
+}
+
+// An action on a plan: the plan show() shows, verified against emerge --pretend, then carried
+// out by carry(shown); act runs the action again once USE changes are written.
+template <class Show, class Act, class Carry>
+Exit act_on_plan(std::string_view name, bool yes, Session& session, const Invocation& invocation,
+                 std::ostream& out, std::ostream& err, const Show& show, const Act& act,
+                 const Carry& carry, bool selecting = false) {
     const auto shown = show();
     if (!shown) {
         return shown.error();
@@ -1483,12 +1515,28 @@ Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
         }
         return status;
     }
-    return confirm_and_run(
-        name, yes, question,
-        [&](const std::vector<std::string>& passed) {
-            return run_arguments(request, oneshot, passed);
+    return carry(*shown);
+}
+
+// An action merging a plan through emerge: the plan show() shows, verified, confirmed, and
+// emerge run on it; act runs the action again once USE changes are written.
+template <class Show, class Act>
+Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
+                const Invocation& invocation, std::ostream& out, std::ostream& err,
+                const Show& show, const Act& act,
+                std::string_view question = "Have emerge merge this plan?",
+                bool selecting = false) {
+    return act_on_plan(
+        name, yes, session, invocation, out, err, show, act,
+        [&](const Shown& shown) {
+            return confirm_and_run(
+                name, yes, question,
+                [&](const std::vector<std::string>& passed) {
+                    return run_arguments(shown.request, oneshot, passed);
+                },
+                shown.store, session, invocation, out, err);
         },
-        store, session, invocation, out, err);
+        selecting);
 }
 
 Exit execute(const Update& command, Session& session, const Invocation& invocation,
@@ -1505,6 +1553,63 @@ Exit execute(const Install& command, Session& session, const Invocation& invocat
         Install::name, command.oneshot, command.yes, session, invocation, out, err,
         [&] { return show_plan(command, Install::name, session, invocation, out, err); },
         [&](const Invocation& again) { return execute(command, session, again, out, err); });
+}
+
+// Runs one worker on the requests in turn, the cpvs they are for in names, reporting each event
+// on out: its exit status, or why the run stopped short.
+std::expected<int, std::string> run_worker(const Invocation& invocation,
+                                           const RunSettings& settings,
+                                           const std::vector<std::string>& requests,
+                                           const std::vector<std::string>& names,
+                                           std::ostream& out) {
+    auto worker = os::start_talking(with_elog_system(worker_command(invocation), settings));
+    if (!worker) {
+        return std::unexpected(worker.error().message);
+    }
+    const bool human = output(invocation).human;
+    const auto outcome =
+        run_requests(*worker, requests, [&](std::size_t index, const WorkerEvent& event) {
+            const auto& name = names.at(index);
+            if (human) {
+                out << std::format("({} of {}) {}: {}\n", index + 1, requests.size(), name,
+                                   describe_event(event));
+            } else {
+                out << std::format("{}\t{}\t{}\n", index + 1, name, describe_event(event));
+            }
+            out << std::flush;
+        });
+    const auto ended = worker->finish();
+    if (outcome.stopped) {
+        return std::unexpected(std::format("{}: {}", names.at(outcome.done), *outcome.stopped));
+    }
+    if (!ended) {
+        return std::unexpected(ended.error().message);
+    }
+    return *ended;
+}
+
+Exit execute(const Exec& command, Session& session, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    return act_on_plan(
+        Exec::name, command.yes, session, invocation, out, err,
+        [&] { return show_plan(command, Exec::name, session, invocation, out, err); },
+        [&](const Invocation& again) { return execute(command, session, again, out, err); },
+        [&](const Shown& shown) {
+            const auto& [plan, request, store, evaluated, arguments] = shown;
+            std::vector<std::string> requests;
+            std::vector<std::string> names;
+            for (const auto& step : run_steps(store, evaluated, plan, arguments, command.oneshot)) {
+                requests.push_back(worker_request(store, evaluated, plan, step));
+                names.push_back(step_cpv(store, evaluated, plan, step));
+            }
+            return confirm_and_carry_out(
+                Exec::name, command.yes, "Have egraph-build --worker merge this plan?",
+                "egraph-build --worker", false,
+                [&](const RunSettings& settings) {
+                    return run_worker(invocation, settings, requests, names, out);
+                },
+                store, session, invocation, out, err);
+        });
 }
 
 // A remove's targets as emerge takes them: an exact cpv as =cpv.
@@ -2015,6 +2120,16 @@ void configure(CLI::App& app, Invocation& invocation) {
         "-1,--oneshot", [&invocation] { std::get<Install>(invocation.command).oneshot = true; },
         "Add the targets to no set, as emerge --oneshot");
     add_yes<Install>(install_cmd, invocation);
+    CLI::App* exec_cmd = add_dynamic_deps(add_command<Exec>(
+        app, invocation,
+        "Show the plan for a request, then merge it one package at a time through egraph-build "
+        "--worker once confirmed"));
+    add_plan_options<Exec>(exec_cmd, invocation);
+    exec_cmd->add_flag_callback(
+        "-1,--oneshot", [&invocation] { std::get<Exec>(invocation.command).oneshot = true; },
+        "Add the targets to no set, as emerge --oneshot");
+    add_yes<Exec>(exec_cmd, invocation,
+                  "Merge without asking, as scripts must where there is no terminal to ask on");
     CLI::App* remove_cmd = add_dynamic_deps(add_command<Remove>(
         app, invocation,
         "Show what emerge --depclean would remove of the packages, then have it remove them once "
@@ -2192,6 +2307,12 @@ std::vector<std::string> builder_command(const Invocation& invocation, std::stri
     return argv;
 }
 
+std::vector<std::string> worker_command(const Invocation& invocation) {
+    std::vector<std::string> argv{builder_program(invocation), "--worker"};
+    add_roots(argv, invocation);
+    return argv;
+}
+
 std::vector<std::string> emerge_command(const Invocation& invocation,
                                         const EmergeRequest& request) {
     return emerge_command(invocation, pretend_arguments(request));
@@ -2338,6 +2459,7 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
     // emerge would write over the interface's screen.
     if (context == Context::interface && (std::holds_alternative<Update>(command.command) ||
                                           std::holds_alternative<Install>(command.command) ||
+                                          std::holds_alternative<Exec>(command.command) ||
                                           std::holds_alternative<Remove>(command.command) ||
                                           std::holds_alternative<Select>(command.command) ||
                                           std::holds_alternative<Deselect>(command.command) ||

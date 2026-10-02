@@ -531,8 +531,8 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     second's `has_version` seeing the first. A failed phase names its log and merges nothing.
     Not yet: the builddir lock held across the phases (each `doebuild` takes it, 16k4),
     `blockers` for the merge's collision checks (16k3), `FEATURES=buildpkg`'s binary package.
-  - 16k3: a whole plan run one build at a time, blockers and uninstalls included; the final
-    system and world file compared with emerge's run.
+  - 16k3 (done): a whole plan run one build at a time, blockers and uninstalls included; the
+    final system and world file compared with emerge's run.
     - 16k3a (done): `egraph` run as `egraph-<command>`, a link to it, runs that command, which
       then takes the global options among its own (the user's choice, 2026-10-01, over a
       separate binary).
@@ -553,9 +553,17 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       takes another ebuild of an equal version (`dev-libs/v-1.0` for `-1.00`), there is nothing
       to hold the request to. Not yet: an old-style virtual's providers, which
       `create_world_atom` weighs for a system virtual (profiles no longer have them).
-    - 16k3d: `egraph exec`: the plan run in order through one worker, each uninstall straight
-      after the merges that need it gone, stopping at the first failure; the final system and
-      world file compared with emerge's run.
+    - 16k3d (done): `egraph exec` (and the `egraph-exec` link, installed): `install`'s action
+      up to the confirmation, then the plan's requests run in turn through one worker
+      (`os::Talk`), stopping at the first not done, a line per event. The same image, vdb
+      entries and world file as `egraph install` with the real emerge from the same state
+      (`test_exec_run.py`): a package with the dependency it pulls in, the same under
+      `--oneshot`, an update replacing a version, and a blocker uninstalling a package whose
+      file the merge takes over; a failed build names its phase and log and stops the run. The
+      comparison found the worker's own `PYTHONPATH` saved in each package's environment, which
+      `test_worker.py` missed by running emerge with the same one; the worker now drops it, and
+      emerge runs there as a user's would. Not yet: dispatch-conf and the preserved-libs rebuild
+      offered after the run (emerge's action offers them), the display (16k6).
   - 16k4: parallel builds; a trace holds the rules emerge depends on (never two merges at once,
     no build before what it builds against is merged, portage's locks taken as portage takes
     them, tested against a concurrent emerge); timing compared with `emerge --jobs`. Workers

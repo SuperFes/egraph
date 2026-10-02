@@ -35,6 +35,8 @@ struct SpawnError {
 std::expected<int, SpawnError> run(const std::vector<std::string>& argv,
                                    const std::optional<std::filesystem::path>& log = std::nullopt);
 
+class Talk;
+
 // A process start() began. Destroying one that has not ended terminates it and reaps it.
 class Child {
   public:
@@ -53,6 +55,7 @@ class Child {
   private:
     friend std::expected<Child, SpawnError> start(const std::vector<std::string>& argv,
                                                   const std::optional<std::filesystem::path>& log);
+    friend std::expected<Talk, SpawnError> start_talking(const std::vector<std::string>& argv);
     Child(int pid, std::string name);
     // Waits for the process, with or without blocking.
     std::optional<std::expected<int, SpawnError>> reap(bool block);
@@ -67,6 +70,51 @@ class Child {
 std::expected<Child, SpawnError>
 start(const std::vector<std::string>& argv,
       const std::optional<std::filesystem::path>& log = std::nullopt);
+
+// A file descriptor this process owns, closed with the object.
+class Descriptor {
+  public:
+    Descriptor() = default;
+    explicit Descriptor(int fd) : fd_{fd} {}
+    Descriptor(const Descriptor&) = delete;
+    Descriptor& operator=(const Descriptor&) = delete;
+    Descriptor(Descriptor&& other) noexcept;
+    Descriptor& operator=(Descriptor&& other) noexcept;
+    ~Descriptor();
+
+    [[nodiscard]] int get() const { return fd_; }
+    void close() noexcept;
+
+  private:
+    int fd_ = -1;
+};
+
+// A process start_talking() began, its standard input and output connected to this process, its
+// standard error ours. Destroying one that has not ended terminates it, as a Child.
+class Talk {
+  public:
+    // Writes line and a newline to its standard input; false once it reads no more.
+    [[nodiscard]] bool send(std::string_view line);
+    // The next line it writes, without the newline; none once its output ends.
+    [[nodiscard]] std::optional<std::string> receive();
+    // Closes its standard input and waits for it to end.
+    [[nodiscard]] std::expected<int, SpawnError> finish();
+
+  private:
+    friend std::expected<Talk, SpawnError> start_talking(const std::vector<std::string>& argv);
+    Talk(Child child, Descriptor input, Descriptor output);
+
+    Child child_;
+    Descriptor input_;
+    Descriptor output_;
+    // Read beyond the last line received.
+    std::string pending_;
+};
+
+// Runs argv (argv[0] looked up in PATH) with our environment, without waiting for it, to talk to
+// a line at a time. Its standard input is a socket, so that writing to one that has ended fails
+// rather than raising SIGPIPE.
+std::expected<Talk, SpawnError> start_talking(const std::vector<std::string>& argv);
 
 // Whether this process could create or replace a file at path by renaming a new one over it:
 // the nearest existing directory above it is writable.
