@@ -202,6 +202,16 @@ def _edit_world(eroot, edit):
         world.unlock()
 
 
+def _unprepared_workdir(settings):
+    """Drops the empty WORKDIR the phases before unpack left: doebuild cleans one that exists
+    unmarked as unpacked, setup's state with it, and runs pretend and setup again, which emerge's
+    phases never do."""
+    try:
+        os.rmdir(settings["WORKDIR"])
+    except OSError:
+        pass
+
+
 def _setcpv(settings, cpv, metadata, portdb):
     """settings set up for the ebuild of cpv with metadata, as from emerge's Package: its cpv
     knows its database, through which a phase finds the repositories' revisions to record.
@@ -289,6 +299,8 @@ class Worker:
         lock.lock()
         for phase in PHASES:
             emit(event(phase=phase))
+            if phase == "unpack":
+                _unprepared_workdir(settings)
             status = portage.doebuild(
                 ebuild,
                 phase,

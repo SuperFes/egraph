@@ -84,6 +84,18 @@ EBUILDS = {
     },
     "app-misc/old-1": {**PLAIN, "MISC_CONTENT": SHARED},
     "app-misc/new-1": {**PLAIN, "RDEPEND": "!app-misc/old", "MISC_CONTENT": SHARED},
+    # Each phase appends its name as it runs.
+    "app-misc/phases-1": {
+        **PLAIN,
+        "MISC_CONTENT": """S="${WORKDIR}"
+mark() { mkdir -p "${EROOT}"/var/tmp; echo "$1" >> "${EROOT}"/var/tmp/marks; }
+pkg_pretend() { mark pretend; }
+pkg_setup() { mark setup; }
+src_unpack() { mark unpack; }
+src_compile() { mark compile; }
+src_install() { mark install; }
+""",
+    },
     "app-misc/broken-1": {
         **PLAIN,
         "MISC_CONTENT": 'S="${WORKDIR}"\nsrc_compile() { die "cannot compile"; }\n',
@@ -541,6 +553,20 @@ def test_a_merge_keeps_what_others_recorded_in_the_mtimedb(machine):
         kept = json.load(f)
     assert kept["updates"] == {"elsewhere": 1}
     assert machine.path("usr/lib64") in kept["ldpath"]
+
+
+def test_each_phase_runs_once_as_in_emerge(machine):
+    marks = machine.path("var/tmp/marks")
+    machine.save()
+    machine.emerge("-1 =app-misc/phases-1")
+    with open(marks) as f:
+        emerged = f.read().split()
+    machine.restore()
+    events, status, stderr = machine.worker(request("app-misc/phases-1"))
+    assert status == 0, stderr
+    with open(marks) as f:
+        assert f.read().split() == emerged
+    assert emerged == ["pretend", "setup", "unpack", "compile", "install"]
 
 
 def test_a_failed_build_lets_its_directory_go(machine):
