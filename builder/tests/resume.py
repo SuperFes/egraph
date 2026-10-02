@@ -178,3 +178,83 @@ def resumed(trees, eroot, entry):
         dropped=frozenset(str(task.cpv) for task in dropped),
         order=tuple(str(pkg.cpv) for pkg in merged),
     )
+
+
+def worker_requests(trees, eroot, entry, requests):
+    """What emerge --resume, running entry as egraph's requests order it, would hand each step:
+    a merge's blockers (as its scheduler finds them, the installed packages counted as its
+    BlockerDB counts them once each step before is done) and world atom (create_world_atom's,
+    before the run), and whether an uninstall cleans the world file; as the requests spell them.
+    None when emerge refuses entry."""
+    from _emerge.BlockerDB import BlockerDB
+    from _emerge.create_world_atom import create_world_atom
+    from portage._sets.base import InternalPackageSet
+    from portage.dep import Atom
+
+    success, depgraph, _, tasks = resume_depgraph(trees, eroot, entry)
+    if not success:
+        return None
+    # emerge picks among equal versions in directory order, egraph by its own.
+    merges = {}
+    spelled = {r["cpv"] for r in requests if "cpv" in r}
+    for pkg in merges_in(tasks):
+        merges[same_version(spelled)(str(pkg.cpv))] = pkg
+    vartree = depgraph.schedulerGraph().trees[eroot]["vartree"]
+    blocker_db = BlockerDB(vartree)
+    root_config = trees[eroot]["root_config"]
+    args_set = InternalPackageSet(entry["favorites"], allow_repo=True)
+    oneshot = "--oneshot" in entry["myopts"]
+    expected = []
+    for request in requests:
+        if "uninstall" in request:
+            (pkg,) = vartree.dbapi.match_pkgs(Atom("=" + request["uninstall"]))
+            step = {"uninstall": request["uninstall"]}
+            if not oneshot and args_set.findAtomForPackage(pkg):
+                step["clean_world"] = True
+        else:
+            pkg = merges[request["cpv"]]
+            if str(pkg.cpv) != request["cpv"]:
+                # Resuming, emerge took another ebuild of an equal version, perhaps in another
+                # slot: nothing to hold the request to.
+                expected.append(request)
+                blocker_db.discardBlocker(pkg)
+                continue
+            step = {"cpv": request["cpv"], "repo": pkg.repo}
+            blockers = sorted(
+                str(blocker.cpv)
+                for blocker in blocker_db.findInstalledBlockers(pkg)
+                if blocker.slot_atom != pkg.slot_atom and blocker.cpv != pkg.cpv
+            )
+            if blockers:
+                step["blockers"] = blockers
+            atom = None
+            if not oneshot:
+                atom = create_world_atom(
+                    pkg, args_set, root_config, before_install=True
+                )
+            if atom is not None:
+                step["world"] = str(atom)
+        expected.append(step)
+        blocker_db.discardBlocker(pkg)
+    return expected
+
+
+def same_version(cpvs):
+    """A cpv as spelled among cpvs: emerge picks among equal versions in directory order."""
+    from portage.versions import cpv_getkey, vercmp
+
+    def spell(cpv):
+        if cpv in cpvs:
+            return cpv
+        cp = cpv_getkey(cpv)
+        return next(
+            (
+                other
+                for other in cpvs
+                if cpv_getkey(other) == cp
+                and vercmp(other[len(cp) + 1 :], cpv[len(cp) + 1 :]) == 0
+            ),
+            cpv,
+        )
+
+    return spell

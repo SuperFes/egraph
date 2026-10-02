@@ -97,6 +97,8 @@ without dynamic deps (the `dynamic_deps` fixture); `test_system.py` does both on
 pointing it there, for `--verify`.
 `test_worker.py` builds and merges real ebuilds in a playground with `emerge -1` and with
 `egraph-build --worker` from the same snapshot, and compares the image and vdb entries.
+`test_requests.py` holds the worker requests `--requests` writes (blockers, world atoms) to
+emerge's `BlockerDB` and `create_world_atom`, replayed on the depgraph its resume builds.
 Test stores come from `conftest.write_stores`, which writes the evaluated store beside the
 installed one as a builder run does. Scenario packages get an accepted
 KEYWORDS in `conftest.py`, because depclean's `||` choices depend on visibility and egraph assumes

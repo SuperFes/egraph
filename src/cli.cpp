@@ -11,6 +11,7 @@
 #include "elog.hpp"
 #include "emerge.hpp"
 #include "evaluated.hpp"
+#include "exec.hpp"
 #include "freshness.hpp"
 #include "graph.hpp"
 #include "human.hpp"
@@ -112,6 +113,15 @@ template <class Field> void add_resume_list(CLI::App* sub, Field field) {
         ->type_name("FILE");
 }
 
+// --requests, filling the path field() returns.
+template <class Field> void add_requests(CLI::App* sub, Field field) {
+    sub->add_option_function<std::string>(
+           "--requests", [field](const std::string& path) { field() = path; },
+           "Also write the plan to FILE as the requests egraph-build --worker takes, a JSON "
+           "object a line")
+        ->type_name("FILE");
+}
+
 // updates' options, for C: Updates or a command extending it.
 template <class C> void add_updates_options(CLI::App* sub, Invocation& invocation) {
     const auto updates = [&invocation]() -> Updates& { return std::get<C>(invocation.command); };
@@ -151,6 +161,7 @@ template <class C> void add_updates_options(CLI::App* sub, Invocation& invocatio
     }
     if constexpr (std::is_same_v<C, Updates>) {
         add_resume_list(sub, [updates]() -> auto& { return updates().resume_list; });
+        add_requests(sub, [updates]() -> auto& { return updates().requests; });
     }
 }
 
@@ -190,6 +201,7 @@ template <class C> void add_plan_options(CLI::App* sub, Invocation& invocation) 
             "--verify", [plan] { plan().verify = true; },
             "Also ask emerge --pretend, and show where its merge list differs");
         add_resume_list(sub, [plan]() -> auto& { return plan().resume_list; });
+        add_requests(sub, [plan]() -> auto& { return plan().requests; });
     }
 }
 
@@ -884,6 +896,8 @@ struct Shown {
     // The session's, until it reloads.
     std::reference_wrapper<const Store> store;
     std::reference_wrapper<const Evaluated> evaluated;
+    // emerge's arguments as the request named them; none for updates.
+    std::vector<Argument> arguments;
 };
 
 // The updates, shown; the exit status instead when there are none to show.
@@ -930,7 +944,8 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
                             .rebuilds = command.rebuilds,
                             .dynamic_deps = invocation.dynamic_deps},
                 .store = *store,
-                .evaluated = evaluated};
+                .evaluated = evaluated,
+                .arguments = {}};
     const auto& plan = shown.plan;
     if (command.tree) {
         const auto tree = update_tree_lines(*store, evaluated, (*depclean)->get().kept, plan);
@@ -975,7 +990,7 @@ Exit write_resume_list(Exit status, const std::optional<std::filesystem::path>& 
     if (!path) {
         return status;
     }
-    const auto& [plan, request, store, evaluated] = shown;
+    const auto& [plan, request, store, evaluated, arguments] = shown;
     if (plan.refused()) {
         err << "egraph: " << name << ": no resume list, as emerge would refuse the plan\n";
         return status;
@@ -988,19 +1003,41 @@ Exit write_resume_list(Exit status, const std::optional<std::filesystem::path>& 
     return status;
 }
 
+// Writes the plan to path as the worker's requests, but for one emerge would refuse.
+Exit write_requests(Exit status, const std::optional<std::filesystem::path>& path,
+                    std::string_view name, const Shown& shown, bool oneshot, std::ostream& err) {
+    if (!path) {
+        return status;
+    }
+    const auto& [plan, request, store, evaluated, arguments] = shown;
+    if (plan.refused()) {
+        err << "egraph: " << name << ": no requests, as emerge would refuse the plan\n";
+        return status;
+    }
+    std::ofstream file{*path};
+    for (const auto& step : run_steps(store, evaluated, plan, arguments, oneshot)) {
+        file << worker_request(store, evaluated, plan, step) << '\n';
+    }
+    if (!file.flush()) {
+        return fail(err, std::format("{}: {}: cannot write", name, path->string()));
+    }
+    return status;
+}
+
 Exit execute(const Updates& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     const auto shown = show_updates(command, session, invocation, out, err);
     if (!shown) {
         return shown.error();
     }
-    const auto& [plan, request, store, evaluated] = *shown;
-    const auto status =
+    const auto& [plan, request, store, evaluated, arguments] = *shown;
+    auto status =
         write_resume_list(finish(command.verify ? verify(invocation, Updates::name, request, store,
                                                          evaluated, plan, out, err)
                                                 : Exit::ok,
                                  plan),
                           command.resume_list, Updates::name, *shown, true, err);
+    status = write_requests(status, command.requests, Updates::name, *shown, true, err);
     return offer_use_changes(
         status, plan, store, evaluated, session, invocation, out, err,
         [&](const Invocation& again) { return execute(command, session, again, out, err); });
@@ -1141,7 +1178,8 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
                             .rebuilds = command.rebuilds,
                             .dynamic_deps = invocation.dynamic_deps},
                 .store = *store,
-                .evaluated = evaluated};
+                .evaluated = evaluated,
+                .arguments = request->arguments};
     const auto lines = update_lines(*store, evaluated, shown.plan, command.rebuilds, false,
                                     command.table, targets);
     if (const auto style = output(invocation); style.human) {
@@ -1158,13 +1196,14 @@ Exit execute(const PlanCommand& command, Session& session, const Invocation& inv
     if (!shown) {
         return shown.error();
     }
-    const auto& [plan, request, store, evaluated] = *shown;
-    const auto status =
+    const auto& [plan, request, store, evaluated, arguments] = *shown;
+    auto status =
         write_resume_list(finish(command.verify ? verify(invocation, PlanCommand::name, request,
                                                          store, evaluated, plan, out, err)
                                                 : Exit::ok,
                                  plan),
                           command.resume_list, PlanCommand::name, *shown, false, err);
+    status = write_requests(status, command.requests, PlanCommand::name, *shown, false, err);
     return offer_use_changes(
         status, plan, store, evaluated, session, invocation, out, err,
         [&](const Invocation& again) { return execute(command, session, again, out, err); });
@@ -1417,7 +1456,7 @@ Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
     if (!shown) {
         return shown.error();
     }
-    const auto& [plan, request, store, evaluated] = *shown;
+    const auto& [plan, request, store, evaluated, arguments] = *shown;
     if (!yes && !plan.use_changes.empty()) {
         const auto status = offer_use_changes(Exit::refused, plan, store, evaluated, session,
                                               invocation, out, err, act);

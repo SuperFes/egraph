@@ -587,6 +587,21 @@ same playground state: `emerge -1` for merges, the uninstall emerge runs for a b
 `emerge -C`. What emerge does around a run rather than in it is egraph-exec's: the news,
 `emerge.log`.
 
+A plan becomes the worker's requests in `exec.cpp` (`updates` and `plan --requests` write them):
+its merges in the plan's order, each uninstall straight after the last merge it waits for. A
+merge's blockers are those emerge's scheduler finds as it merges (`BlockerDB.findInstalledBlockers`
+over the depgraph's view of the installed packages): run-time blockers either way between it and
+an installed package, but for its own slot and cpv, where a package an earlier step uninstalled
+or replaced (by cpv or slot) is gone and nothing the run merged counts yet, as the scheduler's
+view is never told of merges. Its world atom is `create_world_atom`'s, worked out from the store
+before the run as emerge works it out: only an atom argument records one (a set argument is no
+atom, so `emerge @world` records nothing), its slot atom when the cp is slotted and the argument
+names one slot, none when the world file's best atom for the package is that already or when an
+unslotted package is in @system outside virtual/. Under `--oneshot`, as for `updates`, nothing
+is recorded or cleaned. `test_requests.py` replays egraph's requests on the depgraph emerge's
+resume of the same plan builds, through emerge's own `BlockerDB` and `create_world_atom`, for
+every update mode and plan request on every scenario.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

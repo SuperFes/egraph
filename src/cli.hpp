@@ -103,6 +103,8 @@ struct Updates {
     bool verify = false;
     // Where the plan goes as mtimedb's resume entry.
     std::optional<std::filesystem::path> resume_list;
+    // Where the plan goes as egraph-build --worker's requests.
+    std::optional<std::filesystem::path> requests;
 };
 
 // A request planned as emerge --pretend would merge it.
@@ -121,6 +123,8 @@ struct PlanCommand {
     bool verify = false;
     // Where the plan goes as mtimedb's resume entry.
     std::optional<std::filesystem::path> resume_list;
+    // Where the plan goes as egraph-build --worker's requests.
+    std::optional<std::filesystem::path> requests;
 };
 
 // emerge -u run on the updates once shown and confirmed, as emerge --oneshot: what it merges

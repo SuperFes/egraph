@@ -544,8 +544,15 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       file (`test_worker.py`). Without its blockers, protect-owned refuses the merge. Not yet:
       the world_sets entries emerge drops when it uninstalls a package an argument matches
       (`setconfig.active`).
-    - 16k3c: the world atom and each merge's blockers worked out in C++, as emerge's
-      `create_world_atom` and `findInstalledBlockers` do, which shadow them (test code only).
+    - 16k3c (done): the plan as the worker's requests (`exec.cpp`; `updates` and `plan
+      --requests`), each merge's blockers and world atom and each uninstall's world cleaning
+      worked out in C++ as emerge's scheduler, `BlockerDB.findInstalledBlockers` and
+      `create_world_atom` do; held to those, replayed in egraph's order on the depgraph emerge's
+      resume builds (`test_requests.py`, every update mode and plan request on every scenario:
+      blockers on 80 requests, world atoms on 650, 98 of them slot atoms). Where resuming emerge
+      takes another ebuild of an equal version (`dev-libs/v-1.0` for `-1.00`), there is nothing
+      to hold the request to. Not yet: an old-style virtual's providers, which
+      `create_world_atom` weighs for a system virtual (profiles no longer have them).
     - 16k3d: `egraph exec`: the plan run in order through one worker, each uninstall straight
       after the merges that need it gone, stopping at the first failure; the final system and
       world file compared with emerge's run.

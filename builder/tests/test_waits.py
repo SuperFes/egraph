@@ -7,11 +7,11 @@ import re
 import pytest
 
 from portage.dep import Atom, use_reduce
-from portage.versions import cpv_getkey, vercmp
+from portage.versions import cpv_getkey
 
 from conftest import portdb, write_stores
 from egraph_build.cli import EXIT_REFUSED
-from resume import scheduled
+from resume import same_version, scheduled
 from scenarios import SCENARIOS
 from test_queries import PLAN_MODES, egraph, plan_requests
 from test_resume import UPDATE_MODES
@@ -76,26 +76,6 @@ def in_any_of(system, cpv, repo, use, kinds, waited):
         )
         for dep in deps
     )
-
-
-def same_version(cpvs):
-    """A cpv as spelled among cpvs: emerge picks among equal versions in directory order."""
-
-    def spell(cpv):
-        if cpv in cpvs:
-            return cpv
-        cp = cpv_getkey(cpv)
-        return next(
-            (
-                other
-                for other in cpvs
-                if cpv_getkey(other) == cp
-                and vercmp(other[len(cp) + 1 :], cpv[len(cp) + 1 :]) == 0
-            ),
-            cpv,
-        )
-
-    return spell
 
 
 def check_waits(system, result, path, repos):

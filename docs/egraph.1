@@ -323,6 +323,21 @@ as JSON), with
 among its options. emerge resolves the blockers and orders the merges again when it resumes;
 the list carries no uninstalls. A plan emerge would refuse is not written, nor a request for
 nothing (an empty set).
+.TP
+.BI \-\-requests " file"
+Also write the updates to
+.I file
+as the requests
+.BR "egraph\-build \-\-worker" " (" egraph\-build (1))
+takes, a JSON object a line, in the order one worker would carry them out: each merge with the
+installed packages it blocks or that block it then, and each uninstall straight after the merges
+it waits for, as
+.B emerge
+runs them. Nothing joins the world file, as with
+.BR \-\-oneshot .
+Written as
+.B \-\-resume\-list
+is.
 .SS plan \fItarget\fR...
 What
 .B emerge \-\-pretend
@@ -417,6 +432,12 @@ make the exit status 5.
 As for
 .BR updates ,
 the targets among the list's favorites, which emerge selects once they are merged.
+.TP
+.BI \-\-requests " file"
+As for
+.BR updates ,
+each merge an atom target matches recording the atom emerge would put in the world file, and
+each uninstall one matches dropping what then matches nothing.
 .SS update
 Shows the updates as
 .B updates
