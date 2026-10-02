@@ -543,13 +543,28 @@ Shows the plan for the targets and verifies it as
 .B install
 does, then merges it without
 .BR emerge :
-one
 .BR "egraph\-build \-\-worker" " (" egraph\-build (1))
-builds and merges each package in the plan's order, as
+processes build the packages, as many at once as the jobs allow, and merge them one at a time,
+as
 .B emerge
-would, and uninstalls each package a blocker needs gone straight after the merges that need it
-gone, a line for each phase as it starts. The run stops at the first package that fails, naming
-the phase and its build log; what merged before it stays merged. The targets join
+schedules them with
+.B FEATURES=merge\-wait
+(portage's default): a build starts once nothing it reaches through what each package waits for
+is still to merge, a built package merges once no build runs, in the order the builds finished,
+and each package a blocker needs gone is uninstalled once the merges that need it gone are done.
+A line is shown for each phase as it starts. With more than one job, what the builds print goes
+only to their logs, and a build starts beside others only while
+.B PORTAGE_TMPDIR
+has the free space
+.B emerge \-\-jobs\-tmpdir\-require\-free\-gb
+asks (18 GiB by default, and 1 GiB for each build running). Under
+.B FEATURES=jobserver\-token
+each build takes a token from the jobserver
+.B MAKEFLAGS
+names, as
+.B emerge
+does. A package that fails is named with the phase and its build log; nothing new starts after
+it, but the builds running finish and what built still merges. The targets join
 .B @selected
 as
 .B emerge
@@ -581,6 +596,24 @@ does.
 .TP
 .BR \-y ", " \-\-yes
 Merge without asking, and offer no USE changes.
+.TP
+.BR \-j ", " \-\-jobs " \fIN\fR"
+Build up to
+.I N
+packages at once, as
+.B emerge \-\-jobs
+does; otherwise as many as
+.B EMERGE_DEFAULT_OPTS
+says, one by default.
+.TP
+.BI \-\-trace " file"
+Write to
+.I file
+a line as each build, merge and uninstall starts and ends: the seconds since the run started,
+what happened
+.RB ( build\-start ", " built ", " build\-failed ", " merge\-start ", " merged ", "
+.BR merge\-failed ", " uninstall\-start ", " uninstalled " or " uninstall\-failed )
+and the cpv, separated by tabs.
 .SS remove \fIpackage\fR...
 What
 .B emerge \-\-depclean

@@ -148,6 +148,10 @@ struct Install : PlanCommand {
 // and confirmed, as install has emerge carry it out.
 struct Exec : Install {
     static constexpr std::string_view name = "exec";
+    // Builds at once, as emerge --jobs; none for EMERGE_DEFAULT_OPTS' count.
+    std::optional<std::uint32_t> jobs;
+    // Where to write when each step starts and ends.
+    std::optional<std::filesystem::path> trace;
 };
 
 // emerge --depclean run on packages once shown, verified and confirmed.

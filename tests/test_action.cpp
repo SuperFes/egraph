@@ -66,6 +66,17 @@ TEST_CASE("the jobs emerge runs at once come from the last --jobs") {
     CHECK(egraph::jobs_of(egraph::execution_options(Words{"-aj8"})) == 8);
 }
 
+TEST_CASE("the free space a second job needs comes from the last --jobs-tmpdir-require-free-gb") {
+    using Words = std::vector<std::string>;
+    CHECK(egraph::tmpdir_free_gb_of(Words{}) == 18);
+    CHECK(egraph::tmpdir_free_gb_of(Words{"--jobs-tmpdir-require-free-gb=0"}) == 0);
+    CHECK(egraph::tmpdir_free_gb_of(
+              Words{"--jobs-tmpdir-require-free-gb=4", "--jobs-tmpdir-require-free-gb=9"}) == 9);
+    // Passed on to emerge, its value joined.
+    CHECK(egraph::execution_options(Words{"--jobs-tmpdir-require-free-gb", "2"}) ==
+          Words{"--jobs-tmpdir-require-free-gb=2"});
+}
+
 TEST_CASE("emerge carries out the request as verified, asking nothing") {
     const egraph::EmergeRequest request{.targets = {"@world"},
                                         .update = true,
@@ -109,19 +120,29 @@ TEST_CASE("an action stops before verifying for refusals, nothing, privileges, t
 TEST_CASE("what emerge runs under is read from egraph-build's JSON") {
     const auto settings = egraph::parse_run_settings(R"({
  "options": ["--jobs", "4"],
- "elog": {"summary": "/var/log/portage/elog/summary.log", "system": "save_summary"}
+ "elog": {"summary": "/var/log/portage/elog/summary.log", "system": "save_summary"},
+ "jobserver": "/run/jobserver", "tmpdir": "/var/tmp"
 })");
     REQUIRE(settings);
     CHECK(settings->defaults == std::vector<std::string>{"--jobs", "4"});
+    CHECK(settings->jobserver == "/run/jobserver");
+    CHECK(settings->tmpdir == "/var/tmp");
     CHECK(settings->elog_summary == "/var/log/portage/elog/summary.log");
     CHECK(settings->elog_system == "save_summary");
     const auto plain =
-        egraph::parse_run_settings(R"({"options": [], "elog": {"summary": null, "system": null}})");
+        egraph::parse_run_settings(R"({"options": [], "elog": {"summary": null, "system": null},
+                                       "jobserver": null, "tmpdir": "/var/tmp"})");
     REQUIRE(plain);
+    CHECK_FALSE(plain->jobserver);
     CHECK_FALSE(plain->elog_summary);
     CHECK_FALSE(plain->elog_system);
     CHECK_FALSE(egraph::parse_run_settings("--jobs\n4\n"));
     CHECK_FALSE(egraph::parse_run_settings(R"({"options": [1], "elog": {}})"));
     CHECK_FALSE(egraph::parse_run_settings(R"({"options": [], "elog": {"summary": 1}})"));
     CHECK_FALSE(egraph::parse_run_settings(R"({"options": []})"));
+    CHECK_FALSE(egraph::parse_run_settings(
+        R"({"options": [], "elog": {"summary": null, "system": null}, "jobserver": 3,
+            "tmpdir": "/var/tmp"})"));
+    CHECK_FALSE(egraph::parse_run_settings(
+        R"({"options": [], "elog": {"summary": null, "system": null}, "jobserver": null})"));
 }

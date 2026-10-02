@@ -89,6 +89,12 @@ def parser():
         "request a line, reporting on stdout",
     )
     p.add_argument(
+        "--background",
+        action="store_true",
+        help="with --worker: what builds and merges print goes only to their logs, as with "
+        "emerge running more than one job",
+    )
+    p.add_argument(
         "--output",
         type=Path,
         help="file --pending, --emerge-options and --notices write, apart from anything portage "
@@ -217,6 +223,19 @@ def write_pending(args):
     return EXIT_OK
 
 
+def jobserver(settings):
+    """The named pipe emerge takes a token from for each build under FEATURES=jobserver-token:
+    the last --jobserver-auth in MAKEFLAGS, if it names one; None otherwise."""
+    if "jobserver-token" not in settings.get("FEATURES", "").split():
+        return None
+    path = None
+    for flag in settings.get("MAKEFLAGS", "").split():
+        if flag.startswith("--jobserver-auth="):
+            value = flag[len("--jobserver-auth=") :]
+            path = value[len("fifo:") :] if value.startswith("fifo:") else None
+    return path
+
+
 def write_emerge_options(args):
     import json
     import shlex
@@ -236,6 +255,8 @@ def write_emerge_options(args):
     written = {
         "options": shlex.split(settings.get("EMERGE_DEFAULT_OPTS", "")),
         "elog": {"summary": summary, "system": system},
+        "jobserver": jobserver(settings),
+        "tmpdir": settings["PORTAGE_TMPDIR"],
     }
     args.output.write_text(json.dumps(written, indent=1, sort_keys=True))
     return EXIT_OK
@@ -380,7 +401,7 @@ def main(argv=None):
     if args.mode == "worker":
         from egraph_build import worker
 
-        return worker.main(args.config_root, args.root, args.eprefix)
+        return worker.main(args.config_root, args.root, args.eprefix, args.background)
     if args.mode == "json":
         from egraph_build import build, installed
 

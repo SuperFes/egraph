@@ -91,6 +91,22 @@ TEST_CASE("no build starts while what built waits to merge") {
     build(schedule, 1);
 }
 
+TEST_CASE("a schedule is alone with no build running and none waiting to merge") {
+    auto [plan, steps] = planned({{}, {}});
+    egraph::Schedule schedule{plan, steps, std::nullopt};
+    CHECK(schedule.alone());
+    build(schedule, 0);
+    CHECK(schedule.building() == 1);
+    CHECK_FALSE(schedule.alone());
+    build(schedule, 1);
+    schedule.build_finished(0, true);
+    CHECK(schedule.building() == 1);
+    // What built waits to merge.
+    CHECK_FALSE(schedule.alone());
+    schedule.build_finished(1, true);
+    CHECK(schedule.alone());
+}
+
 TEST_CASE("a build waits for the merges it reaches, but those after it") {
     // 1 waits for 0; 2 waits for 3, after it, which waits for 0.
     auto [plan, steps] = planned({{}, {0}, {3}, {0}});
@@ -179,9 +195,21 @@ struct FakePool {
     std::deque<egraph::Heard> heard;
     std::set<std::string, std::less<>> failing;
     std::set<std::string, std::less<>> ending;
+    // Requests refused, or not taken, or answered with what is not an event.
+    std::set<std::string, std::less<>> refused;
+    std::set<std::string, std::less<>> deaf;
+    std::set<std::string, std::less<>> garbled;
     // Free tokens, with a jobserver; and those another holder gives back once asked for.
     std::optional<int> tokens;
     int freed_later = 0;
+    // Whether there is room for a job beside those running.
+    bool room = true;
+    std::vector<std::uint32_t> asked_room;
+
+    bool room_for(std::uint32_t beside) {
+        asked_room.push_back(beside);
+        return room;
+    }
 
     std::expected<std::size_t, std::string> add() {
         sent.emplace_back();
@@ -191,6 +219,9 @@ struct FakePool {
     bool send(std::size_t worker, std::string_view line) {
         REQUIRE(
             std::ranges::none_of(running, [&](const auto& run) { return run.first == worker; }));
+        if (deaf.contains(line)) {
+            return false;
+        }
         sent.at(worker).emplace_back(line);
         running.emplace_back(worker, line);
         return true;
@@ -207,10 +238,11 @@ struct FakePool {
         return true;
     }
 
-    void give_token(std::size_t /*step*/) {
+    std::expected<void, std::string> give_token(std::size_t /*step*/) {
         if (tokens) {
             ++*tokens;
         }
+        return {};
     }
 
     std::expected<egraph::Heard, std::string> next(bool for_token) {
@@ -231,7 +263,11 @@ struct FakePool {
             if (kind == "build") {
                 heard.push_back({.worker = worker, .line = R"({"phase": "compile"})"});
             }
-            if (ending.contains(line)) {
+            if (refused.contains(line)) {
+                heard.push_back({.worker = worker, .line = R"({"error": "no ebuild"})"});
+            } else if (garbled.contains(line)) {
+                heard.push_back({.worker = worker, .line = "garbage"});
+            } else if (ending.contains(line)) {
                 heard.push_back({.worker = worker, .line = std::nullopt});
             } else if (failing.contains(line)) {
                 heard.push_back({.worker = worker,
@@ -375,4 +411,35 @@ TEST_CASE("an uninstall runs on an idle worker, beside a build") {
                                                 "merged c"});
     CHECK(pool.sent == std::vector<std::vector<std::string>>{{"build a", "merge a", "uninstall b"},
                                                              {"build c", "merge c"}});
+}
+
+TEST_CASE("a refused request, a worker that takes no more or talks nonsense, fails its step") {
+    const auto why = [](auto configure) {
+        FakePool pool;
+        configure(pool);
+        const auto ran = run(planned({{}}), 1, pool);
+        CHECK(ran.outcome.done == 0);
+        REQUIRE(ran.outcome.stopped);
+        CHECK(ran.outcome.stopped->step == 0);
+        return ran.outcome.stopped->why;
+    };
+    CHECK(why([](FakePool& pool) { pool.refused = {"build a"}; }) == "no ebuild");
+    CHECK(why([](FakePool& pool) { pool.deaf = {"merge a"}; }) ==
+          "the worker takes no more requests");
+    CHECK(why([](FakePool& pool) {
+              pool.garbled = {"build a"};
+          }).starts_with("the worker reported what egraph cannot read: "));
+}
+
+TEST_CASE("without room for another job, builds run one at a time") {
+    FakePool pool;
+    pool.room = false;
+    const auto ran = run(planned({{}, {}}), 3, pool);
+    CHECK(ran.outcome.done == 2);
+    CHECK(ran.trace == std::vector<std::string>{"build_started a", "built a", "merge_started a",
+                                                "merged a", "build_started b", "built b",
+                                                "merge_started b", "merged b"});
+    // Asked only beside a running build.
+    CHECK_FALSE(pool.asked_room.empty());
+    CHECK(std::ranges::all_of(pool.asked_room, [](std::uint32_t running) { return running == 1; }));
 }

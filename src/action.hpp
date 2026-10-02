@@ -23,6 +23,11 @@ namespace egraph {
 // --jobs decides, one without a number allowing any; one without --jobs.
 [[nodiscard]] std::optional<std::uint32_t> jobs_of(std::span<const std::string> passed);
 
+// The GiB PORTAGE_TMPDIR must have free, beside 1 GiB per running build, before emerge starts
+// another beside them, under passed: the last --jobs-tmpdir-require-free-gb, 18 by default; 0
+// for no check.
+[[nodiscard]] std::uint64_t tmpdir_free_gb_of(std::span<const std::string> passed);
+
 // What emerge runs under, as egraph-build --emerge-options writes it.
 struct RunSettings {
     // EMERGE_DEFAULT_OPTS as portage splits it.
@@ -32,6 +37,11 @@ struct RunSettings {
     // PORTAGE_ELOG_SYSTEM without echo, for a run whose summary egraph shows instead; none to
     // leave it as it is.
     std::optional<std::string> elog_system;
+    // The make jobserver's named pipe each build takes a token from, under
+    // FEATURES=jobserver-token.
+    std::optional<std::string> jobserver;
+    // PORTAGE_TMPDIR, where builds run.
+    std::string tmpdir;
 };
 
 [[nodiscard]] std::expected<RunSettings, std::string> parse_run_settings(std::string_view text);

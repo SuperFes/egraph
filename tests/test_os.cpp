@@ -115,3 +115,11 @@ TEST_CASE("a jobserver's tokens are taken and given back, and waited for") {
     CHECK(taken(*jobserver) == std::byte{'+'});
     CHECK(talks.at(0).finish() == 0);
 }
+
+TEST_CASE("free space is that of the nearest directory that exists") {
+    const egraph::test::TempDir dir;
+    const auto free = egraph::os::free_bytes(dir.path() / "not" / "yet");
+    REQUIRE(free.has_value());
+    CHECK(*free > 0);
+    CHECK(free == egraph::os::free_bytes(dir.path()));
+}

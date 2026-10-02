@@ -17,6 +17,7 @@ build phases, then "merge"; an uninstall's "unmerge"), then {"built": cpv}, {"me
 to stderr or the build log, never among the events.
 """
 
+import contextlib
 import json
 import os
 import sys
@@ -454,8 +455,8 @@ def without_builder(pythonpath, builder_dir):
     return os.pathsep.join(kept) or None
 
 
-def serve(worker, lines, emit):
-    """Each request in lines, in turn."""
+def serve(worker, lines, emit, background=False):
+    """Each request in lines, in turn; in the background, with nothing it prints shown."""
     for line in lines:
         if not line.strip():
             continue
@@ -464,10 +465,35 @@ def serve(worker, lines, emit):
         except ValueError as e:
             emit(event(error=str(e)))
             continue
-        worker.handle(request, emit)
+        if background:
+            with _silenced():
+                worker.handle(request, emit)
+        else:
+            worker.handle(request, emit)
 
 
-def main(config_root=None, root=None, eprefix=None):
+@contextlib.contextmanager
+def _silenced():
+    """Standard output and error at /dev/null, as emerge's background mode leaves what a phase
+    prints to its log alone."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    saved = os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 1)
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.dup2(saved, 1)
+        os.dup2(saved, 2)
+        os.close(saved)
+        os.close(devnull)
+
+
+def main(config_root=None, root=None, eprefix=None, background=False):
     # The events keep stdout to themselves; what anything else writes there goes to stderr.
     sys.stdout.flush()
     events = os.fdopen(os.dup(sys.stdout.fileno()), "w")
@@ -483,5 +509,5 @@ def main(config_root=None, root=None, eprefix=None):
         os.environ.pop("PYTHONPATH", None)
     else:
         os.environ["PYTHONPATH"] = pythonpath
-    serve(Worker(config_root, root, eprefix), sys.stdin, emit)
+    serve(Worker(config_root, root, eprefix), sys.stdin, emit, background)
     return 0

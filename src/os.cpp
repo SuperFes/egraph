@@ -16,6 +16,7 @@
 #include <string_view>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -452,6 +453,20 @@ bool can_create(const std::filesystem::path& path) {
         dir = dir.parent_path();
     }
     return !dir.empty() && access(dir.c_str(), W_OK) == 0;
+}
+
+std::expected<std::uint64_t, std::error_code> free_bytes(const std::filesystem::path& path) {
+    auto existing = path;
+    std::error_code ignored;
+    while (!std::filesystem::exists(existing, ignored) && existing.has_parent_path() &&
+           existing.parent_path() != existing) {
+        existing = existing.parent_path();
+    }
+    struct statvfs found{};
+    if (::statvfs(existing.c_str(), &found) != 0) {
+        return std::unexpected(std::error_code(errno, std::generic_category()));
+    }
+    return std::uint64_t{found.f_bsize} * std::uint64_t{found.f_bavail};
 }
 
 bool is_root() {

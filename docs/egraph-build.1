@@ -62,7 +62,17 @@ module appends to, and
 .B PORTAGE_ELOG_SYSTEM
 without
 .B echo
-when that log holds every class echo shows, as JSON, to
+when that log holds every class echo shows, and under
+.B FEATURES=jobserver\-token
+the named pipe of the last
+.B \-\-jobserver\-auth
+in
+.BR MAKEFLAGS ,
+which
+.B emerge
+takes a token from for each build, and
+.BR PORTAGE_TMPDIR ,
+as JSON, to
 .BR \-\-output .
 .TP
 .B \-\-notices
@@ -117,7 +127,14 @@ then
 naming the phase that failed and its build log, or
 .B {\(dqerror\(dq: ...}
 for a request that cannot be tried. What portage and the ebuild print goes to standard error
-or the build log.
+and the build log.
+.TP
+.B \-\-background
+With
+.BR \-\-worker ,
+what the builds, merges and uninstalls print goes only to their build logs, as
+.B emerge
+sends it there when it runs more than one job.
 .TP
 .BI \-\-output " file"
 The file

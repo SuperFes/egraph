@@ -167,10 +167,11 @@ class Machine:
         assert result.returncode == 0, result.stdout + result.stderr
         return result
 
-    def worker(self, *lines):
-        """The worker's events for lines, each request's in turn, and its exit status."""
+    def worker(self, *lines, options=()):
+        """The worker's events for lines, each request's in turn, its exit status and what it
+        wrote to stderr."""
         result = subprocess.run(
-            [sys.executable, "-m", "egraph_build", "--worker"],
+            [sys.executable, "-m", "egraph_build", "--worker", *options],
             input="".join(line + "\n" for line in lines),
             env=self.environment,
             capture_output=True,
@@ -553,6 +554,19 @@ def test_a_merge_keeps_what_others_recorded_in_the_mtimedb(machine):
         kept = json.load(f)
     assert kept["updates"] == {"elsewhere": 1}
     assert machine.path("usr/lib64") in kept["ldpath"]
+
+
+@pytest.mark.parametrize("background", [False, True])
+def test_in_the_background_build_output_goes_only_to_the_log(machine, background):
+    """As emerge's does with more than one job."""
+    events, status, stderr = machine.worker(
+        build("app-misc/broken-1"), options=["--background"] if background else []
+    )
+    assert status == 0, stderr
+    assert events[-1]["failed"] == "compile"
+    with open(events[-1]["log"]) as f:
+        assert ">>> Compiling source" in f.read()
+    assert (">>> Compiling source" in stderr) != background
 
 
 def test_each_phase_runs_once_as_in_emerge(machine):

@@ -38,6 +38,7 @@ constexpr std::array options{
     Option{.name = "--color", .value = Value::yes_no, .passed = true},
     Option{.name = "--fail-clean", .value = Value::yes_no, .passed = true},
     Option{.name = "--jobs", .value = Value::number, .passed = true},
+    Option{.name = "--jobs-tmpdir-require-free-gb", .value = Value::number, .passed = true},
     Option{.name = "--keep-going", .value = Value::yes_no, .passed = true},
     Option{.name = "--load-average", .value = Value::number, .passed = true},
     Option{.name = "--nospinner", .value = Value::none, .passed = true},
@@ -150,6 +151,21 @@ std::optional<std::uint32_t> jobs_of(std::span<const std::string> passed) {
     return jobs;
 }
 
+std::uint64_t tmpdir_free_gb_of(std::span<const std::string> passed) {
+    constexpr std::string_view prefix = "--jobs-tmpdir-require-free-gb=";
+    std::uint64_t gb = 18;
+    for (const std::string_view option : passed) {
+        if (option.starts_with(prefix)) {
+            const auto digits = option.substr(prefix.size());
+            std::uint64_t value = 0;
+            if (std::from_chars(digits.begin(), digits.end(), value).ec == std::errc{}) {
+                gb = value;
+            }
+        }
+    }
+    return gb;
+}
+
 std::vector<std::string> run_arguments(const EmergeRequest& request, bool oneshot,
                                        std::span<const std::string> passed) {
     std::vector<std::string> arguments{"--ignore-default-opts", "--ask=n"};
@@ -211,7 +227,9 @@ std::expected<RunSettings, std::string> parse_run_settings(std::string_view text
     }
     RunSettings settings{.defaults = words->get<std::vector<std::string>>(),
                          .elog_summary = std::nullopt,
-                         .elog_system = std::nullopt};
+                         .elog_system = std::nullopt,
+                         .jobserver = std::nullopt,
+                         .tmpdir = {}};
     for (const auto& [field, value] : {std::pair{"summary", &settings.elog_summary},
                                        std::pair{"system", &settings.elog_system}}) {
         const auto found = elog->find(field);
@@ -222,6 +240,18 @@ std::expected<RunSettings, std::string> parse_run_settings(std::string_view text
             *value = found->get<std::string>();
         }
     }
+    const auto jobserver = json.find("jobserver");
+    if (jobserver == json.end() || !(jobserver->is_null() || jobserver->is_string())) {
+        return std::unexpected("jobserver: not a string or null");
+    }
+    if (jobserver->is_string()) {
+        settings.jobserver = jobserver->get<std::string>();
+    }
+    const auto tmpdir = json.find("tmpdir");
+    if (tmpdir == json.end() || !tmpdir->is_string()) {
+        return std::unexpected("tmpdir: not a string");
+    }
+    settings.tmpdir = tmpdir->get<std::string>();
     return settings;
 }
 

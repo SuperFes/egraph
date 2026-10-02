@@ -588,8 +588,8 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       Narrower than emerge for now: merge-wait always on (FEATURES=-merge-wait is 16k7's
       narrower barrier), no `--load-average`, and emerge's hold on unrelated builds while a
       merged @system package's run-time dependencies are unmerged is left out.
-    - 16k4c: `exec` runs it over a pool of workers (polled together), writing a trace; the
-      trace holds the rules, the final system is `install`'s, a concurrent emerge waits on
+    - 16k4c (done): `exec` runs it over a pool of workers (polled together), writing a trace;
+      the trace holds the rules, the final system is `install`'s, a concurrent emerge waits on
       portage's locks, and the timing beside `emerge --jobs` goes in findings.md.
       - 16k4c1 (done): a worker keeps several built packages, merged in any order, as merge-wait
         holds them; each merge and uninstall reads the mtimedb afresh, so workers beside each
@@ -602,6 +602,25 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
         built it, an uninstall on any idle one, workers added when none is idle; a merge's
         request is written as it starts, its blockers as emerge's scheduler finds them then
         (`InstalledBlockers` after the steps done, since merges go in the order builds finish).
+      - 16k4c4 (done): `exec -j N` (else EMERGE_DEFAULT_OPTS' jobs) runs the plan over
+        `WorkerPool`, its workers `--background` with more than one job, as emerge's background
+        mode sends build output only to the logs; `--trace` writes each step's start and end.
+        Under FEATURES=jobserver-token, `--emerge-options` names MAKEFLAGS' jobserver and each
+        build takes a token, the first held already when MAKEFLAGS is in the environment, as
+        emerge does. `test_exec_run.py`: the trace holds the rules with two jobs from the
+        configuration and with `-j3`, the system left is `install`'s (but for each COUNTER,
+        which the merge order sets), the jobserver caps the builds and gets its token back,
+        and an emerge of the package exec is building waits on the build directory's lock
+        (its pkg_pretend takes it) until exec's merge. The worker now runs each phase once, as
+        emerge does: `doebuild("unpack")` used to clean an unmarked WORKDIR and run pretend
+        and setup again.
+        A build starts beside others only with the free space in PORTAGE_TMPDIR emerge's
+        `_can_add_job` wants (`--jobs-tmpdir-require-free-gb`, 18 GiB and 1 GiB per running
+        build), which also reaches `install`'s emerge now; the playground's /tmp has less, so
+        the tests set it to 0, as emerge then runs one job at a time.
+        Narrower than emerge: pkg_pretend runs with each build rather than for every package
+        before the first, and PROPERTIES=interactive does not bring builds back to the
+        terminal.
   - 16k5: a failure skipping only what depends on it, compared with what `emerge --keep-going`
     drops.
   - 16k6: the live view in the living app, through the status file the emerge view reads;

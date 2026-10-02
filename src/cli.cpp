@@ -19,10 +19,12 @@
 #include "notices.hpp"
 #include "os.hpp"
 #include "package_use.hpp"
+#include "pool.hpp"
 #include "pressure.hpp"
 #include "remove.hpp"
 #include "request.hpp"
 #include "resume.hpp"
+#include "schedule.hpp"
 #include "selection.hpp"
 #include "session.hpp"
 #include "steve.hpp"
@@ -33,6 +35,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <deque>
 #include <expected>
 #include <format>
@@ -1555,35 +1558,92 @@ Exit execute(const Install& command, Session& session, const Invocation& invocat
         [&](const Invocation& again) { return execute(command, session, again, out, err); });
 }
 
-// Runs one worker on the requests in turn, the cpvs they are for in names, reporting each event
-// on out: its exit status, or why the run stopped short.
-std::expected<int, std::string> run_worker(const Invocation& invocation,
-                                           const RunSettings& settings,
-                                           const std::vector<std::string>& requests,
-                                           const std::vector<std::string>& names,
-                                           std::ostream& out) {
-    auto worker = os::start_talking(with_elog_system(worker_command(invocation), settings));
-    if (!worker) {
-        return std::unexpected(worker.error().message);
+// What --trace calls what happened to a step.
+std::string_view traced_name(Traced what, bool uninstall) {
+    switch (what) {
+    case Traced::build_started:
+        return "build-start";
+    case Traced::built:
+        return "built";
+    case Traced::build_failed:
+        return "build-failed";
+    case Traced::merge_started:
+        return uninstall ? "uninstall-start" : "merge-start";
+    case Traced::merged:
+        return uninstall ? "uninstalled" : "merged";
+    case Traced::merge_failed:
+        break;
     }
+    return uninstall ? "uninstall-failed" : "merge-failed";
+}
+
+// Runs the steps over a pool of workers, as many builds at once as command or else the settings
+// allow, reporting each event on out: the workers' exit status, or why the run stopped short.
+std::expected<int, std::string> run_pool(const Invocation& invocation, const RunSettings& settings,
+                                         const Exec& command, const Plan& plan,
+                                         StepRequests& requests, const std::vector<Step>& steps,
+                                         const std::vector<std::string>& names, std::ostream& out) {
+    const auto jobs = command.jobs ? command.jobs : jobs_of(execution_options(settings.defaults));
+    std::optional<os::Jobserver> jobserver;
+    if (settings.jobserver) {
+        auto opened = os::Jobserver::open(*settings.jobserver);
+        if (!opened) {
+            return std::unexpected(std::format("the jobserver {} could not be opened: {}",
+                                               *settings.jobserver, opened.error().message()));
+        }
+        jobserver = std::move(*opened);
+    }
+    std::ofstream trace;
+    if (command.trace) {
+        trace.open(*command.trace, std::ios::trunc);
+        if (!trace) {
+            return std::unexpected(std::format("{} could not be written", command.trace->string()));
+        }
+    }
+    auto argv = worker_command(invocation);
+    if (jobs != 1U) {
+        argv.emplace_back("--background");
+    }
+    // Under a make that started us, as emerge holds a token then.
+    const auto passed = execution_options(settings.defaults);
+    WorkerPool pool{with_elog_system(std::move(argv), settings),
+                    std::move(jobserver),
+                    os::environment("MAKEFLAGS").has_value(),
+                    {.tmpdir = settings.tmpdir, .free_gb = tmpdir_free_gb_of(passed)},
+                    out};
+    Schedule schedule{plan, steps, jobs};
     const bool human = output(invocation).human;
-    const auto outcome =
-        run_requests(*worker, requests, [&](std::size_t index, const WorkerEvent& event) {
-            const auto& name = names.at(index);
+    const auto start = std::chrono::steady_clock::now();
+    const auto outcome = run_schedule(
+        schedule, pool, requests,
+        [&](std::size_t step, const WorkerEvent& event) {
+            const auto& name = names.at(step);
             if (human) {
-                out << std::format("({} of {}) {}: {}\n", index + 1, requests.size(), name,
+                out << std::format("({} of {}) {}: {}\n", step + 1, steps.size(), name,
                                    describe_event(event));
             } else {
-                out << std::format("{}\t{}\t{}\n", index + 1, name, describe_event(event));
+                out << std::format("{}\t{}\t{}\n", step + 1, name, describe_event(event));
             }
             out << std::flush;
+        },
+        [&](std::size_t step, Traced what) {
+            if (command.trace) {
+                const std::chrono::duration<double> since =
+                    std::chrono::steady_clock::now() - start;
+                trace << std::format("{:.6f}\t{}\t{}\n", since.count(),
+                                     traced_name(what, std::holds_alternative<UninstallStep>(
+                                                           steps.at(step))),
+                                     names.at(step))
+                      << std::flush;
+            }
         });
-    const auto ended = worker->finish();
+    const auto ended = pool.finish();
     if (outcome.stopped) {
-        return std::unexpected(std::format("{}: {}", names.at(outcome.done), *outcome.stopped));
+        const auto& [step, why] = *outcome.stopped;
+        return std::unexpected(step ? std::format("{}: {}", names.at(*step), why) : why);
     }
     if (!ended) {
-        return std::unexpected(ended.error().message);
+        return std::unexpected(ended.error());
     }
     return *ended;
 }
@@ -1596,17 +1656,19 @@ Exit execute(const Exec& command, Session& session, const Invocation& invocation
         [&](const Invocation& again) { return execute(command, session, again, out, err); },
         [&](const Shown& shown) {
             const auto& [plan, request, store, evaluated, arguments] = shown;
-            std::vector<std::string> requests;
+            const auto steps = run_steps(store, evaluated, plan, arguments, command.oneshot);
             std::vector<std::string> names;
-            for (const auto& step : run_steps(store, evaluated, plan, arguments, command.oneshot)) {
-                requests.push_back(worker_request(store, evaluated, plan, step));
+            names.reserve(steps.size());
+            for (const auto& step : steps) {
                 names.push_back(step_cpv(store, evaluated, plan, step));
             }
+            StepRequests requests{store, evaluated, plan, steps};
             return confirm_and_carry_out(
                 Exec::name, command.yes, "Have egraph-build --worker merge this plan?",
                 "egraph-build --worker", false,
                 [&](const RunSettings& settings) {
-                    return run_worker(invocation, settings, requests, names, out);
+                    return run_pool(invocation, settings, command, plan, requests, steps, names,
+                                    out);
                 },
                 store, session, invocation, out, err);
         });
@@ -2130,6 +2192,25 @@ void configure(CLI::App& app, Invocation& invocation) {
         "Add the targets to no set, as emerge --oneshot");
     add_yes<Exec>(exec_cmd, invocation,
                   "Merge without asking, as scripts must where there is no terminal to ask on");
+    exec_cmd
+        ->add_option_function<std::uint32_t>(
+            "-j,--jobs",
+            [&invocation](const std::uint32_t& jobs) {
+                std::get<Exec>(invocation.command).jobs = jobs;
+            },
+            "Build up to N packages at once, as emerge --jobs; EMERGE_DEFAULT_OPTS' count "
+            "otherwise")
+        ->type_name("N")
+        ->check(CLI::PositiveNumber);
+    exec_cmd
+        ->add_option_function<std::string>(
+            "--trace",
+            [&invocation](const std::string& path) {
+                std::get<Exec>(invocation.command).trace = path;
+            },
+            "Write to FILE when each build, merge and uninstall starts and ends, seconds from the "
+            "start, a line each")
+        ->type_name("FILE");
     CLI::App* remove_cmd = add_dynamic_deps(add_command<Remove>(
         app, invocation,
         "Show what emerge --depclean would remove of the packages, then have it remove them once "

@@ -171,6 +171,10 @@ bool can_create(const std::filesystem::path& path);
 std::expected<void, std::error_code> replace_with_copy(const std::filesystem::path& source,
                                                        const std::filesystem::path& target);
 
+// The bytes free to this process on the filesystem of path, or of the nearest directory above it
+// that exists.
+std::expected<std::uint64_t, std::error_code> free_bytes(const std::filesystem::path& path);
+
 // Whether this process runs as root (effective user id 0).
 bool is_root();
 

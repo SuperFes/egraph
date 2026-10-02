@@ -610,9 +610,10 @@ every update mode and plan request on every scenario.
 `egraph exec` (also run as `egraph-exec`, a link to `egraph`: run as `egraph-<command>`, egraph
 runs that command, the global options among its own) carries a plan out without emerge. It is
 `install`'s action up to the confirmation (the plan shown, refused as emerge would refuse it,
-verified against `emerge --pretend`); then one worker, talked to over a socket and a pipe
-(`os::Talk`, so that a worker gone away fails a write rather than raising SIGPIPE), takes the
-plan's requests in turn and the run stops at the first that is not done. The elog summary, the
+verified against `emerge --pretend`); then workers, each talked to over a socket and a pipe
+(`os::Talk`, so that a worker gone away fails a write rather than raising SIGPIPE) and polled
+together (`os::wait_for`, `WorkerPool`), build and merge the plan's steps as the schedule below
+lets them. The elog summary, the
 selection changes and the store refresh are those of an action through emerge. The worker drops
 its own import directory from the `PYTHONPATH` the ebuilds inherit, as the user's emerge would
 not have it (portage's `save-ebuild-env.sh` keeps a `PYTHONPATH` that does not start with its
@@ -626,6 +627,19 @@ yet to finish but those queued after it, as `_dependent_on_scheduled_merges` dec
 up to the jobs (`exec -j`, else EMERGE_DEFAULT_OPTS' `--jobs`); a built package waits to merge
 until no build runs, and merges go one at a time in the order their builds finished, no build
 starting until they are merged, an uninstall ahead of them once its merges are done.
+`run_schedule` carries it out over the pool: a build goes to an idle worker (one is started
+when none is idle) once it has a token, and stays there, its build directory locked, until its
+merge is sent to the same worker; uninstalls go to any idle worker. A merge's request is
+written as it starts, its blockers as emerge's scheduler finds them at that moment
+(`InstalledBlockers`, after the steps done so far), since merges follow the order builds
+finish rather than the plan's. After a failure nothing new starts, what runs finishes and what
+built still merges. With more than one job the workers run `--background`, what the builds
+print going only to their logs, as in emerge's background mode, and a build starts beside
+others only with the free space in PORTAGE_TMPDIR emerge's `_can_add_job` wants. Under FEATURES=jobserver-token
+each build takes a byte from MAKEFLAGS' jobserver pipe (steve's `/dev/steve`, or make's) and
+writes it back when the build ends; the jobserver never decides how many jobs run, only when
+each may start. `--trace` writes each step's start and end, which `test_exec_run.py` holds to
+these rules.
 
 ## Roots and exit codes
 

@@ -15,6 +15,8 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -43,6 +45,11 @@ class Schedule {
     [[nodiscard]] std::optional<std::size_t> next_merge() const;
     void merge_started(std::size_t step);
     void merge_finished(std::size_t step, bool succeeded);
+
+    // Builds running.
+    [[nodiscard]] std::uint32_t building() const { return building_; }
+    // No build runs and none waits to merge, when emerge starts a build whatever the room.
+    [[nodiscard]] bool alone() const { return building_ == 0 && waiting_.empty(); }
 
     // Nothing runs, and nothing more will start.
     [[nodiscard]] bool finished() const;
@@ -110,14 +117,17 @@ struct Heard {
 };
 
 // Runs the schedule's steps over a pool of workers, each running one request at a time: a build
-// on any idle worker once the schedule lets it start and a token is had, its merge on the worker
-// that built it, an uninstall on any idle worker; a worker is added when none is idle. Calls
-// report(step, event) for each event a worker reports and trace(step, what) as each step goes;
-// after a failure, what runs still finishes and what built still merges, as the schedule says.
-// Pool: add() -> std::expected<std::size_t, std::string>, the new worker's index;
+// on any idle worker once the schedule lets it start, there is room for it (or it would run
+// alone, as emerge's _can_add_job weighs PORTAGE_TMPDIR's free space) and a token is had, its
+// merge on the worker that built it, an uninstall on any idle worker; a worker is added when none
+// is idle. Calls report(step, event) for each event a worker reports and trace(step, what) as each
+// step goes; after a failure, what runs still finishes and what built still merges, as the schedule
+// says. Pool: add() -> std::expected<std::size_t, std::string>, the new worker's index;
 //   send(worker, line) -> bool; take_token(step) -> std::expected<bool, std::string>, false when
-//   none is free yet; give_token(step); next(for_token) -> std::expected<Heard, std::string>,
-//   waiting for a line or end from a worker, or with for_token, a token perhaps freed.
+//   none is free yet; give_token(step) -> std::expected<void, std::string>; next(for_token) ->
+//   std::expected<Heard, std::string>, waiting for a line or end from a worker, or with for_token,
+//   a token perhaps freed; room_for(running) -> bool, whether a build may start beside those
+//   running.
 // Requests: build(step), merge(step) -> std::string, written as each is sent; done(step).
 template <class Pool, class Requests, class Report, class Trace>
 PoolOutcome run_schedule(Schedule& schedule, Pool& pool, Requests& requests, const Report& report,
@@ -163,7 +173,10 @@ PoolOutcome run_schedule(Schedule& schedule, Pool& pool, Requests& requests, con
                 ++outcome.done;
             }
         } else {
-            pool.give_token(step);
+            if (auto given = pool.give_token(step); !given && succeeded) {
+                succeeded = false;
+                why = std::move(given.error());
+            }
             schedule.build_finished(step, succeeded);
             trace(step, succeeded ? Traced::built : Traced::build_failed);
         }
@@ -216,6 +229,9 @@ PoolOutcome run_schedule(Schedule& schedule, Pool& pool, Requests& requests, con
         }
         bool for_token = false;
         while (const auto step = schedule.next_build()) {
+            if (!schedule.alone() && !pool.room_for(schedule.building())) {
+                break;
+            }
             const auto token = pool.take_token(*step);
             if (token && !*token) {
                 for_token = true;
@@ -224,7 +240,7 @@ PoolOutcome run_schedule(Schedule& schedule, Pool& pool, Requests& requests, con
             const auto worker = token ? idle() : std::expected<std::size_t, std::string>{};
             if (!token || !worker) {
                 if (token) {
-                    pool.give_token(*step);
+                    std::ignore = pool.give_token(*step);
                 }
                 schedule.build_started(*step);
                 schedule.build_finished(*step, false);

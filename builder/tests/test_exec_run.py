@@ -3,28 +3,76 @@ the real emerge, leaves."""
 
 import os
 import subprocess
+import time
 
 import pytest
 
 from test_actions import EGRAPH, System
 from test_build import age
-from test_worker import EBUILDS, Machine, differences
+from test_worker import EBUILDS, INSTALL, PLAIN, Machine, differences
 
 pytestmark = pytest.mark.skipif(
     not EGRAPH, reason="set EGRAPH to the egraph binary (meson test does)"
 )
 
 
-@pytest.fixture
-def machines(gnupg_home, tmp_path):
-    """A playground with the worker's ebuilds, as an egraph System and a Machine over it."""
+def over(ebuilds, tmp_path, **config):
+    """A playground with ebuilds, as an egraph System and a Machine over it."""
     from portage.tests.resolver.ResolverPlayground import ResolverPlayground
 
-    playground = ResolverPlayground(ebuilds=EBUILDS)
-    system = System(playground, tmp_path)
-    machine = Machine(playground, tmp_path)
-    yield system, machine
+    playground = ResolverPlayground(ebuilds=ebuilds, **config)
+    yield System(playground, tmp_path), Machine(playground, tmp_path)
     playground.cleanup()
+
+
+@pytest.fixture
+def machines(gnupg_home, tmp_path):
+    """The worker's ebuilds."""
+    yield from over(EBUILDS, tmp_path)
+
+
+SLOW = INSTALL + "src_compile() { sleep 1; }\n"
+# Each phase that holds the build directory appends a mark and the time; the compile waits.
+MARKED = """S="${WORKDIR}"
+mark() { mkdir -p "${EROOT}"/var/tmp; echo "$1 $(date +%s.%N)" >> "${EROOT}"/var/tmp/marks; }
+pkg_pretend() { mark pretend; }
+pkg_setup() { mark setup; }
+src_compile() { sleep 8; }
+src_install() { insinto /usr/share/${PN}; echo x > "${T}"/x; doins "${T}"/x; }
+pkg_postinst() { mark postinst; }
+"""
+# base, side and also build at once; mid needs base merged to build, top all three.
+PARALLEL = {
+    "app-misc/base-1": {**PLAIN, "IUSE": "doc", "MISC_CONTENT": SLOW},
+    "app-misc/side-1": {**PLAIN, "IUSE": "doc", "MISC_CONTENT": SLOW},
+    "app-misc/also-1": {**PLAIN, "IUSE": "doc", "MISC_CONTENT": SLOW},
+    "app-misc/mid-1": {
+        **PLAIN,
+        "IUSE": "doc",
+        "DEPEND": "app-misc/base",
+        "MISC_CONTENT": SLOW
+        + 'pkg_setup() { has_version app-misc/base || die "base not seen"; }\n',
+    },
+    "app-misc/top-1": {
+        **PLAIN,
+        "IUSE": "doc",
+        "RDEPEND": "app-misc/mid app-misc/side app-misc/also",
+        "MISC_CONTENT": SLOW,
+    },
+    "app-misc/marked-1": {**PLAIN, "MISC_CONTENT": MARKED},
+}
+NEEDS = {
+    "app-misc/mid-1": ["app-misc/base-1"],
+    "app-misc/top-1": ["app-misc/mid-1", "app-misc/side-1", "app-misc/also-1"],
+}
+
+
+@pytest.fixture
+def parallel(gnupg_home, tmp_path):
+    """The parallel ebuilds, with two jobs configured, whatever the free space."""
+    options = "--jobs=2 --jobs-tmpdir-require-free-gb=0"
+    config = {"make.conf": (f'EMERGE_DEFAULT_OPTS="{options}"',)}
+    yield from over(PARALLEL, tmp_path, user_config=config)
 
 
 def forget_stores(system):
@@ -119,3 +167,195 @@ def test_a_failed_build_stops_the_run(machines):
     first = ran.stdout.splitlines()[0].split("\t")
     if first[1] == "app-misc/broken-1":
         assert not machine.installed("app-misc/lib-1")
+
+
+def read_trace(path):
+    """The trace's lines as (what, cpv), in order, each time after the one before."""
+    lines = [line.split("\t") for line in path.read_text().splitlines()]
+    times = [float(time) for time, _, _ in lines]
+    assert times == sorted(times)
+    return [(what, cpv) for _, what, cpv in lines]
+
+
+def builds_at_once(trace):
+    """The most builds running at once."""
+    running = most = 0
+    for what, _ in trace:
+        if what == "build-start":
+            running += 1
+            most = max(most, running)
+        elif what in ("built", "build-failed"):
+            running -= 1
+    return most
+
+
+def holds_the_rules(trace, jobs):
+    """emerge's scheduling with merge-wait: never two merges at once, nor a merge beside a
+    build, at most jobs builds, and no build before what it needs is merged."""
+    building = merging = 0
+    for what, cpv in trace:
+        if what == "build-start":
+            assert merging == 0, (what, cpv)
+            building += 1
+        elif what in ("built", "build-failed"):
+            building -= 1
+        elif what == "merge-start":
+            assert merging == 0 and building == 0, (what, cpv)
+            merging += 1
+        elif what == "uninstall-start":
+            assert merging == 0, (what, cpv)
+            merging += 1
+        else:
+            merging -= 1
+    assert building == merging == 0
+    assert builds_at_once(trace) <= jobs
+    for cpv, needed in NEEDS.items():
+        if ("build-start", cpv) in trace:
+            started = trace.index(("build-start", cpv))
+            for other in needed:
+                assert trace.index(("merged", other)) < started, (cpv, other)
+
+
+def without_counters(state):
+    """The merge order sets each vdb entry's COUNTER, and parallel runs merge in the order
+    builds finish."""
+    vdb = {}
+    for key, value in state["vdb"].items():
+        if key.endswith("/COUNTER"):
+            continue
+        if key.endswith("/metadata"):
+            value = [line for line in value if not line.startswith("COUNTER=")]
+        vdb[key] = value
+    return {**state, "vdb": vdb}
+
+
+def test_a_parallel_exec_holds_emerges_rules_and_merges_as_install_does(
+    parallel, tmp_path
+):
+    """With EMERGE_DEFAULT_OPTS' two jobs, as emerge would run them."""
+    system, machine = parallel
+    machine.save()
+    installed = system.egraph("install", "--yes", "app-misc/top")
+    assert installed.returncode == 0, installed.stdout + installed.stderr
+    emerged = without_counters(machine.state())
+    machine.restore()
+    forget_stores(system)
+    age(system.playground.eroot)
+    trace = tmp_path / "trace"
+    ran = system.egraph("exec", "--yes", "--trace", str(trace), "app-misc/top")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    worked = without_counters(machine.state())
+    assert worked == emerged, differences(emerged, worked)
+    traced = read_trace(trace)
+    holds_the_rules(traced, 2)
+    assert builds_at_once(traced) == 2
+    assert [cpv for what, cpv in traced if what == "merged"][-1] == "app-misc/top-1"
+    # Each build's output only in its log.
+    assert "installing to stdout" not in ran.stderr
+
+
+def test_exec_j_overrides_the_configured_jobs(parallel, tmp_path):
+    system, machine = parallel
+    age(system.playground.eroot)
+    trace = tmp_path / "trace"
+    ran = system.egraph("exec", "--yes", "-j3", "--trace", str(trace), "app-misc/top")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    traced = read_trace(trace)
+    holds_the_rules(traced, 3)
+    assert builds_at_once(traced) == 3
+    assert machine.installed("app-misc/top-1")
+
+
+def test_builds_wait_to_run_alone_without_room_in_the_build_directory(
+    parallel, tmp_path
+):
+    """As emerge's --jobs-tmpdir-require-free-gb holds them back."""
+    system, machine = parallel
+    age(system.playground.eroot)
+    trace = tmp_path / "trace"
+    options = "--jobs=2 --jobs-tmpdir-require-free-gb=1048576"
+    ran = subprocess.run(
+        system.command("exec", "--yes", "-j3", "--trace", str(trace), "app-misc/top"),
+        capture_output=True,
+        text=True,
+        env=dict(os.environ, EGRAPH_STRICT="1", EMERGE_DEFAULT_OPTS=options),
+    )
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    traced = read_trace(trace)
+    holds_the_rules(traced, 3)
+    assert builds_at_once(traced) == 1
+    assert "builds wait to run alone" in ran.stdout
+
+
+def test_each_build_takes_a_jobserver_token(parallel, tmp_path):
+    """Under FEATURES=jobserver-token, a token from MAKEFLAGS' jobserver per build, the first
+    held already when MAKEFLAGS comes from the environment, as emerge takes them; each given
+    back."""
+    system, machine = parallel
+    age(system.playground.eroot)
+    fifo = tmp_path / "jobserver"
+    os.mkfifo(fifo)
+    jobserver = os.open(fifo, os.O_RDWR | os.O_NONBLOCK)
+    try:
+        os.write(jobserver, b"+")
+        trace = tmp_path / "trace"
+        environment = dict(
+            os.environ,
+            EGRAPH_STRICT="1",
+            FEATURES="jobserver-token",
+            MAKEFLAGS=f"--jobserver-auth=fifo:{fifo}",
+        )
+        ran = subprocess.run(
+            system.command(
+                "exec", "--yes", "-j3", "--trace", str(trace), "app-misc/top"
+            ),
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+        assert ran.returncode == 0, ran.stdout + ran.stderr
+        traced = read_trace(trace)
+        holds_the_rules(traced, 3)
+        assert builds_at_once(traced) == 2
+        assert os.read(jobserver, 2) == b"+"
+    finally:
+        os.close(jobserver)
+
+
+def test_a_concurrent_emerge_waits_on_the_build_directory_lock(parallel, tmp_path):
+    """emerge, run while exec builds the same package, waits for portage's lock on the build
+    directory, which its pkg_pretend takes, until exec's merge lets it go."""
+    system, machine = parallel
+    age(system.playground.eroot)
+    trace = tmp_path / "trace"
+    running = subprocess.Popen(
+        system.command("exec", "--yes", "--trace", str(trace), "app-misc/marked"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=dict(os.environ, EGRAPH_STRICT="1"),
+    )
+    try:
+        deadline = time.monotonic() + 60
+        while not (trace.exists() and "build-start" in trace.read_text()):
+            assert running.poll() is None and time.monotonic() < deadline
+            time.sleep(0.1)
+        launched = time.time()
+        machine.emerge("-1 =app-misc/marked-1")
+    finally:
+        out, err = running.communicate()
+    assert running.returncode == 0, out + err
+    with open(machine.path("var/tmp/marks")) as f:
+        marks = [line.split() for line in f]
+    assert [name for name, _ in marks] == [
+        "pretend",
+        "setup",
+        "postinst",
+        "pretend",
+        "setup",
+        "postinst",
+    ]
+    # Started long before exec merged, emerge went on only once it had.
+    merged = float(marks[2][1])
+    assert merged - launched > 4
+    assert float(marks[3][1]) > merged

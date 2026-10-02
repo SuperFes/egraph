@@ -226,6 +226,14 @@ TEST_CASE("exec takes install's options, and its worker runs under the same root
     CHECK(exec.deep);
     CHECK(exec.oneshot);
     CHECK(exec.yes);
+    CHECK_FALSE(exec.jobs);
+    CHECK_FALSE(exec.trace);
+    const auto parallel = std::get<egraph::Exec>(parse("exec -j4 --trace /t a/b").command);
+    CHECK(parallel.jobs == 4U);
+    CHECK(parallel.trace == "/t");
+    CHECK(std::get<egraph::Exec>(parse("exec --jobs 2 a/b").command).jobs == 2U);
+    CHECK_THROWS(parse("exec -j0 a/b"));
+    CHECK_THROWS(parse("exec -j many a/b"));
     CHECK_THROWS(parse("exec"));
     egraph::Invocation invocation;
     invocation.builder = "egraph-build";
