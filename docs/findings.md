@@ -418,3 +418,23 @@ process including load and the freshness check of 2,575 inputs.
 - Without `--store`, a user's run first tries the system store; a system store of the older
   format costs the whole installed store's decode (36.6M instructions) before the evaluated
   store's version rejects it, until the system package is upgraded too.
+
+## Parallel exec beside emerge --jobs (2026-10-02, roadmap step 16k4c)
+
+- Playground: 8 independent packages, each compiling for 2 s (`sleep`), merged from the same
+  snapshot by `egraph install` (real emerge), `egraph exec` and a bare `emerge -1`, three
+  interleaved rounds each; wall clock, since the work is mostly waiting.
+
+  | jobs | install (emerge) | exec | bare emerge |
+  |------|------------------|------|-------------|
+  | 1    | 42.7–43.5 s      | 43.6–44.3 s | 40.9–41.8 s |
+  | 4    | 19.0–20.4 s      | 19.3–20.0 s | 18.2 s      |
+
+- exec keeps pace with emerge at both job counts. Its pool's workers each load portage's
+  configuration (about a second) in parallel with the first builds, so the extra start-up
+  hides behind them. The 1–3 s on a bare emerge is egraph's planning, verification against
+  `emerge --pretend` and store refresh, which `install` and `exec` share.
+- The first measurement had emerge at 47 s with `--jobs=4`: emerge's `_can_add_job` starts
+  a build beside others only while PORTAGE_TMPDIR has `--jobs-tmpdir-require-free-gb` (18
+  GiB, and 1 GiB per running build) free, and the playground's /tmp has 16 GiB. exec now
+  holds builds back the same way; the comparison above sets the option to 0 for both.
