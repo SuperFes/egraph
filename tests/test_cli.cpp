@@ -4,6 +4,7 @@
 #include <CLI/CLI.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <sstream>
 #include <string>
 #include <variant>
@@ -61,6 +62,32 @@ TEST_CASE("global options precede the command") {
     const auto invocation = parse("--store /tmp/x.egraph --no-refresh broken");
     CHECK(std::holds_alternative<egraph::Broken>(invocation.command));
     CHECK(invocation.store == std::filesystem::path{"/tmp/x.egraph"});
+    CHECK(invocation.no_refresh);
+}
+
+TEST_CASE("egraph run as egraph-<command> runs the command") {
+    CLI::App app;
+    egraph::Invocation invocation;
+    egraph::configure(app, invocation);
+    using Arguments = std::vector<std::string>;
+    CHECK(egraph::multicall_arguments(app, "egraph-orphans", {"--with-bdeps=n"}) ==
+          Arguments{"orphans", "--with-bdeps=n"});
+    CHECK(egraph::multicall_arguments(app, "/usr/bin/egraph-broken", {}) == Arguments{"broken"});
+    for (const auto* program : {"egraph", "/usr/bin/egraph", "egraph-nonesuch", "egraph-",
+                                "xegraph-broken", "egraph-broken/egraph"}) {
+        CAPTURE(program);
+        CHECK(egraph::multicall_arguments(app, program, {"broken"}) == Arguments{"broken"});
+    }
+
+    // Plain egraph takes the global options before the command only. CLI11 takes a vector of
+    // arguments last first.
+    CHECK_THROWS_AS(parse("broken --no-refresh"), CLI::ParseError);
+    auto arguments = egraph::multicall_arguments(app, "egraph-broken",
+                                                 {"--root", "/mnt/target", "--no-refresh"});
+    std::ranges::reverse(arguments);
+    app.parse(arguments);
+    CHECK(std::holds_alternative<egraph::Broken>(invocation.command));
+    CHECK(invocation.root == std::filesystem::path{"/mnt/target"});
     CHECK(invocation.no_refresh);
 }
 

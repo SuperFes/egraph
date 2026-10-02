@@ -31,6 +31,19 @@ def test_cpp_export_matches_builder_json(scenario, tmp_path):
     assert export(path) == installed.to_json(layer).encode()
 
 
+def test_a_link_named_for_a_command_runs_it(scenario, tmp_path):
+    path = tmp_path / "installed.egraph"
+    store.write(path, store.encode(installed.build(scenario.vardb), META))
+    link = tmp_path / "egraph-export"
+    link.symlink_to(os.path.abspath(EGRAPH))
+    linked = subprocess.run(
+        [link, "--format", "json", "--store", str(path), "--no-refresh"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert linked == export(path)
+
+
 def write_both(system, path, installed_build_time_ns=0):
     store.write(path, store.encode(installed.build(system.vardb), META))
     portdb = system.trees[system.eroot]["porttree"].dbapi

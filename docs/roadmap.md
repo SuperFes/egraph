@@ -491,14 +491,14 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   and sets.
 - 16j: the actions in the living app: updates picked, installs from search, orphans removed,
   a confirmation, the run in the emerge view, a failure's log tail.
-- 16k: egraph's own execution: `egraph-exec`, a C++ sibling of `egraph` that holds the order,
-  the parallelism (with steve), priorities, failures and the display, and drives long-lived
-  Python workers that call portage's public phase and merge functions; the ebuild machinery
-  stays portage's. Decided with the user (2026-10-01), replacing one `emerge --oneshot --nodeps`
-  per merge: `--nodeps` turns off blocker handling, and parallel emerges overwrite each other's
-  resume list. emerge-equivalent ordering stays the default until real use shows the narrower
-  waits safe (undeclared dependencies are why emerge's merge-wait exists). Each stage is
-  compared with portage on playgrounds.
+- 16k: egraph's own execution: `egraph exec` (`egraph-exec`, a link to `egraph`), which holds the
+  order, the parallelism (with steve), priorities, failures and the display, and drives long-lived
+  Python workers that call portage's public phase and merge functions; the ebuild machinery stays
+  portage's. Decided with the user (2026-10-01), replacing one `emerge --oneshot --nodeps` per
+  merge: `--nodeps` turns off blocker handling, and parallel emerges overwrite each other's resume
+  list. emerge-equivalent ordering stays the default until real use shows the narrower waits safe
+  (undeclared dependencies are why emerge's merge-wait exists). Each stage is compared with
+  portage on playgrounds.
   - 16k0 (done): egraph's plan written as emerge's resume list (`updates` and `plan`
     `--resume-list`), and emerge's resume of it holding every merge, adding none, and resolving
     the same uninstalls, for every update mode and every plan request on every scenario
@@ -533,6 +533,17 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     `blockers` for the merge's collision checks (16k3), `FEATURES=buildpkg`'s binary package.
   - 16k3: a whole plan run one build at a time, blockers and uninstalls included; the final
     system and world file compared with emerge's run.
+    - 16k3a (done): `egraph` run as `egraph-<command>`, a link to it, runs that command, which
+      then takes the global options among its own (the user's choice, 2026-10-01, over a
+      separate binary).
+    - 16k3b: the worker uninstalls, hands a merge its blockers (dblink's collision checks, and
+      the files the merge takes over leaving the blocked package's CONTENTS, so its uninstall
+      keeps them), and records world atoms; each compared with emerge's.
+    - 16k3c: the world atom and each merge's blockers worked out in C++, as emerge's
+      `create_world_atom` and `findInstalledBlockers` do, which shadow them (test code only).
+    - 16k3d: `egraph exec`: the plan run in order through one worker, each uninstall straight
+      after the merges that need it gone, stopping at the first failure; the final system and
+      world file compared with emerge's run.
   - 16k4: parallel builds; a trace holds the rules emerge depends on (never two merges at once,
     no build before what it builds against is merged, portage's locks taken as portage takes
     them, tested against a concurrent emerge); timing compared with `emerge --jobs`. Workers

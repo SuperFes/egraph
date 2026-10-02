@@ -2355,6 +2355,24 @@ bool answered_yes(std::istream& in, std::ostream& out, std::string_view question
     return word == "y" || word == "Y" || word == "yes" || word == "Yes" || word == "YES";
 }
 
+std::vector<std::string> multicall_arguments(CLI::App& app, std::string_view program,
+                                             std::vector<std::string> arguments) {
+    constexpr std::string_view prefix = "egraph-";
+    const auto name = std::filesystem::path{program}.filename().string();
+    if (!name.starts_with(prefix) || name.size() == prefix.size()) {
+        return arguments;
+    }
+    auto command = name.substr(prefix.size());
+    auto* sub = app.get_subcommand_no_throw(command);
+    if (sub == nullptr) {
+        return arguments;
+    }
+    // Its arguments come all together, the global options among them.
+    sub->fallthrough();
+    arguments.insert(arguments.begin(), std::move(command));
+    return arguments;
+}
+
 Exit run(const Invocation& invocation, std::ostream& out, std::ostream& err) {
     Session session{invocation, err};
     auto asking = invocation;

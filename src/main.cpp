@@ -3,6 +3,7 @@
 
 #include <CLI/CLI.hpp>
 
+#include <algorithm>
 #include <exception>
 #include <filesystem>
 #include <iostream>
@@ -25,8 +26,17 @@ int main(int argc, char** argv) {
             invocation.cache_home = std::filesystem::path{*home} / ".cache";
         }
         egraph::configure(app, invocation);
+        // The name egraph runs under, and its arguments as given.
+        CLI::App given;
+        given.set_help_flag();
+        given.allow_extras();
+        given.prefix_command();
+        given.parse(argc, argv);
+        auto arguments = egraph::multicall_arguments(app, given.get_name(), given.remaining());
+        // CLI11 takes them last first.
+        std::ranges::reverse(arguments);
         try {
-            app.parse(argc, argv);
+            app.parse(arguments);
         } catch (const CLI::ParseError& e) {
             // --help and --version arrive here too, with exit code 0.
             const int code = app.exit(e);

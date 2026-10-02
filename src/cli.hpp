@@ -363,6 +363,12 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
 // outlive the parse.
 void configure(CLI::App& app, Invocation& invocation);
 
+// The arguments to parse for egraph run as program: as egraph-<command> (a link to egraph, say),
+// <command> first, for each of app's subcommands, which then takes the global options too; else
+// arguments as they are.
+[[nodiscard]] std::vector<std::string> multicall_arguments(CLI::App& app, std::string_view program,
+                                                           std::vector<std::string> arguments);
+
 Exit run(const Invocation& invocation, std::ostream& out, std::ostream& err);
 
 // The shell: runs the commands read from in, one per line, against one session, until the end of
