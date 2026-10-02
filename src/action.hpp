@@ -19,6 +19,10 @@ namespace egraph {
 // --name or --name=value.
 [[nodiscard]] std::vector<std::string> execution_options(std::span<const std::string> defaults);
 
+// How many builds emerge runs at once under passed (execution_options' spelling): the last
+// --jobs decides, one without a number allowing any; one without --jobs.
+[[nodiscard]] std::optional<std::uint32_t> jobs_of(std::span<const std::string> passed);
+
 // What emerge runs under, as egraph-build --emerge-options writes it.
 struct RunSettings {
     // EMERGE_DEFAULT_OPTS as portage splits it.

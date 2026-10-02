@@ -577,10 +577,17 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       still the same image and vdb entries as `emerge -1` (`test_worker.py`), the lock seen
       held between the two from another process, let go after a failed build, and one built
       package at a time per worker.
-    - 16k4b: the schedule: when each build may start (what its build and install waits name
-      merged) and each merge go (one at a time, after those before it in the plan's order),
-      each uninstall after the merges it waits for; the job count, and jobserver tokens as
-      emerge takes them; tested on its own, with no workers.
+    - 16k4b (done): the schedule (`schedule.cpp`), as emerge's scheduler with FEATURES=merge-wait
+      (portage's default): a build starts once it reaches no merge yet to finish through what
+      each merge waits for (deeply, through merges done and installed packages that stay),
+      but those queued after it (`_dependent_on_scheduled_merges`), the first anyway when
+      nothing else runs; builds run up to the jobs; a built package merges once no build runs,
+      merges one at a time in the order their builds finished; an uninstall goes first once
+      its merges are done; after a failure nothing new builds and what built still merges.
+      The jobs from EMERGE_DEFAULT_OPTS (`jobs_of`). Tested on its own, with no workers.
+      Narrower than emerge for now: merge-wait always on (FEATURES=-merge-wait is 16k7's
+      narrower barrier), no `--load-average`, and emerge's hold on unrelated builds while a
+      merged @system package's run-time dependencies are unmerged is left out.
     - 16k4c: `exec` runs it over a pool of workers (polled together), writing a trace; the
       trace holds the rules, the final system is `install`'s, a concurrent emerge waits on
       portage's locks, and the timing beside `emerge --jobs` goes in findings.md.

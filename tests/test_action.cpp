@@ -55,6 +55,17 @@ TEST_CASE("short options are split, -j taking its count") {
     CHECK(passed({"-q"}) == std::vector<std::string>{"--quiet"});
 }
 
+TEST_CASE("the jobs emerge runs at once come from the last --jobs") {
+    using Words = std::vector<std::string>;
+    CHECK(egraph::jobs_of(Words{}) == 1);
+    CHECK(egraph::jobs_of(Words{"--keep-going"}) == 1);
+    CHECK(egraph::jobs_of(Words{"--jobs=4"}) == 4);
+    CHECK(egraph::jobs_of(Words{"--jobs=4", "--jobs=2"}) == 2);
+    CHECK(egraph::jobs_of(Words{"--jobs"}) == std::nullopt);
+    CHECK(egraph::jobs_of(Words{"--jobs", "--jobs=3"}) == 3);
+    CHECK(egraph::jobs_of(egraph::execution_options(Words{"-aj8"})) == 8);
+}
+
 TEST_CASE("emerge carries out the request as verified, asking nothing") {
     const egraph::EmergeRequest request{.targets = {"@world"},
                                         .update = true,

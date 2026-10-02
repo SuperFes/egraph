@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cstddef>
 #include <format>
 #include <string_view>
@@ -131,6 +132,22 @@ std::vector<std::string> execution_options(std::span<const std::string> given) {
         }
     }
     return passed;
+}
+
+std::optional<std::uint32_t> jobs_of(std::span<const std::string> passed) {
+    std::optional<std::uint32_t> jobs = 1;
+    for (const std::string_view option : passed) {
+        if (option == "--jobs") {
+            jobs.reset();
+        } else if (option.starts_with("--jobs=")) {
+            std::uint32_t count = 0;
+            const auto digits = option.substr(std::string_view{"--jobs="}.size());
+            if (std::from_chars(digits.begin(), digits.end(), count).ec == std::errc{}) {
+                jobs = count;
+            }
+        }
+    }
+    return jobs;
 }
 
 std::vector<std::string> run_arguments(const EmergeRequest& request, bool oneshot,

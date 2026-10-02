@@ -619,6 +619,14 @@ not have it (portage's `save-ebuild-env.sh` keeps a `PYTHONPATH` that does not s
 own library). `test_exec_run.py` holds `exec` to `install`, with the real emerge, from the same
 playground state.
 
+Parallel runs follow emerge's scheduler under FEATURES=merge-wait, portage's default
+(`schedule.cpp`): a build may start once it reaches, through what each merge waits for
+(`Merge::waits`, deeply, through merges already done and installed packages that stay), no merge
+yet to finish but those queued after it, as `_dependent_on_scheduled_merges` decides; builds run
+up to the jobs (`exec -j`, else EMERGE_DEFAULT_OPTS' `--jobs`); a built package waits to merge
+until no build runs, and merges go one at a time in the order their builds finished, an
+uninstall ahead of them once its merges are done.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,
