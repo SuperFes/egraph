@@ -521,8 +521,16 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     Held to the scheduler graph's uninstall nodes in emerge's merge list (`test_waits.py`), the
     `blockers` scenario now with one uninstall two merges need, one blocking it and one it
     blocks.
-  - 16k2: a worker builds and merges one package; its vdb entry and image compared with
-    `emerge -1`'s.
+  - 16k2 (done): a worker builds and merges one package; its vdb entry and image compared with
+    `emerge -1`'s. `egraph-build --worker`, JSON requests in and events out, through portage's
+    public `doebuild` and `merge` as emerge's `EbuildBuild` drives them, the configuration as
+    emerge's Package sets it up; the same image, world file and vdb entries (but for when they
+    were written) as `emerge -1` from the same state (`test_worker.py`): a new package with a
+    protected file waiting as `._cfg`, one replacing an installed version (what only the old
+    one installed removed, `REPLACING_VERSIONS`), EAPI 7, and two merges by one worker, the
+    second's `has_version` seeing the first. A failed phase names its log and merges nothing.
+    Not yet: the builddir lock held across the phases (each `doebuild` takes it, 16k4),
+    `blockers` for the merge's collision checks (16k3), `FEATURES=buildpkg`'s binary package.
   - 16k3: a whole plan run one build at a time, blockers and uninstalls included; the final
     system and world file compared with emerge's run.
   - 16k4: parallel builds; a trace holds the rules emerge depends on (never two merges at once,

@@ -80,6 +80,14 @@ def parser():
         help="write the configuration updates waiting, the unread news and the preserved "
         "libraries, as JSON, to --output",
     )
+    mode.add_argument(
+        "--worker",
+        dest="mode",
+        action="store_const",
+        const="worker",
+        help="build and merge each package requested on stdin, one JSON request a line, "
+        "reporting on stdout",
+    )
     p.add_argument(
         "--output",
         type=Path,
@@ -369,6 +377,10 @@ def main(argv=None):
     if args.entries:
         print("egraph-build: entries are for --pending and --evaluate", file=sys.stderr)
         return EXIT_USAGE
+    if args.mode == "worker":
+        from egraph_build import worker
+
+        return worker.main(args.config_root, args.root, args.eprefix)
     if args.mode == "json":
         from egraph_build import build, installed
 

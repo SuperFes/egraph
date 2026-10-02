@@ -62,6 +62,33 @@ def portage_program(name):
     return shlex.quote(shutil.which(name, path=path))
 
 
+def merge_environment(playground):
+    """What portage's programs need in their environment to merge into playground, which this
+    prepares for it as portage's own merge tests do: chown and chgrp do nothing, so the
+    installing user owns what is merged."""
+    settings = playground.settings
+    eprefix = settings["EPREFIX"]
+    fake_bin = os.path.join(eprefix, "bin")
+    os.makedirs(fake_bin, exist_ok=True)
+    for name in ("chown", "chgrp"):
+        os.symlink(portage.process.find_binary("true"), os.path.join(fake_bin, name))
+    edb = os.path.join(eprefix, "var", "cache", "edb")
+    os.makedirs(edb, exist_ok=True)
+    with open(os.path.join(edb, "counter"), "w") as f:
+        f.write("100")
+    return {
+        "PORTAGE_OVERRIDE_EPREFIX": eprefix,
+        "PORTAGE_REPOSITORIES": settings.repositories.config_string(),
+        "PYTHONPATH": PORTAGE_LIB,
+        "PATH": fake_bin + ":" + os.environ.get("PATH", ""),
+        "PORTAGE_PYTHON": sys.executable,
+        "PORTAGE_INST_GID": str(os.getgid()),
+        "PORTAGE_INST_UID": str(os.getuid()),
+        # Sandbox forbids writing bytecode beside an installed portage.
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+
+
 class System:
     """A playground real merges can happen in, with an emerge that logs each run's arguments
     and a builder for egraph to refresh its stores with."""
@@ -71,30 +98,8 @@ class System:
         self.tmp_path = tmp_path
         self.store = tmp_path / "installed.egraph"
         self.runs = tmp_path / "runs"
-        settings = playground.settings
-        eprefix = settings["EPREFIX"]
-        # As portage's own merge tests: chown and chgrp do nothing, the installing user owns.
-        fake_bin = os.path.join(eprefix, "bin")
-        os.makedirs(fake_bin, exist_ok=True)
-        for name in ("chown", "chgrp"):
-            os.symlink(
-                portage.process.find_binary("true"), os.path.join(fake_bin, name)
-            )
-        edb = os.path.join(eprefix, "var", "cache", "edb")
-        os.makedirs(edb, exist_ok=True)
-        with open(os.path.join(edb, "counter"), "w") as f:
-            f.write("100")
-        environment = {
-            "PORTAGE_OVERRIDE_EPREFIX": eprefix,
-            "PORTAGE_REPOSITORIES": settings.repositories.config_string(),
-            "PYTHONPATH": PORTAGE_LIB,
-            "PATH": fake_bin + ":" + os.environ.get("PATH", ""),
-            "PORTAGE_PYTHON": sys.executable,
-            "PORTAGE_INST_GID": str(os.getgid()),
-            "PORTAGE_INST_UID": str(os.getuid()),
-            # Sandbox forbids writing bytecode beside an installed portage.
-            "PYTHONDONTWRITEBYTECODE": "1",
-        }
+        eprefix = playground.settings["EPREFIX"]
+        environment = merge_environment(playground)
         exports = "".join(
             f"export {name}={shlex.quote(value)}\n"
             for name, value in environment.items()

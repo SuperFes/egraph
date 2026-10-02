@@ -56,6 +56,7 @@ PYTHONPATH=/Development/Gentoo/portage/lib pytest builder/tests   # builder agai
 meson setup build-sysportage -Dportage_test_keys=$fork/portage/tests/.gnupg  # installed portage
 meson dist -C build                                   # release tarball, built and tested
 build/egraph-completions fish                         # a completion script, as installed
+printf '{"cpv": "app-misc/foo-1", "repo": "gentoo"}\n' | build/egraph-build --worker  # as emerge -1
 docker run --rm -v "$PWD":/src -w /src gentoo/stage3 sh .github/ci.sh   # CI (on a copy: it chowns)
 EGRAPH_SYSTEM_TESTS=1 PYTHONPATH=... pytest builder/tests         # also compare on the live vdb
 ```
@@ -94,6 +95,8 @@ depclean's recorded parents, on every scenario with and without build-time deps 
 without dynamic deps (the `dynamic_deps` fixture); `test_system.py` does both on the live system.
 `test_verify.py` runs the real emerge binary on each playground, through a wrapper script
 pointing it there, for `--verify`.
+`test_worker.py` builds and merges real ebuilds in a playground with `emerge -1` and with
+`egraph-build --worker` from the same snapshot, and compares the image and vdb entries.
 Test stores come from `conftest.write_stores`, which writes the evaluated store beside the
 installed one as a builder run does. Scenario packages get an accepted
 KEYWORDS in `conftest.py`, because depclean's `||` choices depend on visibility and egraph assumes

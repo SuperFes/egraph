@@ -3,7 +3,7 @@
 egraph-build \- evaluate the installed packages through portage and write egraph's store
 .SH SYNOPSIS
 .B egraph-build
-.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-pending | \-\-emerge\-options | \-\-notices ]
+.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-pending | \-\-emerge\-options | \-\-notices | \-\-worker ]
 .RI [ options ]
 .RI [ entry ...]
 .SH DESCRIPTION
@@ -72,6 +72,21 @@ atoms of
 .BR @preserved\-rebuild ,
 as JSON, to
 .BR \-\-output .
+.TP
+.B \-\-worker
+Build and merge each package requested on standard input, one JSON object a line,
+.B {"cpv": ..., "repo": ...},
+from source and in turn, as
+.B emerge \-1
+merges it. Each request's progress goes to standard output, one JSON object a line:
+.B {"phase": ...}
+as each phase starts, then
+.BR {"merged": ...} ,
+.B {"failed": ..., "status": ..., "log": ...}
+naming the phase that failed and its build log, or
+.B {"error": ...}
+for a request that cannot be tried. What portage and the ebuild print goes to standard error
+or the build log.
 .TP
 .BI \-\-output " file"
 The file
