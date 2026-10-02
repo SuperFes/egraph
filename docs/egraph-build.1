@@ -87,6 +87,18 @@ the installed packages it blocks or that block it, whose files it may take over 
 are uninstalled, and with
 .BR "\(dqworld\(dq: " atom ,
 the atom to record in the world file once it is merged.
+.B {\(dqbuild\(dq: ..., \(dqrepo\(dq: ...}
+only builds it, and
+.B {\(dqmerge\(dq: ...}
+(with
+.B \(dqblockers\(dq
+and
+.B \(dqworld\(dq
+as above) then merges what that worker built: its build directory stays locked from the one to
+the other, as
+.B emerge
+keeps it while a built package waits its turn to merge, and a worker holds one built package at
+a time.
 .B {\(dquninstall\(dq: ...}
 uninstalls an installed package; with
 .BR "\(dqclean_world\(dq: true" ,
@@ -100,7 +112,7 @@ as each phase starts (a merge's build phases and
 an uninstall's
 .BR unmerge ),
 then
-.BR {\(dqmerged\(dq:\ ...} " or " {\(dquninstalled\(dq:\ ...} ,
+.BR {\(dqbuilt\(dq:\ ...} ", " {\(dqmerged\(dq:\ ...} " or " {\(dquninstalled\(dq:\ ...} ,
 .B {\(dqfailed\(dq: ..., \(dqstatus\(dq: ..., \(dqlog\(dq: ...}
 naming the phase that failed and its build log, or
 .B {\(dqerror\(dq: ...}

@@ -577,7 +577,12 @@ repository, its database on the cpv for the repositories' revisions, `EMERGE_FRO
 them. The request names its blockers, which the merge hands dblink as emerge's scheduler does:
 the files it installs over theirs are no collision, and leave their CONTENTS, so their
 uninstall after it keeps them. It may name a world atom, recorded once merged as emerge records
-its argument's. An uninstall is emerge's `PackageUninstall`: the installed package's own
+its argument's. A build and its merge may come as two requests, for builds to run beside each
+other while merges wait their turn: the build directory stays locked from the build to its
+merge, as emerge's `EbuildBuildDir` locks it (the category directory locked around taking the
+build directory's lock, and removed once empty), through portage's public `portage.locks`, and
+doebuild takes no lock of its own meanwhile (`PORTAGE_BUILDDIR_LOCKED`); an uninstall holds the
+same lock, as emerge's `PackageUninstall` does. An uninstall is emerge's `PackageUninstall`: the installed package's own
 configuration, then portage's `unmerge`, with the world file cleaned of what then matches
 nothing when asked. Which blockers and which world atom are egraph-exec's to work out, as
 emerge works them out before it starts. A worker is long-lived: it loads portage's

@@ -529,8 +529,8 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     protected file waiting as `._cfg`, one replacing an installed version (what only the old
     one installed removed, `REPLACING_VERSIONS`), EAPI 7, and two merges by one worker, the
     second's `has_version` seeing the first. A failed phase names its log and merges nothing.
-    Not yet: the builddir lock held across the phases (each `doebuild` takes it, 16k4),
-    `blockers` for the merge's collision checks (16k3), `FEATURES=buildpkg`'s binary package.
+    Not yet: `FEATURES=buildpkg`'s binary package (the builddir lock held across the phases
+    came with 16k4a, `blockers` with 16k3b).
   - 16k3 (done): a whole plan run one build at a time, blockers and uninstalls included; the
     final system and world file compared with emerge's run.
     - 16k3a (done): `egraph` run as `egraph-<command>`, a link to it, runs that command, which
@@ -568,6 +568,22 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     no build before what it builds against is merged, portage's locks taken as portage takes
     them, tested against a concurrent emerge); timing compared with `emerge --jobs`. Workers
     pooled, since each spends about a second loading portage's configuration.
+    The number of jobs is `exec -j`, else EMERGE_DEFAULT_OPTS' `--jobs`; steve only queues
+    them, a token taken before each build starts and given back when it ends, as emerge's
+    FEATURES=jobserver-token does, never deciding how many (the user's call, 2026-10-02).
+    - 16k4a (done): the worker builds and merges in two requests, `{"build": ...}` then
+      `{"merge": cpv}`, holding the build directory's lock from the build to its merge, as
+      emerge's `EbuildBuildDir` takes it (through `portage.locks`), and around an uninstall;
+      still the same image and vdb entries as `emerge -1` (`test_worker.py`), the lock seen
+      held between the two from another process, let go after a failed build, and one built
+      package at a time per worker.
+    - 16k4b: the schedule: when each build may start (what its build and install waits name
+      merged) and each merge go (one at a time, after those before it in the plan's order),
+      each uninstall after the merges it waits for; the job count, and jobserver tokens as
+      emerge takes them; tested on its own, with no workers.
+    - 16k4c: `exec` runs it over a pool of workers (polled together), writing a trace; the
+      trace holds the rules, the final system is `install`'s, a concurrent emerge waits on
+      portage's locks, and the timing beside `emerge --jobs` goes in findings.md.
   - 16k5: a failure skipping only what depends on it, compared with what `emerge --keep-going`
     drops.
   - 16k6: the live view in the living app, through the status file the emerge view reads;

@@ -167,6 +167,20 @@ class Machine:
         events = [json.loads(line) for line in result.stdout.splitlines()]
         return events, result.returncode, result.stderr
 
+    def talk(self):
+        """A worker to send requests to one at a time, reading its events as they come."""
+        return subprocess.Popen(
+            [sys.executable, "-m", "egraph_build", "--worker"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=self.environment,
+            text=True,
+        )
+
+    def builddir(self, cpv):
+        return os.path.join(self.playground.settings["PORTAGE_TMPDIR"], "portage", cpv)
+
     def path(self, *parts):
         return os.path.join(self.eroot, *parts)
 
@@ -270,6 +284,14 @@ def request(cpv, repo="test_repo", **fields):
     return json.dumps({"cpv": cpv, "repo": repo, **fields})
 
 
+def build(cpv, repo="test_repo"):
+    return json.dumps({"build": cpv, "repo": repo})
+
+
+def merge(cpv, **fields):
+    return json.dumps({"merge": cpv, **fields})
+
+
 def uninstall(cpv, **fields):
     return json.dumps({"uninstall": cpv, **fields})
 
@@ -279,6 +301,31 @@ def merged(cpv):
     return [{"phase": phase} for phase in worker.PHASES + ("merge",)] + [
         {"merged": cpv}
     ]
+
+
+def built_then_merged(cpv):
+    """A build's events, then its merge's."""
+    return [{"phase": phase} for phase in worker.PHASES] + [
+        {"built": cpv},
+        {"phase": "merge"},
+        {"merged": cpv},
+    ]
+
+
+def locked(path):
+    """Whether another process holds portage's lock on path."""
+    from portage.exception import TryAgain
+    from portage.locks import lockfile, unlockfile
+
+    # Let go, the category directory goes once empty.
+    if not os.path.isdir(os.path.dirname(path)):
+        return False
+    try:
+        lock = lockfile(path, wantnewlockfile=True, flags=os.O_NONBLOCK)
+    except TryAgain:
+        return True
+    unlockfile(lock)
+    return False
 
 
 def uninstalled(cpv):
@@ -400,6 +447,69 @@ def test_a_merge_takes_files_over_from_what_it_blocks(machine):
     )
 
 
+def test_a_build_then_its_merge_leave_what_emerge_does(machine):
+    events = same_as_emerge(
+        machine,
+        ["-1 =app-misc/files-1"],
+        ["-1 =app-misc/files-2"],
+        [build("app-misc/files-2"), merge("app-misc/files-2")],
+    )
+    assert events == built_then_merged("app-misc/files-2")
+
+
+def until_final(process):
+    """The events of the request just sent, up to the one ending it."""
+    events = []
+    while True:
+        events.append(json.loads(process.stdout.readline()))
+        if "phase" not in events[-1]:
+            return events
+
+
+def test_the_build_directory_stays_locked_from_the_build_to_its_merge(machine):
+    """As emerge keeps it while a built package waits its turn to merge."""
+    builddir = machine.builddir("app-misc/lib-1")
+    process = machine.talk()
+    try:
+        process.stdin.write(build("app-misc/lib-1") + "\n")
+        process.stdin.flush()
+        assert until_final(process)[-1] == {"built": "app-misc/lib-1"}
+        assert locked(builddir)
+        assert not machine.installed("app-misc/lib-1")
+        process.stdin.write(merge("app-misc/lib-1") + "\n")
+        process.stdin.flush()
+        assert until_final(process)[-1] == {"merged": "app-misc/lib-1"}
+        assert not locked(builddir)
+        assert machine.installed("app-misc/lib-1")
+    finally:
+        process.stdin.close()
+        status = process.wait()
+        process.stdout.close()
+    assert status == 0
+
+
+def test_a_merge_needs_its_build_and_a_worker_builds_one_at_a_time(machine):
+    events, status, stderr = machine.worker(
+        merge("app-misc/lib-1"),
+        build("app-misc/lib-1"),
+        build("app-misc/files-1"),
+        merge("app-misc/files-1"),
+        merge("app-misc/lib-1"),
+    )
+    assert status == 0, stderr
+    errors = [e for e in events if "error" in e]
+    assert len(errors) == 3
+    assert events[-1] == {"merged": "app-misc/lib-1"}
+    assert not machine.installed("app-misc/files-1")
+
+
+def test_a_failed_build_lets_its_directory_go(machine):
+    events, status, stderr = machine.worker(build("app-misc/broken-1"))
+    assert status == 0, stderr
+    assert events[-1]["failed"] == "compile"
+    assert not locked(machine.builddir("app-misc/broken-1"))
+
+
 def test_without_its_blockers_a_merge_cannot_take_their_files(machine):
     """FEATURES=protect-owned refuses the file old installed."""
     machine.emerge("-1 =app-misc/old-1")
@@ -485,6 +595,10 @@ def test_a_failed_phase_merges_nothing_and_names_its_log(machine):
         uninstall("app-misc/lib"),
         uninstall("app-misc/lib-1", clean_world="yes"),
         json.dumps({"uninstall": "app-misc/lib-1", "cpv": "app-misc/lib-1"}),
+        json.dumps({"build": "app-misc/lib-1"}),
+        build("app-misc/lib"),
+        merge("app-misc/lib"),
+        json.dumps({"merge": "app-misc/lib-1", "build": "app-misc/lib-1", "repo": "r"}),
     ],
 )
 def test_a_malformed_request_is_refused(line):
@@ -507,6 +621,12 @@ def test_parse_request():
     assert worker.parse_request(
         uninstall("app-misc/old-1", clean_world=True)
     ) == worker.Uninstall("app-misc/old-1", True)
+    assert worker.parse_request(build("app-misc/lib-1")) == worker.Build(
+        "app-misc/lib-1", "test_repo"
+    )
+    assert worker.parse_request(
+        merge("app-misc/new-1", blockers=["app-misc/old-1"], world="app-misc/new")
+    ) == worker.MergeBuilt("app-misc/new-1", ("app-misc/old-1",), "app-misc/new")
 
 
 def test_a_request_that_cannot_be_tried_is_an_error(machine):

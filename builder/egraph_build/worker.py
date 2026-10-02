@@ -4,10 +4,13 @@ Requests come one per line on stdin, as JSON objects:
 - {"cpv": ..., "repo": ...} builds and merges the ebuild, with "blockers": [cpv, ...] the
   installed packages it blocks or that block it, which the merge may take files over from and an
   uninstall removes after it, and "world": atom the atom to record in the world file once merged;
+- {"build": cpv, "repo": ...} only builds it, and {"merge": cpv}, with "blockers" and "world" as
+  above, then merges what this worker built: the build directory stays locked from one to the
+  other, as emerge keeps it while a built package waits its turn to merge;
 - {"uninstall": cpv} uninstalls the installed package, with "clean_world": true dropping the
   world file's atoms that then match nothing installed.
 For each, events go to stdout one per line: {"phase": name} as each phase starts (a merge's
-build phases, then "merge"; an uninstall's "unmerge"), then {"merged": cpv} or
+build phases, then "merge"; an uninstall's "unmerge"), then {"built": cpv}, {"merged": cpv} or
 {"uninstalled": cpv}, or {"failed": phase, "status": n, "log": path} when a phase fails, or
 {"error": message} for a request that cannot be tried. Whatever portage or an ebuild prints goes
 to stderr or the build log, never among the events.
@@ -39,13 +42,24 @@ class Merge(NamedTuple):
     world: Optional[str] = None
 
 
+class Build(NamedTuple):
+    cpv: str
+    repo: str
+
+
+class MergeBuilt(NamedTuple):
+    cpv: str
+    blockers: tuple = ()
+    world: Optional[str] = None
+
+
 class Uninstall(NamedTuple):
     cpv: str
     clean_world: bool = False
 
 
 def parse_request(line):
-    """A Merge or Uninstall from its line; ValueError for anything else."""
+    """A Merge, Build, MergeBuilt or Uninstall from its line; ValueError for anything else."""
     from portage.dep import Atom
     from portage.exception import InvalidAtom
     from portage.versions import catpkgsplit
@@ -62,14 +76,21 @@ def parse_request(line):
             raise ValueError(f"not a cpv: {value!r}")
         return value
 
+    if sum(key in fields for key in ("cpv", "build", "merge", "uninstall")) != 1:
+        raise ValueError('a request has one of "cpv", "build", "merge" and "uninstall"')
     if "uninstall" in fields:
-        if "cpv" in fields:
-            raise ValueError('a request has "cpv" or "uninstall", not both')
         clean_world = fields.get("clean_world", False)
         if not isinstance(clean_world, bool):
             raise ValueError('"clean_world" is true or false')
         return Uninstall(cpv_of(fields["uninstall"]), clean_world)
-    cpv, repo = fields.get("cpv"), fields.get("repo")
+    if "build" in fields:
+        repo = fields.get("repo")
+        if not isinstance(repo, str):
+            raise ValueError('a build needs a "repo" string')
+        return Build(cpv_of(fields["build"]), repo)
+    cpv, repo = fields.get("cpv", fields.get("merge")), fields.get("repo")
+    if "merge" in fields:
+        repo = ""
     if not isinstance(cpv, str) or not isinstance(repo, str):
         raise ValueError('a request needs "cpv" and "repo" strings')
     blockers = fields.get("blockers", [])
@@ -81,6 +102,8 @@ def parse_request(line):
             Atom(world, allow_repo=True)
         except (InvalidAtom, TypeError):
             raise ValueError(f"not an atom: {world!r}") from None
+    if "merge" in fields:
+        return MergeBuilt(cpv_of(cpv), tuple(map(cpv_of, blockers)), world)
     return Merge(cpv_of(cpv), repo, tuple(map(cpv_of, blockers)), world)
 
 
@@ -102,6 +125,67 @@ class _Blocker(NamedTuple):
 
     cpv: str
     slot_atom: object
+
+
+class _BuildDirLock:
+    """settings' PORTAGE_BUILDDIR locked as emerge's EbuildBuildDir locks it: the category
+    directory locked while the build directory's lock is taken or let go, and removed once
+    empty. doebuild takes no lock of its own while PORTAGE_BUILDDIR_LOCKED is set."""
+
+    def __init__(self, settings):
+        self._settings = settings
+        self._lock = None
+
+    def lock(self):
+        import portage
+        from portage.exception import PortageException
+        from portage.locks import lockfile, unlockfile
+
+        def ensure(directory):
+            try:
+                portage.util.ensure_dirs(
+                    directory, gid=portage.portage_gid, mode=0o70, mask=0
+                )
+            except PortageException:
+                if not os.path.isdir(directory):
+                    raise
+
+        builddir = self._settings["PORTAGE_BUILDDIR"]
+        catdir = os.path.dirname(builddir)
+        ensure(os.path.dirname(catdir))
+        catdir_lock = lockfile(catdir, wantnewlockfile=True)
+        try:
+            ensure(catdir)
+            self._lock = lockfile(builddir, wantnewlockfile=True)
+            self._settings["PORTAGE_BUILDDIR_LOCKED"] = "1"
+        finally:
+            unlockfile(catdir_lock)
+
+    def unlock(self):
+        from portage.locks import lockfile, unlockfile
+
+        if self._lock is None:
+            return
+        unlockfile(self._lock)
+        self._lock = None
+        self._settings.pop("PORTAGE_BUILDDIR_LOCKED", None)
+        catdir = os.path.dirname(self._settings["PORTAGE_BUILDDIR"])
+        catdir_lock = lockfile(catdir, wantnewlockfile=True)
+        try:
+            os.rmdir(catdir)
+        except OSError:
+            pass
+        finally:
+            unlockfile(catdir_lock)
+
+
+class _Built(NamedTuple):
+    """A package this worker built, waiting for its merge with its build directory locked."""
+
+    cpv: str
+    ebuild: str
+    settings: object
+    lock: _BuildDirLock
 
 
 def _edit_world(eroot, edit):
@@ -148,6 +232,7 @@ class Worker:
             os.path.join(eroot, portage.CACHE_PATH, "mtimedb")
         )
         _queries_see(trees)
+        self._built = None
 
     def _setup(self, request):
         """The request's ebuild and its configuration, as emerge's EbuildBuild sets them up;
@@ -177,36 +262,84 @@ class Worker:
 
     def merge(self, request, emit):
         """Builds and merges the request's package, emitting its events; whether it merged."""
+        try:
+            self._blockers(request.blockers)
+        except ValueError as e:
+            emit(event(error=str(e)))
+            return False
+        if not self.build(Build(request.cpv, request.repo), emit, announce=False):
+            return False
+        return self.merge_built(
+            MergeBuilt(request.cpv, request.blockers, request.world), emit
+        )
+
+    def build(self, request, emit, announce=True):
+        """Builds the request's package, emitting its events, and keeps it, its build directory
+        locked, for its merge; whether it built."""
         import portage
 
+        if self._built is not None:
+            emit(event(error=f"{self._built.cpv} is built and waits for its merge"))
+            return False
         try:
             ebuild, settings = self._setup(request)
+        except ValueError as e:
+            emit(event(error=str(e)))
+            return False
+        lock = _BuildDirLock(settings)
+        lock.lock()
+        for phase in PHASES:
+            emit(event(phase=phase))
+            status = portage.doebuild(
+                ebuild,
+                phase,
+                settings=settings,
+                tree="porttree",
+                mydbapi=self._portdb,
+                vartree=self._vartree,
+            )
+            if status != os.EX_OK:
+                lock.unlock()
+                return self._failed(emit, phase, status, settings)
+        self._built = _Built(request.cpv, ebuild, settings, lock)
+        if announce:
+            emit(event(built=request.cpv))
+        return True
+
+    def merge_built(self, request, emit):
+        """Merges the package this worker built, emitting its events, and lets its build
+        directory go; whether it merged."""
+        import portage
+
+        built = self._built
+        if built is None or built.cpv != request.cpv:
+            emit(event(error=f"{request.cpv} is not built here"))
+            return False
+        try:
             blockers = self._blockers(request.blockers)
         except ValueError as e:
             emit(event(error=str(e)))
             return False
-        dbs = {"mydbapi": self._portdb, "vartree": self._vartree}
-        for phase in PHASES:
-            emit(event(phase=phase))
-            status = portage.doebuild(
-                ebuild, phase, settings=settings, tree="porttree", **dbs
-            )
-            if status != os.EX_OK:
-                return self._failed(emit, phase, status, settings)
+        self._built = None
+        settings = built.settings
         emit(event(phase="merge"))
-        status = portage.merge(
-            settings["CATEGORY"],
-            settings["PF"],
-            settings["D"],
-            os.path.join(settings["PORTAGE_BUILDDIR"], "build-info"),
-            settings=settings,
-            myebuild=ebuild,
-            mytree="porttree",
-            prev_mtimes=self._mtimedb["ldpath"],
-            blockers=lambda: blockers,
-            **dbs,
-        )
-        self._mtimedb.commit()
+        try:
+            status = portage.merge(
+                settings["CATEGORY"],
+                settings["PF"],
+                settings["D"],
+                os.path.join(settings["PORTAGE_BUILDDIR"], "build-info"),
+                settings=settings,
+                myebuild=built.ebuild,
+                mytree="porttree",
+                mydbapi=self._portdb,
+                vartree=self._vartree,
+                prev_mtimes=self._mtimedb["ldpath"],
+                blockers=lambda: blockers,
+            )
+            self._mtimedb.commit()
+        finally:
+            built.lock.unlock()
         if status != os.EX_OK:
             return self._failed(emit, "merge", status, settings)
         if request.world is not None:
@@ -248,16 +381,21 @@ class Worker:
             portage.doebuild_environment(ebuild, "prerm", settings=settings, db=vardb)
         except UnsupportedAPIException:
             pass
-        portage.prepare_build_dirs(settings=settings, cleanup=True)
-        emit(event(phase="unmerge"))
-        status = portage.unmerge(
-            category,
-            pf,
-            settings=settings,
-            vartree=self._vartree,
-            ldpath_mtimes=self._mtimedb["ldpath"],
-        )
-        self._mtimedb.commit()
+        lock = _BuildDirLock(settings)
+        lock.lock()
+        try:
+            portage.prepare_build_dirs(settings=settings, cleanup=True)
+            emit(event(phase="unmerge"))
+            status = portage.unmerge(
+                category,
+                pf,
+                settings=settings,
+                vartree=self._vartree,
+                ldpath_mtimes=self._mtimedb["ldpath"],
+            )
+            self._mtimedb.commit()
+        finally:
+            lock.unlock()
         if status != os.EX_OK:
             return self._failed(emit, "unmerge", status, settings)
         if request.clean_world:
@@ -268,9 +406,13 @@ class Worker:
         return True
 
     def handle(self, request, emit):
-        """Carries out a Merge or an Uninstall; whether it succeeded."""
+        """Carries out a request; whether it succeeded."""
         if isinstance(request, Uninstall):
             return self.uninstall(request, emit)
+        if isinstance(request, Build):
+            return self.build(request, emit)
+        if isinstance(request, MergeBuilt):
+            return self.merge_built(request, emit)
         return self.merge(request, emit)
 
     @staticmethod
