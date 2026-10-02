@@ -582,8 +582,9 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       each merge waits for (deeply, through merges done and installed packages that stay),
       but those queued after it (`_dependent_on_scheduled_merges`), the first anyway when
       nothing else runs; builds run up to the jobs; a built package merges once no build runs,
-      merges one at a time in the order their builds finished; an uninstall goes first once
-      its merges are done; after a failure nothing new builds and what built still merges.
+      merges one at a time in the order their builds finished, no build starting until they
+      are merged (`_merge_wait_scheduled`); an uninstall goes first once its merges are done;
+      after a failure nothing new builds and what built still merges.
       The jobs from EMERGE_DEFAULT_OPTS (`jobs_of`). Tested on its own, with no workers.
       Narrower than emerge for now: merge-wait always on (FEATURES=-merge-wait is 16k7's
       narrower barrier), no `--load-average`, and emerge's hold on unrelated builds while a

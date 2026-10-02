@@ -624,8 +624,8 @@ Parallel runs follow emerge's scheduler under FEATURES=merge-wait, portage's def
 (`Merge::waits`, deeply, through merges already done and installed packages that stay), no merge
 yet to finish but those queued after it, as `_dependent_on_scheduled_merges` decides; builds run
 up to the jobs (`exec -j`, else EMERGE_DEFAULT_OPTS' `--jobs`); a built package waits to merge
-until no build runs, and merges go one at a time in the order their builds finished, an
-uninstall ahead of them once its merges are done.
+until no build runs, and merges go one at a time in the order their builds finished, no build
+starting until they are merged, an uninstall ahead of them once its merges are done.
 
 ## Roots and exit codes
 

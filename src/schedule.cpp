@@ -52,7 +52,8 @@ bool Schedule::dependent(std::size_t step) const {
 }
 
 std::optional<std::size_t> Schedule::next_build() const {
-    if (failed_ || (jobs_ && building_ >= *jobs_)) {
+    // Nor while merge-wait's merges are let through, as emerge holds new jobs then.
+    if (failed_ || flushed_ > 0 || (jobs_ && building_ >= *jobs_)) {
         return std::nullopt;
     }
     std::optional<std::size_t> first;
@@ -106,6 +107,9 @@ void Schedule::merge_started(std::size_t step) {
 
 void Schedule::merge_finished(std::size_t step, bool succeeded) {
     merge_running_ = false;
+    if (std::holds_alternative<MergeStep>(steps_.at(step))) {
+        --flushed_;
+    }
     states_.at(step) = succeeded ? State::done : State::failed;
     failed_ = failed_ || !succeeded;
     release();
@@ -131,6 +135,7 @@ void Schedule::release() {
     merging_.insert(merging_.begin(), ready.begin(), ready.end());
     // merge-wait: what built merges once no build runs and nothing else is merging.
     if (building_ == 0 && !merge_running_ && merging_.empty()) {
+        flushed_ += waiting_.size();
         merging_.insert(merging_.end(), waiting_.begin(), waiting_.end());
         waiting_.clear();
     }

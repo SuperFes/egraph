@@ -69,6 +69,17 @@ TEST_CASE("builds run beside each other up to the jobs, and merge once none runs
     CHECK_FALSE(schedule.failed());
 }
 
+TEST_CASE("no build starts while what built waits to merge") {
+    auto [plan, steps] = planned({{}, {}});
+    egraph::Schedule schedule{plan, steps, 1};
+    build(schedule, 0);
+    schedule.build_finished(0, true);
+    // As emerge holds new jobs while merge-wait's merges are scheduled.
+    CHECK(schedule.next_build() == std::nullopt);
+    merge(schedule, 0);
+    build(schedule, 1);
+}
+
 TEST_CASE("a build waits for the merges it reaches, but those after it") {
     // 1 waits for 0; 2 waits for 3, after it, which waits for 0.
     auto [plan, steps] = planned({{}, {0}, {3}, {0}});

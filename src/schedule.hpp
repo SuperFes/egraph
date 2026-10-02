@@ -26,7 +26,8 @@ class Schedule {
     // The step whose build may start now, if any: the first not built in the steps' order
     // that reaches no merge yet to finish, through what each waits for (installed packages
     // that stay included), but those after it; or, with nothing else running or waiting, the
-    // first. None at the job limit, or once a step has failed.
+    // first. None at the job limit, while what built is let through to merge, or once a step
+    // has failed.
     [[nodiscard]] std::optional<std::size_t> next_build() const;
     void build_started(std::size_t step);
     void build_finished(std::size_t step, bool succeeded);
@@ -64,6 +65,8 @@ class Schedule {
     std::deque<std::size_t> waiting_;
     // Steps let through to merge, one at a time.
     std::deque<std::size_t> merging_;
+    // Merge steps let through from waiting_ and not yet merged.
+    std::size_t flushed_ = 0;
     std::uint32_t building_ = 0;
     bool merge_running_ = false;
     bool failed_ = false;
