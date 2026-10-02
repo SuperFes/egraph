@@ -536,9 +536,14 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     - 16k3a (done): `egraph` run as `egraph-<command>`, a link to it, runs that command, which
       then takes the global options among its own (the user's choice, 2026-10-01, over a
       separate binary).
-    - 16k3b: the worker uninstalls, hands a merge its blockers (dblink's collision checks, and
-      the files the merge takes over leaving the blocked package's CONTENTS, so its uninstall
-      keeps them), and records world atoms; each compared with emerge's.
+    - 16k3b (done): the worker uninstalls (`{"uninstall": cpv}`, as emerge's
+      `PackageUninstall`), hands a merge its blockers (dblink's collision checks, and the files
+      the merge takes over leaving the blocked package's CONTENTS, so its uninstall keeps them),
+      and records world atoms; held to `emerge -1` replacing a blocked package that shares a
+      file with it, to `emerge -C` with and without a world atom, and to plain `emerge`'s world
+      file (`test_worker.py`). Without its blockers, protect-owned refuses the merge. Not yet:
+      the world_sets entries emerge drops when it uninstalls a package an argument matches
+      (`setconfig.active`).
     - 16k3c: the world atom and each merge's blockers worked out in C++, as emerge's
       `create_world_atom` and `findInstalledBlockers` do, which shadow them (test code only).
     - 16k3d: `egraph exec`: the plan run in order through one worker, each uninstall straight

@@ -74,17 +74,36 @@ as JSON, to
 .BR \-\-output .
 .TP
 .B \-\-worker
-Build and merge each package requested on standard input, one JSON object a line,
-.B {"cpv": ..., "repo": ...},
-from source and in turn, as
+Build and merge, or uninstall, each package requested on standard input, one JSON object a
+line, in turn as
+.B emerge
+does.
+.B {\(dqcpv\(dq: ..., \(dqrepo\(dq: ...}
+builds the ebuild from source and merges it, as
 .B emerge \-1
-merges it. Each request's progress goes to standard output, one JSON object a line:
-.B {"phase": ...}
-as each phase starts, then
-.BR {"merged": ...} ,
-.B {"failed": ..., "status": ..., "log": ...}
+does; with
+.BR "\(dqblockers\(dq: [" cpv ", ...]" ,
+the installed packages it blocks or that block it, whose files it may take over before they
+are uninstalled, and with
+.BR "\(dqworld\(dq: " atom ,
+the atom to record in the world file once it is merged.
+.B {\(dquninstall\(dq: ...}
+uninstalls an installed package; with
+.BR "\(dqclean_world\(dq: true" ,
+the world file's atoms that then match nothing installed go too, as
+.B emerge \-C
+drops them.
+Each request's progress goes to standard output, one JSON object a line:
+.B {\(dqphase\(dq: ...}
+as each phase starts (a merge's build phases and
+.BR merge ,
+an uninstall's
+.BR unmerge ),
+then
+.BR {\(dqmerged\(dq:\ ...} " or " {\(dquninstalled\(dq:\ ...} ,
+.B {\(dqfailed\(dq: ..., \(dqstatus\(dq: ..., \(dqlog\(dq: ...}
 naming the phase that failed and its build log, or
-.B {"error": ...}
+.B {\(dqerror\(dq: ...}
 for a request that cannot be tried. What portage and the ebuild print goes to standard error
 or the build log.
 .TP

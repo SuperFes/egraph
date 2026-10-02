@@ -40,6 +40,25 @@ pkg_postinst() {
 	echo "${PF} after ${REPLACING_VERSIONS:-nothing}" >> "${EROOT}"/var/lib/${PN}/postinst
 	elog "Merged ${PF}."
 }
+pkg_postrm() {
+	mkdir -p "${EROOT}"/var/lib
+	echo "${PF} removed $(usev doc) for ${REPLACED_BY_VERSION:-nothing}" >> "${EROOT}"/var/lib/postrm
+}
+"""
+
+# Both install the same file: one blocks the other, and takes it over.
+SHARED = """S="${WORKDIR}"
+src_install() {
+	echo "${PN}" > "${T}"/data
+	insinto /usr/share/shared
+	doins "${T}"/data
+	insinto /usr/share/${PN}
+	doins "${T}"/data
+}
+pkg_postrm() {
+	mkdir -p "${EROOT}"/var/lib
+	echo "${PF} removed" >> "${EROOT}"/var/lib/postrm
+}
 """
 
 PLAIN = {"EAPI": "8", "KEYWORDS": "x86"}
@@ -63,6 +82,8 @@ EBUILDS = {
         "MISC_CONTENT": INSTALL
         + 'pkg_setup() { has_version app-misc/lib || die "lib not seen"; }\n',
     },
+    "app-misc/old-1": {**PLAIN, "MISC_CONTENT": SHARED},
+    "app-misc/new-1": {**PLAIN, "RDEPEND": "!app-misc/old", "MISC_CONTENT": SHARED},
     "app-misc/broken-1": {
         **PLAIN,
         "MISC_CONTENT": 'S="${WORKDIR}"\nsrc_compile() { die "cannot compile"; }\n',
@@ -106,6 +127,7 @@ class Machine:
         self.eprefix = playground.settings["EPREFIX"]
         self.eroot = playground.settings["EROOT"]
         self.environment = dict(os.environ, **merge_environment(playground))
+        self.environment.update(CLEAN_DELAY="0", EMERGE_WARNING_DELAY="0")
         self.environment["PYTHONPATH"] = (
             BUILDER_DIR + os.pathsep + self.environment["PYTHONPATH"]
         )
@@ -242,8 +264,23 @@ def differences(emerged, worked):
     return "\n".join(lines)
 
 
-def request(cpv, repo="test_repo"):
-    return json.dumps({"cpv": cpv, "repo": repo})
+def request(cpv, repo="test_repo", **fields):
+    return json.dumps({"cpv": cpv, "repo": repo, **fields})
+
+
+def uninstall(cpv, **fields):
+    return json.dumps({"uninstall": cpv, **fields})
+
+
+def merged(cpv):
+    """A merge's events."""
+    return [{"phase": phase} for phase in worker.PHASES + ("merge",)] + [
+        {"merged": cpv}
+    ]
+
+
+def uninstalled(cpv):
+    return [{"phase": "unmerge"}, {"uninstalled": cpv}]
 
 
 @pytest.fixture
@@ -251,25 +288,46 @@ def machine(playground, tmp_path):
     return Machine(playground, tmp_path)
 
 
-def merged_as_emerge(machine, before, targets):
-    """After the cpvs before, merged by emerge: the targets merged one by one by emerge -1, and
-    all by one worker, leave the same system; the worker's events for them."""
-    for cpv in before:
-        machine.emerge("-1", f"={cpv}")
+def same_as_emerge(machine, before, emerges, lines):
+    """After the emerges before: the emerges, and the lines given one worker, leave the same
+    system; the worker's events."""
+    for args in before:
+        machine.emerge(args)
     # The user's configuration file, which each version's waits beside.
     os.makedirs(machine.path("etc"), exist_ok=True)
     with open(machine.path("etc", "files.conf"), "a") as f:
         f.write("the user's\n")
     machine.save()
-    for cpv in targets:
-        machine.emerge("-1", f"={cpv}")
+    for args in emerges:
+        machine.emerge(args)
     emerged = machine.state()
     machine.restore()
-    events, status, stderr = machine.worker(*map(request, targets))
+    events, status, stderr = machine.worker(*lines)
     assert status == 0, stderr
     worked = machine.state()
     assert worked == emerged, differences(emerged, worked)
     return events
+
+
+def merged_as_emerge(machine, before, targets):
+    """After the cpvs before, merged by emerge -1: the targets merged one by one by emerge -1,
+    and all by one worker, leave the same system; the worker's events for them."""
+    return same_as_emerge(
+        machine,
+        [f"-1 ={cpv}" for cpv in before],
+        [f"-1 ={cpv}" for cpv in targets],
+        map(request, targets),
+    )
+
+
+def holds(machine, facts):
+    """Each path's content, or None where nothing is."""
+    for path, content in facts.items():
+        if content is None:
+            assert not os.path.lexists(machine.path(path)), path
+        else:
+            with open(machine.path(path)) as f:
+                assert f.read() == content, path
 
 
 @pytest.mark.parametrize(
@@ -292,6 +350,7 @@ def merged_as_emerge(machine, before, targets):
                 "usr/share/files/files.conf": None,
                 "var/db/pkg/app-misc/files-1": None,
                 "var/lib/files/postinst": "files-1 after nothing\nfiles-2 after 1\n",
+                "var/lib/postrm": "files-1 removed doc for 2\n",
             },
         ),
         (
@@ -309,17 +368,85 @@ def test_a_worker_merges_as_emerge_does(machine, before, targets, facts):
     the same worker merged just before. Each case's facts, a path's content or None where
     nothing is, hold what it is there to cover."""
     events = merged_as_emerge(machine, before, targets)
-    expected = []
-    for cpv in targets:
-        expected += [{"phase": phase} for phase in worker.PHASES]
-        expected.append({"merged": cpv})
-    assert events == expected
-    for path, content in facts.items():
-        if content is None:
-            assert not os.path.lexists(machine.path(path)), path
-        else:
-            with open(machine.path(path)) as f:
-                assert f.read() == content, path
+    assert events == [e for cpv in targets for e in merged(cpv)]
+    holds(machine, facts)
+
+
+def test_a_merge_takes_files_over_from_what_it_blocks(machine):
+    """emerge merges new, which blocks old, before it uninstalls old: given old as a blocker,
+    the merge may install the file both have, which then leaves old's CONTENTS, so the uninstall
+    keeps it."""
+    events = same_as_emerge(
+        machine,
+        ["-1 =app-misc/old-1"],
+        ["-1 =app-misc/new-1"],
+        [
+            request("app-misc/new-1", blockers=["app-misc/old-1"]),
+            uninstall("app-misc/old-1"),
+        ],
+    )
+    assert events == merged("app-misc/new-1") + uninstalled("app-misc/old-1")
+    holds(
+        machine,
+        {
+            "usr/share/shared/data": "new\n",
+            "usr/share/new/data": "new\n",
+            "usr/share/old": None,
+            "var/db/pkg/app-misc/old-1": None,
+            "var/lib/postrm": "old-1 removed\n",
+        },
+    )
+
+
+def test_without_its_blockers_a_merge_cannot_take_their_files(machine):
+    """FEATURES=protect-owned refuses the file old installed."""
+    machine.emerge("-1 =app-misc/old-1")
+    events, status, stderr = machine.worker(request("app-misc/new-1"))
+    assert status == 0, stderr
+    assert events[:-1] == merged("app-misc/new-1")[:-1]
+    assert events[-1]["failed"] == "merge"
+    assert not machine.installed("app-misc/new-1")
+    holds(machine, {"usr/share/shared/data": "old\n"})
+
+
+@pytest.mark.parametrize("selected", [False, True], ids=["oneshot", "selected"])
+def test_an_uninstall_is_emerge_C(machine, selected):
+    """As emerge -C uninstalls it, its atom dropped from the world file."""
+    events = same_as_emerge(
+        machine,
+        [("" if selected else "-1 ") + "=app-misc/files-1"],
+        ["-C =app-misc/files-1"],
+        [uninstall("app-misc/files-1", clean_world=True)],
+    )
+    assert events == uninstalled("app-misc/files-1")
+    holds(
+        machine,
+        {
+            "usr/share/files": None,
+            "var/lib/portage/world": "",
+            "var/lib/postrm": "files-1 removed doc for nothing\n",
+        },
+    )
+
+
+def test_an_uninstall_keeps_the_world_file_unless_asked(machine):
+    machine.emerge("=app-misc/files-1")
+    events, status, stderr = machine.worker(uninstall("app-misc/files-1"))
+    assert status == 0, stderr
+    assert events == uninstalled("app-misc/files-1")
+    holds(machine, {"var/lib/portage/world": "app-misc/files\n"})
+
+
+def test_a_merge_records_its_world_atom(machine):
+    """As emerge records its argument once merged."""
+    events = same_as_emerge(
+        machine,
+        [],
+        ["=app-misc/lib-1"],
+        [request("app-misc/lib-1", world="app-misc/lib")],
+    )
+    assert events == merged("app-misc/lib-1")
+    holds(machine, {"var/lib/portage/world": "app-misc/lib\n"})
 
 
 def test_a_failed_phase_merges_nothing_and_names_its_log(machine):
@@ -348,6 +475,14 @@ def test_a_failed_phase_merges_nothing_and_names_its_log(machine):
         '{"cpv": "app-misc/lib-1"}',
         '{"cpv": "app-misc/lib-1", "repo": 1}',
         '{"cpv": "app-misc/lib", "repo": "test_repo"}',
+        request("app-misc/lib-1", blockers="app-misc/old-1"),
+        request("app-misc/lib-1", blockers=[1]),
+        request("app-misc/lib-1", blockers=["app-misc/old"]),
+        request("app-misc/lib-1", world=["app-misc/lib"]),
+        uninstall(1),
+        uninstall("app-misc/lib"),
+        uninstall("app-misc/lib-1", clean_world="yes"),
+        json.dumps({"uninstall": "app-misc/lib-1", "cpv": "app-misc/lib-1"}),
     ],
 )
 def test_a_malformed_request_is_refused(line):
@@ -356,9 +491,20 @@ def test_a_malformed_request_is_refused(line):
 
 
 def test_parse_request():
-    assert worker.parse_request(request("app-misc/lib-1")) == worker.Request(
+    assert worker.parse_request(request("app-misc/lib-1")) == worker.Merge(
         "app-misc/lib-1", "test_repo"
     )
+    assert worker.parse_request(
+        request("app-misc/new-1", blockers=["app-misc/old-1"], world="app-misc/new")
+    ) == worker.Merge(
+        "app-misc/new-1", "test_repo", ("app-misc/old-1",), "app-misc/new"
+    )
+    assert worker.parse_request(uninstall("app-misc/old-1")) == worker.Uninstall(
+        "app-misc/old-1"
+    )
+    assert worker.parse_request(
+        uninstall("app-misc/old-1", clean_world=True)
+    ) == worker.Uninstall("app-misc/old-1", True)
 
 
 def test_a_request_that_cannot_be_tried_is_an_error(machine):
@@ -366,10 +512,11 @@ def test_a_request_that_cannot_be_tried_is_an_error(machine):
         "not json",
         request("app-misc/missing-1"),
         request("app-misc/lib-1", repo="no_repo"),
+        uninstall("app-misc/files-1"),
         request("app-misc/lib-1"),
     )
     assert status == 0, stderr
-    assert [sorted(e) for e in events[:3]] == [["error"]] * 3
+    assert [sorted(e) for e in events[:4]] == [["error"]] * 4
     assert events[-1] == {"merged": "app-misc/lib-1"}
 
 

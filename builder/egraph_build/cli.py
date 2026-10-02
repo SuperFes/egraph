@@ -85,8 +85,8 @@ def parser():
         dest="mode",
         action="store_const",
         const="worker",
-        help="build and merge each package requested on stdin, one JSON request a line, "
-        "reporting on stdout",
+        help="build and merge, or uninstall, each package requested on stdin, one JSON "
+        "request a line, reporting on stdout",
     )
     p.add_argument(
         "--output",

@@ -565,19 +565,27 @@ own resume list. The order honours the waits by a dependency of the merge's own 
 allows, then the waits through installed packages; the displays list only the earlier ones by a
 dependency of its own.
 
-`egraph-build --worker` builds and merges what egraph-exec asks of it, one package at a time:
-JSON requests (cpv and repository) on stdin, JSON events (each phase, then merged, failed with
-the phase and its build log, or an error for a request it cannot try) on stdout, which it keeps
-to itself by pointing fd 1 at stderr. It does what emerge's `EbuildBuild` does for one package
-from source, through portage's public `doebuild` (a clean, then setup to install, pkg_pretend
-and the fetch coming with them) and `merge` (with env-update's library mtimes from mtimedb),
-the configuration set up as emerge's Package sets it (the cpv's own repository, its database
-on the cpv for the repositories' revisions, `EMERGE_FROM` and `MERGE_TYPE`), and the ebuilds'
-`has_version` answered from its own trees as emerge answers them. A worker is long-lived: it
-loads portage's configuration once, and the merge clears its database's caches, so a request
-sees what the one before merged. `test_worker.py` holds its image and vdb entries to
-`emerge -1`'s on the same playground state. What emerge does around a merge rather than in it
-is egraph-exec's: blockers' uninstalls and the collisions they excuse, the news, `emerge.log`.
+`egraph-build --worker` builds and merges, or uninstalls, what egraph-exec asks of it, one
+package at a time: JSON requests on stdin, JSON events (each phase, then merged or uninstalled,
+failed with the phase and its build log, or an error for a request it cannot try) on stdout,
+which it keeps to itself by pointing fd 1 at stderr. A merge does what emerge's `EbuildBuild`
+does for one package from source, through portage's public `doebuild` (a clean, then setup to
+install, pkg_pretend and the fetch coming with them) and `merge` (with env-update's library
+mtimes from mtimedb), the configuration set up as emerge's Package sets it (the cpv's own
+repository, its database on the cpv for the repositories' revisions, `EMERGE_FROM` and
+`MERGE_TYPE`), and the ebuilds' `has_version` answered from its own trees as emerge answers
+them. The request names its blockers, which the merge hands dblink as emerge's scheduler does:
+the files it installs over theirs are no collision, and leave their CONTENTS, so their
+uninstall after it keeps them. It may name a world atom, recorded once merged as emerge records
+its argument's. An uninstall is emerge's `PackageUninstall`: the installed package's own
+configuration, then portage's `unmerge`, with the world file cleaned of what then matches
+nothing when asked. Which blockers and which world atom are egraph-exec's to work out, as
+emerge works them out before it starts. A worker is long-lived: it loads portage's
+configuration once, and a merge clears its database's caches, so a request sees what the one
+before did. `test_worker.py` holds its image, vdb entries and world file to emerge's on the
+same playground state: `emerge -1` for merges, the uninstall emerge runs for a blocker, and
+`emerge -C`. What emerge does around a run rather than in it is egraph-exec's: the news,
+`emerge.log`.
 
 ## Roots and exit codes
 
