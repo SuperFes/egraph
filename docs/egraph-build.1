@@ -97,8 +97,8 @@ and
 as above) then merges what that worker built: its build directory stays locked from the one to
 the other, as
 .B emerge
-keeps it while a built package waits its turn to merge, and a worker holds one built package at
-a time.
+keeps it while a built package waits its turn to merge; several may wait at once, merged in
+any order.
 .B {\(dquninstall\(dq: ...}
 uninstalls an installed package; with
 .BR "\(dqclean_world\(dq: true" ,

@@ -575,8 +575,7 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       `{"merge": cpv}`, holding the build directory's lock from the build to its merge, as
       emerge's `EbuildBuildDir` takes it (through `portage.locks`), and around an uninstall;
       still the same image and vdb entries as `emerge -1` (`test_worker.py`), the lock seen
-      held between the two from another process, let go after a failed build, and one built
-      package at a time per worker.
+      held between the two from another process, and let go after a failed build.
     - 16k4b (done): the schedule (`schedule.cpp`), as emerge's scheduler with FEATURES=merge-wait
       (portage's default): a build starts once it reaches no merge yet to finish through what
       each merge waits for (deeply, through merges done and installed packages that stay),
@@ -592,6 +591,9 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     - 16k4c: `exec` runs it over a pool of workers (polled together), writing a trace; the
       trace holds the rules, the final system is `install`'s, a concurrent emerge waits on
       portage's locks, and the timing beside `emerge --jobs` goes in findings.md.
+      - 16k4c1 (done): a worker keeps several built packages, merged in any order, as merge-wait
+        holds them; each merge and uninstall reads the mtimedb afresh, so workers beside each
+        other keep what the others recorded there.
   - 16k5: a failure skipping only what depends on it, compared with what `emerge --keep-going`
     drops.
   - 16k6: the live view in the living app, through the status file the emerge view reads;

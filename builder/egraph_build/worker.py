@@ -6,7 +6,8 @@ Requests come one per line on stdin, as JSON objects:
   uninstall removes after it, and "world": atom the atom to record in the world file once merged;
 - {"build": cpv, "repo": ...} only builds it, and {"merge": cpv}, with "blockers" and "world" as
   above, then merges what this worker built: the build directory stays locked from one to the
-  other, as emerge keeps it while a built package waits its turn to merge;
+  other, as emerge keeps it while a built package waits its turn to merge, and several built
+  packages may wait at once, merged in any order;
 - {"uninstall": cpv} uninstalls the installed package, with "clean_world": true dropping the
   world file's atoms that then match nothing installed.
 For each, events go to stdout one per line: {"phase": name} as each phase starts (a merge's
@@ -227,12 +228,10 @@ class Worker:
         eroot = self._eroot = self._settings["EROOT"]
         self._portdb = trees[eroot]["porttree"].dbapi
         self._vartree = trees[eroot]["vartree"]
-        # env-update's record of the library directories, which emerge keeps here too.
-        self._mtimedb = portage.MtimeDB(
-            os.path.join(eroot, portage.CACHE_PATH, "mtimedb")
-        )
+        self._mtimedb_path = os.path.join(eroot, portage.CACHE_PATH, "mtimedb")
         _queries_see(trees)
-        self._built = None
+        # By cpv, what was built and waits for its merge.
+        self._built = {}
 
     def _setup(self, request):
         """The request's ebuild and its configuration, as emerge's EbuildBuild sets them up;
@@ -278,8 +277,8 @@ class Worker:
         locked, for its merge; whether it built."""
         import portage
 
-        if self._built is not None:
-            emit(event(error=f"{self._built.cpv} is built and waits for its merge"))
+        if request.cpv in self._built:
+            emit(event(error=f"{request.cpv} is built and waits for its merge"))
             return False
         try:
             ebuild, settings = self._setup(request)
@@ -301,7 +300,7 @@ class Worker:
             if status != os.EX_OK:
                 lock.unlock()
                 return self._failed(emit, phase, status, settings)
-        self._built = _Built(request.cpv, ebuild, settings, lock)
+        self._built[request.cpv] = _Built(request.cpv, ebuild, settings, lock)
         if announce:
             emit(event(built=request.cpv))
         return True
@@ -311,8 +310,8 @@ class Worker:
         directory go; whether it merged."""
         import portage
 
-        built = self._built
-        if built is None or built.cpv != request.cpv:
+        built = self._built.get(request.cpv)
+        if built is None:
             emit(event(error=f"{request.cpv} is not built here"))
             return False
         try:
@@ -320,9 +319,10 @@ class Worker:
         except ValueError as e:
             emit(event(error=str(e)))
             return False
-        self._built = None
+        del self._built[request.cpv]
         settings = built.settings
         emit(event(phase="merge"))
+        mtimedb = self._mtimedb()
         try:
             status = portage.merge(
                 settings["CATEGORY"],
@@ -334,10 +334,10 @@ class Worker:
                 mytree="porttree",
                 mydbapi=self._portdb,
                 vartree=self._vartree,
-                prev_mtimes=self._mtimedb["ldpath"],
+                prev_mtimes=mtimedb["ldpath"],
                 blockers=lambda: blockers,
             )
-            self._mtimedb.commit()
+            mtimedb.commit()
         finally:
             built.lock.unlock()
         if status != os.EX_OK:
@@ -385,15 +385,16 @@ class Worker:
         lock.lock()
         try:
             portage.prepare_build_dirs(settings=settings, cleanup=True)
+            mtimedb = self._mtimedb()
             emit(event(phase="unmerge"))
             status = portage.unmerge(
                 category,
                 pf,
                 settings=settings,
                 vartree=self._vartree,
-                ldpath_mtimes=self._mtimedb["ldpath"],
+                ldpath_mtimes=mtimedb["ldpath"],
             )
-            self._mtimedb.commit()
+            mtimedb.commit()
         finally:
             lock.unlock()
         if status != os.EX_OK:
@@ -404,6 +405,13 @@ class Worker:
             )
         emit(event(uninstalled=request.cpv))
         return True
+
+    def _mtimedb(self):
+        """env-update's record of the library directories, which emerge keeps there too, as
+        the workers merging before this one left it."""
+        import portage
+
+        return portage.MtimeDB(self._mtimedb_path)
 
     def handle(self, request, emit):
         """Carries out a request; whether it succeeded."""

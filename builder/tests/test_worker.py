@@ -488,19 +488,59 @@ def test_the_build_directory_stays_locked_from_the_build_to_its_merge(machine):
     assert status == 0
 
 
-def test_a_merge_needs_its_build_and_a_worker_builds_one_at_a_time(machine):
+def test_a_merge_needs_its_build_and_a_worker_keeps_several_built(machine):
+    """Built packages wait for their merges in any order, as emerge's merge-wait keeps them; a
+    package already built waits for its merge before building again."""
+    files = machine.builddir("app-misc/files-1")
     events, status, stderr = machine.worker(
         merge("app-misc/lib-1"),
         build("app-misc/lib-1"),
         build("app-misc/files-1"),
-        merge("app-misc/files-1"),
+        build("app-misc/lib-1"),
         merge("app-misc/lib-1"),
+        merge("app-misc/files-1"),
     )
     assert status == 0, stderr
     errors = [e for e in events if "error" in e]
-    assert len(errors) == 3
-    assert events[-1] == {"merged": "app-misc/lib-1"}
-    assert not machine.installed("app-misc/files-1")
+    assert errors == [
+        {"error": "app-misc/lib-1 is not built here"},
+        {"error": "app-misc/lib-1 is built and waits for its merge"},
+    ]
+    assert events[-1] == {"merged": "app-misc/files-1"}
+    assert machine.installed("app-misc/lib-1")
+    assert machine.installed("app-misc/files-1")
+    assert not locked(files)
+
+
+def test_a_merge_keeps_what_others_recorded_in_the_mtimedb(machine):
+    """Workers beside each other each merge into the mtimedb as the others left it."""
+    mtimedb = machine.path("var/cache/edb/mtimedb")
+    # A library directory for env-update to record.
+    os.makedirs(machine.path("usr/lib64"), exist_ok=True)
+    process = machine.talk()
+    try:
+        process.stdin.write(build("app-misc/lib-1") + "\n")
+        process.stdin.flush()
+        assert until_final(process)[-1] == {"built": "app-misc/lib-1"}
+        recorded = {}
+        if os.path.exists(mtimedb):
+            with open(mtimedb) as f:
+                recorded = json.load(f)
+        recorded["updates"] = {"elsewhere": 1}
+        os.makedirs(os.path.dirname(mtimedb), exist_ok=True)
+        with open(mtimedb, "w") as f:
+            json.dump(recorded, f)
+        process.stdin.write(merge("app-misc/lib-1") + "\n")
+        process.stdin.flush()
+        assert until_final(process)[-1] == {"merged": "app-misc/lib-1"}
+    finally:
+        process.stdin.close()
+        process.wait()
+        process.stdout.close()
+    with open(mtimedb) as f:
+        kept = json.load(f)
+    assert kept["updates"] == {"elsewhere": 1}
+    assert machine.path("usr/lib64") in kept["ldpath"]
 
 
 def test_a_failed_build_lets_its_directory_go(machine):
