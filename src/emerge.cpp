@@ -63,11 +63,14 @@ Resources resources_of(const Json& task) {
 
 Task task_of(const Json& object) {
     return {.cpv = string_of(object, "cpv"),
+            .root = string_of(object, "root"),
+            .operation = string_of(object, "operation"),
             .kind = string_of(object, "kind") == "merge" ? TaskKind::merge : TaskKind::build,
             .phase = string_of(object, "phase"),
             .binary = bool_of(object, "binary"),
             .merge_wait = bool_of(object, "merge_wait"),
             .pid = integer_of(object, "pid"),
+            .start_time = number_of(object, "start_time"),
             .elapsed = number_of(object, "elapsed"),
             .build_elapsed = number_of(object, "build_elapsed"),
             .resources = resources_of(object)};
@@ -132,6 +135,59 @@ std::expected<Snapshot, std::string> parse_snapshot(std::string_view text) {
         }
     }
     return snapshot;
+}
+
+std::string snapshot_json(const Snapshot& snapshot) {
+    // Unset as null, as Python's None.
+    const auto or_null = [](const auto& value) { return value ? Json(*value) : Json(nullptr); };
+    Json tasks = Json::array();
+    for (const auto& task : snapshot.tasks) {
+        const auto slash = std::min(task.cpv.find('/'), task.cpv.size());
+        Json entry{{"cpv", task.cpv},
+                   {"category", task.cpv.substr(0, slash)},
+                   {"pf", task.cpv.substr(std::min(slash + 1, task.cpv.size()))},
+                   {"root", task.root},
+                   {"operation", task.operation},
+                   {"binary", task.binary},
+                   {"kind", task.kind == TaskKind::merge ? "merge" : "build"},
+                   {"phase", task.phase.empty() ? Json(nullptr) : Json(task.phase)},
+                   {"merge_wait", task.merge_wait},
+                   {"pid", or_null(task.pid)},
+                   {"start_time", or_null(task.start_time)},
+                   {"elapsed", or_null(task.elapsed)},
+                   {"build_elapsed", or_null(task.build_elapsed)}};
+        Json resources = Json::object();
+        for (const auto& [key, value] :
+             {std::pair{"cpu_usec", task.resources.cpu_usec},
+              std::pair{"mem_current", task.resources.mem_current},
+              std::pair{"mem_peak", task.resources.mem_peak},
+              std::pair{"io_read_bytes", task.resources.io_read_bytes},
+              std::pair{"io_write_bytes", task.resources.io_write_bytes}}) {
+            if (value) {
+                resources.emplace(key, *value);
+            }
+        }
+        if (!resources.empty()) {
+            entry.emplace("resources", std::move(resources));
+        }
+        tasks.push_back(std::move(entry));
+    }
+    const auto& jobs = snapshot.jobs;
+    // emerge's _max_jobs is True for --jobs without a limit.
+    const Json json{{"type", "snapshot"},
+                    {"schema", 1},
+                    {"emerge_pid", snapshot.pid},
+                    {"timestamp", snapshot.timestamp},
+                    {"jobs",
+                     {{"running", jobs.running},
+                      {"max", jobs.max ? Json(*jobs.max) : Json(true)},
+                      {"completed", jobs.completed},
+                      {"total", jobs.total},
+                      {"failed", jobs.failed},
+                      {"merge_wait", jobs.merge_wait},
+                      {"merges_pending", jobs.merges_pending}}},
+                    {"tasks", std::move(tasks)}};
+    return json.dump();
 }
 
 std::filesystem::path status_dir(const std::filesystem::path& eprefix) {

@@ -78,6 +78,54 @@ TEST_CASE("a snapshot's jobs and tasks are read") {
     CHECK_FALSE(binary.resources.mem_peak.has_value());
 }
 
+TEST_CASE("a snapshot is written as portage writes it, keys sorted") {
+    const egraph::emerge::Snapshot snapshot{.pid = 77,
+                                            .timestamp = 1790000000.5,
+                                            .jobs = {.running = 1,
+                                                     .max = 2,
+                                                     .completed = 3,
+                                                     .total = 9,
+                                                     .failed = 0,
+                                                     .merge_wait = 1,
+                                                     .merges_pending = 0},
+                                            .tasks = {{.cpv = "dev-libs/foo-1.2",
+                                                       .root = "/",
+                                                       .operation = "merge",
+                                                       .kind = egraph::emerge::TaskKind::build,
+                                                       .phase = "compile",
+                                                       .pid = 5000,
+                                                       .start_time = 1789999900.5,
+                                                       .elapsed = 100.0,
+                                                       .build_elapsed = 100.0},
+                                                      {.cpv = "app-misc/old-1",
+                                                       .root = "/",
+                                                       .operation = "uninstall",
+                                                       .kind = egraph::emerge::TaskKind::merge}}};
+    CHECK(egraph::emerge::snapshot_json(snapshot) ==
+          R"({"emerge_pid":77,"jobs":{"completed":3,"failed":0,"max":2,"merge_wait":1,)"
+          R"("merges_pending":0,"running":1,"total":9},"schema":1,"tasks":[)"
+          R"({"binary":false,"build_elapsed":100.0,"category":"dev-libs","cpv":"dev-libs/foo-1.2",)"
+          R"("elapsed":100.0,"kind":"build","merge_wait":false,"operation":"merge",)"
+          R"("pf":"foo-1.2","phase":"compile","pid":5000,"root":"/","start_time":1789999900.5},)"
+          R"({"binary":false,"build_elapsed":null,"category":"app-misc","cpv":"app-misc/old-1",)"
+          R"("elapsed":null,"kind":"merge","merge_wait":false,"operation":"uninstall",)"
+          R"("pf":"old-1","phase":null,"pid":null,"root":"/","start_time":null}],)"
+          R"("timestamp":1790000000.5,"type":"snapshot"})");
+    CHECK(egraph::emerge::parse_snapshot(egraph::emerge::snapshot_json(snapshot)) == snapshot);
+}
+
+TEST_CASE("a written snapshot keeps its cgroup counters, and --jobs without a limit") {
+    egraph::emerge::Snapshot snapshot{.pid = 1, .timestamp = 2, .jobs = {}, .tasks = {}};
+    snapshot.tasks.push_back({.cpv = "a/b-1",
+                              .root = "/",
+                              .operation = "merge",
+                              .resources = {.cpu_usec = 5, .mem_peak = 6}});
+    const auto json = egraph::emerge::snapshot_json(snapshot);
+    CHECK(json.contains(R"("max":true)"));
+    CHECK(json.contains(R"("resources":{"cpu_usec":5,"mem_peak":6})"));
+    CHECK(egraph::emerge::parse_snapshot(json) == snapshot);
+}
+
 TEST_CASE("--jobs without a limit has no maximum") {
     const auto snapshot =
         egraph::emerge::parse_snapshot(replaced(snapshot_json, R"("max": 4)", R"("max": true)"));

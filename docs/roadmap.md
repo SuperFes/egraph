@@ -649,6 +649,16 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     PDEPEND alone and in a cycle with an RDEPEND.
   - 16k6: the live view in the living app, through the status file the emerge view reads;
     `emerge.log` written in emerge's format, so `qlop` still works.
+    - 16k6a (done): `emerge::snapshot_json` writes a snapshot as portage's `build_snapshot()`
+      does (schema 1, keys sorted, `max` true for `--jobs` without a limit), read back the same
+      by `parse_snapshot`, which now keeps each task's root, operation and start time.
+    - 16k6b: `exec` publishes its snapshot under FEATURES=observability, as emerge's
+      `ObservabilityMonitor` does (on each event, at most once a second, and every 2 s while
+      nothing happens), compared with emerge's for the same build stopped in a phase.
+    - 16k6c: mtimedb's resume entry kept through the run, as emerge's scheduler keeps it (each
+      merge dropped as it merges, in the worker's own mtimedb commit), so the emerge view shows
+      what is left and `emerge --resume` takes over after a failure.
+    - 16k6d: `emerge.log` written as emerge writes it, compared line by line with `install`'s.
   - 16k7: portage updating itself mid-run, and a narrower merge-wait barrier offered as an
     option.
   - 16k8: side-by-side runs against emerge on the dev box.

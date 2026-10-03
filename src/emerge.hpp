@@ -21,6 +21,7 @@ struct Resources {
     std::optional<std::uint64_t> mem_peak{};
     std::optional<std::uint64_t> io_read_bytes{};
     std::optional<std::uint64_t> io_write_bytes{};
+    bool operator==(const Resources&) const = default;
 };
 
 enum class TaskKind : std::uint8_t { build, merge };
@@ -28,6 +29,9 @@ enum class TaskKind : std::uint8_t { build, merge };
 // One package an emerge is building or merging.
 struct Task {
     std::string cpv{};
+    // EROOT, and the package's operation: "merge" or "uninstall".
+    std::string root{};
+    std::string operation{};
     TaskKind kind = TaskKind::build;
     // The ebuild phase, "merge-wait" once built and waiting to merge, or empty before the first.
     std::string phase{};
@@ -35,10 +39,13 @@ struct Task {
     bool binary = false;
     bool merge_wait = false;
     std::optional<std::int64_t> pid{};
+    // When the build started, in seconds since the epoch.
+    std::optional<double> start_time{};
     // Seconds since the build started, and of the build itself (frozen once it is done).
     std::optional<double> elapsed{};
     std::optional<double> build_elapsed{};
     Resources resources{};
+    bool operator==(const Task&) const = default;
 };
 
 struct Jobs {
@@ -50,6 +57,7 @@ struct Jobs {
     std::uint64_t failed = 0;
     std::uint64_t merge_wait = 0;
     std::uint64_t merges_pending = 0;
+    bool operator==(const Jobs&) const = default;
 };
 
 struct Snapshot {
@@ -58,11 +66,15 @@ struct Snapshot {
     double timestamp = 0;
     Jobs jobs{};
     std::vector<Task> tasks{};
+    bool operator==(const Snapshot&) const = default;
 };
 
 // A schema 1 snapshot. Fields missing or of the wrong type take their defaults; anything that is
 // not a snapshot, or of another schema, is an error.
 [[nodiscard]] std::expected<Snapshot, std::string> parse_snapshot(std::string_view text);
+
+// The snapshot as portage's build_snapshot() writes it, keys sorted, without a newline.
+[[nodiscard]] std::string snapshot_json(const Snapshot& snapshot);
 
 // Where emerges publish: ${EPREFIX}/run/portage.
 [[nodiscard]] std::filesystem::path status_dir(const std::filesystem::path& eprefix);
