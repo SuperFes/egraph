@@ -431,7 +431,7 @@ TEST_CASE("the table numbers merges in order, with the earlier merges each waits
                           std::vector<std::string>{
                               "1\t3r\tdev-libs/chain-1\tnew\tdev-libs/chain-1\tgentoo\t\tdev-cpp/"
                               "mm-common-1 dev-libs/chain",
-                              "2\t1r 3p\tdev-cpp/mm-common-1\tnew\tdev-cpp/mm-common-1\tgentoo\t"
+                              "2\t1p 3r\tdev-cpp/mm-common-1\tnew\tdev-cpp/mm-common-1\tgentoo\t"
                               "USE=\"doc\"\ta/glibmm-2 dev-cpp/mm-common",
                               "3\t1l 2b\ta/glibmm-1\tupgrade\ta/glibmm-2\tgentoo",
                               "\t\ta/host-1\theld\ta/host-2\tgentoo\t\ta/holder-1 <a/host-2",
@@ -453,7 +453,7 @@ TEST_CASE("the update tree hangs each merge from its root") {
         "1\t\ta/loose-1\tupgrade\ta/loose-2\tgentoo",
         "2\t\tx/chain-1\tnew\tx/chain-1\tgentoo\t\tx/mm-1 x/chain",
         "3\t2r\tx/mm-1\tnew\tx/mm-1\tgentoo\tUSE=\"doc\"\ta/glibmm-2 x/mm",
-        "4\t3b 1p\ta/glibmm-1\tupgrade\ta/glibmm-2\tgentoo",
+        "4\t1p 3b\ta/glibmm-1\tupgrade\ta/glibmm-2\tgentoo",
     };
     const std::vector<std::string> tree{
         "1\t\ta/loose-1",
@@ -467,7 +467,7 @@ TEST_CASE("the update tree hangs each merge from its root") {
                        "`- U a/loose  1 > 2  ::gentoo  1\n"
                        "@ @selected\n"
                        "`- a/top-1\n"
-                       "   `- U a/glibmm  1 > 2  ::gentoo  4  w 3\n"
+                       "   `- U a/glibmm  1 > 2  ::gentoo  4  w 1 3\n"
                        "      `- N x/mm  1  ::gentoo  3  w 2\n"
                        "         `- N x/chain  1  ::gentoo  2\n"
                        "\n2 upgrades, 2 new\n");

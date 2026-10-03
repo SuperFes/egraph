@@ -38,7 +38,7 @@ struct WaitKinds {
     bool install = false;
     // RDEPEND.
     bool run = false;
-    // PDEPEND: merged after it where the order allows.
+    // PDEPEND: merged before it, as emerge orders it, but the first wait a cycle drops.
     bool post = false;
     // emerge's implicit wait on a libc it merges, which every later merge has.
     bool libc = false;
@@ -59,7 +59,7 @@ struct Wait {
 // The wait holds its merge after the other by one of its own dependencies: what the plan's
 // displays list, for a merge placed before it.
 [[nodiscard]] inline bool ordering(const WaitKinds& kinds) {
-    return kinds.build || kinds.install || kinds.run;
+    return kinds.build || kinds.install || kinds.run || kinds.post;
 }
 
 // The kinds as the plan's table writes them after a place: b build, i install, r run, p post,
@@ -84,7 +84,7 @@ struct Merge {
     // The other merges its DEPEND, BDEPEND, IDEPEND, RDEPEND or PDEPEND match, every member of a
     // || counting, a libc emerge merges before it, and those any installed package it depends on
     // leads to through others; by merge. Those after it in Plan::order are waits the order
-    // breaks: PDEPEND's, a cycle's, and some through installed packages.
+    // breaks: a cycle's, and some through installed packages.
     std::vector<Wait> waits;
 };
 
@@ -138,8 +138,9 @@ struct NeededUseChange {
 struct Plan {
     // Replacements in the installed packages' order, then new packages by cpv.
     std::vector<Merge> merges;
-    // Indices into merges, in an order to merge them: each after what it waits for, a run-time
-    // dependency's wait dropped where a cycle leaves no other way, then a build-time one's.
+    // Indices into merges, in an order to merge them: each after what it waits for, a PDEPEND's
+    // wait dropped where a cycle leaves no other way, then a run-time one's, then a build-time
+    // one's.
     std::vector<std::uint32_t> order;
     // In the installed packages' order.
     std::vector<HeldBack> held;

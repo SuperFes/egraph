@@ -556,8 +556,8 @@ direct plan does.
 
 Each merge's waits (`Merge::waits`) carry their kinds, as egraph-exec needs them: build
 (DEPEND, BDEPEND: merged before it builds), install (IDEPEND: before it merges), run (RDEPEND),
-post (PDEPEND, merged after it where it can), libc (emerge's implicit build-time wait on a new
-libc for every later merge) and through (a merge an installed package it depends on leads to,
+post (PDEPEND: merged before it too, as emerge orders it, but the first wait a cycle drops),
+libc (emerge's implicit build-time wait on a new libc for every later merge) and through (a merge an installed package it depends on leads to,
 through others that stay). emerge's scheduler holds a build until every earlier merge its graph
 reaches is merged, through installed packages too, so the waits are what emerge-equivalent
 scheduling needs; `test_waits.py` holds them to the scheduler graph emerge builds from egraph's

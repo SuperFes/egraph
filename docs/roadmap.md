@@ -641,8 +641,12 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     what emerge's graph holds already; an uninstall whose merge is done still runs after the
     resume, where emerge weighs the blockers again (not compared).
     Found: emerge merges a PDEPEND's package before its parent when nothing else orders them,
-    where egraph's plan puts it after (`plan --verify` compares sets, not order); for a step of
-    its own.
+    where egraph's plan puts it after (`plan --verify` compares sets, not order); 16k5a.
+  - 16k5a (done): PDEPEND in the order as emerge's: a merge waits for its PDEPEND's package as
+    for any dependency, and a cycle drops that wait first (emerge's `_ignore_runtime_post` comes
+    before `_ignore_runtime`); the displays list it with the others. `test_waits.py` now holds
+    PDEPEND's waits to emerge's order too (`slotops` broke it), and the plan's unit tests a
+    PDEPEND alone and in a cycle with an RDEPEND.
   - 16k6: the live view in the living app, through the status file the emerge view reads;
     `emerge.log` written in emerge's format, so `qlop` still works.
   - 16k7: portage updating itself mid-run, and a narrower merge-wait barrier offered as an

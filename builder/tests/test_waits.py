@@ -81,8 +81,8 @@ def in_any_of(system, cpv, repo, use, kinds, waited):
 def check_waits(system, result, path, repos):
     """egraph's waits are the scheduler graph's: each direct edge with its kinds, but for the
     alternatives of a || emerge did not choose; each merge reached only through installed
-    packages, among more; its order keeps each wait emerge's order does, but PDEPEND's; and each
-    uninstall waits for the merges emerge's does.
+    packages, among more; its order keeps each wait emerge's order does; and each uninstall
+    waits for the merges emerge's does.
     """
     if result.returncode == EXIT_REFUSED or not path.exists():
         return
@@ -112,7 +112,7 @@ def check_waits(system, result, path, repos):
     place = {cpv: i for i, cpv in enumerate(order)}
     emerge_place = {spell(cpv): i for i, cpv in enumerate(found.order)}
     for (cpv, other), kinds in edges.items():
-        if set(kinds) & set("bir") and emerge_place[other] < emerge_place[cpv]:
+        if set(kinds) & set("birp") and emerge_place[other] < emerge_place[cpv]:
             assert place[other] < place[cpv], (cpv, other, kinds)
     assert uninstalls == {
         cpv: frozenset(map(spell, merges)) for cpv, merges in found.uninstalls.items()

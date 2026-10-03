@@ -1698,6 +1698,10 @@ void order_merges(const Store& store, const Evaluated& evaluated, Plan& plan) {
     }
     // Only a run-time dependency holds it back.
     const auto run_only = [](const WaitKinds& kinds) { return !kinds.build && !kinds.install; };
+    // Only a PDEPEND, which emerge's cycles drop first.
+    const auto post_only = [](const WaitKinds& kinds) {
+        return kinds.post && !kinds.build && !kinds.install && !kinds.run;
+    };
     // emerge has every merge wait for libc (virtual/libc's provider): it goes first, with what
     // it waits for.
     std::vector<bool> libc(count);
@@ -1742,7 +1746,8 @@ void order_merges(const Store& store, const Evaluated& evaluated, Plan& plan) {
     std::vector<bool> placed(count);
     while (plan.order.size() < count) {
         // Ready first, then ready but for waits through installed packages, then but for
-        // run-time waits, then the fewest waits left; libc first among them, then plan order.
+        // PDEPEND's waits, then but for run-time ones, then the fewest waits left; libc first
+        // among them, then plan order.
         std::optional<std::tuple<int, bool, std::size_t, std::size_t, std::uint32_t>> best;
         for (std::uint32_t merge = 0; merge < count; ++merge) {
             if (placed.at(merge)) {
@@ -1750,6 +1755,7 @@ void order_merges(const Store& store, const Evaluated& evaluated, Plan& plan) {
             }
             std::size_t build = 0;
             std::size_t all = 0;
+            std::size_t post = 0;
             bool through = false;
             for (const auto& [other, kinds] : needs.at(merge)) {
                 if (placed.at(other)) {
@@ -1758,13 +1764,15 @@ void order_merges(const Store& store, const Evaluated& evaluated, Plan& plan) {
                 if (ordering(kinds)) {
                     ++all;
                     build += run_only(kinds) ? 0U : 1U;
+                    post += post_only(kinds) ? 1U : 0U;
                 }
                 through = through || kinds.through;
             }
             const std::tuple key{all == 0 && !through ? 0
                                  : all == 0           ? 1
-                                 : build == 0         ? 2
-                                                      : 3,
+                                 : all == post        ? 2
+                                 : build == 0         ? 3
+                                                      : 4,
                                  !early.at(merge), build, all, merge};
             if (!best || key < *best) {
                 best = key;

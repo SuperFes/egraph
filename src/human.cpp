@@ -921,7 +921,8 @@ std::string earlier_places(std::string_view place, std::string_view waits) {
     for (const auto wait : words(waits)) {
         const auto digits = std::min(wait.find_first_not_of("0123456789"), wait.size());
         const auto letters = wait.substr(digits);
-        if (before(wait.substr(0, digits), place) && letters.find_first_of("bir") != letters.npos) {
+        if (before(wait.substr(0, digits), place) &&
+            letters.find_first_of("birp") != letters.npos) {
             places += std::format("{}{}", places.empty() ? "" : " ", wait.substr(0, digits));
         }
     }

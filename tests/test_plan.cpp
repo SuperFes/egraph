@@ -595,14 +595,22 @@ TEST_CASE("a merge waits for what the installed packages it depends on lead to, 
                                    "dev-libs/other-2"});
 }
 
-TEST_CASE("PDEPEND never holds a merge back, though it is listed") {
+TEST_CASE("PDEPEND holds a merge back, as emerge's order, until a cycle drops it first") {
     const auto system = make_system({{.cpv = "app-misc/x-1"}, {.cpv = "app-misc/y-1"}},
                                     {{.cpv = "app-misc/x-1"},
                                      {.cpv = "app-misc/x-2", .deps = {{"PDEPEND", "app-misc/y"}}},
                                      {.cpv = "app-misc/y-1"},
                                      {.cpv = "app-misc/y-2"}});
     CHECK(ordered(system) ==
-          std::vector<std::string>{"app-misc/x-2 <- app-misc/y-2 p", "app-misc/y-2"});
+          std::vector<std::string>{"app-misc/y-2", "app-misc/x-2 <- app-misc/y-2 p"});
+    // a needs b to run and b's PDEPEND is a: the PDEPEND goes first, though a comes first.
+    const auto cycle = make_system({{.cpv = "app-misc/a-1"}, {.cpv = "app-misc/b-1"}},
+                                   {{.cpv = "app-misc/a-1"},
+                                    {.cpv = "app-misc/a-2", .deps = {{"RDEPEND", "app-misc/b"}}},
+                                    {.cpv = "app-misc/b-1"},
+                                    {.cpv = "app-misc/b-2", .deps = {{"PDEPEND", "app-misc/a"}}}});
+    CHECK(ordered(cycle) == std::vector<std::string>{"app-misc/b-2 <- app-misc/a-2 p",
+                                                     "app-misc/a-2 <- app-misc/b-2 r"});
 }
 
 TEST_CASE("a slot-operator rebuild waits for the merge it is for") {
