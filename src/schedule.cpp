@@ -148,6 +148,26 @@ bool Schedule::finished() const {
            !next_build();
 }
 
+Schedule::Stage Schedule::stage(std::size_t step) const {
+    switch (states_.at(step)) {
+    case State::queued:
+        return Stage::queued;
+    case State::building:
+        return Stage::building;
+    case State::built:
+        return std::ranges::contains(waiting_, step) ? Stage::waiting : Stage::let_through;
+    case State::merging:
+        return Stage::merging;
+    case State::done:
+        return Stage::done;
+    case State::failed:
+        return Stage::failed;
+    case State::skipped:
+        return Stage::skipped;
+    }
+    return Stage::queued;
+}
+
 bool Schedule::failed() const {
     return failed_;
 }

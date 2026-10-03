@@ -655,6 +655,13 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     - 16k6b: `exec` publishes its snapshot under FEATURES=observability, as emerge's
       `ObservabilityMonitor` does (on each event, at most once a second, and every 2 s while
       nothing happens), compared with emerge's for the same build stopped in a phase.
+      - 16k6b1 (done): the snapshot of a run (`Observer`, `observe.cpp`), from the schedule's
+        stage of each step (`Schedule::stage`) and the phases and workers reported: a task from
+        a build's start (an uninstall's from being let through) to its merge, a merge once
+        built, waiting under merge-wait (its time frozen at the build's end) or let through
+        (keeping its last phase); emerge's counts (merges done, failures, the merge queue with
+        the merge running), the total the merges left after keep-going goes on.
+      - 16k6b2: `exec` publishes it, compared with emerge's.
     - 16k6c: mtimedb's resume entry kept through the run, as emerge's scheduler keeps it (each
       merge dropped as it merges, in the worker's own mtimedb commit), so the emerge view shows
       what is left and `emerge --resume` takes over after a failure.

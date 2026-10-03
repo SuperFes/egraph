@@ -80,6 +80,37 @@ TEST_CASE("builds run beside each other up to the jobs, and merge once none runs
     CHECK_FALSE(schedule.failed());
 }
 
+TEST_CASE("each step's stage follows it through the run, as a status display shows it") {
+    using Stage = egraph::Schedule::Stage;
+    auto [plan, steps] = planned({{}, {}, {}, {}});
+    egraph::Schedule schedule{plan, steps, 2};
+    CHECK(schedule.stage(0) == Stage::queued);
+    build(schedule, 0);
+    build(schedule, 1);
+    CHECK(schedule.stage(0) == Stage::building);
+    schedule.build_finished(0, true);
+    CHECK(schedule.stage(0) == Stage::waiting);
+    CHECK(schedule.waiting() == 1);
+    CHECK(schedule.let_through() == 0);
+    schedule.build_finished(1, true);
+    CHECK(schedule.stage(0) == Stage::let_through);
+    CHECK(schedule.stage(1) == Stage::let_through);
+    CHECK(schedule.waiting() == 0);
+    CHECK(schedule.let_through() == 2);
+    schedule.merge_started(0);
+    CHECK(schedule.stage(0) == Stage::merging);
+    CHECK(schedule.let_through() == 2);
+    schedule.merge_finished(0, true);
+    CHECK(schedule.stage(0) == Stage::done);
+    CHECK(schedule.let_through() == 1);
+    schedule.merge_started(1);
+    schedule.merge_finished(1, false);
+    CHECK(schedule.stage(1) == Stage::failed);
+    schedule.resume(std::array<std::size_t, 1>{2});
+    CHECK(schedule.stage(2) == Stage::skipped);
+    CHECK(schedule.stage(3) == Stage::queued);
+}
+
 TEST_CASE("no build starts while what built waits to merge") {
     auto [plan, steps] = planned({{}, {}});
     egraph::Schedule schedule{plan, steps, 1};

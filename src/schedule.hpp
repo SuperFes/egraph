@@ -64,6 +64,25 @@ class Schedule {
     // steps never run, and what failed or was skipped holds nothing back.
     void resume(std::span<const std::size_t> skipped);
 
+    // Where a step stands, as a status display shows it: built steps waiting for merge-wait
+    // apart from those let through to merge.
+    enum class Stage : std::uint8_t {
+        queued,
+        building,
+        waiting,
+        let_through,
+        merging,
+        done,
+        failed,
+        skipped
+    };
+    [[nodiscard]] Stage stage(std::size_t step) const;
+    // Steps let through to merge, the one merging included, as emerge's merge queue counts.
+    [[nodiscard]] std::size_t let_through() const {
+        return merging_.size() + (merge_running_ ? 1U : 0U);
+    }
+    [[nodiscard]] std::size_t waiting() const { return waiting_.size(); }
+
     [[nodiscard]] std::span<const Step> steps() const { return steps_; }
     [[nodiscard]] const Step& step(std::size_t index) const { return steps_.at(index); }
 
