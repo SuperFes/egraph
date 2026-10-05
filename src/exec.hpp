@@ -134,10 +134,10 @@ struct WorkerEvent {
     Kind kind = Kind::phase;
     // The phase starting, the cpv built or done, the phase that failed, or the error's
     // message.
-    std::string text;
+    std::string text{};
     // For a failed phase: its exit status and build log.
     int status = 0;
-    std::string log;
+    std::string log{};
     auto operator<=>(const WorkerEvent&) const = default;
 };
 

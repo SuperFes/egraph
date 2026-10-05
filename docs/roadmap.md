@@ -677,7 +677,7 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       fast enough that resuming needs no saved graph (16k9). What stays: `emerge_myopts`, held
       to `parse_opts` through the shadow binary, for `--resume-list`, whose favorites now name
       the targets under `--oneshot` too, as emerge records them.
-    - 16k6d: logging: to the journal when systemd runs (libsystemd, an optional feature;
+    - 16k6d (done): logging: to the journal when systemd runs (libsystemd, an optional feature;
       structured fields for the run, step, package and event), else
       `${EPREFIX}/var/log/egraph.log` as JSON lines; an option picks the journal, the file,
       both or neither. `exec` first: the run, each phase, each package built, merged or
@@ -686,7 +686,8 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
         `--log-file`, the journal through `sd_journal_sendv` behind the `journal` feature, the
         file appended under portage's lock (`os::append_locked`); `meson test` logs to the
         playgrounds' files.
-      - 16k6d2: `exec` logs its runs, held to its `--trace`.
+      - 16k6d2 (done): `exec` logs its runs (`RunEvents`), held to its `--trace` in the
+        keep-going runs, and read back from the journal as from the file with `--log both`.
       - Later: the other commands that change the system.
   - 16k7: portage updating itself mid-run, and a narrower merge-wait barrier offered as an
     option.

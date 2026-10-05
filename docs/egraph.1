@@ -595,6 +595,10 @@ uses under
 but in its own
 .IR ${EPREFIX}/run/egraph/exec\-<pid>.json ,
 which the living app's emerge view reads beside emerge's; it writes none of emerge's files. The
+run is logged where
+.B \-\-log
+says: its start, each phase, each package built, merged or uninstalled with its times, each
+failure with its build log, each skip, and its end. The
 targets join
 .B @selected
 as

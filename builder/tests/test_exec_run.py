@@ -4,6 +4,7 @@ the real emerge, leaves."""
 import glob
 import json
 import os
+import shutil
 import subprocess
 import time
 
@@ -158,6 +159,42 @@ def test_egraph_exec_is_exec(machines, tmp_path):
     assert machine.installed("app-misc/lib-1")
 
 
+def test_a_run_is_logged_to_the_journal_as_to_the_file(machines):
+    """With --log both, the journal holds the run's events, as the file does, under its id."""
+    system, machine = machines
+    if not os.path.isdir("/run/systemd/system") or not shutil.which("journalctl"):
+        pytest.skip("systemd does not run here")
+    age(system.playground.eroot)
+    ran = system.egraph("--log", "both", "exec", "--yes", "-1", "app-misc/lib")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    if "cannot log to the journal" in ran.stdout:
+        pytest.skip("egraph is built without the journal")
+    events = logged(system)
+    run = events[0]["run"]
+    deadline = time.monotonic() + 10
+    while True:
+        journal = subprocess.run(
+            [
+                "journalctl",
+                "--no-pager",
+                "-o",
+                "json",
+                "-t",
+                "egraph",
+                f"EGRAPH_RUN={run}",
+            ],
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        if len(journal) >= len(events) or time.monotonic() > deadline:
+            break
+        time.sleep(0.2)
+    entries = [json.loads(line) for line in journal]
+    assert [entry["EGRAPH_EVENT"] for entry in entries] == [e["event"] for e in events]
+    assert [entry["MESSAGE"] for entry in entries] == [e["message"] for e in events]
+    assert entries[-1]["EGRAPH_STATUS"] == "ok"
+
+
 def test_a_failed_build_stops_the_run(machines):
     """The step that failed is named with its phase and log; nothing after it runs."""
     system, machine = machines
@@ -189,6 +226,47 @@ def builds_at_once(trace):
         elif what in ("built", "build-failed"):
             running -= 1
     return most
+
+
+def logged(system):
+    """The events exec logged to its playground's file, as egraph's own log (meson test sets
+    EGRAPH_LOG=file)."""
+    path = os.path.join(system.playground.eprefix, "var", "log", "egraph.log")
+    with open(path) as f:
+        return [json.loads(line) for line in f]
+
+
+# What each trace line of a step's end is logged as.
+LOGGED_AS = {
+    "built": "built",
+    "merged": "merged",
+    "uninstalled": "uninstalled",
+    "build-failed": "failed",
+    "merge-failed": "failed",
+    "uninstall-failed": "failed",
+    "skipped": "skipped",
+}
+
+
+def holds_the_trace(events, trace):
+    """The log of one run: begun and ended once, under one id, each step's end as the trace has
+    it, phases only between a build's start and end, and the end's counts its events'.
+    """
+    assert events[0]["event"] == "run" and events[-1]["event"] == "end"
+    assert len({event["run"] for event in events}) == 1
+    ends = [
+        (e["event"], e["cpv"])
+        for e in events
+        if e["event"] not in ("run", "phase", "end")
+    ]
+    assert sorted(ends) == sorted(
+        (LOGGED_AS[what], cpv) for what, cpv in trace if what in LOGGED_AS
+    )
+    end = events[-1]
+    for kind in ("merged", "uninstalled", "failed", "skipped"):
+        assert end[kind] == sum(1 for event, _ in ends if event == kind), kind
+    started = {cpv for what, cpv in trace if what == "build-start"}
+    assert {e["cpv"] for e in events if e["event"] == "phase"} <= started
 
 
 def holds_the_rules(trace, jobs):
@@ -563,6 +641,11 @@ def test_keep_going_skips_what_emerge_drops(keep_going, tmp_path, jobs):
     holds_the_rules(traced, int(jobs))
     skipped = {cpv for what, cpv in traced if what == "skipped"}
     assert skipped == {"app-misc/needs-1", "app-misc/top-1", "app-misc/user2-1"}
+    events = logged(system)
+    holds_the_trace(events, traced)
+    assert events[-1]["status"] == "failed"
+    failed = [event for event in events if event["event"] == "failed"]
+    assert all(event["phase"] == "compile" and event["log"] for event in failed)
     assert "app-misc/user2-1\tskipped, needs >=app-misc/lib-2" in ran.stdout
     assert "app-misc/top-1\tskipped, needs app-misc/needs" in ran.stdout
     assert "; 1 more failed; 3 skipped" in ran.stderr

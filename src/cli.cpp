@@ -26,6 +26,7 @@
 #include "remove.hpp"
 #include "request.hpp"
 #include "resume.hpp"
+#include "run_log.hpp"
 #include "schedule.hpp"
 #include "selection.hpp"
 #include "session.hpp"
@@ -1642,6 +1643,27 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     };
     publish(true);
     pool.every(std::chrono::seconds{2}, [&] { publish(true); });
+    // Logged as egraph's own runs, to the journal or its file.
+    std::vector<RunStep> logged;
+    logged.reserve(steps.size());
+    for (const auto& [step, name] : std::views::zip(steps, names)) {
+        logged.push_back({.cpv = name, .uninstall = std::holds_alternative<UninstallStep>(step)});
+    }
+    RunEvents events{log::new_run(), std::move(logged)};
+    log::Log logger{
+        log::targets(invocation.log, log::journal_running()),
+        invocation.log_file.value_or(log::default_file(invocation.eprefix.value_or(""))), out};
+    const auto now = [] {
+        const std::chrono::duration<double> since =
+            std::chrono::system_clock::now().time_since_epoch();
+        return since.count();
+    };
+    logger.write(events.started({.command = std::string{Exec::name},
+                                 .targets = shown.request.targets,
+                                 .options = request_options(shown.request, command.oneshot),
+                                 .jobs = jobs,
+                                 .keep_going = keep_going},
+                                now()));
     const bool human = output(invocation).human;
     const auto start = std::chrono::steady_clock::now();
     const auto say = [&](std::size_t step, std::string_view what) {
@@ -1662,6 +1684,9 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                 observer.phase(step, event.text);
             }
             publish(false);
+            if (const auto logs = events.reported(step, event, now())) {
+                logger.write(*logs);
+            }
         },
         [&](std::size_t step, Traced what, std::optional<std::size_t> worker) {
             if (worker) {
@@ -1670,6 +1695,9 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                 }
             }
             publish(false);
+            if (const auto logs = events.traced(step, what, now())) {
+                logger.write(*logs);
+            }
             if (command.trace) {
                 const std::chrono::duration<double> since =
                     std::chrono::steady_clock::now() - start;
@@ -1692,13 +1720,15 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
             }
             std::vector<std::size_t> skipped;
             for (const auto& skip : resumed.skipped) {
-                say(skip.step, "skipped, " + describe_skip(skip));
+                const auto why = describe_skip(skip);
+                say(skip.step, "skipped, " + why);
+                logger.write(events.skipped(skip.step, why, now()));
                 skipped.push_back(skip.step);
             }
             observer.resumed(drained, skipped);
             return skipped;
         });
-    const auto ended = pool.finish();
+    auto ended = pool.finish();
     if (outcome.stopped) {
         const auto& [step, why] = *outcome.stopped;
         auto message = step ? std::format("{}: {}", names.at(*step), why) : why;
@@ -1711,12 +1741,16 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
         if (stuck) {
             message += std::format("; cannot go on without {}, which nothing satisfies", *stuck);
         }
-        return std::unexpected(std::move(message));
+        ended = std::unexpected(std::move(message));
     }
+    std::optional<std::string> error;
     if (!ended) {
-        return std::unexpected(ended.error());
+        error = ended.error();
+    } else if (*ended != 0) {
+        error = std::format("the workers exited with status {}", *ended);
     }
-    return *ended;
+    logger.write(events.ended(error, now()));
+    return ended;
 }
 
 Exit execute(const Exec& command, Session& session, const Invocation& invocation, std::ostream& out,

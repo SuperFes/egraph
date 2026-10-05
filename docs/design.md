@@ -663,7 +663,12 @@ systemd runs and egraph was built with libsystemd (the optional `journal` featur
 own under `EGRAPH_`); otherwise to `${EPREFIX}/var/log/egraph.log`, one JSON object a line,
 appended under the POSIX lock portage takes on its own logs so that runs beside each other never
 interleave. `--log` picks the journal, the file, both or neither. egraph never writes emerge's
-log: its runs are its own, and the build history (roadmap 20) is built on them.
+log: its runs are its own, and the build history (roadmap 20) is built on them. `exec` logs
+through `RunEvents` (`src/run_log.hpp`), which turns what the schedule traces and the workers
+report into events under one run id: `run` (targets, options, jobs), `phase`, `built` (its
+seconds), `merged` (the merge's seconds, the build's, and how long merge-wait held it),
+`uninstalled`, `failed` (phase, status, build log; an error), `skipped` (why; a warning) and
+`end` (the counts, the wall time, and what stopped it).
 
 ## Roots and exit codes
 
