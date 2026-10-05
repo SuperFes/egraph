@@ -669,7 +669,7 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
         emerge's but for times and pids (whether each is there compared), and neither leaves
         its file behind.
         Narrower than emerge: no cgroup resources, no socket streaming snapshots.
-      - 16k6b3: egraph writes none of emerge's files: the status file moves to its own
+      - 16k6b3 (done): egraph writes none of emerge's files: the status file moves to its own
         `${EPREFIX}/run/egraph/exec-<pid>.json`, published on every run rather than under
         emerge's FEATURES=observability, and the emerge view reads it beside emerge's.
     - 16k6c (withdrawn): mtimedb's resume entry. egraph leaves emerge's files alone, and plans

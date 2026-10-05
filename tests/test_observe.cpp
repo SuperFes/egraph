@@ -219,6 +219,6 @@ TEST_CASE("a status file that cannot be written is said once, and the run goes o
     egraph::StatusFile status{dir.path() / "run/portage/emerge-7.json", notes};
     status.publish(at(1), false);
     status.publish(at(3), false);
-    CHECK(notes.str().starts_with("egraph: observability: cannot write "));
+    CHECK(notes.str().starts_with("egraph: exec: cannot publish the status to "));
     CHECK(std::ranges::count(notes.str(), '\n') == 1);
 }

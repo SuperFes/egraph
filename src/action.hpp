@@ -44,8 +44,6 @@ struct RunSettings {
     // The make jobserver's named pipe each build takes a token from, under
     // FEATURES=jobserver-token.
     std::optional<std::string> jobserver;
-    // FEATURES=observability: a run publishes its status as emerge does.
-    bool observability = false;
     // PORTAGE_TMPDIR, where builds run.
     std::string tmpdir;
 };

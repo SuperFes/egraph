@@ -183,6 +183,24 @@ TEST_CASE("only live emerges' snapshots are read, by pid") {
     CHECK(found.at(1).pid == 4321);
 
     CHECK(egraph::emerge::read_snapshots(dir.path() / "missing", proc).empty());
+    CHECK(std::ranges::all_of(found, [](const auto& snapshot) {
+        return snapshot.publisher == egraph::emerge::Publisher::emerge;
+    }));
+}
+
+TEST_CASE("egraph exec's snapshots are read from its own place, marked as its") {
+    const egraph::test::TempDir dir;
+    const auto run = dir.path() / "run";
+    const auto proc = dir.path() / "proc";
+    std::filesystem::create_directories(run);
+    std::filesystem::create_directories(proc / "4321");
+    egraph::test::write_text(run / "exec-4321.json", snapshot_json);
+    egraph::test::write_text(run / "emerge-4321.json", snapshot_json);
+    const auto found = egraph::emerge::read_snapshots(run, proc, egraph::emerge::Publisher::exec);
+    REQUIRE(found.size() == 1);
+    CHECK(found.front().publisher == egraph::emerge::Publisher::exec);
+    CHECK(egraph::emerge::status_dir("/p", egraph::emerge::Publisher::exec) == "/p/run/egraph");
+    CHECK(egraph::emerge::status_dir("/p") == "/p/run/portage");
 }
 
 namespace {

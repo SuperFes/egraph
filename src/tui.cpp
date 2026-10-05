@@ -1741,7 +1741,12 @@ std::size_t rows_owner(const Watched& watched) {
     }
     std::size_t owner = watched.snapshots.size();
     std::size_t most = 0;
+    std::size_t emerges = 0;
     for (std::size_t at = 0; at < watched.snapshots.size(); ++at) {
+        if (watched.snapshots.at(at).publisher != emerge::Publisher::emerge) {
+            continue;
+        }
+        ++emerges;
         const auto& tasks = watched.snapshots.at(at).tasks;
         const auto count = static_cast<std::size_t>(std::ranges::count_if(
             tasks, [&](const emerge::Task& task) { return listed.contains(task.cpv); }));
@@ -1751,8 +1756,12 @@ std::size_t rows_owner(const Watched& watched) {
         }
     }
     // One emerge between tasks still owns the list it left.
-    if (owner == watched.snapshots.size() && watched.snapshots.size() == 1 && !listed.empty()) {
-        owner = 0;
+    if (owner == watched.snapshots.size() && emerges == 1 && !listed.empty()) {
+        for (std::size_t at = 0; at < watched.snapshots.size(); ++at) {
+            if (watched.snapshots.at(at).publisher == emerge::Publisher::emerge) {
+                owner = at;
+            }
+        }
     }
     return owner;
 }

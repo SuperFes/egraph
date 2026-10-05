@@ -1621,7 +1621,7 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                     {.tmpdir = settings.tmpdir, .free_gb = tmpdir_free_gb_of(passed)},
                     out};
     Schedule schedule{plan, steps, jobs};
-    // FEATURES=observability: published as emerge's scheduler publishes itself.
+    // Published as emerge's scheduler publishes itself, in egraph's own place.
     std::vector<Observed> observed;
     observed.reserve(steps.size());
     for (const auto& [step, name] : std::views::zip(steps, names)) {
@@ -1631,19 +1631,14 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
              .operation = std::holds_alternative<MergeStep>(step) ? "merge" : "uninstall"});
     }
     Observer observer{os::process_id(), jobs, std::move(observed)};
-    std::optional<StatusFile> status;
-    if (settings.observability) {
-        status.emplace(emerge::status_dir(invocation.eprefix.value_or("")) /
-                           std::format("emerge-{}.json", os::process_id()),
-                       out);
-    }
+    StatusFile status{emerge::status_dir(invocation.eprefix.value_or(""), emerge::Publisher::exec) /
+                          std::format("exec-{}.json", os::process_id()),
+                      out};
     const auto publish = [&](bool tick) {
-        if (status) {
-            const std::chrono::duration<double> now =
-                std::chrono::system_clock::now().time_since_epoch();
-            observer.update(schedule, now.count());
-            status->publish(observer.snapshot(schedule, now.count()), tick);
-        }
+        const std::chrono::duration<double> now =
+            std::chrono::system_clock::now().time_since_epoch();
+        observer.update(schedule, now.count());
+        status.publish(observer.snapshot(schedule, now.count()), tick);
     };
     publish(true);
     pool.every(std::chrono::seconds{2}, [&] { publish(true); });
@@ -1984,8 +1979,15 @@ Exit execute(const Tui&, Session& session, const Invocation& invocation, std::os
             };
         };
     }
-    const auto run_dir = emerge::status_dir(invocation.eprefix.value_or(""));
-    const auto watch = [run_dir] { return emerge::read_snapshots(run_dir); };
+    const auto eprefix = invocation.eprefix.value_or("");
+    const auto watch = [emerges = emerge::status_dir(eprefix),
+                        runs = emerge::status_dir(eprefix, emerge::Publisher::exec)] {
+        auto found = emerge::read_snapshots(emerges);
+        std::ranges::move(emerge::read_snapshots(runs, "/proc", emerge::Publisher::exec),
+                          std::back_inserter(found));
+        std::ranges::sort(found, {}, &emerge::Snapshot::pid);
+        return found;
+    };
     const auto sample = [] { return pressure::read_sample(); };
     const auto set_steve = [](steve::Setting setting,
                               double value) -> std::expected<void, std::string> {

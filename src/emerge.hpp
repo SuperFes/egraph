@@ -1,7 +1,8 @@
 #pragma once
 
 // Running emerges, as portage publishes them with FEATURES="observability": one JSON snapshot
-// per emerge in ${EPREFIX}/run/portage/emerge-<pid>.json.
+// per emerge in ${EPREFIX}/run/portage/emerge-<pid>.json; and egraph exec's runs, in the same
+// schema in ${EPREFIX}/run/egraph/exec-<pid>.json.
 
 #include <cstdint>
 #include <expected>
@@ -60,12 +61,17 @@ struct Jobs {
     bool operator==(const Jobs&) const = default;
 };
 
+// Who publishes a snapshot: an emerge, or egraph exec in its own place.
+enum class Publisher : std::uint8_t { emerge, exec };
+
 struct Snapshot {
     std::int64_t pid = 0;
     // When emerge wrote it, in seconds since the epoch.
     double timestamp = 0;
     Jobs jobs{};
     std::vector<Task> tasks{};
+    // Which directory it was read from; not written.
+    Publisher publisher = Publisher::emerge;
     bool operator==(const Snapshot&) const = default;
 };
 
@@ -76,13 +82,16 @@ struct Snapshot {
 // The snapshot as portage's build_snapshot() writes it, keys sorted, without a newline.
 [[nodiscard]] std::string snapshot_json(const Snapshot& snapshot);
 
-// Where emerges publish: ${EPREFIX}/run/portage.
-[[nodiscard]] std::filesystem::path status_dir(const std::filesystem::path& eprefix);
+// Where emerges publish, as emerge-<pid>.json: ${EPREFIX}/run/portage; and egraph exec, as
+// exec-<pid>.json: ${EPREFIX}/run/egraph.
+[[nodiscard]] std::filesystem::path status_dir(const std::filesystem::path& eprefix,
+                                               Publisher publisher = Publisher::emerge);
 
-// Every live emerge's snapshot in dir, by pid. A file is live when the pid in its name is the one
-// inside and that process exists under proc; one left behind by an emerge that died is not.
+// Every live publisher's snapshot in dir, by pid. A file is live when the pid in its name is the
+// one inside and that process exists under proc; one left behind by a run that died is not.
 [[nodiscard]] std::vector<Snapshot> read_snapshots(const std::filesystem::path& dir,
-                                                   const std::filesystem::path& proc = "/proc");
+                                                   const std::filesystem::path& proc = "/proc",
+                                                   Publisher publisher = Publisher::emerge);
 
 // A package emerge has yet to merge, from mtimedb's resume mergelist; emerge drops each one once
 // it has merged.

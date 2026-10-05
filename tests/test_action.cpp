@@ -131,21 +131,18 @@ TEST_CASE("what emerge runs under is read from egraph-build's JSON") {
     const auto settings = egraph::parse_run_settings(R"({
  "options": ["--jobs", "4"],
  "elog": {"summary": "/var/log/portage/elog/summary.log", "system": "save_summary"},
- "jobserver": "/run/jobserver", "observability": true, "tmpdir": "/var/tmp"
+ "jobserver": "/run/jobserver", "tmpdir": "/var/tmp"
 })");
     REQUIRE(settings);
     CHECK(settings->defaults == std::vector<std::string>{"--jobs", "4"});
     CHECK(settings->jobserver == "/run/jobserver");
     CHECK(settings->tmpdir == "/var/tmp");
-    CHECK(settings->observability);
     CHECK(settings->elog_summary == "/var/log/portage/elog/summary.log");
     CHECK(settings->elog_system == "save_summary");
     const auto plain =
         egraph::parse_run_settings(R"({"options": [], "elog": {"summary": null, "system": null},
-                                       "jobserver": null, "observability": false,
-                                       "tmpdir": "/var/tmp"})");
+                                       "jobserver": null, "tmpdir": "/var/tmp"})");
     REQUIRE(plain);
-    CHECK_FALSE(plain->observability);
     CHECK_FALSE(plain->jobserver);
     CHECK_FALSE(plain->elog_summary);
     CHECK_FALSE(plain->elog_system);
@@ -155,11 +152,7 @@ TEST_CASE("what emerge runs under is read from egraph-build's JSON") {
     CHECK_FALSE(egraph::parse_run_settings(R"({"options": []})"));
     CHECK_FALSE(egraph::parse_run_settings(
         R"({"options": [], "elog": {"summary": null, "system": null}, "jobserver": 3,
-            "observability": false, "tmpdir": "/var/tmp"})"));
+            "tmpdir": "/var/tmp"})"));
     CHECK_FALSE(egraph::parse_run_settings(
-        R"({"options": [], "elog": {"summary": null, "system": null}, "jobserver": null,
-            "observability": "yes", "tmpdir": "/var/tmp"})"));
-    CHECK_FALSE(egraph::parse_run_settings(
-        R"({"options": [], "elog": {"summary": null, "system": null}, "jobserver": null,
-            "observability": false})"));
+        R"({"options": [], "elog": {"summary": null, "system": null}, "jobserver": null})"));
 }

@@ -87,13 +87,16 @@ Jobs jobs_of(const Json& snapshot) {
             .merges_pending = unsigned_of(object, "merges_pending").value_or(0)};
 }
 
-// The pid in an emerge-<pid>.json name.
-std::optional<std::int64_t> named_pid(const std::filesystem::path& path) {
+std::string_view name_prefix(Publisher publisher) {
+    return publisher == Publisher::exec ? "exec-" : "emerge-";
+}
+
+// The pid in an emerge-<pid>.json (or exec-<pid>.json) name.
+std::optional<std::int64_t> named_pid(const std::filesystem::path& path, std::string_view prefix) {
     if (path.extension() != ".json") {
         return std::nullopt;
     }
     const auto stem = path.stem().string();
-    constexpr std::string_view prefix = "emerge-";
     if (!stem.starts_with(prefix) || stem.size() == prefix.size()) {
         return std::nullopt;
     }
@@ -190,16 +193,17 @@ std::string snapshot_json(const Snapshot& snapshot) {
     return json.dump();
 }
 
-std::filesystem::path status_dir(const std::filesystem::path& eprefix) {
-    return std::filesystem::path{"/"} / eprefix.relative_path() / "run/portage";
+std::filesystem::path status_dir(const std::filesystem::path& eprefix, Publisher publisher) {
+    return std::filesystem::path{"/"} / eprefix.relative_path() /
+           (publisher == Publisher::exec ? "run/egraph" : "run/portage");
 }
 
 std::vector<Snapshot> read_snapshots(const std::filesystem::path& dir,
-                                     const std::filesystem::path& proc) {
+                                     const std::filesystem::path& proc, Publisher publisher) {
     std::vector<Snapshot> found;
     std::error_code error;
     for (const auto& entry : std::filesystem::directory_iterator{dir, error}) {
-        const auto pid = named_pid(entry.path());
+        const auto pid = named_pid(entry.path(), name_prefix(publisher));
         if (!pid || !std::filesystem::exists(proc / std::to_string(*pid), error)) {
             continue;
         }
@@ -208,6 +212,7 @@ std::vector<Snapshot> read_snapshots(const std::filesystem::path& dir,
         text << in.rdbuf();
         auto snapshot = parse_snapshot(text.str());
         if (snapshot && snapshot->pid == *pid) {
+            snapshot->publisher = publisher;
             found.push_back(std::move(*snapshot));
         }
     }

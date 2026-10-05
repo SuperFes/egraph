@@ -256,7 +256,6 @@ def write_emerge_options(args):
         "options": shlex.split(settings.get("EMERGE_DEFAULT_OPTS", "")),
         "elog": {"summary": summary, "system": system},
         "jobserver": jobserver(settings),
-        "observability": "observability" in settings.features,
         "tmpdir": settings["PORTAGE_TMPDIR"],
     }
     args.output.write_text(json.dumps(written, indent=1, sort_keys=True))

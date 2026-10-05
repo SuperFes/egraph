@@ -153,7 +153,7 @@ void StatusFile::publish(const emerge::Snapshot& snapshot, bool tick) {
         std::error_code ignored;
         std::filesystem::remove(temporary, ignored);
         if (!told_) {
-            notes_.get() << std::format("egraph: observability: cannot write {}: {}\n",
+            notes_.get() << std::format("egraph: exec: cannot publish the status to {}: {}\n",
                                         path_.string(), error.message());
             told_ = true;
         }

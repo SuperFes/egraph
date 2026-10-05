@@ -366,7 +366,8 @@ def test_a_concurrent_emerge_waits_on_the_build_directory_lock(parallel, tmp_pat
 @pytest.fixture
 def observed(gnupg_home, tmp_path):
     """held, whose compile waits for a file to appear, and quick, under FEATURES=observability
-    with two jobs: quick built and waiting to merge while held compiles. The file's path.
+    (for emerge) with two jobs: quick built and waiting to merge while held compiles. The
+    file's path.
     """
     go = tmp_path / "go"
     ebuilds = {
@@ -389,36 +390,46 @@ def observed(gnupg_home, tmp_path):
         yield system, machine, go
 
 
-def published(eprefix):
-    """The status files under eprefix, each as (pid in its name, snapshot)."""
+# Where emerge publishes, and where egraph exec does.
+EMERGES = ("portage", "emerge-")
+RUNS = ("egraph", "exec-")
+
+
+def published(eprefix, where):
+    """The status files under eprefix where says, each as (pid in its name, snapshot)."""
+    directory, prefix = where
     found = []
-    for path in glob.glob(os.path.join(eprefix, "run", "portage", "emerge-*.json")):
+    for path in glob.glob(os.path.join(eprefix, "run", directory, prefix + "*.json")):
         try:
             with open(path) as f:
                 snapshot = json.load(f)
         except (OSError, ValueError):
             continue
         found.append(
-            (int(os.path.basename(path)[len("emerge-") : -len(".json")]), snapshot)
+            (int(os.path.basename(path)[len(prefix) : -len(".json")]), snapshot)
         )
     return found
 
 
-def snapshot_while_held(system, go, *args):
-    """The snapshot egraph's args publish once held compiles and quick waits to merge, then the
-    run let go; also whether its status file is left behind."""
+def snapshot_while_held(system, go, where, *args, **environment):
+    """The snapshot egraph's args publish where says once held compiles and quick waits to
+    merge, then the run let go; also whether its status file is left behind, and whether any
+    was published in the other place meanwhile."""
+    elsewhere = RUNS if where == EMERGES else EMERGES
     running = subprocess.Popen(
         system.command(*args, "--yes", "app-misc/held", "app-misc/quick"),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env=dict(os.environ, EGRAPH_STRICT="1"),
+        env=dict(os.environ, EGRAPH_STRICT="1", **environment),
     )
+    strays = False
     try:
         deadline = time.monotonic() + 120
         caught = None
         while caught is None:
-            for pid, snapshot in published(system.playground.eprefix):
+            strays = strays or bool(published(system.playground.eprefix, elsewhere))
+            for pid, snapshot in published(system.playground.eprefix, where):
                 tasks = {task["cpv"]: task for task in snapshot["tasks"]}
                 held = tasks.get("app-misc/held-1", {})
                 quick = tasks.get("app-misc/quick-1", {})
@@ -430,7 +441,8 @@ def snapshot_while_held(system, go, *args):
         go.touch()
         out, err = running.communicate()
     assert running.returncode == 0, out + err
-    return caught, published(system.playground.eprefix)
+    assert not strays
+    return caught, published(system.playground.eprefix, where)
 
 
 # A snapshot's times and pids, which no two runs share: compared by whether each is there.
@@ -455,19 +467,21 @@ def comparable(caught):
 
 
 def test_exec_publishes_its_status_as_emerge_does(observed):
-    """Under FEATURES=observability, exec's status file says what emerge's says of the same run
-    at the same point: one package compiling, one built and waiting to merge, the jobs counted
-    alike; and it goes with the run."""
+    """exec's status file, in its own place and whatever FEATURES says, says what emerge's says
+    of the same run at the same point under FEATURES=observability: one package compiling, one
+    built and waiting to merge, the jobs counted alike; and it goes with the run."""
     system, machine, go = observed
     age(system.playground.eroot)
     machine.save()
-    emerged, left = snapshot_while_held(system, go, "install")
+    emerged, left = snapshot_while_held(system, go, EMERGES, "install")
     assert left == []
     machine.restore()
     forget_stores(system)
     go.unlink()
     age(system.playground.eroot)
-    worked, left = snapshot_while_held(system, go, "exec")
+    worked, left = snapshot_while_held(
+        system, go, RUNS, "exec", FEATURES="-observability"
+    )
     assert left == []
     assert comparable(worked) == comparable(emerged)
 

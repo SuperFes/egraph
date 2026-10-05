@@ -104,7 +104,8 @@ emerge's `BlockerDB` and `create_world_atom`, replayed on the depgraph its resum
 `test_exec_run.py` runs `egraph install` (real emerge) and `egraph exec` from the same snapshot
 and compares the systems they leave, and holds a parallel run's `--trace` to emerge's
 scheduling rules, beside a jobserver and a concurrent emerge, a `--keep-going` run's skips
-to what emerge drops, and its FEATURES=observability status file to emerge's.
+to what emerge drops, and its status file (its own, in `run/egraph`) to emerge's under
+FEATURES=observability.
 Test stores come from `conftest.write_stores`, which writes the evaluated store beside the
 installed one as a builder run does. Scenario packages get an accepted
 KEYWORDS in `conftest.py`, because depclean's `||` choices depend on visibility and egraph assumes

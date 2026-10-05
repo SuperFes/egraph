@@ -1,7 +1,7 @@
 #pragma once
 
-// What a run publishes of itself as it goes, as emerge's ObservabilityMonitor does under
-// FEATURES="observability".
+// What a run publishes of itself as it goes, in the schema emerge's ObservabilityMonitor
+// publishes under FEATURES="observability".
 
 #include "emerge.hpp"
 #include "schedule.hpp"
@@ -61,8 +61,8 @@ class Observer {
     std::uint64_t total_ = 0;
 };
 
-// The status file a run publishes its snapshots to, as emerge's ObservabilityMonitor writes
-// ${EPREFIX}/run/portage/emerge-<pid>.json: replaced whole, and removed with this object.
+// The status file a run publishes its snapshots to (${EPREFIX}/run/egraph/exec-<pid>.json), as
+// emerge's ObservabilityMonitor writes its own: replaced whole, and removed with this object.
 class StatusFile {
   public:
     // Why it cannot be written is said once on notes, as the run goes on without it.

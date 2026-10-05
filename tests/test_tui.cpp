@@ -908,8 +908,9 @@ TEST_CASE("the emerge view says how to publish when nothing runs") {
     egraph::tui::App app{store, graph};
     FakeScreen screen{12, 100, {character(U'e')}};
     egraph::tui::run(screen, app, ascii, {});
-    CHECK(contains(screen.text(), "No emerge is publishing its progress"));
+    CHECK(contains(screen.text(), "No emerge or egraph exec is publishing its progress"));
     CHECK(contains(screen.text(), "FEATURES=\"observability\""));
+    CHECK(contains(screen.text(), "egraph exec to /run/egraph"));
     // Moving or opening in an empty view does nothing.
     app.handle(key(KeyKind::down));
     app.handle(key(KeyKind::enter));
@@ -1255,6 +1256,22 @@ TEST_CASE("the merge list hangs under the emerge that runs it, what is running o
     CHECK(egraph::tui::watch_rows(watched).size() == 3);
 }
 
+TEST_CASE("egraph exec is named as such, and never takes emerge's merge list") {
+    egraph::tui::Watched watched;
+    auto run = building_lib();
+    run.publisher = egraph::emerge::Publisher::exec;
+    watched.snapshots = {run};
+    watched.merge_list = lib_merge_list();
+    watched.waits = lib_waits;
+    CHECK(egraph::tui::rows_owner(watched) == 1);
+    CHECK(std::ranges::none_of(egraph::tui::watch_rows(watched),
+                               [](const auto& row) { return !row.task.has_value(); }));
+    const auto spans = egraph::tui::emerge_spans(run, ascii);
+    CHECK(spans.front().text == " * egraph exec 4321");
+    // Beside an emerge between tasks, the list is the emerge's.
+    watched.snapshots = {{.pid = 99, .timestamp = 0, .tasks = {}}, run};
+    CHECK(egraph::tui::rows_owner(watched) == 0);
+}
 TEST_CASE("the emerge view draws the merge list as a tree that says what can start") {
     const auto store = sample();
     const auto graph = egraph::build_graph(store);

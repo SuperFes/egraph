@@ -211,7 +211,8 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   bar says it is not saved. The user's cache store is left alone either way; it is refreshed on
   the next query.
 - `e` watches the running emerges, from the snapshots portage publishes with
-  `FEATURES="observability"` (`src/emerge.hpp`): each emerge's jobs and progress as a bar, and
+  `FEATURES="observability"` (`src/emerge.hpp`), and `egraph exec`'s runs, which publish the
+  same snapshots in `run/egraph`: each one's jobs and progress as a bar, and
   its tasks under it with a spinner, kind, phase, elapsed time and, with `FEATURES=cgroup`, CPU
   parallelism and peak memory. The view reads them again every second (the screen's read takes a
   timeout, and a tick with no key is a key of its own), and not while a page covers it. A task
@@ -644,9 +645,10 @@ others only with the free space in PORTAGE_TMPDIR emerge's `_can_add_job` wants.
 each build takes a byte from MAKEFLAGS' jobserver pipe (steve's `/dev/steve`, or make's) and
 writes it back when the build ends; the jobserver never decides how many jobs run, only when
 each may start. `--trace` writes each step's start and end, which `test_exec_run.py` holds to
-these rules. Under FEATURES=observability the run publishes itself as emerge's
-`ObservabilityMonitor` does, to `${EPREFIX}/run/portage/emerge-<pid>.json`, so that the emerge
-view and `portageq jobs` show it as they show an emerge: `Observer` reads each step's stage
+these rules. The run publishes itself in the schema of emerge's `ObservabilityMonitor`, to its
+own `${EPREFIX}/run/egraph/exec-<pid>.json` (egraph writes none of emerge's files), so that the
+emerge view shows it as it shows an emerge, named as egraph's and never taking emerge's merge
+list from mtimedb: `Observer` reads each step's stage
 from the schedule (a task from its build's start, or an uninstall's from being let through,
 until it has merged; a merge once built), the phases and the worker's pid from the pool, and
 `StatusFile` writes it on each event at most once a second, and every 2 s while no worker says

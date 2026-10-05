@@ -237,7 +237,8 @@ struct WatchRow {
 };
 
 // The rows under each emerge, in order. The merge list belongs to the emerge running most of
-// its packages (the only one, if there is one); its tasks not on the list come first.
+// its packages (the only one, if there is one), never to egraph exec, which keeps none there;
+// its tasks not on the list come first.
 [[nodiscard]] std::vector<WatchRow> watch_rows(const Watched& watched);
 
 // Where steve stops handing out jobs, marked on the pressure graphs when known.
@@ -1352,7 +1353,10 @@ inline std::vector<Span> emerge_spans(const emerge::Snapshot& snapshot, const Gl
     const auto& jobs = snapshot.jobs;
     const auto percent = jobs.total == 0 ? 0 : jobs.completed * 100 / jobs.total;
     std::vector<Span> spans{
-        {std::format(" {} emerge {}", glyph.package, snapshot.pid), tone_pen(Tone::heading)},
+        {std::format(" {} {} {}", glyph.package,
+                     snapshot.publisher == emerge::Publisher::exec ? "egraph exec" : "emerge",
+                     snapshot.pid),
+         tone_pen(Tone::heading)},
         {jobs.max ? std::format("   {} of {} jobs", jobs.running, *jobs.max)
                   : std::format("   {} jobs", jobs.running),
          tone_pen(Tone::note)},
@@ -1428,13 +1432,17 @@ template <class S> void draw_watch(S& screen, App& app, const Glyphs& glyph, Siz
         put_spans(screen, row, 0, steve_line(watched.steve, watched.editing, glyph), size.cols);
     }
     if (watched.snapshots.empty()) {
-        put_spans(screen, 1, 1, {{"No emerge is publishing its progress", tone_pen(Tone::heading)}},
-                  size.cols);
+        put_spans(
+            screen, 1, 1,
+            {{"No emerge or egraph exec is publishing its progress", tone_pen(Tone::heading)}},
+            size.cols);
         put_spans(screen, 3, 3,
-                  {{"emerge publishes it to /run/portage with FEATURES=\"observability\";",
+                  {{"emerge publishes it to /run/portage with FEATURES=\"observability\",",
                     tone_pen(Tone::note)}},
                   size.cols);
-        put_spans(screen, 4, 3, {{"this view reads it again every second.", tone_pen(Tone::note)}},
+        put_spans(screen, 4, 3,
+                  {{"egraph exec to /run/egraph; this view reads them again every second.",
+                    tone_pen(Tone::note)}},
                   size.cols);
         draw_watch_hints(screen, watched, glyph, size);
         return;

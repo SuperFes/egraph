@@ -248,7 +248,6 @@ std::expected<RunSettings, std::string> parse_run_settings(std::string_view text
                          .elog_summary = std::nullopt,
                          .elog_system = std::nullopt,
                          .jobserver = std::nullopt,
-                         .observability = false,
                          .tmpdir = {}};
     for (const auto& [field, value] : {std::pair{"summary", &settings.elog_summary},
                                        std::pair{"system", &settings.elog_system}}) {
@@ -267,11 +266,6 @@ std::expected<RunSettings, std::string> parse_run_settings(std::string_view text
     if (jobserver->is_string()) {
         settings.jobserver = jobserver->get<std::string>();
     }
-    const auto observability = json.find("observability");
-    if (observability == json.end() || !observability->is_boolean()) {
-        return std::unexpected("observability: not true or false");
-    }
-    settings.observability = observability->get<bool>();
     const auto tmpdir = json.find("tmpdir");
     if (tmpdir == json.end() || !tmpdir->is_string()) {
         return std::unexpected("tmpdir: not a string");
