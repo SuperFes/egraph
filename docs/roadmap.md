@@ -672,6 +672,15 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     - 16k6c: mtimedb's resume entry kept through the run, as emerge's scheduler keeps it (each
       merge dropped as it merges, in the worker's own mtimedb commit), so the emerge view shows
       what is left and `emerge --resume` takes over after a failure.
+      - 16k6c1 (done): the entry's parts in C++: emerge's options as its parser leaves them
+        (`emerge_myopts`, held to `parse_opts` through the shadow binary), the entry for the
+        merges still listed, and `ResumeList`, which follows what emerge's scheduler lists and
+        when it commits.
+      - 16k6c2: `egraph-build --save-resume` writes the entry through portage's `MtimeDB`
+        (moving a list of more than one merge to `resume_backup`, as a new emerge does), and the
+        worker drops each merge in the commit after it.
+      - 16k6c3: `exec` keeps the entry; compared with `install`'s after the same failed runs,
+        and taken over by `emerge --resume`.
     - 16k6d: `emerge.log` written as emerge writes it, compared line by line with `install`'s.
   - 16k7: portage updating itself mid-run, and a narrower merge-wait barrier offered as an
     option.

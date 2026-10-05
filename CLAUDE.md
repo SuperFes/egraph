@@ -85,7 +85,8 @@ are strict xfails that must flip when the implementation lands.
 `test_match.py` shadows the C++ atom matcher against `vardb.match`: a generated corpus on the
 `atoms` scenario (whose make.conf sets up both kinds of implicit IUSE), and every atom in every
 scenario. Any change to `src/atom.cpp` or `src/version.cpp` must keep it and the live-system run
-at zero differences.
+at zero differences. `test_myopts.py` likewise holds the options egraph records in mtimedb's
+resume entry (`emerge_myopts`, through `build/shadow`) to emerge's own `parse_opts`.
 
 `builder/tests/depclean.py` runs portage's own depclean (`_calc_depclean`, test code only), and
 `builder/tests/update.py` its `emerge --pretend --update @installed` (with `--newuse` or

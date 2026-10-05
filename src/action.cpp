@@ -7,6 +7,7 @@
 #include <charconv>
 #include <cstddef>
 #include <format>
+#include <iterator>
 #include <string_view>
 
 namespace egraph {
@@ -178,30 +179,36 @@ std::uint64_t tmpdir_free_gb_of(std::span<const std::string> passed) {
     return gb;
 }
 
+std::vector<std::string> request_options(const EmergeRequest& request, bool oneshot) {
+    std::vector<std::string> found;
+    if (request.update) {
+        found.emplace_back("--update");
+    }
+    if (request.deep) {
+        found.emplace_back("--deep");
+    }
+    if (request.noreplace) {
+        found.emplace_back("--noreplace");
+    }
+    if (request.rebuilds == UseRebuilds::all) {
+        found.emplace_back("--newuse");
+    } else if (request.rebuilds == UseRebuilds::changed) {
+        found.emplace_back("--changed-use");
+    }
+    if (!request.dynamic_deps) {
+        found.emplace_back("--dynamic-deps=n");
+    }
+    if (oneshot) {
+        found.emplace_back("--oneshot");
+    }
+    return found;
+}
+
 std::vector<std::string> run_arguments(const EmergeRequest& request, bool oneshot,
                                        std::span<const std::string> passed) {
     std::vector<std::string> arguments{"--ignore-default-opts", "--ask=n"};
     arguments.insert(arguments.end(), passed.begin(), passed.end());
-    if (request.update) {
-        arguments.emplace_back("--update");
-    }
-    if (request.deep) {
-        arguments.emplace_back("--deep");
-    }
-    if (request.noreplace) {
-        arguments.emplace_back("--noreplace");
-    }
-    if (request.rebuilds == UseRebuilds::all) {
-        arguments.emplace_back("--newuse");
-    } else if (request.rebuilds == UseRebuilds::changed) {
-        arguments.emplace_back("--changed-use");
-    }
-    if (!request.dynamic_deps) {
-        arguments.emplace_back("--dynamic-deps=n");
-    }
-    if (oneshot) {
-        arguments.emplace_back("--oneshot");
-    }
+    std::ranges::move(request_options(request, oneshot), std::back_inserter(arguments));
     arguments.insert(arguments.end(), request.targets.begin(), request.targets.end());
     return arguments;
 }

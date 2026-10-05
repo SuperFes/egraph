@@ -264,8 +264,8 @@ unit_tests = executable(
   dependencies: [egraph_dep, catch2],
   cpp_args: '-DEGRAPH_SOURCE_DIR="' + meson.project_source_root() + '"',
 )
-# Answers REQUIRED_USE checks and dependency reductions for the builder's tests, which hold them
-# to portage's.
+# Answers REQUIRED_USE checks, dependency reductions and emerge's options for the builder's tests,
+# which hold them to portage's.
 shadow_exe = executable(
   'shadow',
   'tests/shadow.cpp',

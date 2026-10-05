@@ -4,7 +4,9 @@
 //     -> {"satisfied": bool, "unsatisfied": "..."}
 //   {"check": "use_reduce", "tokens": [...], "use": [...], "empty_true": bool}
 //     -> {"nodes": [[type, parent, text], ...]}, parent -1 for none
+//   {"check": "myopts", "options": [...]} -> the options as emerge's parser leaves them
 #include "required_use.hpp"
+#include "resume.hpp"
 #include "use_reduce.hpp"
 
 #include <nlohmann/json.hpp>
@@ -21,6 +23,11 @@ int main() {
         std::string line;
         while (std::getline(std::cin, line)) {
             const auto input = nlohmann::json::parse(line);
+            if (input.at("check") == "myopts") {
+                const auto options = input.at("options").get<std::vector<std::string>>();
+                std::cout << egraph::emerge_myopts(options) << '\n';
+                continue;
+            }
             const auto tokens = input.at("tokens").get<std::vector<std::string>>();
             const auto use = input.at("use").get<std::vector<std::string>>();
             const std::vector<std::string_view> views(tokens.begin(), tokens.end());

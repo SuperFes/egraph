@@ -52,6 +52,9 @@ struct RunSettings {
 
 [[nodiscard]] std::expected<RunSettings, std::string> parse_run_settings(std::string_view text);
 
+// The request's options as emerge takes them, --oneshot when oneshot.
+[[nodiscard]] std::vector<std::string> request_options(const EmergeRequest& request, bool oneshot);
+
 // emerge's options and arguments to carry out request, asking nothing: EMERGE_DEFAULT_OPTS
 // ignored but for passed (execution_options), --oneshot when oneshot.
 [[nodiscard]] std::vector<std::string> run_arguments(const EmergeRequest& request, bool oneshot,
