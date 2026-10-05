@@ -27,6 +27,7 @@ Update the status column as steps land.
 | 19 | What-if | planned |
 | 20 | Build knowledge | planned |
 | 21 | The fork's speedups upstream | planned |
+| 22 | Portage's tools in egraph's space | to map out |
 
 ## 0. Scaffold
 
@@ -784,3 +785,10 @@ without changing what emerge does.
 - Then the query memo and `regenerate()` replay, opt-in first; then neighborhood completion over
   the in-process installed index, with shadow-mode results from other systems.
 - Facts persisted across runs and the external index stay out until the in-process ones land.
+
+## 22. Portage's tools in egraph's space
+
+`ebuild` (as `egraph-ebuild`, named options, manifests, bumps), the rest of `sys-apps/portage`'s
+programs, the overlapping gentoolkit and portage-utils tools, and the library underneath, so
+that a system runs without portage installed; then egraph moves into `sys-apps`. Mapped out in
+`docs/vision.md` ("Portage's tools in egraph's space"); not scheduled until the user decides.

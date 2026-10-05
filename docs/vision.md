@@ -57,3 +57,58 @@ The loop egraph should absorb: run `emerge -pv`, read the USE flags, edit `packa
   divergence rule: a test proving egraph right, recorded in `docs/upstream-notes.md`.
 - A distribution of our own on the Gentoo tree, as ChromiumOS is: a profile and an overlay for
   what differs, our tooling on top, and the packages maintained upstream.
+
+## Portage's tools in egraph's space
+
+Recorded 2026-10-05. egraph is meant to replace emerge; this carries that through to the rest
+of `sys-apps/portage`, so that a system runs without a working portage installed. Once egraph
+has parity, it moves into `sys-apps` too. Until then portage stays the oracle: each tool lands
+held to portage's in shadow tests (as the store, plans and the worker are today), and portage
+drops to a test dependency only at parity. egraph never writes portage's own files
+(`emerge.log`, mtimedb's resume entries, `/run/portage`); it keeps its own state.
+
+- Ebuild tooling for working in local repositories, in place of `ebuild` (an `egraph-ebuild`
+  link): (todo)
+  - The package named rather than the file (`egraph ebuild app-misc/foo`, found in the local
+    repositories), and named options in place of ordered phases: `--until compile`,
+    `--from install`, `--clean`, `--keep`, `--merge`.
+  - Manifests: distfiles fetched and `Manifest` written, for one package, a repository, or what
+    git says changed.
+  - Bumps: `--bump 1.2.4` copies the ebuild, drops its keywords to `~arch` and writes the
+    manifest; `ekeyword`'s keyword edits beside it.
+  - What `ebuild` cannot do: a phase run again on a kept build directory, `--shell` into the
+    build environment at the phase that failed, the image diffed against what is installed,
+    and a build in a throwaway prefix (as the tests build), which never touches the system.
+  - Checks and scaffolding: pkgcheck where installed, `metadata.xml` from a template, a commit
+    message in Gentoo's style.
+- The rest of `sys-apps/portage`'s programs, each in egraph's space: (todo)
+  - `emerge`: under way (roadmap 16: `install`, `exec`, `remove`, `select`, `sync`).
+  - `portageq`: the queries egraph answers already, and those scripts and eclasses' helpers
+    call (`has_version`, `best_version`, `envvar`, `get_repo_path`...).
+  - `emaint`: world and vdb checks, stale resume and merge leftovers, logs, binhost index,
+    package moves (`moveinst`, `movebin`, with `fixpackages`).
+  - `etc-update`, `dispatch-conf`, `archive-conf`: configuration updates merged in the living
+    app, the archive kept as `dispatch-conf` keeps it.
+  - `env-update`: `profile.env`, `ld.so.conf` and `ldconfig` after merges.
+  - `regenworld`: the world file rebuilt from history (egraph's own log, `emerge.log` read
+    only when the user imports it).
+  - `quickpkg`, `gpkg-sign`, binary packages (gpkg and xpak) and binhosts.
+  - `egencache`: metadata caches for local repositories.
+  - `glsa-check`: GLSAs matched against the store (roadmap 20 already plans it).
+  - `emerge-webrsync`, `emirrordist`: snapshot syncing and mirroring.
+- The overlapping tools from gentoolkit and portage-utils, where egraph has the data already:
+  `equery` and `q*` (owners, dependencies, sizes, checks; `qlop` from egraph's build history),
+  `eclean` (distfiles and binary packages no plan needs), `revdep-rebuild` (soname consumers,
+  done), `euse`, `eshowkw`, `eread` (elog). (todo)
+- The library underneath, which today comes from importing portage's Python: (todo, the large
+  part)
+  - Configuration: the profile stack, `make.conf`, `package.*`, USE, keywords, masks and
+    licenses evaluated without portage's `config`.
+  - The metadata cache, eclasses and `ebuild.sh`'s sourcing for metadata.
+  - Running phases: portage's bash side (`ebuild.sh`, phase functions, helpers) carried as our
+    own copy, the executor idea under "Planning, building, and a distribution".
+  - Fetching (mirrors, `thirdpartymirrors`, `FETCHCOMMAND`), manifest checks, merging into the
+    vdb (config protection, collision protection, preserved libraries), news and elog.
+- First to map out: which of these the builder's portage import keeps alive longest, since
+  dropping that import is what makes portage optional; and the order the tools move in, the
+  ones egraph nearly covers already (`portageq`, `revdep-rebuild`, `eclean`) first.
