@@ -1,5 +1,6 @@
 #include "os.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <clocale>
@@ -8,6 +9,7 @@
 #include <fcntl.h>
 #include <format>
 #include <langinfo.h>
+#include <limits>
 #include <poll.h>
 #include <random>
 #include <ranges>
@@ -301,7 +303,10 @@ std::expected<void, std::error_code> Jobserver::give(std::byte token) {
 
 std::expected<Readiness, std::error_code>
 wait_for(std::span<Talk> talks,
-         const std::optional<std::reference_wrapper<const Jobserver>>& jobserver) {
+         const std::optional<std::reference_wrapper<const Jobserver>>& jobserver,
+         std::optional<std::chrono::milliseconds> timeout) {
+    using Clock = std::chrono::steady_clock;
+    const auto deadline = timeout ? std::optional{Clock::now() + *timeout} : std::nullopt;
     const auto ready = [&] {
         std::vector<std::size_t> found;
         for (const auto& [i, talk] : std::views::enumerate(talks)) {
@@ -326,11 +331,22 @@ wait_for(std::span<Talk> talks,
         if (watched.empty()) {
             return Readiness{};
         }
-        if (::poll(watched.data(), watched.size(), -1) < 0) {
+        int wait = -1;
+        if (deadline) {
+            const auto left =
+                std::chrono::ceil<std::chrono::milliseconds>(*deadline - Clock::now());
+            wait = static_cast<int>(std::clamp<std::chrono::milliseconds::rep>(
+                left.count(), 0, std::numeric_limits<int>::max()));
+        }
+        const auto events = ::poll(watched.data(), watched.size(), wait);
+        if (events < 0) {
             if (errno == EINTR) {
                 continue;
             }
             return std::unexpected(std::error_code(errno, std::generic_category()));
+        }
+        if (events == 0) {
+            return Readiness{.talks = {}, .token = false, .timed_out = true};
         }
         for (const auto& [talk, polled] : std::views::zip(talks, watched)) {
             if (polled.revents != 0) {
@@ -467,6 +483,10 @@ std::expected<std::uint64_t, std::error_code> free_bytes(const std::filesystem::
         return std::unexpected(std::error_code(errno, std::generic_category()));
     }
     return std::uint64_t{found.f_bsize} * std::uint64_t{found.f_bavail};
+}
+
+std::int64_t process_id() {
+    return ::getpid();
 }
 
 bool is_root() {

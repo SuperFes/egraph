@@ -2,6 +2,7 @@
 
 // The only place egraph calls C APIs directly; everything here returns values.
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -56,6 +57,7 @@ class Child {
     [[nodiscard]] std::optional<std::expected<int, SpawnError>> poll();
     // How it ended, waiting for it.
     [[nodiscard]] std::expected<int, SpawnError> wait();
+    [[nodiscard]] int pid() const { return pid_; }
 
   private:
     friend std::expected<Child, SpawnError> start(const std::vector<std::string>& argv,
@@ -106,12 +108,14 @@ class Talk {
     [[nodiscard]] std::optional<std::string> receive();
     // Closes its standard input and waits for it to end.
     [[nodiscard]] std::expected<int, SpawnError> finish();
+    [[nodiscard]] int pid() const { return child_.pid(); }
 
   private:
     friend std::expected<Talk, SpawnError> start_talking(const std::vector<std::string>& argv);
     friend std::expected<Readiness, std::error_code>
     wait_for(std::span<Talk> talks,
-             const std::optional<std::reference_wrapper<const Jobserver>>& jobserver);
+             const std::optional<std::reference_wrapper<const Jobserver>>& jobserver,
+             std::optional<std::chrono::milliseconds> timeout);
     Talk(Child child, Descriptor input, Descriptor output);
     // Reads what has come, once, without waiting if poll(2) said something has.
     void fill();
@@ -142,7 +146,8 @@ class Jobserver {
   private:
     friend std::expected<Readiness, std::error_code>
     wait_for(std::span<Talk> talks,
-             const std::optional<std::reference_wrapper<const Jobserver>>& jobserver);
+             const std::optional<std::reference_wrapper<const Jobserver>>& jobserver,
+             std::optional<std::chrono::milliseconds> timeout);
     explicit Jobserver(Descriptor fd) : fd_{std::move(fd)} {}
 
     Descriptor fd_;
@@ -154,13 +159,16 @@ struct Readiness {
     std::vector<std::size_t> talks;
     // The jobserver may have a token.
     bool token = false;
+    // The timeout passed first.
+    bool timed_out = false;
 };
 
-// Waits until a talk is ready() or, given one, the jobserver may have a token; nothing found
-// when there is nothing to wait for.
+// Waits until a talk is ready() or, given one, the jobserver may have a token, or the timeout
+// passes; nothing found when there is nothing to wait for.
 std::expected<Readiness, std::error_code>
 wait_for(std::span<Talk> talks,
-         const std::optional<std::reference_wrapper<const Jobserver>>& jobserver = std::nullopt);
+         const std::optional<std::reference_wrapper<const Jobserver>>& jobserver = std::nullopt,
+         std::optional<std::chrono::milliseconds> timeout = std::nullopt);
 
 // Whether this process could create or replace a file at path by renaming a new one over it:
 // the nearest existing directory above it is writable.
@@ -177,6 +185,9 @@ std::expected<std::uint64_t, std::error_code> free_bytes(const std::filesystem::
 
 // Whether this process runs as root (effective user id 0).
 bool is_root();
+
+// This process's id.
+std::int64_t process_id();
 
 // The running executable, from /proc/self/exe; empty if that cannot be read.
 std::filesystem::path executable();

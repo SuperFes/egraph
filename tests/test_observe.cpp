@@ -1,10 +1,15 @@
 #include "observe.hpp"
 
+#include "helpers.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -160,10 +165,60 @@ TEST_CASE("once keep-going goes on, the total is the merges left") {
     CHECK(observer.snapshot(schedule, 0).jobs.total == 3);
     schedule.build_started(0);
     schedule.build_finished(0, false);
+    // As keep-going names them, before the schedule skips them.
+    observer.resumed(schedule, std::array<std::size_t, 1>{1});
     schedule.resume(std::array<std::size_t, 1>{1});
     observer.update(schedule, 1);
-    observer.resumed(schedule);
     const auto snapshot = observer.snapshot(schedule, 1);
     CHECK(snapshot.jobs.total == 1);
     CHECK(snapshot.jobs.failed == 1);
+}
+
+namespace {
+
+std::string contents(const std::filesystem::path& path) {
+    std::ifstream in{path};
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
+egraph::emerge::Snapshot at(double timestamp) {
+    return {.pid = 7, .timestamp = timestamp, .jobs = {}, .tasks = {}};
+}
+
+} // namespace
+
+TEST_CASE("a status file is written at most once a second for events, and each tick") {
+    const egraph::test::TempDir dir;
+    const auto path = dir.path() / "run/portage/emerge-7.json";
+    std::ostringstream notes;
+    {
+        egraph::StatusFile status{path, notes};
+        status.publish(at(10), false);
+        // Its directories made, one line of JSON, as emerge writes it.
+        CHECK(contents(path) == egraph::emerge::snapshot_json(at(10)) + "\n");
+        status.publish(at(10.5), false);
+        CHECK(contents(path) == egraph::emerge::snapshot_json(at(10)) + "\n");
+        // A tick writes whatever the last event's time, and does not hold the next event back.
+        status.publish(at(10.6), true);
+        CHECK(contents(path) == egraph::emerge::snapshot_json(at(10.6)) + "\n");
+        status.publish(at(11.0), false);
+        CHECK(contents(path) == egraph::emerge::snapshot_json(at(11.0)) + "\n");
+        CHECK(std::ranges::distance(std::filesystem::directory_iterator{path.parent_path()}) == 1);
+    }
+    // Gone with the run.
+    CHECK_FALSE(std::filesystem::exists(path));
+    CHECK(notes.str().empty());
+}
+
+TEST_CASE("a status file that cannot be written is said once, and the run goes on") {
+    const egraph::test::TempDir dir;
+    std::ofstream{dir.path() / "run"} << "not a directory";
+    std::ostringstream notes;
+    egraph::StatusFile status{dir.path() / "run/portage/emerge-7.json", notes};
+    status.publish(at(1), false);
+    status.publish(at(3), false);
+    CHECK(notes.str().starts_with("egraph: observability: cannot write "));
+    CHECK(std::ranges::count(notes.str(), '\n') == 1);
 }

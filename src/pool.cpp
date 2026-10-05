@@ -103,10 +103,15 @@ std::expected<void, std::string> WorkerPool::give_token(std::size_t step) {
 std::expected<Heard, std::string> WorkerPool::next(bool for_token) {
     while (heard_.empty()) {
         const auto found = os::wait_for(
-            talks_, for_token && jobserver_ ? std::optional{std::cref(*jobserver_)} : std::nullopt);
+            talks_, for_token && jobserver_ ? std::optional{std::cref(*jobserver_)} : std::nullopt,
+            period_);
         if (!found) {
             return std::unexpected(
                 std::format("waiting for the workers: {}", found.error().message()));
+        }
+        if (found->timed_out) {
+            tick_();
+            continue;
         }
         if (found->talks.empty() && !found->token) {
             return std::unexpected("there are no workers to hear from");
@@ -132,6 +137,19 @@ std::expected<Heard, std::string> WorkerPool::next(bool for_token) {
     auto next = std::move(heard_.front());
     heard_.pop_front();
     return next;
+}
+
+void WorkerPool::every(std::chrono::milliseconds period, std::function<void()> tick) {
+    period_ = period;
+    tick_ = std::move(tick);
+}
+
+std::optional<std::int64_t> WorkerPool::pid(std::size_t worker) const {
+    const auto found = std::ranges::find(indices_, worker);
+    if (found == indices_.end()) {
+        return std::nullopt;
+    }
+    return talks_.at(static_cast<std::size_t>(found - indices_.begin())).pid();
 }
 
 std::expected<int, std::string> WorkerPool::finish() {

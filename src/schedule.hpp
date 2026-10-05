@@ -156,11 +156,12 @@ struct Heard {
 // on any idle worker once the schedule lets it start, there is room for it (or it would run
 // alone, as emerge's _can_add_job weighs PORTAGE_TMPDIR's free space) and a token is had, its
 // merge on the worker that built it, an uninstall on any idle worker; a worker is added when none
-// is idle. Calls report(step, event) for each event a worker reports and trace(step, what) as each
-// step goes; after a failure, what runs still finishes and what built still merges, as the schedule
-// says, and then resume(schedule) -> std::optional<std::vector<std::size_t>> names the steps to
-// skip as the run goes on, or none to end it, as emerge --keep-going decides. Pool: add() ->
-// std::expected<std::size_t, std::string>, the new worker's index;
+// is idle. Calls report(step, event) for each event a worker reports and trace(step, what, worker)
+// as each step goes, with the worker running it, if any; after a failure, what runs still finishes
+// and what built still merges, as the schedule says, and then resume(schedule) ->
+// std::optional<std::vector<std::size_t>> names the steps to skip as the run goes on, or none to
+// end it, as emerge --keep-going decides. Pool: add() -> std::expected<std::size_t, std::string>,
+// the new worker's index;
 //   send(worker, line) -> bool; take_token(step) -> std::expected<bool, std::string>, false when
 //   none is free yet; give_token(step) -> std::expected<void, std::string>; next(for_token) ->
 //   std::expected<Heard, std::string>, waiting for a line or end from a worker, or with for_token,
@@ -208,7 +209,7 @@ PoolOutcome run_schedule(Schedule& schedule, Pool& pool, Requests& requests, con
         workers.at(worker).running.reset();
         if (merging) {
             schedule.merge_finished(step, succeeded);
-            trace(step, succeeded ? Traced::merged : Traced::merge_failed);
+            trace(step, succeeded ? Traced::merged : Traced::merge_failed, worker);
             if (succeeded) {
                 requests.done(step);
                 ++outcome.done;
@@ -219,7 +220,7 @@ PoolOutcome run_schedule(Schedule& schedule, Pool& pool, Requests& requests, con
                 why = std::move(given.error());
             }
             schedule.build_finished(step, succeeded);
-            trace(step, succeeded ? Traced::built : Traced::build_failed);
+            trace(step, succeeded ? Traced::built : Traced::build_failed, worker);
         }
         if (!succeeded) {
             stop(step, std::move(why));
@@ -239,7 +240,7 @@ PoolOutcome run_schedule(Schedule& schedule, Pool& pool, Requests& requests, con
                 if (workers.at(built_by).ended) {
                     schedule.merge_started(*step);
                     schedule.merge_finished(*step, false);
-                    trace(*step, Traced::merge_failed);
+                    trace(*step, Traced::merge_failed, std::nullopt);
                     stop(step, "the worker that built it has ended");
                     started = true;
                     continue;
@@ -261,7 +262,7 @@ PoolOutcome run_schedule(Schedule& schedule, Pool& pool, Requests& requests, con
             }
             schedule.merge_started(*step);
             workers.at(*worker).running = Running{.step = *step, .merging = true};
-            trace(*step, Traced::merge_started);
+            trace(*step, Traced::merge_started, worker);
             if (!pool.send(*worker, requests.merge(*step))) {
                 workers.at(*worker).ended = true;
                 finish(*worker, false, "the worker takes no more requests");
@@ -291,7 +292,7 @@ PoolOutcome run_schedule(Schedule& schedule, Pool& pool, Requests& requests, con
             schedule.build_started(*step);
             builder.at(*step) = *worker;
             workers.at(*worker).running = Running{.step = *step, .merging = false};
-            trace(*step, Traced::build_started);
+            trace(*step, Traced::build_started, std::optional{*worker});
             if (!pool.send(*worker, requests.build(*step))) {
                 workers.at(*worker).ended = true;
                 finish(*worker, false, "the worker takes no more requests");
@@ -308,7 +309,7 @@ PoolOutcome run_schedule(Schedule& schedule, Pool& pool, Requests& requests, con
                 return outcome;
             }
             for (const auto step : *skipped) {
-                trace(step, Traced::skipped);
+                trace(step, Traced::skipped, std::nullopt);
             }
             outcome.skipped.insert(outcome.skipped.end(), skipped->begin(), skipped->end());
             schedule.resume(*skipped);

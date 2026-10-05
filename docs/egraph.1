@@ -568,7 +568,15 @@ names, as
 does. A package that fails is named with the phase and its build log; nothing new starts after
 it, but the builds running finish and what built still merges, and then, with
 .BR \-\-keep\-going ,
-the run goes on without what needs it. The targets join
+the run goes on without what needs it. Under
+.B FEATURES=observability
+the run publishes its status as
+.B emerge
+does, in
+.IR ${EPREFIX}/run/portage/emerge\-<pid>.json ,
+which the living app's emerge view and
+.B portageq jobs
+read. The targets join
 .B @selected
 as
 .B emerge

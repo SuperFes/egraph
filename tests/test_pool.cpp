@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <format>
 #include <optional>
@@ -52,6 +53,24 @@ TEST_CASE("a pool's workers are started as added and heard from together") {
     CHECK(heard(pool).line == "got c");
     // The first exit status that is not 0.
     CHECK(pool.finish() == 4);
+}
+
+TEST_CASE("a pool ticks while it waits without hearing from a worker") {
+    std::ostringstream notes;
+    egraph::WorkerPool pool{
+        {"sh", "-c", "read -r line; sleep 0.5; echo $$"}, std::nullopt, false, {}, notes};
+    int ticks = 0;
+    pool.every(std::chrono::milliseconds{100}, [&] { ++ticks; });
+    CHECK(pool.add() == 0);
+    CHECK(pool.pid(0).has_value());
+    CHECK(pool.send(0, "go"));
+    const auto line = heard(pool).line;
+    CHECK(ticks >= 2);
+    // The worker's pid, until it ends.
+    CHECK(line == std::to_string(pool.pid(0).value_or(0)));
+    CHECK_FALSE(heard(pool).line);
+    CHECK_FALSE(pool.pid(0).has_value());
+    CHECK(pool.finish() == 0);
 }
 
 TEST_CASE("a pool's workers end with their input") {

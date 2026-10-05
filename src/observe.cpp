@@ -1,6 +1,9 @@
 #include "observe.hpp"
 
 #include <algorithm>
+#include <format>
+#include <fstream>
+#include <system_error>
 #include <utility>
 #include <variant>
 
@@ -56,8 +59,14 @@ void Observer::worker(std::size_t step, std::int64_t pid) {
     times_.at(step).pid = pid;
 }
 
-void Observer::resumed(const Schedule& schedule) {
-    total_ = merges(schedule, Stage::queued);
+void Observer::resumed(const Schedule& schedule, std::span<const std::size_t> skipped) {
+    total_ = 0;
+    for (std::size_t step = 0; step < schedule.steps().size(); ++step) {
+        if (std::holds_alternative<MergeStep>(schedule.step(step)) &&
+            schedule.stage(step) == Stage::queued && !std::ranges::contains(skipped, step)) {
+            ++total_;
+        }
+    }
 }
 
 emerge::Snapshot Observer::snapshot(const Schedule& schedule, double now) const {
@@ -105,6 +114,52 @@ emerge::Snapshot Observer::snapshot(const Schedule& schedule, double now) const 
                      .merge_wait = schedule.waiting(),
                      .merges_pending = schedule.let_through()},
             .tasks = std::move(tasks)};
+}
+
+StatusFile::StatusFile(std::filesystem::path path, std::ostream& notes)
+    : path_{std::move(path)}, notes_{notes} {}
+
+StatusFile::~StatusFile() {
+    if (written_) {
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+    }
+}
+
+void StatusFile::publish(const emerge::Snapshot& snapshot, bool tick) {
+    if (!tick) {
+        if (last_ && snapshot.timestamp - *last_ < 1) {
+            return;
+        }
+        last_ = snapshot.timestamp;
+    }
+    // Renamed over it, so a reader never sees half of one; not named *.json meanwhile.
+    auto temporary = path_;
+    temporary += ".new";
+    std::error_code error;
+    std::filesystem::create_directories(path_.parent_path(), error);
+    if (!error) {
+        std::ofstream out{temporary, std::ios::trunc};
+        out << emerge::snapshot_json(snapshot) << '\n';
+        out.close();
+        if (!out) {
+            error = std::make_error_code(std::errc::io_error);
+        }
+    }
+    if (!error) {
+        std::filesystem::rename(temporary, path_, error);
+    }
+    if (error) {
+        std::error_code ignored;
+        std::filesystem::remove(temporary, ignored);
+        if (!told_) {
+            notes_.get() << std::format("egraph: observability: cannot write {}: {}\n",
+                                        path_.string(), error.message());
+            told_ = true;
+        }
+        return;
+    }
+    written_ = true;
 }
 
 } // namespace egraph

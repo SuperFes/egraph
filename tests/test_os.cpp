@@ -4,7 +4,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstddef>
+#include <filesystem>
 #include <format>
 #include <functional>
 #include <optional>
@@ -85,6 +87,29 @@ TEST_CASE("waiting on talking children finds those with a line or an end") {
     CHECK(found->talks == std::vector<std::size_t>{0});
     CHECK(talks.at(0).receive() == "slow");
     CHECK(talks.at(0).finish() == 0);
+}
+
+TEST_CASE("a wait given a timeout ends with nothing found once it passes") {
+    std::vector<egraph::os::Talk> talks;
+    talks.push_back(talk(R"(read -r line; printf 'par'; sleep 2; echo tial)"));
+    CHECK(talks.at(0).send("go"));
+    const auto started = std::chrono::steady_clock::now();
+    const auto found = egraph::os::wait_for(talks, std::nullopt, std::chrono::milliseconds{200});
+    REQUIRE(found.has_value());
+    // A part of a line that comes meanwhile does not end it early.
+    CHECK(found->talks.empty());
+    CHECK(found->timed_out);
+    CHECK(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds{200});
+    CHECK(std::chrono::steady_clock::now() - started < std::chrono::milliseconds{1500});
+}
+
+TEST_CASE("a talking child's pid, and this process's, are the ones the system knows") {
+    auto child = talk(R"(read -r line; echo $$)");
+    CHECK(child.send("go"));
+    CHECK(child.receive() == std::to_string(child.pid()));
+    CHECK(child.finish() == 0);
+    CHECK(std::to_string(egraph::os::process_id()) ==
+          std::filesystem::read_symlink("/proc/self").string());
 }
 
 TEST_CASE("nothing to wait for finds nothing") {

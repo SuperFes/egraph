@@ -652,7 +652,7 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     - 16k6a (done): `emerge::snapshot_json` writes a snapshot as portage's `build_snapshot()`
       does (schema 1, keys sorted, `max` true for `--jobs` without a limit), read back the same
       by `parse_snapshot`, which now keeps each task's root, operation and start time.
-    - 16k6b: `exec` publishes its snapshot under FEATURES=observability, as emerge's
+    - 16k6b (done): `exec` publishes its snapshot under FEATURES=observability, as emerge's
       `ObservabilityMonitor` does (on each event, at most once a second, and every 2 s while
       nothing happens), compared with emerge's for the same build stopped in a phase.
       - 16k6b1 (done): the snapshot of a run (`Observer`, `observe.cpp`), from the schedule's
@@ -661,7 +661,14 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
         built, waiting under merge-wait (its time frozen at the build's end) or let through
         (keeping its last phase); emerge's counts (merges done, failures, the merge queue with
         the merge running), the total the merges left after keep-going goes on.
-      - 16k6b2: `exec` publishes it, compared with emerge's.
+      - 16k6b2 (done): `exec` publishes it (`StatusFile`) to `emerge-<pid>.json` under
+        `${EPREFIX}/run/portage`, FEATURES read by `egraph-build --emerge-options`; the pool
+        ticks every 2 s while no worker speaks (`os::wait_for` with a timeout) and tells each
+        worker's pid, which the trace hook now carries. `test_exec_run.py`: with two jobs, one
+        package held in its compile and one built and waiting to merge, exec's snapshot is
+        emerge's but for times and pids (whether each is there compared), and neither leaves
+        its file behind.
+        Narrower than emerge: no cgroup resources, no socket streaming snapshots.
     - 16k6c: mtimedb's resume entry kept through the run, as emerge's scheduler keeps it (each
       merge dropped as it merges, in the worker's own mtimedb commit), so the emerge view shows
       what is left and `emerge --resume` takes over after a failure.

@@ -49,6 +49,7 @@ def test_make_conf_options_are_written_as_emerge_splits_them(
         "system": "save_summary:log,warn,error,qa",
     }
     assert written["jobserver"] is None
+    assert written["observability"] is False
     assert written["tmpdir"] == os.path.join(system.eprefix, "var/tmp")
 
 
@@ -66,6 +67,12 @@ def test_the_jobserver_is_written_as_emerge_finds_it(system, tmp_path, monkeypat
         == cli.EXIT_OK
     )
     assert json.loads(output.read_text())["jobserver"] == "/run/jobserver"
+
+
+def test_observability_is_written_from_features(system, tmp_path, monkeypatch):
+    output = tmp_path / "options"
+    assert run(system, output, monkeypatch, FEATURES="observability") == cli.EXIT_OK
+    assert json.loads(output.read_text())["observability"] is True
 
 
 @pytest.mark.parametrize(

@@ -410,7 +410,14 @@ Ran run(const Planned& planned, std::optional<std::uint32_t> jobs, FakePool& poo
             ran.events.push_back(
                 std::format("{} {}", requests.name(step), egraph::describe_event(event)));
         },
-        [&](std::size_t step, egraph::Traced what) {
+        [&](std::size_t step, egraph::Traced what, std::optional<std::size_t> worker) {
+            // A step starts on a worker; a skipped one never runs.
+            if (what == egraph::Traced::build_started || what == egraph::Traced::merge_started) {
+                CHECK(worker.has_value());
+            }
+            if (what == egraph::Traced::skipped) {
+                CHECK_FALSE(worker.has_value());
+            }
             constexpr std::array names{"build_started", "built",  "build_failed",
                                        "merge_started", "merged", "merge_failed",
                                        "skipped"};

@@ -18,6 +18,7 @@
 #include "json.hpp"
 #include "keep_going.hpp"
 #include "notices.hpp"
+#include "observe.hpp"
 #include "os.hpp"
 #include "package_use.hpp"
 #include "pool.hpp"
@@ -1619,6 +1620,32 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                     {.tmpdir = settings.tmpdir, .free_gb = tmpdir_free_gb_of(passed)},
                     out};
     Schedule schedule{plan, steps, jobs};
+    // FEATURES=observability: published as emerge's scheduler publishes itself.
+    std::vector<Observed> observed;
+    observed.reserve(steps.size());
+    for (const auto& [step, name] : std::views::zip(steps, names)) {
+        observed.push_back(
+            {.cpv = name,
+             .root = shown.store.get().meta.eroot,
+             .operation = std::holds_alternative<MergeStep>(step) ? "merge" : "uninstall"});
+    }
+    Observer observer{os::process_id(), jobs, std::move(observed)};
+    std::optional<StatusFile> status;
+    if (settings.observability) {
+        status.emplace(emerge::status_dir(invocation.eprefix.value_or("")) /
+                           std::format("emerge-{}.json", os::process_id()),
+                       out);
+    }
+    const auto publish = [&](bool tick) {
+        if (status) {
+            const std::chrono::duration<double> now =
+                std::chrono::system_clock::now().time_since_epoch();
+            observer.update(schedule, now.count());
+            status->publish(observer.snapshot(schedule, now.count()), tick);
+        }
+    };
+    publish(true);
+    pool.every(std::chrono::seconds{2}, [&] { publish(true); });
     const bool human = output(invocation).human;
     const auto start = std::chrono::steady_clock::now();
     const auto say = [&](std::size_t step, std::string_view what) {
@@ -1633,8 +1660,20 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     std::optional<std::string> stuck;
     const auto outcome = run_schedule(
         schedule, pool, requests,
-        [&](std::size_t step, const WorkerEvent& event) { say(step, describe_event(event)); },
-        [&](std::size_t step, Traced what) {
+        [&](std::size_t step, const WorkerEvent& event) {
+            say(step, describe_event(event));
+            if (event.kind == WorkerEvent::Kind::phase) {
+                observer.phase(step, event.text);
+            }
+            publish(false);
+        },
+        [&](std::size_t step, Traced what, std::optional<std::size_t> worker) {
+            if (worker) {
+                if (const auto pid = pool.pid(*worker)) {
+                    observer.worker(step, *pid);
+                }
+            }
+            publish(false);
             if (command.trace) {
                 const std::chrono::duration<double> since =
                     std::chrono::steady_clock::now() - start;
@@ -1660,6 +1699,7 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                 say(skip.step, "skipped, " + describe_skip(skip));
                 skipped.push_back(skip.step);
             }
+            observer.resumed(drained, skipped);
             return skipped;
         });
     const auto ended = pool.finish();

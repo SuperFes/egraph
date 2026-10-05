@@ -7,7 +7,11 @@
 #include "schedule.hpp"
 
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <optional>
+#include <ostream>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -36,8 +40,9 @@ class Observer {
     void phase(std::size_t step, std::string name);
     // The worker running the step.
     void worker(std::size_t step, std::int64_t pid);
-    // After keep-going goes on, the merges left are the total, as emerge's next pass counts.
-    void resumed(const Schedule& schedule);
+    // When keep-going goes on without the steps skipped, the merges left are the total, as
+    // emerge's next pass counts.
+    void resumed(const Schedule& schedule, std::span<const std::size_t> skipped);
 
     [[nodiscard]] emerge::Snapshot snapshot(const Schedule& schedule, double now) const;
 
@@ -54,6 +59,30 @@ class Observer {
     std::vector<Observed> steps_;
     std::vector<Times> times_;
     std::uint64_t total_ = 0;
+};
+
+// The status file a run publishes its snapshots to, as emerge's ObservabilityMonitor writes
+// ${EPREFIX}/run/portage/emerge-<pid>.json: replaced whole, and removed with this object.
+class StatusFile {
+  public:
+    // Why it cannot be written is said once on notes, as the run goes on without it.
+    StatusFile(std::filesystem::path path, std::ostream& notes EGRAPH_KEPT_BY_THIS);
+    StatusFile(const StatusFile&) = delete;
+    StatusFile& operator=(const StatusFile&) = delete;
+    StatusFile(StatusFile&&) = delete;
+    StatusFile& operator=(StatusFile&&) = delete;
+    ~StatusFile();
+
+    // Writes the snapshot: for an event, unless the last event wrote one less than a second
+    // before; for a tick, always.
+    void publish(const emerge::Snapshot& snapshot, bool tick);
+
+  private:
+    std::filesystem::path path_;
+    std::reference_wrapper<std::ostream> notes_;
+    std::optional<double> last_;
+    bool written_ = false;
+    bool told_ = false;
 };
 
 } // namespace egraph

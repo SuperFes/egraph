@@ -5,6 +5,7 @@
 #include "os.hpp"
 #include "schedule.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -51,6 +52,10 @@ class WorkerPool {
     // Waits for a worker's next line, or its end (reported once); with for_token, also for the
     // jobserver to have a token perhaps.
     [[nodiscard]] std::expected<Heard, std::string> next(bool for_token);
+    // Calls tick each period next() waits without hearing anything.
+    void every(std::chrono::milliseconds period, std::function<void()> tick);
+    // The worker's process id; none once it has ended.
+    [[nodiscard]] std::optional<std::int64_t> pid(std::size_t worker) const;
     // Closes each worker's input and waits for it: the first exit status not 0, else 0.
     [[nodiscard]] std::expected<int, std::string> finish();
 
@@ -71,6 +76,8 @@ class WorkerPool {
     std::vector<std::size_t> indices_;
     std::size_t added_ = 0;
     std::deque<Heard> heard_;
+    std::optional<std::chrono::milliseconds> period_;
+    std::function<void()> tick_;
     // How the workers that ended went, as record() keeps it.
     std::optional<std::expected<int, std::string>> ended_;
 };

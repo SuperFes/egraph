@@ -1,6 +1,8 @@
 """egraph exec: a plan carried out by egraph-build --worker leaves the system egraph install, with
 the real emerge, leaves."""
 
+import glob
+import json
 import os
 import subprocess
 import time
@@ -359,6 +361,115 @@ def test_a_concurrent_emerge_waits_on_the_build_directory_lock(parallel, tmp_pat
     merged = float(marks[2][1])
     assert merged - launched > 4
     assert float(marks[3][1]) > merged
+
+
+@pytest.fixture
+def observed(gnupg_home, tmp_path):
+    """held, whose compile waits for a file to appear, and quick, under FEATURES=observability
+    with two jobs: quick built and waiting to merge while held compiles. The file's path.
+    """
+    go = tmp_path / "go"
+    ebuilds = {
+        "app-misc/held-1": {
+            **PLAIN,
+            "IUSE": "doc",
+            "MISC_CONTENT": INSTALL
+            + f"src_compile() {{ while [[ ! -e {go} ]]; do sleep 0.1; done; }}\n",
+        },
+        "app-misc/quick-1": {**PLAIN, "IUSE": "doc", "MISC_CONTENT": INSTALL},
+    }
+    options = "--jobs=2 --jobs-tmpdir-require-free-gb=0"
+    config = {
+        "make.conf": (
+            f'EMERGE_DEFAULT_OPTS="{options}"',
+            'FEATURES="${FEATURES} observability"',
+        )
+    }
+    for system, machine in over(ebuilds, tmp_path, user_config=config):
+        yield system, machine, go
+
+
+def published(eprefix):
+    """The status files under eprefix, each as (pid in its name, snapshot)."""
+    found = []
+    for path in glob.glob(os.path.join(eprefix, "run", "portage", "emerge-*.json")):
+        try:
+            with open(path) as f:
+                snapshot = json.load(f)
+        except (OSError, ValueError):
+            continue
+        found.append(
+            (int(os.path.basename(path)[len("emerge-") : -len(".json")]), snapshot)
+        )
+    return found
+
+
+def snapshot_while_held(system, go, *args):
+    """The snapshot egraph's args publish once held compiles and quick waits to merge, then the
+    run let go; also whether its status file is left behind."""
+    running = subprocess.Popen(
+        system.command(*args, "--yes", "app-misc/held", "app-misc/quick"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=dict(os.environ, EGRAPH_STRICT="1"),
+    )
+    try:
+        deadline = time.monotonic() + 120
+        caught = None
+        while caught is None:
+            for pid, snapshot in published(system.playground.eprefix):
+                tasks = {task["cpv"]: task for task in snapshot["tasks"]}
+                held = tasks.get("app-misc/held-1", {})
+                quick = tasks.get("app-misc/quick-1", {})
+                if held.get("phase") == "compile" and quick.get("merge_wait"):
+                    caught = pid, snapshot
+            assert running.poll() is None and time.monotonic() < deadline
+            time.sleep(0.1)
+    finally:
+        go.touch()
+        out, err = running.communicate()
+    assert running.returncode == 0, out + err
+    return caught, published(system.playground.eprefix)
+
+
+# A snapshot's times and pids, which no two runs share: compared by whether each is there.
+VARYING = {"pid", "start_time", "elapsed", "build_elapsed", "timestamp"}
+
+
+def comparable(caught):
+    pid, snapshot = caught
+    assert snapshot["emerge_pid"] == pid
+
+    def kept(entry):
+        return {
+            key: (value is None) if key in VARYING else value
+            for key, value in entry.items()
+            if key != "emerge_pid"
+        }
+
+    return {
+        **kept(snapshot),
+        "tasks": sorted((kept(task) for task in snapshot["tasks"]), key=str),
+    }
+
+
+def test_exec_publishes_its_status_as_emerge_does(observed):
+    """Under FEATURES=observability, exec's status file says what emerge's says of the same run
+    at the same point: one package compiling, one built and waiting to merge, the jobs counted
+    alike; and it goes with the run."""
+    system, machine, go = observed
+    age(system.playground.eroot)
+    machine.save()
+    emerged, left = snapshot_while_held(system, go, "install")
+    assert left == []
+    machine.restore()
+    forget_stores(system)
+    go.unlink()
+    age(system.playground.eroot)
+    worked, left = snapshot_while_held(system, go, "exec")
+    assert left == []
+    assert comparable(worked) == comparable(emerged)
 
 
 FAILS = INSTALL + 'src_compile() { die "fails on purpose"; }\n'
