@@ -17,6 +17,7 @@
 #include "human.hpp"
 #include "json.hpp"
 #include "keep_going.hpp"
+#include "log_read.hpp"
 #include "merge_wait.hpp"
 #include "notices.hpp"
 #include "observe.hpp"
@@ -2212,6 +2213,52 @@ Exit execute(const Stats&, Session& session, const Invocation&, std::ostream& ou
     return Exit::ok;
 }
 
+Exit execute(const LogCommand& command, Session&, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    std::vector<log::Event> events;
+    if (log::targets(invocation.log, log::journal_running()).journal) {
+        const auto printed = output_of(log::journal_command());
+        if (!printed) {
+            err << "egraph: log: journalctl failed: " << printed.error() << '\n';
+            return Exit::failure;
+        }
+        events = log::journal_events(*printed);
+    } else {
+        const auto file =
+            invocation.log_file.value_or(log::default_file(invocation.eprefix.value_or("")));
+        std::ostringstream text;
+        if (std::ifstream in{file}; in) {
+            text << in.rdbuf();
+        }
+        events = log::file_events(text.str());
+    }
+    const auto runs = log::summarize(events);
+    const std::chrono::time_zone* zone = nullptr;
+    try {
+        zone = std::chrono::current_zone();
+    } catch (const std::runtime_error&) {
+        zone = std::chrono::locate_zone("UTC");
+    }
+    const bool human = output(invocation).human;
+    if (!command.run) {
+        for (const auto& run : runs) {
+            out << (human ? log::summary_line(run, *zone) : log::summary_fields(run)) << '\n';
+        }
+        return Exit::ok;
+    }
+    const auto found = log::find_run(runs, *command.run);
+    if (!found) {
+        err << "egraph: log: " << found.error() << '\n';
+        return Exit::failure;
+    }
+    for (const auto& event : events) {
+        if (event.run == *found) {
+            out << (human ? log::event_line(event, *zone) : log::file_line(event)) << '\n';
+        }
+    }
+    return Exit::ok;
+}
+
 Exit execute(const Export& command, Session& session, const Invocation&, std::ostream& out,
              std::ostream& err) {
     if (command.evaluated) {
@@ -2548,6 +2595,11 @@ void configure(CLI::App& app, Invocation& invocation) {
         app, invocation,
         "What needs attention once emerge has run: configuration updates waiting, unread news");
     add_command<Stats>(app, invocation, "Store and graph statistics");
+    add_field(add_command<LogCommand>(app, invocation,
+                                      "The runs logged where --log writes, a line each, or the "
+                                      "events of one"),
+              invocation, "run", &LogCommand::run, "A run's id, or the start of it")
+        ->type_name("RUN");
     add_command<Tui>(app, invocation, "Browse the graph in a terminal interface");
     add_command<Shell>(app, invocation,
                        "Answer commands read one per line from standard input, loading the stores "

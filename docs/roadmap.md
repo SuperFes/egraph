@@ -717,7 +717,10 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       `${EROOT}/var/lib/egraph/exec.json`, planned and verified again without the merges of
       what that run merged (a target would be merged again otherwise); `--jobs`, `--keep-going`
       and `--merge-wait-scope` given anew replace the run's.
-    - 16k9b: `egraph log`, the logs of past runs read back from the journal or the file.
+    - 16k9b (done): `egraph log`, the logged runs read back from wherever `--log` writes (the
+      journal through `journalctl -o json`, else the file): a line a run with how it ended, or
+      one run's events; the journal's fields come back as text, which the summary reads as
+      numbers.
 - 16l (done): a gap in the deep plan's scope, which follows the installed versions' dependencies where
   `emerge -uD` follows those of the versions replacing them. An installed package only a merge's
   new dependencies reach (an orphan until then) keeps its version where emerge updates it, and

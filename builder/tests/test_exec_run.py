@@ -193,6 +193,37 @@ def test_a_run_is_logged_to_the_journal_as_to_the_file(machines):
     assert [entry["EGRAPH_EVENT"] for entry in entries] == [e["event"] for e in events]
     assert [entry["MESSAGE"] for entry in entries] == [e["message"] for e in events]
     assert entries[-1]["EGRAPH_STATUS"] == "ok"
+    shown = system.egraph("--log", "journal", "log", run)
+    assert shown.returncode == 0, shown.stdout + shown.stderr
+    read = [json.loads(line) for line in shown.stdout.splitlines()]
+    assert [e["message"] for e in read] == [e["message"] for e in events]
+
+
+def test_the_logged_runs_read_back(machines):
+    """egraph log lists each run with how it ended, and shows a run's events as the file holds
+    them."""
+    system, machine = machines
+    age(system.playground.eroot)
+    failed = system.egraph("exec", "--yes", "app-misc/broken")
+    assert failed.returncode != 0, failed.stdout + failed.stderr
+    age(system.playground.eroot)
+    ran = system.egraph("exec", "--yes", "-1", "app-misc/lib")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    listed = system.egraph("log")
+    assert listed.returncode == 0, listed.stdout + listed.stderr
+    rows = [line.split("\t") for line in listed.stdout.splitlines()]
+    assert [(row[2], row[3], row[4], row[9]) for row in rows] == [
+        ("exec", "failed", "0", "app-misc/broken"),
+        ("exec", "done", "1", "app-misc/lib"),
+    ]
+    run = rows[1][0]
+    shown = system.egraph("log", run[:8])
+    assert shown.returncode == 0, shown.stdout + shown.stderr
+    read = [json.loads(line) for line in shown.stdout.splitlines()]
+    assert read == [event for event in logged(system) if event["run"] == run]
+    unknown = system.egraph("log", "not-a-run")
+    assert unknown.returncode != 0
+    assert "no run is logged as not-a-run" in unknown.stderr
 
 
 def test_a_failed_build_stops_the_run(machines):

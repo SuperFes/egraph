@@ -679,7 +679,9 @@ through `RunEvents` (`src/run_log.hpp`), which turns what the schedule traces an
 report into events under one run id: `run` (targets, options, jobs), `phase`, `built` (its
 seconds), `merged` (the merge's seconds, the build's, and how long merge-wait held it),
 `uninstalled`, `failed` (phase, status, build log; an error), `skipped` (why; a warning) and
-`end` (the counts, the wall time, and what stopped it).
+`end` (the counts, the wall time, and what stopped it). `egraph log` reads them back
+(`src/log_read.hpp`) from where `--log` writes: the journal through `journalctl -o json
+--identifier=egraph`, whose fields are all text, or the file, typed.
 
 `exec` also keeps its own record of the last run on a root, `${EROOT}/var/lib/egraph/exec.json`
 (`src/run_state.hpp`), never emerge's mtimedb: its arguments, the cpvs it has merged (rewritten,

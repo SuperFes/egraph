@@ -840,6 +840,24 @@ Which edges to follow (default
 .BR reverse ).
 .SS stats
 Store and graph statistics.
+.SS log \fR[\fIrun\fR]
+The runs logged where
+.B \-\-log
+writes, read back from the journal (through
+.BR journalctl )
+or the file: a line each, oldest first, with when it started, its id, the command and its
+targets, and how it ended
+.RB ( done ", " failed ,
+or
+.B unfinished
+when it was cut short or runs still) with what it merged, uninstalled, failed and skipped and
+how long it took. As lines, the fields are separated by tabs: the id, the start in seconds since
+the epoch, the command, the status, the four counts, the seconds (empty when unfinished) and
+the targets.
+.TP
+.I run
+The events of the run whose id this is, or starts with: each with its time and message, or as
+lines, as the file holds them, a JSON object each.
 .SS tui
 The interactive interface: the installed packages, pending updates, orphans and broken ones, each
 package's page, the plan, the running emerges, and a

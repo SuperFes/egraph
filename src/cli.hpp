@@ -212,6 +212,13 @@ struct Stats {
     static constexpr std::string_view name = "stats";
 };
 
+// The runs logged where --log writes, or one run's events.
+struct LogCommand {
+    static constexpr std::string_view name = "log";
+    // A run's id, or the start of it.
+    std::optional<std::string> run;
+};
+
 struct Rebuild {
     static constexpr std::string_view name = "rebuild";
 };
@@ -241,10 +248,10 @@ struct Affected {
     std::string request = "-";
 };
 
-using Command =
-    std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Blockers, Orphans,
-                 Updates, PlanCommand, Update, Install, Exec, Remove, Select, Deselect, Sync,
-                 NoticesCommand, Export, Stats, Rebuild, Refresh, Check, Tui, Shell, Affected>;
+using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Blockers,
+                             Orphans, Updates, PlanCommand, Update, Install, Exec, Remove, Select,
+                             Deselect, Sync, NoticesCommand, Export, Stats, LogCommand, Rebuild,
+                             Refresh, Check, Tui, Shell, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

@@ -46,6 +46,8 @@ printf 'updates -N\norphans\n' | build/egraph shell      # many commands, one se
 build/egraph updates -D --verify                      # the plan beside emerge --pretend's
 build/egraph blockers                                 # installed packages blocking others
 build/egraph exec -y -j4 app-misc/foo                 # merged by egraph's workers, not emerge
+build/egraph exec -y --resume                         # the last run again, without what it merged
+build/egraph log                                      # logged runs; log <run> for one's events
 build/egraph                                          # interactive: TUI on a terminal, : for commands
 meson test -C build --print-errorlogs                 # Catch2 + pytest
 meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false ...  # plus the fork options

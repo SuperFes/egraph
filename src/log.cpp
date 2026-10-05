@@ -48,6 +48,17 @@ std::vector<std::string> journal_fields(const Event& event) {
     return found;
 }
 
+std::string duration(double seconds) {
+    if (seconds < 60) {
+        return std::format("{:.1f} s", seconds);
+    }
+    const auto whole = static_cast<std::int64_t>(seconds);
+    if (whole < 3600) {
+        return std::format("{} min {} s", whole / 60, whole % 60);
+    }
+    return std::format("{} h {} min", whole / 3600, whole % 3600 / 60);
+}
+
 Targets targets(Sink sink, bool journal_running) {
     switch (sink) {
     case Sink::automatic:

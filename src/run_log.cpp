@@ -19,18 +19,6 @@ std::string counted(std::int64_t count, std::string_view one, std::string_view m
     return std::format("{} {}", count, count == 1 ? one : many);
 }
 
-// Seconds as a person reads them: "12.3 s", "4 min 5 s", "1 h 2 min".
-std::string duration(double seconds) {
-    if (seconds < 60) {
-        return std::format("{:.1f} s", seconds);
-    }
-    const auto whole = static_cast<std::int64_t>(seconds);
-    if (whole < 3600) {
-        return std::format("{} min {} s", whole / 60, whole % 60);
-    }
-    return std::format("{} h {} min", whole / 3600, whole % 3600 / 60);
-}
-
 } // namespace
 
 RunEvents::RunEvents(std::string run, std::vector<RunStep> steps)
@@ -92,7 +80,7 @@ std::optional<log::Event> RunEvents::traced(std::size_t step, Traced what, doubl
     case Traced::built: {
         times.built = now;
         const auto seconds = now - times.build_start.value_or(now);
-        auto found = step_event(step, "built", "built in " + duration(seconds), now);
+        auto found = step_event(step, "built", "built in " + log::duration(seconds), now);
         found.fields.push_back({.name = "seconds", .value = seconds});
         return found;
     }
@@ -101,12 +89,12 @@ std::optional<log::Event> RunEvents::traced(std::size_t step, Traced what, doubl
         if (steps_.at(step).uninstall) {
             ++uninstalled_;
             auto found =
-                step_event(step, "uninstalled", "uninstalled in " + duration(seconds), now);
+                step_event(step, "uninstalled", "uninstalled in " + log::duration(seconds), now);
             found.fields.push_back({.name = "seconds", .value = seconds});
             return found;
         }
         ++merged_;
-        auto found = step_event(step, "merged", "merged in " + duration(seconds), now);
+        auto found = step_event(step, "merged", "merged in " + log::duration(seconds), now);
         found.fields.push_back({.name = "seconds", .value = seconds});
         if (times.built && times.build_start) {
             found.fields.push_back(
@@ -167,7 +155,7 @@ log::Event RunEvents::ended(const std::optional<std::string>& error, double now)
     auto message = std::format("egraph {} {}: {} merged, {} uninstalled, {} failed, {} skipped "
                                "in {}",
                                command_, error ? "failed" : "done", merged_, uninstalled_, failed_,
-                               skipped_, duration(seconds));
+                               skipped_, log::duration(seconds));
     if (error) {
         message += ": " + *error;
     }

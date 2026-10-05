@@ -47,6 +47,9 @@ struct Event {
 // EGRAPH_RUN, EGRAPH_EVENT, and each field as EGRAPH_ and its name in upper case.
 [[nodiscard]] std::vector<std::string> journal_fields(const Event& event);
 
+// Seconds as a person reads them: "12.3 s", "4 min 5 s", "1 h 2 min".
+[[nodiscard]] std::string duration(double seconds);
+
 struct Targets {
     bool journal = false;
     bool file = false;
