@@ -1584,6 +1584,20 @@ std::string_view traced_name(Traced what, bool uninstall) {
     return uninstall ? "uninstall-failed" : "merge-failed";
 }
 
+// A directory removed with this object, whatever is in it.
+struct RemovedAtEnd {
+    explicit RemovedAtEnd(std::filesystem::path made) : path{std::move(made)} {}
+    RemovedAtEnd(const RemovedAtEnd&) = delete;
+    RemovedAtEnd& operator=(const RemovedAtEnd&) = delete;
+    RemovedAtEnd(RemovedAtEnd&&) = delete;
+    RemovedAtEnd& operator=(RemovedAtEnd&&) = delete;
+    ~RemovedAtEnd() {
+        std::error_code ignored;
+        std::filesystem::remove_all(path, ignored);
+    }
+    std::filesystem::path path;
+};
+
 // Runs the steps over a pool of workers, as many builds at once as command or else the settings
 // allow, going on after a failure as either says, reporting each event on out: the workers' exit
 // status, or why the run stopped short.
@@ -1614,6 +1628,21 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     auto argv = worker_command(invocation);
     if (jobs != 1U) {
         argv.emplace_back("--background");
+    }
+    // Portage merging itself into the running root: the workers run on a copy of the portage
+    // running now, taken before the run, as emerge updates itself.
+    std::optional<RemovedAtEnd> portage_copy;
+    if (settings.portage_installed && same_root(invocation.root, "/") &&
+        merges_cp(plan, shown.evaluated.get(), "sys-apps/portage")) {
+        std::random_device random;
+        portage_copy.emplace(std::filesystem::path{settings.tmpdir} / "portage" /
+                             std::format("._egraph_portage_.{:08x}", random()));
+        if (const auto copied = output_of(copy_portage_command(invocation, portage_copy->path));
+            !copied) {
+            return std::unexpected(
+                std::format("portage could not be copied to run from: {}", copied.error()));
+        }
+        argv.insert(argv.end(), {"--portage-copy", portage_copy->path.string()});
     }
     // Under a make that started us, as emerge holds a token then.
     const auto passed = execution_options(settings.defaults);
@@ -2583,6 +2612,14 @@ std::vector<std::string> notices_command(const Invocation& invocation,
                                          const std::filesystem::path& output) {
     std::vector<std::string> argv{builder_program(invocation), "--notices", "--output",
                                   output.string()};
+    add_roots(argv, invocation);
+    return argv;
+}
+
+std::vector<std::string> copy_portage_command(const Invocation& invocation,
+                                              const std::filesystem::path& directory) {
+    std::vector<std::string> argv{builder_program(invocation), "--copy-portage", "--output",
+                                  directory.string()};
     add_roots(argv, invocation);
     return argv;
 }

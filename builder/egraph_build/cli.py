@@ -81,6 +81,14 @@ def parser():
         "libraries, as JSON, to --output",
     )
     mode.add_argument(
+        "--copy-portage",
+        dest="mode",
+        action="store_const",
+        const="copy-portage",
+        help="copy the running portage to --output, a directory, for workers to run from while "
+        "a run merges a new one",
+    )
+    mode.add_argument(
         "--worker",
         dest="mode",
         action="store_const",
@@ -95,10 +103,15 @@ def parser():
         "emerge running more than one job",
     )
     p.add_argument(
+        "--portage-copy",
+        type=Path,
+        help="with --worker: run on the copy of portage --copy-portage made there",
+    )
+    p.add_argument(
         "--output",
         type=Path,
         help="file --pending, --emerge-options and --notices write, apart from anything portage "
-        "prints",
+        "prints; the directory --copy-portage makes",
     )
     p.add_argument(
         "entries",
@@ -241,6 +254,7 @@ def write_emerge_options(args):
     import shlex
 
     import portage
+    from portage import installation
 
     from egraph_build import notices
 
@@ -256,6 +270,7 @@ def write_emerge_options(args):
         "options": shlex.split(settings.get("EMERGE_DEFAULT_OPTS", "")),
         "elog": {"summary": summary, "system": system},
         "jobserver": jobserver(settings),
+        "portage_installed": installation.TYPE == installation.TYPES.SYSTEM,
         "merge_wait": "merge-wait" in settings.features,
         "tmpdir": settings["PORTAGE_TMPDIR"],
     }
@@ -399,9 +414,25 @@ def main(argv=None):
     if args.entries:
         print("egraph-build: entries are for --pending and --evaluate", file=sys.stderr)
         return EXIT_USAGE
+    if args.mode == "copy-portage":
+        from egraph_build import selfupdate
+
+        if args.output is None:
+            print("egraph-build: --copy-portage needs --output", file=sys.stderr)
+            return EXIT_USAGE
+        try:
+            selfupdate.copy_portage(str(args.output))
+        except OSError as e:
+            print(f"egraph-build: {args.output}: {e}", file=sys.stderr)
+            return EXIT_FAILURE
+        return EXIT_OK
     if args.mode == "worker":
         from egraph_build import worker
 
+        if args.portage_copy is not None:
+            from egraph_build import selfupdate
+
+            selfupdate.use_copy(str(args.portage_copy))
         return worker.main(args.config_root, args.root, args.eprefix, args.background)
     if args.mode == "json":
         from egraph_build import build, installed

@@ -262,3 +262,13 @@ TEST_CASE("only a phase leaves its request going") {
     CHECK(egraph::describe_event(
               {.kind = Kind::error, .text = "no ebuild", .status = 0, .log = ""}) == "no ebuild");
 }
+
+TEST_CASE("a plan merging portage is told from one that does not") {
+    const auto system = make_system({{.cpv = "sys-apps/portage-3.0"}, {.cpv = "app-misc/foo-1"}},
+                                    {{.cpv = "sys-apps/portage-3.1"}, {.cpv = "app-misc/foo-1"}});
+    const auto plan =
+        egraph::plan_updates(system.store, system.evaluated, egraph::UseRebuilds::none);
+    CHECK(egraph::merges_cp(plan, system.evaluated, "sys-apps/portage"));
+    CHECK_FALSE(egraph::merges_cp(plan, system.evaluated, "app-misc/foo"));
+    CHECK_FALSE(egraph::merges_cp(egraph::Plan{}, system.evaluated, "sys-apps/portage"));
+}

@@ -50,6 +50,11 @@ def test_make_conf_options_are_written_as_emerge_splits_them(
     }
     assert written["jobserver"] is None
     assert written["merge_wait"] is True
+    from portage import installation
+
+    assert written["portage_installed"] == (
+        installation.TYPE == installation.TYPES.SYSTEM
+    )
     assert written["tmpdir"] == os.path.join(system.eprefix, "var/tmp")
 
 

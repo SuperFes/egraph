@@ -648,6 +648,13 @@ each may start. Without FEATURES=merge-wait a built package merges while builds 
 merge-wait scope's packages (`merge_wait_steps`, the fork's `--merge-wait-scope`) still wait
 for no build and merge alone, and one merged before what it needs at run time holds new builds
 beside running ones until that has merged, as emerge's `_system_merge_started` does.
+When the plan merges `sys-apps/portage` into the running root of a system install (as
+`egraph-build --emerge-options` says), `egraph-build --copy-portage` copies the running
+portage's bin directory and packages under `PORTAGE_TMPDIR/portage` before the run, and the
+workers start with `--portage-copy`, importing portage and running the ebuilds from there, so
+that none started after the merge runs half of each version; the copy goes at the end. emerge's
+`_prepare_self_update` does the same for its own process, but removes its copy when the process
+that made it exits, which is why the builder makes one of its own.
 `--trace` writes each step's start and end, which `test_exec_run.py` holds to
 these rules. The run publishes itself in the schema of emerge's `ObservabilityMonitor`, to its
 own `${EPREFIX}/run/egraph/exec-<pid>.json` (egraph writes none of emerge's files), so that the

@@ -556,6 +556,29 @@ def test_a_merge_keeps_what_others_recorded_in_the_mtimedb(machine):
     assert machine.path("usr/lib64") in kept["ldpath"]
 
 
+def test_a_worker_runs_on_a_copy_of_portage_while_a_new_one_merges(machine, tmp_path):
+    """--copy-portage copies the running portage, and a worker given it imports portage and
+    runs the ebuilds from there, as emerge runs from its copy while it updates itself.
+    """
+    copy = tmp_path / "portage-copy"
+    assert cli.main(["--copy-portage", "--output", str(copy)]) == cli.EXIT_OK
+    for path in ("bin/ebuild.sh", "lib/portage/__init__.py", "lib/_emerge/__init__.py"):
+        assert (copy / path).exists(), path
+    assert cli.main(["--copy-portage", "--output", str(copy)]) == cli.EXIT_FAILURE
+    # The copy's ebuild.sh marks each phase it runs.
+    marks = tmp_path / "marks"
+    ebuild_sh = copy / "bin" / "ebuild.sh"
+    text = ebuild_sh.read_text()
+    first, rest = text.split("\n", 1)
+    ebuild_sh.write_text(f'{first}\necho "${{EBUILD_PHASE}}" >> "{marks}"\n{rest}')
+    events, status, stderr = machine.worker(
+        request("app-misc/lib-1"), options=["--portage-copy", str(copy)]
+    )
+    assert status == 0, stderr
+    assert events[-1] == {"merged": "app-misc/lib-1"}, stderr
+    assert "compile" in marks.read_text().split()
+
+
 @pytest.mark.parametrize("background", [False, True])
 def test_in_the_background_build_output_goes_only_to_the_log(machine, background):
     """As emerge's does with more than one job."""

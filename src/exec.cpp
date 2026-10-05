@@ -454,6 +454,13 @@ bool final_event(const WorkerEvent& event) {
     return event.kind != WorkerEvent::Kind::phase;
 }
 
+bool merges_cp(const Plan& plan, const Evaluated& original, std::string_view cp) {
+    const auto& evaluated = plan.evaluated_or(original);
+    return std::ranges::any_of(plan.merges, [&](const Merge& merge) {
+        return evaluated.string(evaluated.candidates.at(merge.candidate).cp) == cp;
+    });
+}
+
 std::string describe_event(const WorkerEvent& event) {
     using Kind = WorkerEvent::Kind;
     switch (event.kind) {

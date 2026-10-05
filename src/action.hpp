@@ -50,6 +50,9 @@ struct RunSettings {
     std::optional<std::string> jobserver;
     // FEATURES=merge-wait: every built package waits for no build to run before it merges.
     bool merge_wait = true;
+    // Portage is installed to the system, not run from a checkout or as a module alone: a run
+    // that merges it then works from a copy, as emerge updating itself does.
+    bool portage_installed = false;
     // PORTAGE_TMPDIR, where builds run.
     std::string tmpdir;
 };

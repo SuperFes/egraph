@@ -261,6 +261,7 @@ std::expected<RunSettings, std::string> parse_run_settings(std::string_view text
                          .elog_system = std::nullopt,
                          .jobserver = std::nullopt,
                          .merge_wait = true,
+                         .portage_installed = false,
                          .tmpdir = {}};
     for (const auto& [field, value] : {std::pair{"summary", &settings.elog_summary},
                                        std::pair{"system", &settings.elog_system}}) {
@@ -284,6 +285,11 @@ std::expected<RunSettings, std::string> parse_run_settings(std::string_view text
         return std::unexpected("merge_wait: not true or false");
     }
     settings.merge_wait = merge_wait->get<bool>();
+    const auto installed = json.find("portage_installed");
+    if (installed == json.end() || !installed->is_boolean()) {
+        return std::unexpected("portage_installed: not true or false");
+    }
+    settings.portage_installed = installed->get<bool>();
     const auto tmpdir = json.find("tmpdir");
     if (tmpdir == json.end() || !tmpdir->is_string()) {
         return std::unexpected("tmpdir: not a string");

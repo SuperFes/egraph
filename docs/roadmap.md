@@ -690,8 +690,8 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       - 16k6d2 (done): `exec` logs its runs (`RunEvents`), held to its `--trace` in the
         keep-going runs, and read back from the journal as from the file with `--log both`.
       - Later: the other commands that change the system.
-  - 16k7: portage updating itself mid-run, and a narrower merge-wait barrier offered as an
-    option.
+  - 16k7 (done): portage updating itself mid-run, and a narrower merge-wait barrier offered as
+    an option.
     - 16k7a (done): FEATURES=-merge-wait: a built package merges while builds run, merges
       still one at a time; only the merge-wait scope's packages (the fork's `--merge-wait-scope`: deep, the
       default, for @system and its run-time dependencies in the plan; system; toolchain, its
@@ -703,12 +703,14 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       graph reached them, so it may hold more than emerge, never less), the schedule's rules
       unit-tested, and an `exec` run under FEATURES=-merge-wait held to them by its trace and
       to `install`'s system.
-    - 16k7b: portage updating itself: when the plan merges `sys-apps/portage` into the
+    - 16k7b (done): portage updating itself: when the plan merges `sys-apps/portage` into the
       running root of a system install, the workers run from a copy of the running portage
-      taken before the run, as emerge's `_prepare_self_update` copies its own (bin and lib,
-      under `PORTAGE_TMPDIR/portage`), removed at the end; likewise `egraph-build` itself
-      when the plan merges egraph, so that no worker started after the merge speaks another
-      protocol.
+      taken before the run (`egraph-build --copy-portage`, then `--worker --portage-copy`), as
+      emerge's `_prepare_self_update` copies its own (bin and lib, under
+      `PORTAGE_TMPDIR/portage`), removed at the end. Tested under the installed portage (the
+      sysportage build), where the PYTHONPATH saved with the package shows the copy ran.
+      Left for when egraph has a package in the tree: the same copy of `egraph-build` itself
+      when the plan merges egraph.
   - 16k8: side-by-side runs against emerge on the dev box.
   - 16k9: `exec --resume`: the last run's request, kept in egraph's own state, planned again
     without what that run merged already (a target would be merged again otherwise); and

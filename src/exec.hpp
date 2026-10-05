@@ -141,6 +141,9 @@ struct WorkerEvent {
     auto operator<=>(const WorkerEvent&) const = default;
 };
 
+// Whether the plan merges a version of cp.
+[[nodiscard]] bool merges_cp(const Plan& plan, const Evaluated& evaluated, std::string_view cp);
+
 // The worker's line as an event; an error for anything else.
 [[nodiscard]] std::expected<WorkerEvent, std::string> parse_event(std::string_view line);
 

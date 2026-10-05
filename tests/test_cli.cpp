@@ -289,6 +289,16 @@ TEST_CASE("emerge runs, and EMERGE_DEFAULT_OPTS is read, under the same roots") 
                                    "--root", "/", "--config-root", "/mnt/config"});
 }
 
+TEST_CASE("portage is copied to run from under the same roots") {
+    egraph::Invocation invocation;
+    invocation.builder = "egraph-build";
+    invocation.config_root = "/mnt/config";
+    CHECK(egraph::copy_portage_command(invocation, "/var/tmp/portage/copy") ==
+          std::vector<std::string>{"egraph-build", "--copy-portage", "--output",
+                                   "/var/tmp/portage/copy", "--root", "/", "--config-root",
+                                   "/mnt/config"});
+}
+
 TEST_CASE("notices are read, and dispatch-conf runs, under the same roots") {
     CHECK(std::holds_alternative<egraph::NoticesCommand>(parse("notices").command));
     CHECK(parse("--dispatch-conf /bin/true notices").dispatch_conf == "/bin/true");

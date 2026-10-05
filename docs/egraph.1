@@ -600,8 +600,11 @@ which the living app's emerge view reads beside emerge's; it writes none of emer
 run is logged where
 .B \-\-log
 says: its start, each phase, each package built, merged or uninstalled with its times, each
-failure with its build log, each skip, and its end. The
-targets join
+failure with its build log, each skip, and its end. When the plan merges portage itself into
+the running root of a system install, the workers run on a copy of the portage running before
+it, removed at the end, as
+.B emerge
+updating itself does. The targets join
 .B @selected
 as
 .B emerge

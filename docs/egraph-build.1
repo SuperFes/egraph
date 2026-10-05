@@ -83,6 +83,17 @@ atoms of
 as JSON, to
 .BR \-\-output .
 .TP
+.B \-\-copy\-portage
+Copy the running portage (its bin directory, and its
+.B portage
+and
+.B _emerge
+packages) to the directory
+.BR \-\-output ,
+which must not exist yet, for workers to run from while a run merges a new portage, as
+.B emerge
+copies itself before it updates itself.
+.TP
 .B \-\-worker
 Build and merge, or uninstall, each package requested on standard input, one JSON object a
 line, in turn as
@@ -129,6 +140,14 @@ naming the phase that failed and its build log, or
 for a request that cannot be tried. What portage and the ebuild print goes to standard error
 and the build log.
 .TP
+.BI \-\-portage\-copy " dir"
+With
+.BR \-\-worker :
+import portage, and run the ebuilds, from the copy
+.B \-\-copy\-portage
+made in
+.IR dir .
+.TP
 .B \-\-background
 With
 .BR \-\-worker ,
@@ -139,7 +158,9 @@ sends it there when it runs more than one job.
 .BI \-\-output " file"
 The file
 .BR \-\-pending ", " \-\-emerge\-options " and " \-\-notices
-write, apart from anything portage prints.
+write, apart from anything portage prints; the directory
+.B \-\-copy\-portage
+makes.
 .TP
 .BI \-\-store " file"
 The store to write (default

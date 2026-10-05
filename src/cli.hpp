@@ -369,6 +369,11 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
 [[nodiscard]] std::vector<std::string> notices_command(const Invocation& invocation,
                                                        const std::filesystem::path& output);
 
+// The egraph-build command line that copies the running portage to directory, for workers to run
+// from (worker_command and --portage-copy) while a run merges a new one.
+[[nodiscard]] std::vector<std::string> copy_portage_command(const Invocation& invocation,
+                                                            const std::filesystem::path& directory);
+
 // The dispatch-conf command line, under the invocation's roots.
 [[nodiscard]] std::vector<std::string> dispatch_conf_command(const Invocation& invocation);
 

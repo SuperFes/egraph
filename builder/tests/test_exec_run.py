@@ -441,6 +441,23 @@ def test_a_concurrent_emerge_waits_on_the_build_directory_lock(parallel, tmp_pat
     assert float(marks[3][1]) > merged
 
 
+@pytest.fixture
+def portage_package(gnupg_home, tmp_path):
+    """A package named sys-apps/portage."""
+    ebuild = {**PLAIN, "IUSE": "doc", "MISC_CONTENT": INSTALL}
+    yield from over({"sys-apps/portage-9": ebuild}, tmp_path)
+
+
+def test_a_run_merging_portage_leaves_install_system_and_no_copy(portage_package):
+    """Merging portage itself, a system install's runs from a copy of the running portage
+    (egraph-build --copy-portage) as emerge's does, which the PYTHONPATH saved with the package
+    shows; either way the system is install's and no copy is left behind."""
+    system, machine = portage_package
+    carried_out_as_install(system, machine, [], ["-1", "sys-apps/portage"])
+    tmpdir = os.path.join(system.playground.eprefix, "var", "tmp", "portage")
+    assert glob.glob(os.path.join(tmpdir, "._egraph_portage_.*")) == []
+
+
 LONG = INSTALL + "src_compile() { sleep 4; }\n"
 # sys is in @system; quick builds while slow takes longer.
 UNWAITED = {
