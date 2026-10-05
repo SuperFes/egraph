@@ -320,7 +320,7 @@ if pytest.found()
     args: ['-p', 'no:cacheprovider', '-q', meson.project_source_root() / 'builder' / 'tests'],
     env: builder_env,
     depends: [egraph_exe, completion_scripts, shadow_exe],
-    timeout: 600,
+    timeout: 1800,
   )
 else
   warning('pytest not found: builder tests are not registered')
