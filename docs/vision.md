@@ -96,6 +96,19 @@ drops to a test dependency only at parity. egraph never writes portage's own fil
   - `egencache`: metadata caches for local repositories.
   - `glsa-check`: GLSAs matched against the store (roadmap 20 already plans it).
   - `emerge-webrsync`, `emirrordist`: snapshot syncing and mirroring.
+- Syncing and its trust chain, as portage does it today: (todo)
+  - `repos.conf`'s sync settings (`sync-type` rsync, git, webrsync; `sync-uri`, `auto-sync`,
+    `sync-depth`, `sync-user`), hooks in `repo.postsync.d` and `postsync.d`, and
+    `metadata/timestamp` checks against stale mirrors.
+  - Verification: rsync trees by their signed Manifests (gemato's job: OpenPGP, with
+    `sec-keys/openpgp-keys-gentoo-release` and refreshing the keys over WKD or a keyserver),
+    git trees by commit signatures (`sync-git-verify-commit-signature`), webrsync snapshots by
+    their detached signatures, and distfiles by the Manifest's hashes.
+  - Binary packages: gpkg signatures (`gpkg-sign`, `BINPKG_GPG_VERIFY`) and the binhost's
+    signed index.
+  - The privilege drops and sandboxes portage applies: `usersync`, `userfetch`, `userpriv`
+    (the portage user), `sandbox`, and the network, IPC, PID and mount namespaces; news after
+    a sync.
 - The overlapping tools from gentoolkit and portage-utils, where egraph has the data already:
   `equery` and `q*` (owners, dependencies, sizes, checks; `qlop` from egraph's build history),
   `eclean` (distfiles and binary packages no plan needs), `revdep-rebuild` (soname consumers,
