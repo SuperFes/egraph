@@ -50,7 +50,7 @@ build/egraph exec -y --resume                         # the last run again, with
 build/egraph log                                      # logged runs; log <run> for one's events
 build/egraph                                          # interactive: TUI on a terminal, : for commands
 meson test -C build --print-errorlogs                 # Catch2 + pytest
-meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false ...  # plus the fork options
+CC=clang CXX=clang++ meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false ...  # plus the fork options; gcc 16.2.1's libasan fails at thread exit
 meson setup build-notui -Dtui=disabled -Djournal=disabled ...  # without Notcurses or libsystemd
 clang-tidy -p build src/*.cpp                         # safety checks, config in .clang-tidy
 clang-format -i src/*.cpp src/*.hpp tests/*.cpp tests/*.hpp
