@@ -688,9 +688,8 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     option.
   - 16k8: side-by-side runs against emerge on the dev box.
   - 16k9: `exec --resume`: the last run's request, kept in egraph's own state, planned again
-    without what that run merged already (a target would be merged again otherwise); and the
-    logs read back: `egraph log` (past runs, each package's build times) and estimates in
-    `exec` and the TUI.
+    without what that run merged already (a target would be merged again otherwise); and
+    `egraph log`, the logs of past runs read back. Estimates come from the build history (20).
 - 16l (done): a gap in the deep plan's scope, which follows the installed versions' dependencies where
   `emerge -uD` follows those of the versions replacing them. An installed package only a merge's
   new dependencies reach (an orphan until then) keeps its version where emerge updates it, and
@@ -739,6 +738,34 @@ an emerge run (`docs/vision.md`).
 
 - Build history from the emerge monitor's cgroup readings: time and peak memory per package,
   which gives every plan an estimate ("34 rebuilds, about 2 h, 6 GB peak").
+- A build history store of egraph's own (todo, to map out; recorded 2026-10-05), written by
+  `exec` as each step ends, never dependent on emerge's files:
+  - What each build records: package, version, repository, USE, the build's environment
+    (CFLAGS, MAKEOPTS, `package.env`, the toolchain's versions), wall and CPU time per phase,
+    peak memory, the build directory's peak size, installed size, distfile sizes and fetch
+    time, how many builds ran beside it and the load average and PSI over it, the jobs and
+    steve's tokens it had, the outcome and the failing phase's log.
+  - Estimates: a package's time from its own builds, scaled for USE, version and the
+    parallelism it gets; for one never built here, from similar ones (build system, eclasses,
+    distfile size). A plan's wall time from the schedule itself, run ahead with those times
+    and the jobs (the critical path, not the sum): `updates`, `plan`, `exec` and a whole
+    `@world` update say how long they will take, and the build view counts down by time, not
+    packages.
+  - Queries and views: a package's last builds as a table and a sparkline ("gcc, the last 12
+    times"), the slowest packages, total build time by week or month, what rebuilds most often
+    and why (subslot rebuilds, USE churn), packages that fail now and then, and a build that
+    got slower (a toolchain or CFLAGS change, LTO), each a page in the living app.
+  - Advice from it: a build whose directory will not fit a tmpfs `PORTAGE_TMPDIR` (offer a
+    `notmpfs` env), one whose peak memory at these jobs nears what the system has (fewer
+    jobs, or steve's memory floor), FEATURES=test's cost per package, a binary package offered
+    when a build is long and a binhost has it, a finish time for a run started now.
+  - Scheduling from it: among the builds ready at once, the longest first or the critical
+    path first, beside emerge's order; a divergence from emerge, so behind an option and
+    recorded in `docs/upstream-notes.md`.
+  - Importing earlier build times from `emerge.log` (read only, marked as imported, coarser),
+    never required.
+  - Export as JSON or CSV. The storage format (SQLite, or an append-only file of our own with
+    an index) is the first thing to map out; C APIs stay behind `os.cpp`-style wrappers.
 - GLSAs matched against the store at once, and a filter in the list.
 - Space: what removing a package frees with the orphans it leaves (the vdb's SIZE).
 - Notifications: security fixes pending, a stale sync, broken soname dependencies after a merge.
