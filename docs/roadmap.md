@@ -712,9 +712,12 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       Left for when egraph has a package in the tree: the same copy of `egraph-build` itself
       when the plan merges egraph.
   - 16k8: side-by-side runs against emerge on the dev box.
-  - 16k9: `exec --resume`: the last run's request, kept in egraph's own state, planned again
-    without what that run merged already (a target would be merged again otherwise); and
-    `egraph log`, the logs of past runs read back. Estimates come from the build history (20).
+  - 16k9: resuming and reading back runs. Estimates come from the build history (20).
+    - 16k9a (done): `exec --resume`: the last run's arguments and what it merged, kept in
+      `${EROOT}/var/lib/egraph/exec.json`, planned and verified again without the merges of
+      what that run merged (a target would be merged again otherwise); `--jobs`, `--keep-going`
+      and `--merge-wait-scope` given anew replace the run's.
+    - 16k9b: `egraph log`, the logs of past runs read back from the journal or the file.
 - 16l (done): a gap in the deep plan's scope, which follows the installed versions' dependencies where
   `emerge -uD` follows those of the versions replacing them. An installed package only a merge's
   new dependencies reach (an orphan until then) keeps its version where emerge updates it, and

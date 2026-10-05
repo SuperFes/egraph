@@ -28,6 +28,7 @@
 #include "request.hpp"
 #include "resume.hpp"
 #include "run_log.hpp"
+#include "run_state.hpp"
 #include "schedule.hpp"
 #include "selection.hpp"
 #include "session.hpp"
@@ -1604,7 +1605,8 @@ struct RemovedAtEnd {
 std::expected<int, std::string> run_pool(const Invocation& invocation, const RunSettings& settings,
                                          const Exec& command, const Shown& shown,
                                          StepRequests& requests, const std::vector<Step>& steps,
-                                         const std::vector<std::string>& names, std::ostream& out) {
+                                         const std::vector<std::string>& names, RunState state,
+                                         std::ostream& out) {
     const auto& plan = shown.plan;
     const auto jobs = command.jobs ? command.jobs : jobs_of(execution_options(settings.defaults));
     const bool keep_going =
@@ -1704,6 +1706,18 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                                  .jobs = jobs,
                                  .keep_going = keep_going},
                                 now()));
+    // What exec --resume reads: rewritten as each merge finishes, so a run cut short leaves it.
+    const auto state_path = run_state_path(shown.store.get().meta.eroot);
+    bool state_told = false;
+    const auto record = [&] {
+        if (const auto written = os::replace_with_text(state_path, run_state_json(state) + '\n');
+            !written && !state_told) {
+            out << std::format("egraph: exec: cannot record the run in {}: {}\n",
+                               state_path.string(), written.error().message());
+            state_told = true;
+        }
+    };
+    record();
     const bool human = output(invocation).human;
     const auto start = std::chrono::steady_clock::now();
     const auto say = [&](std::size_t step, std::string_view what) {
@@ -1737,6 +1751,10 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
             publish(false);
             if (const auto logs = events.traced(step, what, now())) {
                 logger.write(*logs);
+            }
+            if (what == Traced::merged && std::holds_alternative<MergeStep>(steps.at(step))) {
+                state.merged.push_back(names.at(step));
+                record();
             }
             if (command.trace) {
                 const std::chrono::duration<double> since =
@@ -1790,18 +1808,35 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
         error = std::format("the workers exited with status {}", *ended);
     }
     logger.write(events.ended(error, now()));
+    state.status = error ? RunState::Status::failed : RunState::Status::done;
+    record();
     return ended;
 }
 
-Exit execute(const Exec& command, Session& session, const Invocation& invocation, std::ostream& out,
-             std::ostream& err) {
+// Carries out command, a run resumed from one that merged the cpvs merged when it has any.
+Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Session& session,
+               const Invocation& invocation, std::ostream& out, std::ostream& err) {
     return act_on_plan(
         Exec::name, command.yes, session, invocation, out, err,
         [&] { return show_plan(command, Exec::name, session, invocation, out, err); },
-        [&](const Invocation& again) { return execute(command, session, again, out, err); },
+        [&](const Invocation& again) {
+            return carry_out(command, merged, session, again, out, err);
+        },
         [&](const Shown& shown) {
             const auto& [plan, request, store, evaluated, arguments] = shown;
-            const auto steps = run_steps(store, evaluated, plan, arguments, command.oneshot);
+            auto all = run_steps(store, evaluated, plan, arguments, command.oneshot);
+            const auto total = all.size();
+            const auto steps = resumed_steps(store, evaluated, plan, std::move(all), merged);
+            if (steps.size() < total) {
+                out << std::format("egraph: exec: resuming without the {} merged by the last run\n",
+                                   total - steps.size() == 1
+                                       ? std::string{"merge"}
+                                       : std::format("{} merges", total - steps.size()));
+            }
+            if (steps.empty()) {
+                out << "egraph: exec: the last run merged all of it\n";
+                return Exit::ok;
+            }
             std::vector<std::string> names;
             names.reserve(steps.size());
             for (const auto& step : steps) {
@@ -1813,10 +1848,44 @@ Exit execute(const Exec& command, Session& session, const Invocation& invocation
                 "egraph-build --worker", false,
                 [&](const RunSettings& settings) {
                     return run_pool(invocation, settings, command, shown, requests, steps, names,
-                                    out);
+                                    {.arguments = exec_arguments(command), .merged = merged}, out);
                 },
                 store, session, invocation, out, err);
         });
+}
+
+Exit execute(const Exec& command, Session& session, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    if (!command.resume) {
+        return carry_out(command, {}, session, invocation, out, err);
+    }
+    const auto stores = session.stores();
+    if (!stores) {
+        return fail(err, stores.error());
+    }
+    const auto path = run_state_path(stores->get().installed.meta.eroot);
+    std::ifstream in{path};
+    if (!in) {
+        err << std::format("egraph: exec: no run to resume: {} cannot be read\n", path.string());
+        return Exit::failure;
+    }
+    std::ostringstream text;
+    text << in.rdbuf();
+    const auto state = parse_run_state(text.str());
+    if (!state) {
+        err << std::format("egraph: exec: {}: {}\n", path.string(), state.error());
+        return Exit::failure;
+    }
+    if (state->status == RunState::Status::done) {
+        out << "egraph: exec: the last run finished; nothing to resume\n";
+        return Exit::ok;
+    }
+    const auto resumed = resumed_exec(command, state->arguments);
+    if (!resumed) {
+        err << std::format("egraph: exec: {}: {}\n", path.string(), resumed.error());
+        return Exit::failure;
+    }
+    return carry_out(*resumed, state->merged, session, invocation, out, err);
 }
 
 // A remove's targets as emerge takes them: an exact cpv as =cpv.
@@ -2398,6 +2467,30 @@ void configure(CLI::App& app, Invocation& invocation) {
             "EMERGE_DEFAULT_OPTS' otherwise, else deep")
         ->type_name("SCOPE")
         ->check(CLI::IsMember({"deep", "system", "toolchain", "none"}));
+    // Targets stay required while parsing, so that --keep-going takes none for its value, unless
+    // --resume, which takes the last run's.
+    CLI::Option* exec_targets = exec_cmd->get_option("targets");
+    exec_cmd->preparse_callback([&invocation, exec_targets](std::size_t) {
+        invocation.command.emplace<Exec>();
+        exec_targets->required();
+    });
+    exec_cmd
+        ->add_flag_callback(
+            "--resume",
+            [&invocation, exec_targets] {
+                std::get<Exec>(invocation.command).resume = true;
+                exec_targets->required(false);
+            },
+            "Carry out the last run's targets and options again, without what it merged; --jobs, "
+            "--keep-going and --merge-wait-scope given now replace its own")
+        ->trigger_on_parse();
+    exec_cmd->callback([&invocation] {
+        const auto& exec = std::get<Exec>(invocation.command);
+        if (exec.resume && (!exec.targets.empty() || exec.update || exec.deep || exec.noreplace ||
+                            exec.oneshot || exec.rebuilds != UseRebuilds::none)) {
+            throw CLI::ValidationError("--resume", "takes the last run's targets and plan options");
+        }
+    });
     CLI::App* remove_cmd = add_dynamic_deps(add_command<Remove>(
         app, invocation,
         "Show what emerge --depclean would remove of the packages, then have it remove them once "
@@ -2622,6 +2715,61 @@ std::vector<std::string> copy_portage_command(const Invocation& invocation,
                                   directory.string()};
     add_roots(argv, invocation);
     return argv;
+}
+
+std::vector<std::string> exec_arguments(const Exec& command) {
+    std::vector<std::string> arguments;
+    const auto flag = [&arguments](bool set, const char* name) {
+        if (set) {
+            arguments.emplace_back(name);
+        }
+    };
+    flag(command.update, "--update");
+    flag(command.deep, "--deep");
+    flag(command.noreplace, "--noreplace");
+    flag(command.rebuilds == UseRebuilds::all, "--newuse");
+    flag(command.rebuilds == UseRebuilds::changed, "--changed-use");
+    flag(command.oneshot, "--oneshot");
+    if (command.jobs) {
+        arguments.insert(arguments.end(), {"--jobs", std::to_string(*command.jobs)});
+    }
+    if (command.keep_going) {
+        arguments.emplace_back(*command.keep_going ? "--keep-going=y" : "--keep-going=n");
+    }
+    if (command.merge_wait_scope) {
+        arguments.insert(arguments.end(), {"--merge-wait-scope", *command.merge_wait_scope});
+    }
+    arguments.emplace_back("--");
+    arguments.insert(arguments.end(), command.targets.begin(), command.targets.end());
+    return arguments;
+}
+
+std::expected<Exec, std::string> resumed_exec(const Exec& given,
+                                              std::span<const std::string> arguments) {
+    CLI::App app;
+    Invocation invocation;
+    configure(app, invocation);
+    // CLI11 takes the arguments last first.
+    std::vector<std::string> reversed(arguments.rbegin(), arguments.rend());
+    reversed.emplace_back(Exec::name);
+    try {
+        app.parse(reversed);
+    } catch (const CLI::ParseError& error) {
+        return std::unexpected(
+            std::format("the last run's arguments do not parse: {}", error.what()));
+    }
+    auto* parsed = std::get_if<Exec>(&invocation.command);
+    if (parsed == nullptr || parsed->resume) {
+        return std::unexpected("the last run's arguments are not a run's");
+    }
+    Exec resumed = std::move(*parsed);
+    resumed.jobs = given.jobs ? given.jobs : resumed.jobs;
+    resumed.keep_going = given.keep_going ? given.keep_going : resumed.keep_going;
+    resumed.merge_wait_scope =
+        given.merge_wait_scope ? given.merge_wait_scope : resumed.merge_wait_scope;
+    resumed.yes = given.yes;
+    resumed.trace = given.trace;
+    return resumed;
 }
 
 std::vector<std::string> dispatch_conf_command(const Invocation& invocation) {

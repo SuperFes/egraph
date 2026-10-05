@@ -108,6 +108,7 @@ src_install() { mark install; }
 NOT_IMAGE = (
     "bin",
     "etc/portage",
+    "var/lib/egraph",
     "var/lib/gentoo",
     "var/cache",
     "var/log",

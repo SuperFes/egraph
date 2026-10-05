@@ -158,6 +158,17 @@ TEST_CASE("appending under the file's lock adds to what is there, and makes it i
     CHECK_FALSE(egraph::os::append_locked(dir.path() / "a/b/log/under", "x"));
 }
 
+TEST_CASE("a file replaced with text holds the text alone, with no copy left beside it") {
+    const egraph::test::TempDir dir;
+    const auto path = dir.path() / "a/b/state.json";
+    REQUIRE(egraph::os::replace_with_text(path, "first, and longer\n"));
+    REQUIRE(egraph::os::replace_with_text(path, "second\n"));
+    CHECK(egraph::test::read_text(path) == "second\n");
+    CHECK(std::distance(std::filesystem::directory_iterator{path.parent_path()},
+                        std::filesystem::directory_iterator{}) == 1);
+    CHECK_FALSE(egraph::os::replace_with_text(path / "under", "x"));
+}
+
 TEST_CASE("the journal takes an entry when egraph has it") {
     const std::vector<std::string> fields{"MESSAGE=egraph unit test", "PRIORITY=7",
                                           "SYSLOG_IDENTIFIER=egraph-test"};

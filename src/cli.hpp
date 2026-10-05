@@ -157,6 +157,8 @@ struct Exec : Install {
     std::optional<bool> keep_going;
     // The portage fork's --merge-wait-scope; none for EMERGE_DEFAULT_OPTS'.
     std::optional<std::string> merge_wait_scope;
+    // Carry out the last run's request again, without what it merged.
+    bool resume = false;
 };
 
 // emerge --depclean run on packages once shown, verified and confirmed.
@@ -373,6 +375,16 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
 // from (worker_command and --portage-copy) while a run merges a new one.
 [[nodiscard]] std::vector<std::string> copy_portage_command(const Invocation& invocation,
                                                             const std::filesystem::path& directory);
+
+// exec's own arguments for command, as the run's record keeps them: the options that shape its
+// plan and run, then its targets.
+[[nodiscard]] std::vector<std::string> exec_arguments(const Exec& command);
+
+// The command exec --resume carries out: the recorded run's arguments, with the --jobs,
+// --keep-going and --merge-wait-scope given now in place of the run's, and given's --yes and
+// --trace. An error for a record exec cannot parse.
+[[nodiscard]] std::expected<Exec, std::string> resumed_exec(const Exec& given,
+                                                            std::span<const std::string> arguments);
 
 // The dispatch-conf command line, under the invocation's roots.
 [[nodiscard]] std::vector<std::string> dispatch_conf_command(const Invocation& invocation);

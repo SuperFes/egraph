@@ -759,3 +759,65 @@ def test_keep_going_stops_where_emerge_cannot_resume(keep_going):
     )
     assert not machine.installed("app-misc/uses-1")
     assert "cannot go on without app-misc/broken-1: app-misc/gone" in ran.stderr
+
+
+# flaky fails to build while the root holds var/tmp/fail; it builds after first.
+FLAKY = INSTALL + 'src_compile() { [[ -e ${EROOT}/var/tmp/fail ]] && die "told to"; }\n'
+RESUMED = {
+    "app-misc/first-1": {**DOC, "MISC_CONTENT": INSTALL},
+    "app-misc/flaky-1": {**DOC, "DEPEND": "app-misc/first", "MISC_CONTENT": FLAKY},
+}
+
+
+@pytest.fixture
+def resumed(gnupg_home, tmp_path):
+    yield from over(RESUMED, tmp_path)
+
+
+def run_state(system):
+    path = os.path.join(system.playground.eroot, "var", "lib", "egraph", "exec.json")
+    with open(path) as f:
+        return json.load(f)
+
+
+def test_a_resumed_run_merges_what_is_left_as_install_merges_it_all(resumed, tmp_path):
+    """A failed run's request again, without what it merged, though a target merged would be
+    merged again otherwise; then nothing is left to resume."""
+    system, machine = resumed
+    targets = ["app-misc/first", "app-misc/flaky"]
+    age(system.playground.eroot)
+    nothing = system.egraph("exec", "--yes", "--resume")
+    assert nothing.returncode != 0
+    assert "no run to resume" in nothing.stderr
+    machine.save()
+    installed = system.egraph("install", "--yes", *targets)
+    assert installed.returncode == 0, installed.stdout + installed.stderr
+    emerged = without_counters(machine.state())
+    machine.restore()
+    forget_stores(system)
+    fail = os.path.join(system.playground.eroot, "var", "tmp", "fail")
+    os.makedirs(os.path.dirname(fail), exist_ok=True)
+    open(fail, "w").close()
+    age(system.playground.eroot)
+    failed = system.egraph("exec", "--yes", "-j", "1", *targets)
+    assert failed.returncode != 0, failed.stdout + failed.stderr
+    assert run_state(system) == {
+        "arguments": ["--jobs", "1", "--", *targets],
+        "merged": ["app-misc/first-1"],
+        "status": "failed",
+    }
+    os.remove(fail)
+    age(system.playground.eroot)
+    trace = tmp_path / "trace"
+    ran = system.egraph("exec", "--yes", "--resume", "--trace", str(trace))
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert {cpv for _, cpv in read_trace(trace)} == {"app-misc/flaky-1"}
+    worked = without_counters(machine.state())
+    assert worked == emerged, differences(emerged, worked)
+    state = run_state(system)
+    assert state["merged"] == ["app-misc/first-1", "app-misc/flaky-1"]
+    assert state["status"] == "done"
+    age(system.playground.eroot)
+    again = system.egraph("exec", "--yes", "--resume")
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert "the last run finished" in again.stdout

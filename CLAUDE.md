@@ -105,7 +105,7 @@ emerge's `BlockerDB` and `create_world_atom`, replayed on the depgraph its resum
 and compares the systems they leave, and holds a parallel run's `--trace` to emerge's
 scheduling rules (with and without FEATURES=merge-wait), a run merging portage itself
 (on a copy of portage under the installed one), beside a jobserver and a concurrent emerge, a `--keep-going` run's skips
-to what emerge drops, its status file (its own, in `run/egraph`) to emerge's under
+to what emerge drops, a failed run resumed (`exec --resume`) to one install of it all, its status file (its own, in `run/egraph`) to emerge's under
 FEATURES=observability, and its log (to the playground's file, as `meson test` sets
 `EGRAPH_LOG=file`) to its trace.
 Test stores come from `conftest.write_stores`, which writes the evaluated store beside the

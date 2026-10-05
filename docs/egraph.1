@@ -560,7 +560,7 @@ does.
 .TP
 .BR \-y ", " \-\-yes
 Run emerge without asking, and offer no USE changes.
-.SS exec \fItarget\fR...
+.SS exec \fItarget\fR...|\-\-resume
 Shows the plan for the targets and verifies it as
 .B install
 does, then merges it without
@@ -610,6 +610,10 @@ as
 .B emerge
 adds them, unless
 .BR \-\-oneshot .
+The run is recorded in
+.IR ${EROOT}/var/lib/egraph/exec.json :
+its arguments, the packages it has merged, rewritten as each merges, and how it ended, for
+.BR \-\-resume .
 Also run as
 .BR egraph\-exec .
 .TP
@@ -680,6 +684,17 @@ by default. Once one of them merges before what it needs at run time, no build s
 another until that has merged, as
 .B emerge
 holds them.
+.TP
+.B \-\-resume
+Carry out the last run's targets and options again, after it failed or was cut short: the plan
+is made and verified afresh, then its merges of packages the last run merged, and that are
+installed still, are left out, where a target would be merged again otherwise. The
+.BR \-\-jobs ,
+.B \-\-keep\-going
+and
+.B \-\-merge\-wait\-scope
+given now replace the last run's; targets and the plan's options cannot be given. Nothing is
+done when the last run finished.
 .TP
 .BI \-\-trace " file"
 Write to

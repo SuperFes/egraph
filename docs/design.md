@@ -681,6 +681,15 @@ seconds), `merged` (the merge's seconds, the build's, and how long merge-wait he
 `uninstalled`, `failed` (phase, status, build log; an error), `skipped` (why; a warning) and
 `end` (the counts, the wall time, and what stopped it).
 
+`exec` also keeps its own record of the last run on a root, `${EROOT}/var/lib/egraph/exec.json`
+(`src/run_state.hpp`), never emerge's mtimedb: its arguments, the cpvs it has merged (rewritten,
+synced and renamed into place as each merges, so a run cut short leaves it), and how it ended.
+Planning takes seconds, so `exec --resume` keeps no merge list: it parses the recorded arguments
+again, plans and verifies the request afresh, and leaves out the steps whose merges the record
+names and that are installed still. Only a target merged again by a plain (not `-u`) request
+needs that; an update has nothing left to do for what merged, and a dependency that merged
+satisfies its atom. The schedule takes a merge with no step for done, so what waited for it runs.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

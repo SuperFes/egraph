@@ -588,27 +588,24 @@ std::expected<void, std::error_code> journal_send(std::span<const std::string> f
 #endif
 }
 
-std::expected<void, std::error_code> replace_with_copy(const std::filesystem::path& source,
-                                                       const std::filesystem::path& target) {
-    namespace fs = std::filesystem;
-    const auto directory = target.has_parent_path() ? target.parent_path() : fs::path{"."};
-    std::error_code error;
-    fs::create_directories(directory, error);
-    if (error) {
-        return std::unexpected(error);
-    }
+namespace {
+
+// Where a replacement for target is written before it is renamed over target.
+std::filesystem::path replacement_of(const std::filesystem::path& target) {
     std::random_device random;
-    const auto temp = directory / std::format(".{}.{:08x}", target.filename().string(), random());
-    // copy_file refuses to overwrite, so the name is ours.
-    fs::copy_file(source, temp, error);
-    if (error) {
-        return std::unexpected(error);
-    }
+    return target.parent_path() / std::format(".{}.{:08x}", target.filename().string(), random());
+}
+
+// Renames the replacement written at temp over target, readable by all and synced first.
+std::expected<void, std::error_code> rename_over(const std::filesystem::path& temp,
+                                                 const std::filesystem::path& target) {
+    namespace fs = std::filesystem;
     const auto discard = [&temp](std::error_code why) {
         std::error_code ignored;
         fs::remove(temp, ignored);
         return std::unexpected(why);
     };
+    std::error_code error;
     fs::permissions(temp,
                     fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read |
                         fs::perms::others_read,
@@ -623,10 +620,53 @@ std::expected<void, std::error_code> replace_with_copy(const std::filesystem::pa
     if (error) {
         return discard(error);
     }
-    if (const auto unsynced = sync(directory)) {
+    if (const auto unsynced = sync(target.parent_path())) {
         return std::unexpected(unsynced);
     }
     return {};
+}
+
+} // namespace
+
+std::expected<void, std::error_code> replace_with_copy(const std::filesystem::path& source,
+                                                       const std::filesystem::path& target) {
+    namespace fs = std::filesystem;
+    const auto absolute = fs::absolute(target);
+    std::error_code error;
+    fs::create_directories(absolute.parent_path(), error);
+    if (error) {
+        return std::unexpected(error);
+    }
+    const auto temp = replacement_of(absolute);
+    // copy_file refuses to overwrite, so the name is ours.
+    fs::copy_file(source, temp, error);
+    if (error) {
+        return std::unexpected(error);
+    }
+    return rename_over(temp, absolute);
+}
+
+std::expected<void, std::error_code> replace_with_text(const std::filesystem::path& target,
+                                                       std::string_view text) {
+    namespace fs = std::filesystem;
+    const auto absolute = fs::absolute(target);
+    std::error_code error;
+    fs::create_directories(absolute.parent_path(), error);
+    if (error) {
+        return std::unexpected(error);
+    }
+    const auto temp = replacement_of(absolute);
+    {
+        std::ofstream out{temp, std::ios::binary | std::ios::trunc};
+        out << text;
+        out.close();
+        if (!out) {
+            std::error_code ignored;
+            fs::remove(temp, ignored);
+            return std::unexpected(std::make_error_code(std::errc::io_error));
+        }
+    }
+    return rename_over(temp, absolute);
 }
 
 bool utf8_locale() {

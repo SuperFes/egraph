@@ -390,6 +390,73 @@ TEST_CASE("exec takes the merge-wait scope by name") {
     CHECK_THROWS_AS(parse("exec --merge-wait-scope all a/b"), CLI::ValidationError);
 }
 
+TEST_CASE("exec --resume takes no targets or plan options of its own") {
+    const auto resumed = std::get<egraph::Exec>(parse("exec --resume -y -j2").command);
+    CHECK(resumed.resume);
+    CHECK(resumed.targets.empty());
+    CHECK(resumed.jobs == 2U);
+    CHECK_FALSE(std::get<egraph::Exec>(parse("exec a/b").command).resume);
+    CHECK_THROWS(parse("exec"));
+    CHECK_THROWS(parse("exec --resume a/b"));
+    CHECK_THROWS(parse("exec --resume -u"));
+    CHECK_THROWS(parse("exec --resume --oneshot"));
+    CHECK_THROWS(parse("exec --resume --changed-use"));
+}
+
+TEST_CASE("a run's recorded arguments parse back to its command, but for --yes and --trace") {
+    egraph::Exec command;
+    command.targets = {"a/b", "@set"};
+    command.update = true;
+    command.deep = true;
+    command.noreplace = true;
+    command.rebuilds = egraph::UseRebuilds::changed;
+    command.oneshot = true;
+    command.jobs = 3;
+    command.keep_going = false;
+    command.merge_wait_scope = "system";
+    command.yes = true;
+    command.trace = "/t";
+    command.table = true;
+    const auto words = egraph::exec_arguments(command);
+    CHECK(words == std::vector<std::string>{"--update", "--deep", "--noreplace", "--changed-use",
+                                            "--oneshot", "--jobs", "3", "--keep-going=n",
+                                            "--merge-wait-scope", "system", "--", "a/b", "@set"});
+    command.rebuilds = egraph::UseRebuilds::all;
+    CHECK(std::ranges::contains(egraph::exec_arguments(command), "--newuse"));
+    CHECK(egraph::exec_arguments(egraph::Exec{}) == std::vector<std::string>{"--"});
+
+    egraph::Exec given;
+    given.resume = true;
+    given.yes = true;
+    given.trace = "/u";
+    const auto resumed = egraph::resumed_exec(given, words);
+    REQUIRE(resumed);
+    CHECK(resumed->targets == std::vector<std::string>{"a/b", "@set"});
+    CHECK(resumed->update);
+    CHECK(resumed->deep);
+    CHECK(resumed->noreplace);
+    CHECK(resumed->rebuilds == egraph::UseRebuilds::changed);
+    CHECK(resumed->oneshot);
+    CHECK(resumed->jobs == 3U);
+    CHECK(resumed->keep_going == false);
+    CHECK(resumed->merge_wait_scope == "system");
+    CHECK(resumed->yes);
+    CHECK(resumed->trace == "/u");
+    CHECK_FALSE(resumed->table);
+    CHECK_FALSE(resumed->resume);
+    given.jobs = 8;
+    given.keep_going = true;
+    given.merge_wait_scope = "none";
+    const auto overridden = egraph::resumed_exec(given, words);
+    REQUIRE(overridden);
+    CHECK(overridden->jobs == 8U);
+    CHECK(overridden->keep_going == true);
+    CHECK(overridden->merge_wait_scope == "none");
+    CHECK_FALSE(egraph::resumed_exec(given, std::vector<std::string>{"--bogus", "a/b"}));
+    CHECK_FALSE(egraph::resumed_exec(given, std::vector<std::string>{}));
+    CHECK_FALSE(egraph::resumed_exec(given, std::vector<std::string>{"--resume"}));
+}
+
 TEST_CASE("runs are logged where --log says, to the journal or the file by default") {
     CHECK(parse("stats").log == egraph::log::Sink::automatic);
     CHECK_FALSE(parse("stats").log_file);

@@ -179,6 +179,10 @@ bool can_create(const std::filesystem::path& path);
 std::expected<void, std::error_code> replace_with_copy(const std::filesystem::path& source,
                                                        const std::filesystem::path& target);
 
+// Replaces target with text as replace_with_copy replaces it with a file's copy.
+std::expected<void, std::error_code> replace_with_text(const std::filesystem::path& target,
+                                                       std::string_view text);
+
 // Appends text to the file at path in writes under an exclusive lock on the whole file (the
 // POSIX record lock portage's lockfile takes on its logs), so that runs beside each other never
 // interleave their lines. Creates the file with mode 0644, and its directories.
