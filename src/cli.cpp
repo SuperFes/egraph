@@ -2913,14 +2913,14 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
         out << app.help();
         return {};
     }
-    const auto usage = [&](const auto&... message) {
-        ((err << "egraph: " << where << ": ") << ... << message) << '\n';
+    const auto usage = [&](std::string_view message) {
+        err << "egraph: " << where << ": " << message << '\n';
         return LineResult{.quit = false, .exit = Exit::usage};
     };
     // CLI11 only says a subcommand is required.
     if (const auto word = line.substr(0, line.find_first_of(" \t"));
         !word.starts_with('-') && app.get_subcommand_no_throw(std::string{word}) == nullptr) {
-        return usage(word, ": no such command (help lists them)");
+        return usage(std::format("{}: no such command (help lists them)", word));
     }
     try {
         app.parse(std::string{line}, false);
@@ -2929,13 +2929,14 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
         return {.quit = false, .exit = app.exit(e, out, err) == 0 ? Exit::ok : Exit::usage};
     }
     if (const auto option = changed_stores(invocation, command)) {
-        return usage(*option, " chooses the stores, which the ", where,
-                     " keeps; start another egraph for others");
+        return usage(std::format("{} chooses the stores, which the {} keeps; start another "
+                                 "egraph for others",
+                                 *option, where));
     }
     if (std::holds_alternative<std::monostate>(command.command) ||
         std::holds_alternative<Shell>(command.command) ||
         std::holds_alternative<Tui>(command.command)) {
-        return usage("already in the ", where);
+        return usage(std::format("already in the {}", where));
     }
     // emerge would write over the interface's screen.
     if (context == Context::interface && (std::holds_alternative<Update>(command.command) ||
