@@ -1005,7 +1005,8 @@ Exit write_resume_list(Exit status, const std::optional<std::filesystem::path>& 
         return status;
     }
     std::ofstream file{*path};
-    file << resume_entry(evaluated, plan, store.get().meta.eroot, request, oneshot) << '\n';
+    file << resume_entry(evaluated, plan, store.get().meta.eroot, request, oneshot, arguments)
+         << '\n';
     if (!file.flush()) {
         return fail(err, std::format("{}: {}: cannot write", name, path->string()));
     }

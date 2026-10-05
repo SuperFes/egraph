@@ -669,22 +669,28 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
         emerge's but for times and pids (whether each is there compared), and neither leaves
         its file behind.
         Narrower than emerge: no cgroup resources, no socket streaming snapshots.
-    - 16k6c: mtimedb's resume entry kept through the run, as emerge's scheduler keeps it (each
-      merge dropped as it merges, in the worker's own mtimedb commit), so the emerge view shows
-      what is left and `emerge --resume` takes over after a failure.
-      - 16k6c1 (done): the entry's parts in C++: emerge's options as its parser leaves them
-        (`emerge_myopts`, held to `parse_opts` through the shadow binary), the entry for the
-        merges still listed, and `ResumeList`, which follows what emerge's scheduler lists and
-        when it commits.
-      - 16k6c2 (done): `egraph-build --save-resume` writes the entry through portage's `MtimeDB`
-        (moving a list of more than one merge to `resume_backup`, as a new emerge does), and the
-        worker drops each merge in the commit after it.
-      - 16k6c3: `exec` keeps the entry; compared with `install`'s after the same failed runs,
-        and taken over by `emerge --resume`.
-    - 16k6d: `emerge.log` written as emerge writes it, compared line by line with `install`'s.
+      - 16k6b3: egraph writes none of emerge's files: the status file moves to its own
+        `${EPREFIX}/run/egraph/exec-<pid>.json`, published on every run rather than under
+        emerge's FEATURES=observability, and the emerge view reads it beside emerge's.
+    - 16k6c (withdrawn): mtimedb's resume entry. egraph leaves emerge's files alone, and plans
+      fast enough that resuming needs no saved graph (16k9). What stays: `emerge_myopts`, held
+      to `parse_opts` through the shadow binary, for `--resume-list`, whose favorites now name
+      the targets under `--oneshot` too, as emerge records them.
+    - 16k6d: logging: to the journal when systemd runs (libsystemd, an optional feature;
+      structured fields for the run, step, package and event), else
+      `${EPREFIX}/var/log/egraph.log` as JSON lines; an option picks the journal, the file,
+      both or neither. `exec` first: the run, each phase, each package built, merged or
+      uninstalled with its times, failures with their logs, skips, and the end.
+      - 16k6d1: the sinks and the event format.
+      - 16k6d2: `exec` logs its runs, held to its `--trace`.
+      - Later: the other commands that change the system.
   - 16k7: portage updating itself mid-run, and a narrower merge-wait barrier offered as an
     option.
   - 16k8: side-by-side runs against emerge on the dev box.
+  - 16k9: `exec --resume`: the last run's request, kept in egraph's own state, planned again
+    without what that run merged already (a target would be merged again otherwise); and the
+    logs read back: `egraph log` (past runs, each package's build times) and estimates in
+    `exec` and the TUI.
 - 16l (done): a gap in the deep plan's scope, which follows the installed versions' dependencies where
   `emerge -uD` follows those of the versions replacing them. An installed package only a merge's
   new dependencies reach (an orphan until then) keeps its version where emerge updates it, and

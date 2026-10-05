@@ -1,5 +1,5 @@
-"""Shadows the C++ emerge_myopts, the options of mtimedb's resume entry, against emerge's own
-parse_opts, over every option egraph passes to emerge."""
+"""Shadows the C++ emerge_myopts, the options of the resume entry --resume-list writes, against
+emerge's own parse_opts, over every option egraph passes to emerge."""
 
 import json
 import os

@@ -81,13 +81,6 @@ def parser():
         "libraries, as JSON, to --output",
     )
     mode.add_argument(
-        "--save-resume",
-        dest="mode",
-        action="store_const",
-        const="save-resume",
-        help="save the resume entry in --input as mtimedb's, as emerge saves its merge list",
-    )
-    mode.add_argument(
         "--worker",
         dest="mode",
         action="store_const",
@@ -100,17 +93,6 @@ def parser():
         action="store_true",
         help="with --worker: what builds and merges print goes only to their logs, as with "
         "emerge running more than one job",
-    )
-    p.add_argument(
-        "--backup",
-        action="store_true",
-        help="with --save-resume: as a new run starts, keep a merge list of more than one "
-        "package from before as resume_backup, as emerge does",
-    )
-    p.add_argument(
-        "--input",
-        type=Path,
-        help="file --save-resume reads",
     )
     p.add_argument(
         "--output",
@@ -300,26 +282,6 @@ def write_notices(args):
     return EXIT_OK
 
 
-def save_resume(args):
-    import portage
-
-    from egraph_build import resume
-
-    if args.input is None:
-        print("egraph-build: --save-resume needs --input", file=sys.stderr)
-        return EXIT_USAGE
-    try:
-        entry = resume.parse_entry(args.input.read_text())
-    except (OSError, ValueError) as e:
-        print(f"egraph-build: {args.input}: {e}", file=sys.stderr)
-        return EXIT_FAILURE
-    settings = portage.config(
-        config_root=args.config_root, target_root=args.root, eprefix=args.eprefix
-    )
-    resume.save(resume.mtimedb_path(settings["EROOT"]), entry, args.backup)
-    return EXIT_OK
-
-
 def _previous(path, decode):
     from egraph_build import store
 
@@ -429,8 +391,6 @@ def main(argv=None):
         return write_emerge_options(args)
     if args.mode == "notices":
         return write_notices(args)
-    if args.mode == "save-resume":
-        return save_resume(args)
     if args.mode == "evaluate":
         if not args.entries:
             print("egraph-build: --evaluate takes the cps to evaluate", file=sys.stderr)

@@ -10,7 +10,6 @@
 #include <map>
 #include <optional>
 #include <thread>
-#include <variant>
 
 namespace egraph {
 
@@ -160,15 +159,9 @@ Json myopts_of(std::span<const std::string> options) {
     return found;
 }
 
-} // namespace
-
-std::string emerge_myopts(std::span<const std::string> options) {
-    return myopts_of(options).dump();
-}
-
-std::string resume_entry(const Evaluated& original, const Plan& plan, std::string_view eroot,
-                         std::span<const std::size_t> listed, std::span<const std::string> options,
-                         std::span<const std::string> favorites) {
+std::string entry_of(const Evaluated& original, const Plan& plan, std::string_view eroot,
+                     std::span<const std::size_t> listed, std::span<const std::string> options,
+                     std::span<const std::string> favorites) {
     const auto& evaluated = plan.evaluated_or(original);
     auto mergelist = Json::array();
     for (const auto index : listed) {
@@ -182,68 +175,35 @@ std::string resume_entry(const Evaluated& original, const Plan& plan, std::strin
         .dump(1);
 }
 
-std::string resume_entry(const Evaluated& evaluated, const Plan& plan, std::string_view eroot,
-                         const EmergeRequest& request, bool oneshot) {
-    const std::vector<std::size_t> listed(plan.order.begin(), plan.order.end());
-    const auto options = request_options(request, oneshot);
-    return resume_entry(evaluated, plan, eroot, listed, options,
-                        oneshot ? std::span<const std::string>{} : request.targets);
+} // namespace
+
+std::string emerge_myopts(std::span<const std::string> options) {
+    return myopts_of(options).dump();
 }
 
-ResumeList::ResumeList(const Schedule& schedule) : listed_(schedule.steps().size()) {
-    for (std::size_t step = 0; step < listed_.size(); ++step) {
-        listed_.at(step) = std::holds_alternative<MergeStep>(schedule.step(step));
-    }
-}
-
-void ResumeList::drop_failed(const Schedule& schedule) {
-    for (std::size_t step = 0; step < listed_.size(); ++step) {
-        if (listed_.at(step) && schedule.stage(step) == Schedule::Stage::failed) {
-            listed_.at(step) = false;
-            unsaved_ = true;
+std::vector<std::string> resume_favorites(std::span<const std::string> targets,
+                                          std::span<const Argument> arguments) {
+    std::vector<std::string> found;
+    for (const auto& target : targets) {
+        if (target.starts_with('@')) {
+            found.push_back(target);
         }
     }
-}
-
-bool ResumeList::weighed(const Schedule& schedule,
-                         std::optional<std::span<const std::size_t>> skipped) {
-    drop_failed(schedule);
-    if (!skipped) {
-        return false;
-    }
-    std::vector<bool> left(listed_.size());
-    for (std::size_t step = 0; step < listed_.size(); ++step) {
-        left.at(step) = listed_.at(step) && schedule.stage(step) == Schedule::Stage::queued &&
-                        !std::ranges::contains(*skipped, step);
-    }
-    // emerge goes on without saving when it would merge nothing.
-    if (std::ranges::none_of(left, std::identity{})) {
-        return false;
-    }
-    listed_ = std::move(left);
-    unsaved_ = false;
-    return true;
-}
-
-bool ResumeList::ended(const Schedule& schedule, bool keep_going) {
-    if (keep_going) {
-        drop_failed(schedule);
-    }
-    bool changed = false;
-    for (std::size_t step = 0; step < listed_.size(); ++step) {
-        changed = changed || schedule.stage(step) == Schedule::Stage::done;
-    }
-    return unsaved_ && changed;
-}
-
-std::vector<std::size_t> ResumeList::steps(const Schedule& schedule) const {
-    std::vector<std::size_t> found;
-    for (std::size_t step = 0; step < listed_.size(); ++step) {
-        if (listed_.at(step) && schedule.stage(step) != Schedule::Stage::done) {
-            found.push_back(step);
+    for (const auto& argument : arguments) {
+        if (argument.set.empty()) {
+            found.push_back(argument.atom);
         }
     }
     return found;
+}
+
+std::string resume_entry(const Evaluated& evaluated, const Plan& plan, std::string_view eroot,
+                         const EmergeRequest& request, bool oneshot,
+                         std::span<const Argument> arguments) {
+    const std::vector<std::size_t> listed(plan.order.begin(), plan.order.end());
+    const auto options = request_options(request, oneshot);
+    const auto favorites = resume_favorites(request.targets, arguments);
+    return entry_of(evaluated, plan, eroot, listed, options, favorites);
 }
 
 } // namespace egraph
