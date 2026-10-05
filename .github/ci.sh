@@ -23,5 +23,6 @@ chown -R ci .
 su ci -c "
     set -e
     meson setup build -Dtui=disabled -Dportage_test_keys=/var/tmp/portage/lib/portage/tests/.gnupg
-    meson test -C build --print-errorlogs
+    # GitHub runners take about twice as long as a workstation.
+    meson test -C build --print-errorlogs --timeout-multiplier 2
 "
