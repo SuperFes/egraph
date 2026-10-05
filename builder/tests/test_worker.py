@@ -556,6 +556,42 @@ def test_a_merge_keeps_what_others_recorded_in_the_mtimedb(machine):
     assert machine.path("usr/lib64") in kept["ldpath"]
 
 
+def resume_entry(machine):
+    with open(machine.path("var/cache/edb/mtimedb")) as f:
+        return json.load(f).get("resume")
+
+
+def test_a_merge_leaves_emerges_resume_list(machine):
+    """Each package merged leaves the list, and the entry goes with the last, as emerge's
+    scheduler drops them; what fails stays."""
+    from egraph_build import resume
+
+    def task(cpv):
+        return ["ebuild", machine.eroot, cpv, "merge"]
+
+    def save(*cpvs):
+        entry = {"binpkgs": [], "favorites": [], "myopts": {"--oneshot": True}}
+        entry["mergelist"] = [task(cpv) for cpv in cpvs]
+        resume.save(resume.mtimedb_path(machine.eroot), entry, backup=False)
+
+    save("app-misc/lib-1", "app-misc/broken-1", "app-misc/files-1")
+    events, status, stderr = machine.worker(
+        request("app-misc/lib-1"), request("app-misc/broken-1")
+    )
+    assert status == 0, stderr
+    assert events[-1]["failed"] == "compile"
+    assert resume_entry(machine)["mergelist"] == [
+        task("app-misc/broken-1"),
+        task("app-misc/files-1"),
+    ]
+    save("app-misc/files-1")
+    events, status, stderr = machine.worker(
+        build("app-misc/files-1"), merge("app-misc/files-1")
+    )
+    assert events[-1] == {"merged": "app-misc/files-1"}, stderr
+    assert resume_entry(machine) is None
+
+
 @pytest.mark.parametrize("background", [False, True])
 def test_in_the_background_build_output_goes_only_to_the_log(machine, background):
     """As emerge's does with more than one job."""

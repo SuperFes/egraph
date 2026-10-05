@@ -83,6 +83,19 @@ atoms of
 as JSON, to
 .BR \-\-output .
 .TP
+.B \-\-save\-resume
+Save the resume entry in
+.B \-\-input
+as the one in
+.IR ${EROOT}/var/cache/edb/mtimedb ,
+the merge list
+.B emerge \-\-resume
+takes up, as
+.B emerge
+saves its own as a run starts and as
+.B \-\-keep\-going
+goes on; the rest of the mtimedb stays as it is.
+.TP
 .B \-\-worker
 Build and merge, or uninstall, each package requested on standard input, one JSON object a
 line, in turn as
@@ -127,7 +140,24 @@ then
 naming the phase that failed and its build log, or
 .B {\(dqerror\(dq: ...}
 for a request that cannot be tried. What portage and the ebuild print goes to standard error
-and the build log.
+and the build log. A package merged leaves the mtimedb's resume entry in the same commit, and
+the entry goes with the last, as
+.B emerge
+drops each one it merges.
+.TP
+.B \-\-backup
+With
+.BR \-\-save\-resume ,
+as a new run starts: a merge list of more than one package left from before is kept as
+.BR resume_backup ,
+as a new
+.B emerge
+run keeps it.
+.TP
+.BI \-\-input " file"
+The file
+.B \-\-save\-resume
+reads.
 .TP
 .B \-\-background
 With

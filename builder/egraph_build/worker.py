@@ -230,6 +230,7 @@ class Worker:
     def __init__(self, config_root=None, root=None, eprefix=None):
         import portage
 
+        from egraph_build import resume
         from egraph_build.cli import portage_environment
 
         env = portage_environment(config_root, root, eprefix)
@@ -239,7 +240,7 @@ class Worker:
         eroot = self._eroot = self._settings["EROOT"]
         self._portdb = trees[eroot]["porttree"].dbapi
         self._vartree = trees[eroot]["vartree"]
-        self._mtimedb_path = os.path.join(eroot, portage.CACHE_PATH, "mtimedb")
+        self._mtimedb_path = resume.mtimedb_path(eroot)
         _queries_see(trees)
         # By cpv, what was built and waits for its merge.
         self._built = {}
@@ -320,8 +321,11 @@ class Worker:
 
     def merge_built(self, request, emit):
         """Merges the package this worker built, emitting its events, and lets its build
-        directory go; whether it merged."""
+        directory go; whether it merged. Once merged, it leaves mtimedb's resume entry in the
+        same commit, as emerge's scheduler drops it."""
         import portage
+
+        from egraph_build import resume
 
         built = self._built.get(request.cpv)
         if built is None:
@@ -350,6 +354,8 @@ class Worker:
                 prev_mtimes=mtimedb["ldpath"],
                 blockers=lambda: blockers,
             )
+            if status == os.EX_OK:
+                resume.drop(mtimedb, self._eroot, request.cpv)
             mtimedb.commit()
         finally:
             built.lock.unlock()
@@ -420,8 +426,8 @@ class Worker:
         return True
 
     def _mtimedb(self):
-        """env-update's record of the library directories, which emerge keeps there too, as
-        the workers merging before this one left it."""
+        """env-update's record of the library directories and emerge's resume entry, as the
+        workers merging before this one left it."""
         import portage
 
         return portage.MtimeDB(self._mtimedb_path)
