@@ -27,6 +27,10 @@ namespace egraph {
 // value or with y; off without one.
 [[nodiscard]] bool keep_going_of(std::span<const std::string> passed);
 
+// Which packages merge alone whatever FEATURES=merge-wait says, under passed: the last
+// --merge-wait-scope (the portage fork's) decides, deep by default.
+[[nodiscard]] std::string merge_wait_scope_of(std::span<const std::string> passed);
+
 // The GiB PORTAGE_TMPDIR must have free, beside 1 GiB per running build, before emerge starts
 // another beside them, under passed: the last --jobs-tmpdir-require-free-gb, 18 by default; 0
 // for no check.
@@ -44,6 +48,8 @@ struct RunSettings {
     // The make jobserver's named pipe each build takes a token from, under
     // FEATURES=jobserver-token.
     std::optional<std::string> jobserver;
+    // FEATURES=merge-wait: every built package waits for no build to run before it merges.
+    bool merge_wait = true;
     // PORTAGE_TMPDIR, where builds run.
     std::string tmpdir;
 };

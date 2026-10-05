@@ -49,6 +49,7 @@ def test_make_conf_options_are_written_as_emerge_splits_them(
         "system": "save_summary:log,warn,error,qa",
     }
     assert written["jobserver"] is None
+    assert written["merge_wait"] is True
     assert written["tmpdir"] == os.path.join(system.eprefix, "var/tmp")
 
 
@@ -133,3 +134,9 @@ def test_the_summary_follows_portage_logdir():
         PORTAGE_ELOG_SYSTEM="save_summary", PORTAGE_LOGDIR="/logs//here"
     )
     assert notices.elog_settings(settings)[0] == "/logs/here/elog/summary.log"
+
+
+def test_merge_wait_is_written_from_features(system, tmp_path, monkeypatch):
+    output = tmp_path / "options"
+    assert run(system, output, monkeypatch, FEATURES="-merge-wait") == cli.EXIT_OK
+    assert json.loads(output.read_text())["merge_wait"] is False

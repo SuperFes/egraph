@@ -131,19 +131,22 @@ TEST_CASE("what emerge runs under is read from egraph-build's JSON") {
     const auto settings = egraph::parse_run_settings(R"({
  "options": ["--jobs", "4"],
  "elog": {"summary": "/var/log/portage/elog/summary.log", "system": "save_summary"},
- "jobserver": "/run/jobserver", "tmpdir": "/var/tmp"
+ "jobserver": "/run/jobserver", "merge_wait": false, "tmpdir": "/var/tmp"
 })");
     REQUIRE(settings);
     CHECK(settings->defaults == std::vector<std::string>{"--jobs", "4"});
     CHECK(settings->jobserver == "/run/jobserver");
     CHECK(settings->tmpdir == "/var/tmp");
+    CHECK_FALSE(settings->merge_wait);
     CHECK(settings->elog_summary == "/var/log/portage/elog/summary.log");
     CHECK(settings->elog_system == "save_summary");
     const auto plain =
         egraph::parse_run_settings(R"({"options": [], "elog": {"summary": null, "system": null},
-                                       "jobserver": null, "tmpdir": "/var/tmp"})");
+                                       "jobserver": null, "merge_wait": true,
+                                       "tmpdir": "/var/tmp"})");
     REQUIRE(plain);
     CHECK_FALSE(plain->jobserver);
+    CHECK(plain->merge_wait);
     CHECK_FALSE(plain->elog_summary);
     CHECK_FALSE(plain->elog_system);
     CHECK_FALSE(egraph::parse_run_settings("--jobs\n4\n"));
@@ -152,7 +155,20 @@ TEST_CASE("what emerge runs under is read from egraph-build's JSON") {
     CHECK_FALSE(egraph::parse_run_settings(R"({"options": []})"));
     CHECK_FALSE(egraph::parse_run_settings(
         R"({"options": [], "elog": {"summary": null, "system": null}, "jobserver": 3,
-            "tmpdir": "/var/tmp"})"));
+            "merge_wait": true, "tmpdir": "/var/tmp"})"));
+    CHECK_FALSE(egraph::parse_run_settings(
+        R"({"options": [], "elog": {"summary": null, "system": null}, "jobserver": null,
+            "merge_wait": "yes", "tmpdir": "/var/tmp"})"));
     CHECK_FALSE(egraph::parse_run_settings(
         R"({"options": [], "elog": {"summary": null, "system": null}, "jobserver": null})"));
+}
+
+TEST_CASE("the merge-wait scope is the last --merge-wait-scope, deep by default") {
+    CHECK(egraph::merge_wait_scope_of({}) == "deep");
+    const std::vector<std::string> passed{"--merge-wait-scope=none", "--jobs=2",
+                                          "--merge-wait-scope=toolchain"};
+    CHECK(egraph::merge_wait_scope_of(passed) == "toolchain");
+    const std::vector<std::string> defaults{"--merge-wait-scope", "system", "--ask"};
+    CHECK(egraph::execution_options(defaults) ==
+          std::vector<std::string>{"--merge-wait-scope=system"});
 }

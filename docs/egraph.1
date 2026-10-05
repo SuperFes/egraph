@@ -571,7 +571,9 @@ as
 .B emerge
 schedules them with
 .B FEATURES=merge\-wait
-(portage's default): a build starts once nothing it reaches through what each package waits for
+(portage's default; without it, a built package merges while builds run, but for those
+.B \-\-merge\-wait\-scope
+holds): a build starts once nothing it reaches through what each package waits for
 is still to merge, a built package merges once no build runs, in the order the builds finished,
 and each package a blocker needs gone is uninstalled once the merges that need it gone are done.
 A line is shown for each phase as it starts. With more than one job, what the builds print goes
@@ -654,6 +656,27 @@ stops, as emerge's resume does. Without a value, or with
 otherwise as
 .B EMERGE_DEFAULT_OPTS
 says, off by default.
+.TP
+.BR \-\-merge\-wait\-scope " deep|system|toolchain|none"
+The packages that merge alone, once no build runs and after what was let through to merge
+before them, whatever
+.B FEATURES=merge\-wait
+says, as the portage fork's emerge option of the name picks them:
+.B deep
+@system's packages and what they need at run time,
+.B system
+@system's alone,
+.B toolchain
+the few every build runs (bash, coreutils, gcc, binutils, glibc and the like), or
+.BR none ;
+otherwise as
+.B EMERGE_DEFAULT_OPTS
+says,
+.B deep
+by default. Once one of them merges before what it needs at run time, no build starts beside
+another until that has merged, as
+.B emerge
+holds them.
 .TP
 .BI \-\-trace " file"
 Write to

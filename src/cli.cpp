@@ -17,6 +17,7 @@
 #include "human.hpp"
 #include "json.hpp"
 #include "keep_going.hpp"
+#include "merge_wait.hpp"
 #include "notices.hpp"
 #include "observe.hpp"
 #include "os.hpp"
@@ -1621,7 +1622,17 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                     os::environment("MAKEFLAGS").has_value(),
                     {.tmpdir = settings.tmpdir, .free_gb = tmpdir_free_gb_of(passed)},
                     out};
-    Schedule schedule{plan, steps, jobs};
+    // emerge's merge-wait scope, as its --merge-wait-scope picks it.
+    const auto scope =
+        merge_wait_scope(command.merge_wait_scope.value_or(merge_wait_scope_of(passed)))
+            .value_or(MergeWaitScope::deep);
+    Schedule schedule{plan,
+                      steps,
+                      jobs,
+                      {.feature = settings.merge_wait,
+                       .alone = merge_wait_steps(shown.store.get(), build_graph(shown.store.get()),
+                                                 shown.evaluated.get(), plan, steps, scope),
+                       .running_root = same_root(invocation.root, "/")}};
     // Published as emerge's scheduler publishes itself, in egraph's own place.
     std::vector<Observed> observed;
     observed.reserve(steps.size());
@@ -2347,6 +2358,17 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->expected(0, 1)
         ->default_str("y")
         ->transform(yes_no);
+    exec_cmd
+        ->add_option_function<std::string>(
+            "--merge-wait-scope",
+            [&invocation](const std::string& scope) {
+                std::get<Exec>(invocation.command).merge_wait_scope = scope;
+            },
+            "The packages that merge alone once no build runs, whatever FEATURES=merge-wait says: "
+            "deep (@system and what it needs at run time), system, toolchain or none; "
+            "EMERGE_DEFAULT_OPTS' otherwise, else deep")
+        ->type_name("SCOPE")
+        ->check(CLI::IsMember({"deep", "system", "toolchain", "none"}));
     CLI::App* remove_cmd = add_dynamic_deps(add_command<Remove>(
         app, invocation,
         "Show what emerge --depclean would remove of the packages, then have it remove them once "

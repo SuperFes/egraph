@@ -155,6 +155,8 @@ struct Exec : Install {
     std::optional<std::filesystem::path> trace;
     // Go on after a failure, as emerge --keep-going; none for EMERGE_DEFAULT_OPTS'.
     std::optional<bool> keep_going;
+    // The portage fork's --merge-wait-scope; none for EMERGE_DEFAULT_OPTS'.
+    std::optional<std::string> merge_wait_scope;
 };
 
 // emerge --depclean run on packages once shown, verified and confirmed.

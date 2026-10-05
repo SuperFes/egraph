@@ -373,6 +373,13 @@ TEST_CASE("why takes one atom and emerge's --with-bdeps") {
     CHECK_THROWS_AS(parse("why"), CLI::RequiredError);
 }
 
+TEST_CASE("exec takes the merge-wait scope by name") {
+    CHECK_FALSE(std::get<egraph::Exec>(parse("exec a/b").command).merge_wait_scope);
+    CHECK(std::get<egraph::Exec>(parse("exec --merge-wait-scope toolchain a/b").command)
+              .merge_wait_scope == "toolchain");
+    CHECK_THROWS_AS(parse("exec --merge-wait-scope all a/b"), CLI::ValidationError);
+}
+
 TEST_CASE("runs are logged where --log says, to the journal or the file by default") {
     CHECK(parse("stats").log == egraph::log::Sink::automatic);
     CHECK_FALSE(parse("stats").log_file);

@@ -644,7 +644,11 @@ print going only to their logs, as in emerge's background mode, and a build star
 others only with the free space in PORTAGE_TMPDIR emerge's `_can_add_job` wants. Under FEATURES=jobserver-token
 each build takes a byte from MAKEFLAGS' jobserver pipe (steve's `/dev/steve`, or make's) and
 writes it back when the build ends; the jobserver never decides how many jobs run, only when
-each may start. `--trace` writes each step's start and end, which `test_exec_run.py` holds to
+each may start. Without FEATURES=merge-wait a built package merges while builds run; the
+merge-wait scope's packages (`merge_wait_steps`, the fork's `--merge-wait-scope`) still wait
+for no build and merge alone, and one merged before what it needs at run time holds new builds
+beside running ones until that has merged, as emerge's `_system_merge_started` does.
+`--trace` writes each step's start and end, which `test_exec_run.py` holds to
 these rules. The run publishes itself in the schema of emerge's `ObservabilityMonitor`, to its
 own `${EPREFIX}/run/egraph/exec-<pid>.json` (egraph writes none of emerge's files), so that the
 emerge view shows it as it shows an emerge, named as egraph's and never taking emerge's merge

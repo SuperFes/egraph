@@ -587,8 +587,9 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       after a failure nothing new builds and what built still merges.
       The jobs from EMERGE_DEFAULT_OPTS (`jobs_of`). Tested on its own, with no workers.
       Narrower than emerge for now: merge-wait always on (FEATURES=-merge-wait is 16k7's
-      narrower barrier), no `--load-average`, and emerge's hold on unrelated builds while a
-      merged @system package's run-time dependencies are unmerged is left out.
+      narrower barrier, since done), no `--load-average`, and emerge's hold on unrelated builds
+      while a merged @system package's run-time dependencies are unmerged is left out (16k7a
+      adds it).
     - 16k4c (done): `exec` runs it over a pool of workers (polled together), writing a trace;
       the trace holds the rules, the final system is `install`'s, a concurrent emerge waits on
       portage's locks, and the timing beside `emerge --jobs` goes in findings.md.
@@ -691,6 +692,23 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       - Later: the other commands that change the system.
   - 16k7: portage updating itself mid-run, and a narrower merge-wait barrier offered as an
     option.
+    - 16k7a (done): FEATURES=-merge-wait: a built package merges while builds run, merges
+      still one at a time; only the merge-wait scope's packages (the fork's `--merge-wait-scope`: deep, the
+      default, for @system and its run-time dependencies in the plan; system; toolchain, its
+      fixed list; none) wait for no build to run and merge alone, and once one of them merges
+      with run-time dependencies still to merge, no unrelated build starts until they have
+      (`_system_merge_started`). FEATURES and the scope from `egraph-build --emerge-options`
+      and `exec --merge-wait-scope`; the scope's packages from egraph's own plan
+      (`merge_wait_steps`; deep follows installed @system members whether or not emerge's
+      graph reached them, so it may hold more than emerge, never less), the schedule's rules
+      unit-tested, and an `exec` run under FEATURES=-merge-wait held to them by its trace and
+      to `install`'s system.
+    - 16k7b: portage updating itself: when the plan merges `sys-apps/portage` into the
+      running root of a system install, the workers run from a copy of the running portage
+      taken before the run, as emerge's `_prepare_self_update` copies its own (bin and lib,
+      under `PORTAGE_TMPDIR/portage`), removed at the end; likewise `egraph-build` itself
+      when the plan merges egraph, so that no worker started after the merge speaks another
+      protocol.
   - 16k8: side-by-side runs against emerge on the dev box.
   - 16k9: `exec --resume`: the last run's request, kept in egraph's own state, planned again
     without what that run merged already (a target would be merged again otherwise); and

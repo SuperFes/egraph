@@ -42,6 +42,7 @@ constexpr std::array options{
     Option{.name = "--jobs-tmpdir-require-free-gb", .value = Value::number, .passed = true},
     Option{.name = "--keep-going", .value = Value::yes_no, .passed = true},
     Option{.name = "--load-average", .value = Value::number, .passed = true},
+    Option{.name = "--merge-wait-scope", .value = Value::required, .passed = true},
     Option{.name = "--nospinner", .value = Value::none, .passed = true},
     Option{.name = "--quiet", .value = Value::yes_no, .passed = true},
     Option{.name = "--quiet-build", .value = Value::yes_no, .passed = true},
@@ -164,6 +165,17 @@ bool keep_going_of(std::span<const std::string> passed) {
     return keep_going;
 }
 
+std::string merge_wait_scope_of(std::span<const std::string> passed) {
+    constexpr std::string_view prefix = "--merge-wait-scope=";
+    std::string scope = "deep";
+    for (const std::string_view option : passed) {
+        if (option.starts_with(prefix)) {
+            scope = option.substr(prefix.size());
+        }
+    }
+    return scope;
+}
+
 std::uint64_t tmpdir_free_gb_of(std::span<const std::string> passed) {
     constexpr std::string_view prefix = "--jobs-tmpdir-require-free-gb=";
     std::uint64_t gb = 18;
@@ -248,6 +260,7 @@ std::expected<RunSettings, std::string> parse_run_settings(std::string_view text
                          .elog_summary = std::nullopt,
                          .elog_system = std::nullopt,
                          .jobserver = std::nullopt,
+                         .merge_wait = true,
                          .tmpdir = {}};
     for (const auto& [field, value] : {std::pair{"summary", &settings.elog_summary},
                                        std::pair{"system", &settings.elog_system}}) {
@@ -266,6 +279,11 @@ std::expected<RunSettings, std::string> parse_run_settings(std::string_view text
     if (jobserver->is_string()) {
         settings.jobserver = jobserver->get<std::string>();
     }
+    const auto merge_wait = json.find("merge_wait");
+    if (merge_wait == json.end() || !merge_wait->is_boolean()) {
+        return std::unexpected("merge_wait: not true or false");
+    }
+    settings.merge_wait = merge_wait->get<bool>();
     const auto tmpdir = json.find("tmpdir");
     if (tmpdir == json.end() || !tmpdir->is_string()) {
         return std::unexpected("tmpdir: not a string");

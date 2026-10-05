@@ -1,5 +1,7 @@
 #include "schedule.hpp"
 
+#include "merge_wait.hpp"
+
 #include <algorithm>
 #include <limits>
 #include <variant>
@@ -12,9 +14,11 @@ constexpr auto no_step = std::numeric_limits<std::size_t>::max();
 
 } // namespace
 
-Schedule::Schedule(const Plan& plan, std::vector<Step> steps, std::optional<std::uint32_t> jobs)
+Schedule::Schedule(const Plan& plan, std::vector<Step> steps, std::optional<std::uint32_t> jobs,
+                   MergeWait merge_wait)
     : plan_{plan}, steps_{std::move(steps)}, jobs_{jobs}, states_(steps_.size(), State::queued),
-      step_of_merge_(plan.merges.size(), no_step) {
+      step_of_merge_(plan.merges.size(), no_step), merge_wait_{std::move(merge_wait)},
+      was_flushed_(steps_.size(), false), unsatisfied_(steps_.size(), false) {
     for (std::size_t i = 0; i < steps_.size(); ++i) {
         if (const auto* merge = std::get_if<MergeStep>(&steps_.at(i))) {
             step_of_merge_.at(merge->merge) = i;
@@ -52,8 +56,10 @@ bool Schedule::dependent(std::size_t step) const {
 }
 
 std::optional<std::size_t> Schedule::next_build() const {
-    // Nor while merge-wait's merges are let through, as emerge holds new jobs then.
-    if (halted_ || flushed_ > 0 || (jobs_ && building_ >= *jobs_)) {
+    // Nor while merge-wait's merges are let through, as emerge holds new jobs then, nor beside
+    // a running build while an alone merge's run-time needs are unmerged.
+    if (halted_ || flushed_ > 0 || (jobs_ && building_ >= *jobs_) ||
+        (building_ > 0 && std::ranges::contains(unsatisfied_, true))) {
         return std::nullopt;
     }
     std::optional<std::size_t> first;
@@ -84,7 +90,11 @@ void Schedule::build_finished(std::size_t step, bool succeeded) {
     --building_;
     if (succeeded) {
         states_.at(step) = State::built;
-        waiting_.push_back(step);
+        if (merge_wait_.feature || alone(step)) {
+            waiting_.push_back(step);
+        } else {
+            merging_.push_back(step);
+        }
     } else {
         states_.at(step) = State::failed;
         failed_ = true;
@@ -104,12 +114,25 @@ void Schedule::merge_started(std::size_t step) {
     std::erase(merging_, step);
     states_.at(step) = State::merging;
     merge_running_ = true;
+    if (alone(step) && merge_wait_.running_root) {
+        for (const auto merge :
+             run_time_waits(plan_.get(), std::get<MergeStep>(steps_.at(step)).merge)) {
+            const auto other = step_of_merge_.at(merge);
+            if (other != no_step && other != step && states_.at(other) != State::done) {
+                unsatisfied_.at(other) = true;
+            }
+        }
+    }
 }
 
 void Schedule::merge_finished(std::size_t step, bool succeeded) {
     merge_running_ = false;
-    if (std::holds_alternative<MergeStep>(steps_.at(step))) {
+    if (was_flushed_.at(step)) {
+        was_flushed_.at(step) = false;
         --flushed_;
+    }
+    if (succeeded) {
+        unsatisfied_.at(step) = false;
     }
     states_.at(step) = succeeded ? State::done : State::failed;
     failed_ = failed_ || !succeeded;
@@ -135,11 +158,22 @@ void Schedule::release() {
         }
     }
     merging_.insert(merging_.begin(), ready.begin(), ready.end());
-    // merge-wait: what built merges once no build runs and nothing else is merging.
+    // merge-wait: what built merges once no build runs and nothing else is merging, an alone
+    // step only after what was let through before it, and on its own.
     if (building_ == 0 && !merge_running_ && merging_.empty()) {
-        flushed_ += waiting_.size();
-        merging_.insert(merging_.end(), waiting_.begin(), waiting_.end());
-        waiting_.clear();
+        while (!waiting_.empty()) {
+            const auto step = waiting_.front();
+            if (alone(step) && !merging_.empty()) {
+                break;
+            }
+            waiting_.pop_front();
+            merging_.push_back(step);
+            was_flushed_.at(step) = true;
+            ++flushed_;
+            if (alone(step)) {
+                break;
+            }
+        }
     }
 }
 
@@ -187,6 +221,8 @@ void Schedule::resume(std::span<const std::size_t> skipped) {
     for (const auto step : skipped) {
         states_.at(step) = State::skipped;
     }
+    // A new pass, as emerge's main loop cleans up after each.
+    std::ranges::fill(unsatisfied_, false);
     halted_ = false;
     release();
 }

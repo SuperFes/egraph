@@ -103,7 +103,7 @@ pointing it there, for `--verify`.
 emerge's `BlockerDB` and `create_world_atom`, replayed on the depgraph its resume builds.
 `test_exec_run.py` runs `egraph install` (real emerge) and `egraph exec` from the same snapshot
 and compares the systems they leave, and holds a parallel run's `--trace` to emerge's
-scheduling rules, beside a jobserver and a concurrent emerge, a `--keep-going` run's skips
+scheduling rules (with and without FEATURES=merge-wait), beside a jobserver and a concurrent emerge, a `--keep-going` run's skips
 to what emerge drops, its status file (its own, in `run/egraph`) to emerge's under
 FEATURES=observability, and its log (to the playground's file, as `meson test` sets
 `EGRAPH_LOG=file`) to its trace.

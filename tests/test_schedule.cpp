@@ -587,3 +587,104 @@ TEST_CASE("keep-going is asked only once a failure leaves steps to run, and may 
     CHECK(ran.outcome.done == 0);
     CHECK(ran.trace == std::vector<std::string>{"build_started a", "build_failed a"});
 }
+
+TEST_CASE("without merge-wait, a built package merges while others build") {
+    auto [plan, steps] = planned({{}, {}, {}});
+    egraph::Schedule schedule{plan, steps, 2, {.feature = false}};
+    build(schedule, 0);
+    build(schedule, 1);
+    schedule.build_finished(0, true);
+    CHECK(schedule.stage(0) == egraph::Schedule::Stage::let_through);
+    REQUIRE(schedule.next_merge() == 0);
+    schedule.merge_started(0);
+    // Builds go on beside the merge.
+    build(schedule, 2);
+    schedule.merge_finished(0, true);
+    schedule.build_finished(1, true);
+    merge(schedule, 1);
+    schedule.build_finished(2, true);
+    merge(schedule, 2);
+    CHECK(schedule.finished());
+}
+
+TEST_CASE("a merge-wait scope step waits for no build, then merges alone after the others") {
+    auto [plan, steps] = planned({{}, {}, {}, {}});
+    // 1 merges alone; merge-wait off, so 0 and 3 do not wait.
+    egraph::Schedule schedule{
+        plan, steps, 3, {.feature = false, .alone = {false, true, false, false}}};
+    build(schedule, 0);
+    build(schedule, 1);
+    build(schedule, 2);
+    schedule.build_finished(1, true);
+    CHECK(schedule.stage(1) == egraph::Schedule::Stage::waiting);
+    schedule.build_finished(0, true);
+    REQUIRE(schedule.next_merge() == 0);
+    schedule.merge_started(0);
+    schedule.merge_finished(0, true);
+    // Still a build running.
+    CHECK(schedule.next_merge() == std::nullopt);
+    build(schedule, 3);
+    schedule.build_finished(3, true);
+    schedule.build_finished(2, true);
+    // 3 and 2 were let through as they built, ahead of 1 which waits for the queue to empty.
+    merge(schedule, 3);
+    merge(schedule, 2);
+    REQUIRE(schedule.next_merge() == 1);
+    schedule.merge_started(1);
+    CHECK(schedule.next_build() == std::nullopt);
+    schedule.merge_finished(1, true);
+    CHECK(schedule.finished());
+}
+
+TEST_CASE("with merge-wait, a scope step is let through on its own") {
+    auto [plan, steps] = planned({{}, {}, {}});
+    egraph::Schedule schedule{plan, steps, 3, {.feature = true, .alone = {false, true, false}}};
+    build(schedule, 0);
+    build(schedule, 1);
+    build(schedule, 2);
+    schedule.build_finished(0, true);
+    schedule.build_finished(1, true);
+    schedule.build_finished(2, true);
+    // 0 first; 1 only once 0 has merged, and 2 only after 1.
+    REQUIRE(schedule.next_merge() == 0);
+    schedule.merge_started(0);
+    schedule.merge_finished(0, true);
+    REQUIRE(schedule.next_merge() == 1);
+    CHECK(schedule.stage(2) == egraph::Schedule::Stage::waiting);
+    schedule.merge_started(1);
+    schedule.merge_finished(1, true);
+    merge(schedule, 2);
+    CHECK(schedule.finished());
+}
+
+TEST_CASE("once a scope step merges before what it needs at run time, builds wait to run alone") {
+    // 0 needs 2 at run time, a wait the order breaks; 1 is unrelated.
+    auto [plan, steps] = planned({{2}, {}, {}, {}});
+    const auto run = [&](bool running_root) {
+        egraph::Schedule schedule{
+            plan,
+            steps,
+            3,
+            {.feature = false, .alone = {true, false, false, false}, .running_root = running_root}};
+        build(schedule, 0);
+        schedule.build_finished(0, true);
+        merge(schedule, 0);
+        build(schedule, 1);
+        // 2 is unmerged and a build runs: nothing new beside it, on the running root.
+        if (running_root) {
+            CHECK(schedule.next_build() == std::nullopt);
+            schedule.build_finished(1, true);
+            merge(schedule, 1);
+            build(schedule, 2);
+            CHECK(schedule.next_build() == std::nullopt);
+            schedule.build_finished(2, true);
+            merge(schedule, 2);
+            // Merged, so the hold is gone.
+            build(schedule, 3);
+        } else {
+            build(schedule, 2);
+        }
+    };
+    run(true);
+    run(false);
+}

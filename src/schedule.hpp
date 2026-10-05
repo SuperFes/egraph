@@ -23,13 +23,26 @@
 
 namespace egraph {
 
+// How built packages are let through to merge. With emerge's FEATURES=merge-wait (portage's
+// default) every one waits until no build runs; without it, only those alone marks (the
+// merge-wait scope, merge_wait_steps) do. Those merge alone, after what was let through before
+// them, and once one starts merging with what it needs at run time unmerged, no build starts
+// beside a running one until that has merged, on the running root only (_system_merge_started).
+struct MergeWait {
+    bool feature = true;
+    // Per step; empty for none.
+    std::vector<bool> alone{};
+    bool running_root = true;
+};
+
 // The steps of a run and where each stands. A merge step builds, then merges once allowed;
 // an uninstall step only runs. Builds run beside each other, up to jobs; merges and uninstalls
-// one at a time, and with merge-wait only once no build runs, as emerge merges by default.
+// one at a time, and as merge_wait says, as emerge merges.
 class Schedule {
   public:
     // jobs: how many builds may run at once; none for no limit.
-    Schedule(const Plan& plan, std::vector<Step> steps, std::optional<std::uint32_t> jobs);
+    Schedule(const Plan& plan, std::vector<Step> steps, std::optional<std::uint32_t> jobs,
+             MergeWait merge_wait = {});
 
     // The step whose build may start now, if any: the first not built in the steps' order
     // that reaches no merge yet to finish, through what each waits for (installed packages
@@ -105,12 +118,21 @@ class Schedule {
     std::vector<State> states_;
     // By merge index, its step.
     std::vector<std::size_t> step_of_merge_;
-    // Built steps waiting to merge, in the order their builds finished.
+    // Built steps waiting to merge (emerge's merge-wait queue), in the order their builds
+    // finished.
     std::deque<std::size_t> waiting_;
     // Steps let through to merge, one at a time.
     std::deque<std::size_t> merging_;
-    // Merge steps let through from waiting_ and not yet merged.
+    [[nodiscard]] bool alone(std::size_t step) const {
+        return step < merge_wait_.alone.size() && merge_wait_.alone.at(step);
+    }
+
+    MergeWait merge_wait_;
+    // Merge steps let through from waiting_ and not yet merged, and which they are.
     std::size_t flushed_ = 0;
+    std::vector<bool> was_flushed_;
+    // Steps an alone step that started merging needs at run time, not merged yet.
+    std::vector<bool> unsatisfied_;
     std::uint32_t building_ = 0;
     bool merge_running_ = false;
     bool failed_ = false;

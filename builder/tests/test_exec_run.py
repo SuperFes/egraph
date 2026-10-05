@@ -441,6 +441,85 @@ def test_a_concurrent_emerge_waits_on_the_build_directory_lock(parallel, tmp_pat
     assert float(marks[3][1]) > merged
 
 
+LONG = INSTALL + "src_compile() { sleep 4; }\n"
+# sys is in @system; quick builds while slow takes longer.
+UNWAITED = {
+    "app-misc/sys-1": {**PLAIN, "IUSE": "doc", "MISC_CONTENT": SLOW},
+    "app-misc/quick-1": {**PLAIN, "IUSE": "doc", "MISC_CONTENT": SLOW},
+    "app-misc/slow-1": {**PLAIN, "IUSE": "doc", "MISC_CONTENT": LONG},
+}
+
+
+@pytest.fixture
+def unwaited(gnupg_home, tmp_path):
+    """The unwaited ebuilds under FEATURES=-merge-wait with three jobs, sys in @system."""
+    options = "--jobs=3 --jobs-tmpdir-require-free-gb=0"
+    config = {
+        "make.conf": (f'EMERGE_DEFAULT_OPTS="{options}"', 'FEATURES="-merge-wait"')
+    }
+    yield from over(
+        UNWAITED,
+        tmp_path,
+        user_config=config,
+        profile={"packages": ("*app-misc/sys",)},
+    )
+
+
+def merges_alone(trace, alone):
+    """Whether the trace merges each package of alone only while no build runs, and starts no
+    build while one of them merges; and whether another merged while a build ran."""
+    building, merging, beside = set(), None, False
+    for what, cpv in trace:
+        if what == "build-start":
+            assert merging not in alone, (cpv, merging)
+            building.add(cpv)
+        elif what in ("built", "build-failed"):
+            building.discard(cpv)
+        elif what == "merge-start":
+            if cpv in alone:
+                assert not building, (cpv, building)
+            beside = beside or bool(building)
+            merging = cpv
+        elif what in ("merged", "merge-failed"):
+            merging = None
+    return beside
+
+
+def test_without_merge_wait_only_the_scope_waits_to_merge(unwaited, tmp_path):
+    """Under FEATURES=-merge-wait a package merges while others build, but for @system's, which
+    merges once no build runs, as emerge's merge-wait scope holds it; the system is install's.
+    """
+    system, machine = unwaited
+    trace = tmp_path / "trace"
+    carried_out_as_install(
+        system,
+        machine,
+        [],
+        ["-1", "app-misc/sys", "app-misc/quick", "app-misc/slow"],
+        ["exec", "--trace", str(trace)],
+    )
+    assert merges_alone(read_trace(trace), {"app-misc/sys-1"})
+    # Nothing merges alone with no scope, and the run still leaves install's system.
+    trace.unlink()
+    machine.restore()
+    forget_stores(system)
+    age(system.playground.eroot)
+    ran = system.egraph(
+        "exec",
+        "--merge-wait-scope",
+        "none",
+        "--trace",
+        str(trace),
+        "--yes",
+        "-1",
+        "app-misc/sys",
+        "app-misc/quick",
+        "app-misc/slow",
+    )
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert merges_alone(read_trace(trace), set())
+
+
 @pytest.fixture
 def observed(gnupg_home, tmp_path):
     """held, whose compile waits for a file to appear, and quick, under FEATURES=observability
