@@ -184,6 +184,7 @@ python.install_sources(
     'builder/egraph_build/pending.py',
     'builder/egraph_build/profile.py',
     'builder/egraph_build/roots.py',
+    'builder/egraph_build/selfupdate.py',
     'builder/egraph_build/store.py',
     'builder/egraph_build/worker.py',
   ),
