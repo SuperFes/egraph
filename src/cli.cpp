@@ -2160,6 +2160,19 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->transform(one_of<Layout>(
             {{"auto", Layout::automatic}, {"human", Layout::human}, {"lines", Layout::lines}}))
         ->envname("EGRAPH_LAYOUT");
+    app.add_option("--log", invocation.log,
+                   "Where runs that change the system are logged (default auto: the systemd "
+                   "journal when systemd runs, else the file)")
+        ->transform(one_of<log::Sink>({{"auto", log::Sink::automatic},
+                                       {"journal", log::Sink::journal},
+                                       {"file", log::Sink::file},
+                                       {"both", log::Sink::both},
+                                       {"none", log::Sink::none}}))
+        ->envname("EGRAPH_LOG");
+    app.add_option("--log-file", invocation.log_file,
+                   "The log file (default: ${EPREFIX}/var/log/egraph.log)")
+        ->type_name("FILE")
+        ->envname("EGRAPH_LOG_FILE");
     app.add_option("--color", invocation.color,
                    "Colour the human layout (default auto: on a terminal, unless NO_COLOR is set)")
         ->transform(one_of<ColorMode>({{"auto", ColorMode::automatic},

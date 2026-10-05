@@ -127,6 +127,26 @@ else
 .BR auto :
 for people on a terminal).
 .TP
+.BR \-\-log " auto|journal|file|both|none"
+Where runs that change the system are logged (default
+.BR $EGRAPH_LOG ,
+else
+.BR auto :
+the systemd journal when systemd runs and egraph was built with it, else the file). The
+journal's entries carry
+.B SYSLOG_IDENTIFIER=egraph
+and fields under
+.BR EGRAPH_ ,
+as
+.B journalctl \-t egraph EGRAPH_EVENT=failed
+finds them; the file holds one JSON object a line. Neither is emerge's log.
+.TP
+.BI \-\-log\-file " file"
+The log file (default
+.BR $EGRAPH_LOG_FILE ,
+else
+.IR ${EPREFIX}/var/log/egraph.log ).
+.TP
 .BR \-\-color " auto|always|never"
 Colour the layout for people (default
 .BR auto :
@@ -805,10 +825,10 @@ Defaults for
 .BR \-\-root ", " \-\-config\-root " and " \-\-eprefix .
 .TP
 .BR EGRAPH_STORE ", " EGRAPH_BUILD ", " EGRAPH_EMERGE ", " EGRAPH_DISPATCH_CONF ", " EGRAPH_EMAINT ,
-.BR EGRAPH_LAYOUT ", " EGRAPH_GLYPHS
+.BR EGRAPH_LAYOUT ", " EGRAPH_GLYPHS ", " EGRAPH_LOG ", " EGRAPH_LOG_FILE
 Defaults for
 .BR \-\-store ", " \-\-builder ", " \-\-emerge ", " \-\-dispatch\-conf ", " \-\-emaint ,
-.BR \-\-layout " and " \-\-glyphs .
+.BR \-\-layout ", " \-\-glyphs ", " \-\-log " and " \-\-log\-file .
 .TP
 .B NO_COLOR
 When set and not empty, no colour unless

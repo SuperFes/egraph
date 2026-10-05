@@ -655,6 +655,16 @@ until it has merged; a merge once built), the phases and the worker's pid from t
 anything, removing it at the end. Resources (FEATURES=cgroup) and the socket emerge also
 streams snapshots on are left out.
 
+## Logging
+
+Runs that change the system log what they do (`src/log.hpp`): to the systemd journal when
+systemd runs and egraph was built with libsystemd (the optional `journal` feature), with
+`SYSLOG_IDENTIFIER=egraph` and structured fields (`EGRAPH_RUN`, `EGRAPH_EVENT`, and each event's
+own under `EGRAPH_`); otherwise to `${EPREFIX}/var/log/egraph.log`, one JSON object a line,
+appended under the POSIX lock portage takes on its own logs so that runs beside each other never
+interleave. `--log` picks the journal, the file, both or neither. egraph never writes emerge's
+log: its runs are its own, and the build history (roadmap 20) is built on them.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

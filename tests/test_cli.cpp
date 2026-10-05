@@ -373,6 +373,16 @@ TEST_CASE("why takes one atom and emerge's --with-bdeps") {
     CHECK_THROWS_AS(parse("why"), CLI::RequiredError);
 }
 
+TEST_CASE("runs are logged where --log says, to the journal or the file by default") {
+    CHECK(parse("stats").log == egraph::log::Sink::automatic);
+    CHECK_FALSE(parse("stats").log_file);
+    const auto invocation = parse("--log both --log-file /tmp/e.log stats");
+    CHECK(invocation.log == egraph::log::Sink::both);
+    CHECK(invocation.log_file == "/tmp/e.log");
+    CHECK(parse("--log none stats").log == egraph::log::Sink::none);
+    CHECK_THROWS_AS(parse("--log syslog stats"), CLI::ValidationError);
+}
+
 TEST_CASE("the layout is for people on a terminal and lines otherwise") {
     using egraph::ColorDepth;
     egraph::Invocation invocation;

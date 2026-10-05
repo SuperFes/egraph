@@ -45,12 +45,15 @@ notcurses = dependency(
   include_type: 'system',
 )
 
+libsystemd = dependency('libsystemd', required: get_option('journal'), include_type: 'system')
+
 build_info_hpp = configure_file(
   input: 'src/build_info.hpp.in',
   output: 'build_info.hpp',
   configuration: {
     'VERSION': meson.project_version(),
     'HAVE_TUI': notcurses.found() ? 1 : 0,
+    'HAVE_JOURNAL': libsystemd.found() ? 1 : 0,
   },
 )
 
@@ -79,6 +82,7 @@ egraph_lib = static_library(
   'src/human.cpp',
   'src/json.cpp',
   'src/keep_going.cpp',
+  'src/log.cpp',
   'src/notices.cpp',
   'src/os.cpp',
   'src/package_use.cpp',
@@ -104,12 +108,12 @@ egraph_lib = static_library(
   'src/verify.cpp',
   'src/version.cpp',
   build_info_hpp,
-  dependencies: [cli11, json, notcurses],
+  dependencies: [cli11, json, notcurses, libsystemd],
 )
 egraph_dep = declare_dependency(
   link_with: egraph_lib,
   include_directories: include_directories('src', '.'),
-  dependencies: [cli11, notcurses],
+  dependencies: [cli11, notcurses, libsystemd],
 )
 
 egraph_exe = executable('egraph', 'src/main.cpp', dependencies: egraph_dep, install: true)
@@ -237,6 +241,7 @@ unit_tests = executable(
   'tests/test_human.cpp',
   'tests/test_json.cpp',
   'tests/test_keep_going.cpp',
+  'tests/test_log.cpp',
   'tests/test_man.cpp',
   'tests/test_notices.cpp',
   'tests/test_package_use.cpp',
@@ -272,8 +277,9 @@ shadow_exe = executable(
   dependencies: [egraph_dep, json],
 )
 # Tests set egraph's options themselves, whatever the user's environment says.
-egraph_variables = ['EGRAPH_STORE', 'EGRAPH_BUILD', 'EGRAPH_EMERGE', 'EGRAPH_LAYOUT', 'EGRAPH_GLYPHS', 'ROOT',
-                    'PORTAGE_CONFIGROOT', 'PORTAGE_OVERRIDE_EPREFIX']
+egraph_variables = ['EGRAPH_STORE', 'EGRAPH_BUILD', 'EGRAPH_EMERGE', 'EGRAPH_LAYOUT', 'EGRAPH_GLYPHS',
+                    'EGRAPH_LOG', 'EGRAPH_LOG_FILE', 'ROOT', 'PORTAGE_CONFIGROOT',
+                    'PORTAGE_OVERRIDE_EPREFIX']
 # Empty rather than unset: environment().unset() leaves an inherited variable in place (portage
 # exports PORTAGE_CONFIGROOT to a package's tests), and CLI11 takes an empty one as absent.
 unit_env = environment()
@@ -288,12 +294,16 @@ pytest = find_program('pytest', required: false)
 if pytest.found()
   builder_env = environment()
   foreach variable : egraph_variables
-    builder_env.unset(variable)
+    if variable != 'EGRAPH_LOG'
+      builder_env.unset(variable)
+    endif
   endforeach
   # The golden tests run the C++ reader on stores the Python writer produced.
   builder_env.set('EGRAPH', egraph_exe.full_path())
   builder_env.set('EGRAPH_COMPLETIONS', meson.current_build_dir())
   builder_env.set('EGRAPH_SHADOW', shadow_exe.full_path())
+  # Runs log to their playground's file, not the journal of the system running the tests.
+  builder_env.set('EGRAPH_LOG', 'file')
   if get_option('portage_lib') != ''
     builder_env.set('PYTHONPATH', get_option('portage_lib'))
   endif

@@ -3,6 +3,7 @@
 #include "evaluated.hpp"
 #include "human.hpp"
 #include "job.hpp"
+#include "log.hpp"
 #include "query.hpp"
 #include "verify.hpp"
 
@@ -266,6 +267,9 @@ struct Invocation {
     // ebuild when the same version is still in its repository (the evaluated store).
     bool dynamic_deps = true;
     Layout layout = Layout::automatic;
+    // Where runs that change the system are logged, and the file when there.
+    log::Sink log = log::Sink::automatic;
+    std::optional<std::filesystem::path> log_file;
     ColorMode color = ColorMode::automatic;
     // Unset, a Nerd Font's in a UTF-8 locale and ASCII otherwise.
     std::optional<GlyphSet> glyphs;

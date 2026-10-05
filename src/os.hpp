@@ -179,6 +179,19 @@ bool can_create(const std::filesystem::path& path);
 std::expected<void, std::error_code> replace_with_copy(const std::filesystem::path& source,
                                                        const std::filesystem::path& target);
 
+// Appends text to the file at path in writes under an exclusive lock on the whole file (the
+// POSIX record lock portage's lockfile takes on its logs), so that runs beside each other never
+// interleave their lines. Creates the file with mode 0644, and its directories.
+std::expected<void, std::error_code> append_locked(const std::filesystem::path& path,
+                                                   std::string_view text);
+
+// Whether egraph was built with the systemd journal (libsystemd).
+bool journal_built();
+
+// Sends one entry to the systemd journal, each field as NAME=value; values may hold newlines.
+// Without the journal built in, function_not_supported.
+std::expected<void, std::error_code> journal_send(std::span<const std::string> fields);
+
 // The bytes free to this process on the filesystem of path, or of the nearest directory above it
 // that exists.
 std::expected<std::uint64_t, std::error_code> free_bytes(const std::filesystem::path& path);

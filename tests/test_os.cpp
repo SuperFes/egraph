@@ -148,3 +148,25 @@ TEST_CASE("free space is that of the nearest directory that exists") {
     CHECK(*free > 0);
     CHECK(free == egraph::os::free_bytes(dir.path()));
 }
+
+TEST_CASE("appending under the file's lock adds to what is there, and makes it if need be") {
+    const egraph::test::TempDir dir;
+    const auto path = dir.path() / "a/b/log";
+    REQUIRE(egraph::os::append_locked(path, "one\n"));
+    REQUIRE(egraph::os::append_locked(path, "two\n"));
+    CHECK(egraph::test::read_text(path) == "one\ntwo\n");
+    CHECK_FALSE(egraph::os::append_locked(dir.path() / "a/b/log/under", "x"));
+}
+
+TEST_CASE("the journal takes an entry when egraph has it") {
+    const std::vector<std::string> fields{"MESSAGE=egraph unit test", "PRIORITY=7",
+                                          "SYSLOG_IDENTIFIER=egraph-test"};
+    const auto sent = egraph::os::journal_send(fields);
+    if (egraph::os::journal_built()) {
+        // Without a journal to reach, the socket is missing.
+        CHECK((sent || sent.error() == std::errc::no_such_file_or_directory ||
+               sent.error() == std::errc::connection_refused));
+    } else {
+        CHECK(sent.error() == std::errc::function_not_supported);
+    }
+}

@@ -682,7 +682,10 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       `${EPREFIX}/var/log/egraph.log` as JSON lines; an option picks the journal, the file,
       both or neither. `exec` first: the run, each phase, each package built, merged or
       uninstalled with its times, failures with their logs, skips, and the end.
-      - 16k6d1: the sinks and the event format.
+      - 16k6d1 (done): the sinks and the event format (`src/log.hpp`): `--log` and
+        `--log-file`, the journal through `sd_journal_sendv` behind the `journal` feature, the
+        file appended under portage's lock (`os::append_locked`); `meson test` logs to the
+        playgrounds' files.
       - 16k6d2: `exec` logs its runs, held to its `--trace`.
       - Later: the other commands that change the system.
   - 16k7: portage updating itself mid-run, and a narrower merge-wait barrier offered as an

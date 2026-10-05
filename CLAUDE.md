@@ -49,7 +49,7 @@ build/egraph exec -y -j4 app-misc/foo                 # merged by egraph's worke
 build/egraph                                          # interactive: TUI on a terminal, : for commands
 meson test -C build --print-errorlogs                 # Catch2 + pytest
 meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false ...  # plus the fork options
-meson setup build-notui -Dtui=disabled ...            # without Notcurses, plus the fork options
+meson setup build-notui -Dtui=disabled -Djournal=disabled ...  # without Notcurses or libsystemd
 clang-tidy -p build src/*.cpp                         # safety checks, config in .clang-tidy
 clang-format -i src/*.cpp src/*.hpp tests/*.cpp tests/*.hpp
 black builder

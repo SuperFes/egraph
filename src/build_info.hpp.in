@@ -2,6 +2,8 @@
 
 // Whether egraph tui is built in (Notcurses was found).
 #define EGRAPH_HAVE_TUI @HAVE_TUI@
+// Whether egraph logs to the systemd journal (libsystemd was found).
+#define EGRAPH_HAVE_JOURNAL @HAVE_JOURNAL@
 
 #include <string_view>
 

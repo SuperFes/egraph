@@ -1,5 +1,7 @@
 #include "os.hpp"
 
+#include "build_info.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -8,6 +10,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <format>
+#include <fstream>
 #include <langinfo.h>
 #include <limits>
 #include <poll.h>
@@ -20,9 +23,14 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <utility>
+
+#if EGRAPH_HAVE_JOURNAL
+#include <systemd/sd-journal.h>
+#endif
 
 // posix_spawn hands the child our environment.
 extern "C" {
@@ -505,6 +513,79 @@ bool stdout_is_terminal() {
 
 bool stdin_is_terminal() {
     return isatty(STDIN_FILENO) == 1;
+}
+
+std::expected<void, std::error_code> append_locked(const std::filesystem::path& path,
+                                                   std::string_view text) {
+    std::error_code error;
+    if (path.has_parent_path()) {
+        std::filesystem::create_directories(path.parent_path(), error);
+        if (error) {
+            return std::unexpected(error);
+        }
+    }
+    if (!std::filesystem::exists(path, error)) {
+        // Made here rather than by open's O_CREAT, whose mode is a vararg.
+        std::ofstream{path, std::ios::app}.close();
+        std::filesystem::permissions(
+            path,
+            std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
+                std::filesystem::perms::group_read | std::filesystem::perms::others_read,
+            error);
+        if (error) {
+            return std::unexpected(error);
+        }
+    }
+    Descriptor fd{::open(path.c_str(), O_WRONLY | O_APPEND | O_CLOEXEC)};
+    if (fd.get() < 0) {
+        return std::unexpected(std::error_code(errno, std::generic_category()));
+    }
+    // From offset 0, where a new descriptor starts, to the end: the whole file, the POSIX record
+    // lock Python's fcntl.lockf takes for portage.
+    while (::lockf(fd.get(), F_LOCK, 0) != 0) {
+        if (errno != EINTR) {
+            return std::unexpected(std::error_code(errno, std::generic_category()));
+        }
+    }
+    while (!text.empty()) {
+        const auto put = ::write(fd.get(), text.data(), text.size());
+        if (put < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return std::unexpected(std::error_code(errno, std::generic_category()));
+        }
+        text.remove_prefix(static_cast<std::size_t>(put));
+    }
+    // Closing lets the lock go.
+    return {};
+}
+
+bool journal_built() {
+    return EGRAPH_HAVE_JOURNAL != 0;
+}
+
+std::expected<void, std::error_code> journal_send(std::span<const std::string> fields) {
+#if EGRAPH_HAVE_JOURNAL
+    // sd_journal_sendv takes mutable buffers.
+    std::vector<std::string> copies(fields.begin(), fields.end());
+    std::vector<iovec> vectors;
+    vectors.reserve(copies.size());
+    for (auto& field : copies) {
+        vectors.push_back({.iov_base = field.data(), .iov_len = field.size()});
+    }
+    if (vectors.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        return std::unexpected(std::make_error_code(std::errc::argument_list_too_long));
+    }
+    const int sent = sd_journal_sendv(vectors.data(), static_cast<int>(vectors.size()));
+    if (sent < 0) {
+        return std::unexpected(std::error_code(-sent, std::generic_category()));
+    }
+    return {};
+#else
+    std::ignore = fields;
+    return std::unexpected(std::make_error_code(std::errc::function_not_supported));
+#endif
 }
 
 std::expected<void, std::error_code> replace_with_copy(const std::filesystem::path& source,

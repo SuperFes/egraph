@@ -33,3 +33,9 @@ option(
   value: 'auto',
   description: 'The terminal interface (egraph tui), which needs Notcurses',
 )
+option(
+  'journal',
+  type: 'feature',
+  value: 'auto',
+  description: 'Logging to the systemd journal, which needs libsystemd',
+)
