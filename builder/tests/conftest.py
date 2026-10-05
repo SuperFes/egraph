@@ -76,6 +76,19 @@ def pytest_report_header(config):
     return f"portage {portage.VERSION} from {os.path.dirname(portage.__file__)}"
 
 
+# Settings portage takes from the environment over make.conf.
+PORTAGE_OVERRIDES = (
+    "ACCEPT_KEYWORDS",
+    "ACCEPT_LICENSE",
+    "EMERGE_DEFAULT_OPTS",
+    "FEATURES",
+    "MAKEOPTS",
+    "PORTAGE_BINHOST",
+    "PORTAGE_TMPDIR",
+    "USE",
+)
+
+
 @pytest.fixture(autouse=True, scope="session")
 def portage_environment():
     """The process state portage's own test suite sets up before touching portage."""
@@ -93,6 +106,10 @@ def portage_environment():
         "EGRAPH_LAYOUT",
         "EGRAPH_GLYPHS",
     ):
+        os.environ.pop(variable, None)
+    # The playgrounds' make.conf decides how portage behaves, not the caller's environment,
+    # which portage lets override it.
+    for variable in PORTAGE_OVERRIDES:
         os.environ.pop(variable, None)
     # Never read the running system's config by accident.
     portage._disable_legacy_globals()
