@@ -222,3 +222,22 @@ TEST_CASE("a status file that cannot be written is said once, and the run goes o
     CHECK(notes.str().starts_with("egraph: exec: cannot publish the status to "));
     CHECK(std::ranges::count(notes.str(), '\n') == 1);
 }
+
+TEST_CASE("a status file's directories go with it, unless something else is in them") {
+    const egraph::test::TempDir dir;
+    std::ostringstream notes;
+    {
+        egraph::StatusFile status{dir.path() / "run/egraph/exec-7.json", notes};
+        status.publish(at(1), true);
+        CHECK(std::filesystem::exists(dir.path() / "run/egraph/exec-7.json"));
+    }
+    CHECK_FALSE(std::filesystem::exists(dir.path() / "run"));
+    std::filesystem::create_directories(dir.path() / "run/egraph");
+    egraph::test::write_text(dir.path() / "run/egraph/exec-8.json", "{}");
+    {
+        egraph::StatusFile status{dir.path() / "run/egraph/exec-7.json", notes};
+        status.publish(at(1), true);
+    }
+    CHECK(std::filesystem::exists(dir.path() / "run/egraph/exec-8.json"));
+    CHECK_FALSE(std::filesystem::exists(dir.path() / "run/egraph/exec-7.json"));
+}

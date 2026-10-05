@@ -120,9 +120,15 @@ StatusFile::StatusFile(std::filesystem::path path, std::ostream& notes)
     : path_{std::move(path)}, notes_{notes} {}
 
 StatusFile::~StatusFile() {
+    std::error_code ignored;
     if (written_) {
-        std::error_code ignored;
         std::filesystem::remove(path_, ignored);
+    }
+    // remove() leaves a directory something else is in.
+    for (const auto& directory : made_) {
+        if (!std::filesystem::remove(directory, ignored)) {
+            break;
+        }
     }
 }
 
@@ -137,6 +143,13 @@ void StatusFile::publish(const emerge::Snapshot& snapshot, bool tick) {
     auto temporary = path_;
     temporary += ".new";
     std::error_code error;
+    if (made_.empty()) {
+        for (auto directory = path_.parent_path();
+             !directory.empty() && !std::filesystem::exists(directory, error);
+             directory = directory.parent_path()) {
+            made_.push_back(directory);
+        }
+    }
     std::filesystem::create_directories(path_.parent_path(), error);
     if (!error) {
         std::ofstream out{temporary, std::ios::trunc};

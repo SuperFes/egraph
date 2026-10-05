@@ -62,7 +62,8 @@ class Observer {
 };
 
 // The status file a run publishes its snapshots to (${EPREFIX}/run/egraph/exec-<pid>.json), as
-// emerge's ObservabilityMonitor writes its own: replaced whole, and removed with this object.
+// emerge's ObservabilityMonitor writes its own: replaced whole, and removed with this object,
+// with the directories made for it once nothing else is in them.
 class StatusFile {
   public:
     // Why it cannot be written is said once on notes, as the run goes on without it.
@@ -82,6 +83,8 @@ class StatusFile {
     std::reference_wrapper<std::ostream> notes_;
     std::optional<double> last_;
     bool written_ = false;
+    // The directories it made for the file, deepest first, removed with it once empty.
+    std::vector<std::filesystem::path> made_;
     bool told_ = false;
 };
 
