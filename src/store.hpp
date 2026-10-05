@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -149,8 +150,19 @@ struct Store : Tables {
     [[nodiscard]] std::span<const Require> required_in(Range range) const EGRAPH_LIFETIMEBOUND;
 };
 
+// A store in another format version than this egraph reads: written by another version.
+struct FormatMismatch {
+    // "an egraph store", "an evaluated egraph store".
+    std::string kind;
+    std::uint32_t found = 0;
+    std::uint32_t expected = 0;
+    // The file, once loaded from one.
+    std::filesystem::path path{};
+};
+
 struct StoreError {
     std::string message;
+    std::optional<FormatMismatch> mismatch{};
 };
 
 // Rejects anything that does not follow docs/store-format.md exactly.

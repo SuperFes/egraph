@@ -11,7 +11,10 @@ layout change bumps the version.
   plain-file encoding meets that, no database is used.
 - Decodable in C++ with bounds-checked reads over `std::span<const std::byte>`: no struct overlays,
   no `mmap`, fixed little-endian, lengths before data.
-- Versioned: a format version that both sides check, with any mismatch treated as stale.
+- Versioned: a format version that both sides check, with any mismatch treated as stale. A
+  store in another format that egraph-build has just written means the two are from different
+  versions, and egraph says so; one kept from before is rebuilt, or under `--no-refresh` named
+  with `egraph rebuild` as the remedy.
 - Atomic replace: write to a temp file in the same directory, fsync, rename.
 
 ## Logical content

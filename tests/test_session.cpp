@@ -131,3 +131,31 @@ TEST_CASE("a session answers from the stores it adopts") {
     // The old stores live on with whoever shares them.
     CHECK((*shared)->installed.packages.size() == 2);
 }
+
+TEST_CASE("a store in another format is put down to another version of egraph or its builder") {
+    const egraph::StoreError mismatch{
+        .message = "/s/installed.egraph: format version 4, expected 5",
+        .mismatch = egraph::FormatMismatch{
+            .kind = "an egraph store", .found = 4, .expected = 5, .path = "/s/installed.egraph"}};
+    CHECK(egraph::built_store_error("egraph-build", mismatch) ==
+          "egraph and egraph-build are from different versions: egraph-build wrote "
+          "/s/installed.egraph as an egraph store of format 4, but this egraph reads format 5; "
+          "install both from the same release");
+    CHECK(egraph::stored_store_error(mismatch) ==
+          "/s/installed.egraph is an egraph store of format 4, from another egraph version, but "
+          "this egraph reads format 5; egraph rebuild writes it anew");
+    const egraph::StoreError other{.message = "/s/installed.egraph: truncated header"};
+    CHECK(egraph::built_store_error("egraph-build", other) == other.message);
+    CHECK(egraph::stored_store_error(other) == other.message);
+}
+
+TEST_CASE("a session without refreshing says how to replace a store from another version") {
+    const TempDir dir;
+    write_bytes(dir.path() / "installed.egraph",
+                egraph::test::assemble(egraph::test::sample_sections(), 3));
+    std::ostringstream warnings;
+    egraph::Session session{at(dir.path()), warnings};
+    const auto installed = session.installed();
+    REQUIRE_FALSE(installed.has_value());
+    CHECK(installed.error().ends_with("egraph rebuild writes it anew"));
+}

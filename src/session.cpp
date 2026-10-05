@@ -51,12 +51,14 @@ std::expected<Loaded, std::string> open_current(const Invocation& invocation, st
             return std::move(*loaded);
         }
     } else if (invocation.no_refresh) {
-        return std::unexpected(loaded.error().message);
+        return std::unexpected(stored_store_error(loaded.error()));
     }
     if (auto error = run_builder(invocation, "--incremental", path)) {
         return std::unexpected(std::move(*error));
     }
-    return load_path(path).transform_error([](const StoreError& error) { return error.message; });
+    return load_path(path).transform_error([&invocation](const StoreError& error) {
+        return built_store_error(builder_program(invocation), error);
+    });
 }
 
 } // namespace
@@ -66,6 +68,28 @@ std::optional<std::string> run_builder(const Invocation& invocation, std::string
                                        const std::optional<std::filesystem::path>& log,
                                        std::span<const std::string> cps) {
     return builder_error(invocation, os::run(builder_command(invocation, mode, path, cps), log));
+}
+
+std::string built_store_error(std::string_view builder, const StoreError& error) {
+    if (!error.mismatch) {
+        return error.message;
+    }
+    const auto& mismatch = *error.mismatch;
+    return std::format("egraph and {0} are from different versions: {0} wrote {1} as {2} of "
+                       "format {3}, but this egraph reads format {4}; install both from the same "
+                       "release",
+                       builder, mismatch.path.string(), mismatch.kind, mismatch.found,
+                       mismatch.expected);
+}
+
+std::string stored_store_error(const StoreError& error) {
+    if (!error.mismatch) {
+        return error.message;
+    }
+    const auto& mismatch = *error.mismatch;
+    return std::format("{} is {} of format {}, from another egraph version, but this egraph reads "
+                       "format {}; egraph rebuild writes it anew",
+                       mismatch.path.string(), mismatch.kind, mismatch.found, mismatch.expected);
 }
 
 std::optional<std::string> builder_error(const Invocation& invocation,
@@ -159,7 +183,7 @@ std::optional<std::string> Session::evaluate(std::span<const std::string> cps) {
     }
     auto loaded = load_stores(path);
     if (!loaded) {
-        return std::move(loaded.error().message);
+        return built_store_error(builder_program(invocation_), loaded.error());
     }
     adopt(std::make_shared<const Stores>(std::move(*loaded)), path);
     return std::nullopt;

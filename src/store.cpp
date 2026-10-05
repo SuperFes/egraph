@@ -184,6 +184,9 @@ std::expected<Store, StoreError> load(const std::filesystem::path& path) {
     return read_file(path).and_then([&path](const std::vector<std::byte>& bytes) {
         return decode(bytes).transform_error([&path](StoreError error) {
             error.message = std::format("{}: {}", path.string(), error.message);
+            if (error.mismatch) {
+                error.mismatch->path = path;
+            }
             return error;
         });
     });

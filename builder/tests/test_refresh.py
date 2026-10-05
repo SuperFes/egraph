@@ -308,3 +308,36 @@ def test_use_changes_are_written_on_yes_and_planned_again(
     again = printed.split("planning again.\n", 1)[1]
     assert "USE changes needed" not in again
     assert "dev-libs/gtkdep" in again
+
+
+def test_a_builder_from_another_version_is_named(system, tmp_path):
+    """A store egraph-build writes in another format than egraph reads is put down to the two
+    being from different versions; one kept from before says how to replace it."""
+    from egraph_build.store import FORMAT_VERSION
+
+    playground, store, builder, log = system
+    older = tmp_path / "older-egraph-build"
+    older.write_text(
+        "#!/bin/sh\n"
+        f'"{builder}" "$@" || exit\n'
+        f'"{sys.executable}" -c "import struct, sys\n'
+        "with open(sys.argv[1], 'r+b') as f:\n"
+        "    f.seek(8)\n"
+        f"    f.write(struct.pack('<I', {FORMAT_VERSION - 1}))\n"
+        f'" "{store}"\n'
+    )
+    older.chmod(0o755)
+    ran = egraph((playground, store, older, log), "orphans")
+    assert ran.returncode != 0
+    assert (
+        f"egraph and {older} are from different versions: {older} wrote {store} as an "
+        f"egraph store of format {FORMAT_VERSION - 1}, but this egraph reads format "
+        f"{FORMAT_VERSION}; install both from the same release"
+    ) in ran.stderr
+    kept = egraph(system, "--no-refresh", "orphans")
+    assert kept.returncode != 0
+    assert (
+        f"{store} is an egraph store of format {FORMAT_VERSION - 1}, from another egraph "
+        "version"
+    ) in kept.stderr
+    assert egraph(system, "orphans").returncode == 0

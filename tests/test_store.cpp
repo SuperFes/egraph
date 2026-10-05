@@ -1,4 +1,5 @@
 #include "cli.hpp"
+#include "helpers.hpp"
 #include "store.hpp"
 #include "store_writer.hpp"
 
@@ -244,4 +245,23 @@ TEST_CASE("export --format json reads the store") {
     std::ostringstream missing;
     CHECK(egraph::run(invocation, out, missing) == egraph::Exit::failure);
     CHECK(missing.str() == "egraph: /nonexistent/egraph.store: No such file or directory\n");
+}
+
+TEST_CASE("a store in another format says which, and where it was loaded from") {
+    const auto older = egraph::test::assemble(egraph::test::sample_sections(), 3);
+    const auto decoded = egraph::decode(older);
+    REQUIRE_FALSE(decoded);
+    REQUIRE(decoded.error().mismatch);
+    CHECK(decoded.error().mismatch->kind == "an egraph store");
+    CHECK(decoded.error().mismatch->found == 3);
+    CHECK(decoded.error().mismatch->expected == egraph::store_format_version);
+    CHECK(decoded.error().mismatch->path.empty());
+    CHECK_FALSE(egraph::decode(egraph::test::assemble({}, 5)).error().mismatch);
+
+    const egraph::test::TempDir dir;
+    egraph::test::write_bytes(dir.path() / "old.egraph", older);
+    const auto loaded = egraph::load(dir.path() / "old.egraph");
+    REQUIRE_FALSE(loaded);
+    REQUIRE(loaded.error().mismatch);
+    CHECK(loaded.error().mismatch->path == dir.path() / "old.egraph");
 }

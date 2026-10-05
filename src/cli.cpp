@@ -442,7 +442,9 @@ std::expected<Loaded, std::string> fresh_build(const Invocation& invocation,
     if (auto error = run_builder(invocation, "--full", files.path())) {
         return std::unexpected(std::move(*error));
     }
-    return load_path(files.path()).transform_error([](const StoreError& e) { return e.message; });
+    return load_path(files.path()).transform_error([&invocation](const StoreError& e) {
+        return built_store_error(builder_program(invocation), e);
+    });
 }
 
 // The check's fresh build in the background, and how stored differs from it; with keep, its
@@ -464,7 +466,8 @@ Job<tui::CheckResult> background_check(const Invocation& invocation, const Store
         }
         auto loaded = load_stores(files.path());
         if (!loaded) {
-            return tui::CheckResult{std::unexpected(std::move(loaded.error().message))};
+            return tui::CheckResult{
+                std::unexpected(built_store_error(builder_program(invocation), loaded.error()))};
         }
         auto lines = drift(stored, loaded->installed);
         if (keep) {
@@ -520,8 +523,9 @@ Job<std::expected<Stores, std::string>> save_stores(const Invocation& invocation
             return ready(std::expected<Stores, std::string>{std::move(*stores)});
         }
     }
-    return [build = background_build(invocation, "--full", path),
-            path]() mutable -> std::optional<std::expected<Stores, std::string>> {
+    return [build = background_build(invocation, "--full", path), path,
+            builder = builder_program(
+                invocation)]() mutable -> std::optional<std::expected<Stores, std::string>> {
         auto ended = build();
         if (!ended) {
             return std::nullopt;
@@ -529,7 +533,8 @@ Job<std::expected<Stores, std::string>> save_stores(const Invocation& invocation
         if (*ended) {
             return std::expected<Stores, std::string>{std::unexpected(std::move(**ended))};
         }
-        return load_stores(path).transform_error([](const StoreError& e) { return e.message; });
+        return load_stores(path).transform_error(
+            [&builder](const StoreError& e) { return built_store_error(builder, e); });
     };
 }
 
@@ -549,8 +554,8 @@ Job<tui::RefreshResult> background_refresh(const Invocation& invocation, Session
     if (auto current = current_stores(invocation, used)) {
         return ready(tui::RefreshResult{share(session, std::move(*current), used)});
     }
-    return [build = background_build(invocation, "--incremental", used), used,
-            &session]() mutable -> std::optional<tui::RefreshResult> {
+    return [build = background_build(invocation, "--incremental", used), used, &session,
+            builder = builder_program(invocation)]() mutable -> std::optional<tui::RefreshResult> {
         auto ended = build();
         if (!ended) {
             return std::nullopt;
@@ -560,7 +565,7 @@ Job<tui::RefreshResult> background_refresh(const Invocation& invocation, Session
         }
         auto loaded = load_stores(used);
         if (!loaded) {
-            return tui::RefreshResult{std::unexpected(std::move(loaded.error().message))};
+            return tui::RefreshResult{std::unexpected(built_store_error(builder, loaded.error()))};
         }
         return share(session, std::move(*loaded), used);
     };
@@ -574,7 +579,7 @@ Exit execute(const Check&, Session&, const Invocation& invocation, std::ostream&
     const bool current = system_store && !staleness(*system_store);
     const auto stored = load(!invocation.store && current ? system : store_path(invocation));
     if (!stored) {
-        err << "egraph: " << stored.error().message << '\n';
+        err << "egraph: " << stored_store_error(stored.error()) << '\n';
         return Exit::failure;
     }
     const auto built = fresh_build<Store>(invocation, [](const auto& path) { return load(path); });

@@ -53,9 +53,12 @@ sections(std::span<const std::byte> data, const Magic& magic, std::string_view k
     if (!std::ranges::equal(data.first(magic.size()), magic)) {
         return failure(std::format("not {}", kind));
     }
-    const auto found_version = little_endian(data.subspan(8, 4));
+    const auto found_version = size32(little_endian(data.subspan(8, 4)));
     if (found_version != version) {
-        return failure(std::format("format version {}, expected {}", found_version, version));
+        return std::unexpected(StoreError{
+            .message = std::format("format version {}, expected {}", found_version, version),
+            .mismatch = FormatMismatch{
+                .kind = std::string{kind}, .found = found_version, .expected = version}});
     }
     if (little_endian(data.subspan(12, 4)) != count ||
         data.size() < header_size + (entry_size * count)) {

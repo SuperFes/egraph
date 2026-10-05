@@ -198,7 +198,12 @@ std::expected<Evaluated, StoreError> load_evaluated(const std::filesystem::path&
     }
     auto evaluated = decode_evaluated(*bytes);
     if (!evaluated) {
-        return failed(std::move(evaluated.error().message));
+        auto error = std::move(evaluated.error());
+        error.message = std::format("{}: {}", path.string(), error.message);
+        if (error.mismatch) {
+            error.mismatch->path = path;
+        }
+        return std::unexpected(std::move(error));
     }
     if (evaluated->packages.size() != installed.packages.size()) {
         return failed(std::format("{} packages, the installed store has {}",

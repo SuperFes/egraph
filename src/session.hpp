@@ -90,6 +90,13 @@ run_builder(const Invocation& invocation, std::string_view mode, const std::file
             const std::optional<std::filesystem::path>& log = std::nullopt,
             std::span<const std::string> cps = {});
 
+// Why the store builder (egraph-build, as builder_program names it) has just written cannot be
+// read: for one in another format, that egraph and it are from different versions.
+[[nodiscard]] std::string built_store_error(std::string_view builder, const StoreError& error);
+
+// Why a store kept from before cannot be read: for one in another format, how to replace it.
+[[nodiscard]] std::string stored_store_error(const StoreError& error);
+
 // Why a builder run failed, from how it ended; nothing when it succeeded.
 [[nodiscard]] std::optional<std::string>
 builder_error(const Invocation& invocation, const std::expected<int, os::SpawnError>& status);
