@@ -2,4 +2,7 @@
 # egraph-build, installed next to egraph; the egraph_build package is in site-packages.
 from egraph_build.cli import main
 
-raise SystemExit(main())
+# multiprocessing's spawn start method, which portage's fetch uses, runs this again as
+# __mp_main__ in each child.
+if __name__ == "__main__":
+    raise SystemExit(main())

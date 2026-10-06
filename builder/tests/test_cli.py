@@ -1,4 +1,7 @@
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -107,3 +110,30 @@ def test_the_environment_does_not_override_the_configuration(playgrounds, monkey
     assert "kernel_hurd" not in enabled
     env = cli.portage_environment(*where)
     assert "USE" not in env and "KERNEL" not in env
+
+
+def test_the_installed_script_runs_nothing_when_multiprocessing_reruns_it(tmp_path):
+    # portage's fetch spawns its helpers with the spawn start method under Python 3.14, which runs
+    # the parent's script again as __mp_main__ (multiprocessing.spawn._fixup_main_from_path).
+    script = tmp_path / "egraph-build"
+    template = Path(__file__).parents[1] / "egraph-build.py.in"
+    script.write_text(template.read_text().replace("@PYTHON@", sys.executable))
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path))
+
+    def run(name):
+        code = (
+            "import runpy, sys; sys.argv = [sys.argv[1], '--help']; "
+            f"runpy.run_path(sys.argv[0], run_name={name!r})"
+        )
+        return subprocess.run(
+            [sys.executable, "-c", code, str(script)],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    rerun = run("__mp_main__")
+    assert (rerun.returncode, rerun.stdout, rerun.stderr) == (0, "", "")
+    assert "usage: egraph-build" in run("__main__").stdout
