@@ -1227,4 +1227,42 @@ SCENARIOS = {
             "dev-libs/y-1": {"EAPI": "8"},
         },
     },
+    # World atoms naming no slot, each version in a slot of its own, as gentoo-sources and
+    # wine-vanilla: a set's atom goes only to its best version, a new slot here, where an atom
+    # named alone also takes every installed slot it matches (emerge's greedy slots). An old slot
+    # with a USE change (sources) or a newer version in it (wine) stays unless a dependency
+    # reaches it (libv, through needs).
+    "world-slots": {
+        "world": [
+            "sys-kernel/sources",
+            "app-misc/wine",
+            "dev-libs/libv",
+            "app-misc/needs",
+        ],
+        "ebuilds": {
+            "sys-kernel/sources-1": {"EAPI": "8", "SLOT": "1", "IUSE": "symlink"},
+            "sys-kernel/sources-2": {"EAPI": "8", "SLOT": "2", "IUSE": "symlink"},
+            "sys-kernel/sources-3": {"EAPI": "8", "SLOT": "3", "IUSE": "symlink"},
+            "app-misc/wine-1": {"EAPI": "8", "SLOT": "1"},
+            "app-misc/wine-1.1": {"EAPI": "8", "SLOT": "1"},
+            "app-misc/wine-2": {"EAPI": "8", "SLOT": "2"},
+            "dev-libs/libv-1": {"EAPI": "8", "SLOT": "1"},
+            "dev-libs/libv-1.1": {"EAPI": "8", "SLOT": "1"},
+            "dev-libs/libv-2": {"EAPI": "8", "SLOT": "2"},
+            "app-misc/needs-1": {"EAPI": "8", "RDEPEND": "dev-libs/libv:1"},
+        },
+        "installed": {
+            "sys-kernel/sources-1": {"EAPI": "8", "SLOT": "1", "IUSE": "symlink"},
+            "sys-kernel/sources-2": {
+                "EAPI": "8",
+                "SLOT": "2",
+                "IUSE": "symlink",
+                "USE": "symlink",
+            },
+            "app-misc/wine-1": {"EAPI": "8", "SLOT": "1"},
+            "dev-libs/libv-1": {"EAPI": "8", "SLOT": "1"},
+            "app-misc/needs-1": {"EAPI": "8", "RDEPEND": "dev-libs/libv:1"},
+        },
+        "user_config": {"package.use": ("sys-kernel/sources symlink",)},
+    },
 }

@@ -739,6 +739,19 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   (`other_slots`), in the human layout, the tree and the living app; `--verify` compares it
   with emerge's `NS`. Held to vardb for every update mode and plan request on every scenario
   (`blocked`, `blockers`, `pulls` and `shallow` have one), and to the emerge binary.
+- 16n (done): a set's atom naming no slot goes only to its best version, where egraph took every
+  installed slot it matched, as emerge does for an atom named alone (`_greedy_slots`, for
+  `AtomArg`s only). Found with `updates -DN --world --verify` on the dev box: an old
+  gentoo-sources slot with a USE change was rebuilt where emerge leaves it. The `world-slots`
+  scenario holds an old slot with a USE change, one with a newer version in it, and one a
+  dependency reaches.
+- 16o: replacing an old slot, per package and opt-in (the user's preference for wine-vanilla):
+  when a set's atom naming no slot moves to a new slot, the run uninstalls the installed slots
+  it leaves once the new one merges, if nothing else needs them. A list of atoms in an egraph
+  configuration file, empty by default, so the default stays emerge's (an old kernel's sources
+  are kept while it runs); never the running kernel's sources. `updates` and `plan` show the
+  replacement, `exec` uninstalls natively, `update`/`install` depclean after emerge. The first
+  of egraph's configurable defaults; to be mapped out with the user first.
 
 ## 17. `egraphd`, the service
 

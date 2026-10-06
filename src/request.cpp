@@ -9,9 +9,11 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <ranges>
 #include <set>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace egraph {
 
@@ -155,6 +157,7 @@ class Reach {
                 atom->use.clear();
                 cps_.insert(atom->cp);
                 atoms_.push_back(std::move(*atom));
+                from_set_.push_back(!argument.set.empty());
             }
         }
         for (std::uint32_t i = 0; i < evaluated.candidates.size(); ++i) {
@@ -209,6 +212,8 @@ class Reach {
     std::reference_wrapper<const Store> store_;
     std::reference_wrapper<const Evaluated> evaluated_;
     std::vector<Atom> atoms_;
+    // Parallel to atoms_: whether the atom came from a set.
+    std::vector<bool> from_set_;
     Cps cps_;
     // Visible candidates and installed packages, by cp.
     std::map<std::string, std::vector<std::uint32_t>, std::less<>> visible_;
@@ -221,10 +226,21 @@ class Reach {
     [[nodiscard]] const Store& store() const { return store_.get(); }
     [[nodiscard]] const Evaluated& evaluated() const { return evaluated_.get(); }
 
+    // Matched by an argument: an atom named alone takes every installed slot it matches, a set's
+    // atom only its best version's (emerge's greedy slots are for atom arguments).
     [[nodiscard]] bool named(std::uint32_t id) const {
-        return std::ranges::any_of(atoms_, [&](const Atom& atom) {
-            return matches(store(), store().packages.at(id), atom);
-        });
+        const auto& pkg = store().packages.at(id);
+        for (const auto& [atom, from_set] : std::views::zip(atoms_, from_set_)) {
+            if (!matches(store(), pkg, atom)) {
+                continue;
+            }
+            const auto best = from_set ? best_match(atom) : std::nullopt;
+            if (!best || evaluated().string(evaluated().candidates.at(*best).slot) ==
+                             store().string(pkg.slot)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     [[nodiscard]] std::optional<std::uint32_t>

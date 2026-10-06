@@ -318,8 +318,15 @@ class Planner {
         const auto selection = targets_ref_.get().selection;
         const auto best = arg.atom ? best_match(*arg.atom) : std::nullopt;
         if (selection == Selection::update) {
-            // Every installed slot the atom matches, as emerge's greedy slots.
+            // Every installed slot the atom matches, as emerge's greedy slots; a set's atom only
+            // its best version's slot, as emerge takes greedy slots for atom arguments alone.
+            // The others stay unless a dependency reaches them.
             for (const auto id : arg.matches) {
+                if (best && !arg.named.set.empty() &&
+                    store().string(store().packages.at(id).slot) !=
+                        evaluated().string(evaluated().candidates.at(*best).slot)) {
+                    continue;
+                }
                 if (best && greedy_blocked(id, *best)) {
                     dropped_.insert(id);
                     continue;
