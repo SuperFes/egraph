@@ -515,7 +515,9 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     IndexedPortdb searches), held to emerge's own search on every scenario and the live
     system; and depgraph's validity per version in the index (format 3), which search's
     visibility and `versions` follow.
-  - 16i4: pages for packages not installed in the living app, and search there.
+  - 16i4 (done): search in the living app (`s`, as `egraph search`, the index loaded or built
+    in the background the first time), listings of packages not installed (their ebuild and
+    every version with why it is masked), and versions on installed packages' pages.
 - 16j: the actions in the living app: updates picked, installs from search, orphans removed,
   a confirmation, the run in the emerge view, a failure's log tail.
 - 16k: egraph's own execution: `egraph exec` (`egraph-exec`, a link to `egraph`), which holds the

@@ -965,9 +965,15 @@ The events of the run whose id this is, or starts with: each with its time and m
 lines, as the file holds them, a JSON object each.
 .SS tui
 The interactive interface: the installed packages, pending updates, orphans and broken ones, each
-package's page, the plan, the running emerges, and a
+package's page, the plan, the running emerges, a search through the repositories
+.RB ( s ,
+as
+.BR search ;
+.B tab
+adds descriptions) whose packages not installed open a listing of their versions, and a
 .B :
-prompt taking these commands. It keeps the store current while it is open.
+prompt taking these commands. It keeps the store current while it is open, and loads the
+repository index the first time it searches, building it where it is missing or stale.
 .SS shell
 Commands read one per line from standard input, the stores loaded once; the global options that
 choose the stores are taken from the command line only.

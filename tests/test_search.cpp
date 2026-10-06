@@ -104,3 +104,65 @@ TEST_CASE("search_lines: the best visible version, else the best, with its ebuil
     CHECK(*lines == Strings{"openssl\tdev-libs/openssl\t3.5.0\tvisible\t3.4.0\th\t\tToolkit",
                             "masked\tapp-misc/masked\t2\tmasked\t\t\t\tm"});
 }
+
+TEST_CASE("Catalogue::versions: every ebuild and installed package of a cp, lowest first") {
+    auto system = egraph::test::make_system(
+        {{.cpv = "dev-libs/openssl-3.4.0"}, {.cpv = "dev-libs/openssl-3.5.0"}}, {});
+    egraph::test::IndexBuilder b;
+    b.version({.cpv = "dev-libs/openssl-4.0", .keywords = "~x86", .slot = "0/4"});
+    b.version({.cpv = "dev-libs/openssl-3.5.0", .repo = "overlay"});
+    b.version({.cpv = "dev-libs/openssl-3.5.0"});
+    const egraph::VersionMasks masks{b.index()};
+    const egraph::Catalogue catalogue{system.store, system.evaluated, b.index(), masks};
+    const auto versions = catalogue.versions("dev-libs/openssl");
+    REQUIRE(versions.size() == 5);
+    // 3.4.0 is only installed; the installed 3.5.0 came from test_repo, which the index lacks.
+    CHECK(versions.at(0).version == "3.4.0");
+    CHECK_FALSE(versions.at(0).ebuild);
+    CHECK(versions.at(0).repo == "test_repo");
+    CHECK(versions.at(0).installed == 0U);
+    CHECK(versions.at(1).repo == "gentoo");
+    CHECK(versions.at(2).repo == "overlay");
+    CHECK(versions.at(3).repo == "test_repo");
+    CHECK(versions.at(3).installed == 1U);
+    CHECK(versions.at(4).version == "4.0");
+    CHECK(versions.at(4).sub_slot == "4");
+    CHECK_FALSE(versions.at(4).visible);
+    CHECK(versions.at(4).reasons == Strings{"~x86 keyword"});
+}
+
+TEST_CASE("Catalogue::versions marks the ebuild an installed package came from") {
+    auto system = egraph::test::make_system({{.cpv = "app-misc/foo-1"}}, {});
+    egraph::test::IndexBuilder b;
+    b.version({.cpv = "app-misc/foo-1", .repo = "overlay"});
+    const egraph::VersionMasks masks{b.index()};
+    // Installed from test_repo, not from the overlay's ebuild of the same cpv.
+    const egraph::Catalogue catalogue{system.store, system.evaluated, b.index(), masks};
+    CHECK(catalogue.versions("app-misc/foo").size() == 2);
+}
+
+TEST_CASE("Catalogue::found: what a search result shows") {
+    const auto system = egraph::test::make_system({{.cpv = "dev-libs/openssl-3.4.0"}}, {});
+    egraph::test::IndexBuilder b;
+    b.version({.cpv = "dev-libs/openssl-3.5.0", .license = "Apache-2.0", .description = "TLS"});
+    const egraph::VersionMasks masks{b.index()};
+    const egraph::Catalogue catalogue{system.store, system.evaluated, b.index(), masks};
+    const auto found = catalogue.found("dev-libs/openssl");
+    CHECK(found.version == "3.5.0");
+    CHECK(found.visible);
+    CHECK(found.installed == "3.4.0");
+    CHECK(found.license == "Apache-2.0");
+    CHECK(found.description == "TLS");
+    CHECK(catalogue.contains("dev-libs/openssl"));
+    CHECK_FALSE(catalogue.contains("dev-libs/libressl"));
+}
+
+TEST_CASE("Catalogue::description: an indexed repository's versions that do not parse give none") {
+    const auto system = egraph::test::make_system({}, {});
+    egraph::test::IndexBuilder b;
+    b.describe("gentoo");
+    b.version({.cpv = "app-misc/odd-1x.y", .description = "Odd"});
+    const egraph::VersionMasks masks{b.index()};
+    const egraph::Catalogue catalogue{system.store, system.evaluated, b.index(), masks};
+    CHECK(catalogue.description("app-misc/odd").empty());
+}

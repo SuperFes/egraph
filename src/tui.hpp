@@ -15,9 +15,12 @@
 #include "pressure.hpp"
 #include "query.hpp"
 #include "remedy.hpp"
+#include "repository.hpp"
 #include "screen.hpp"
+#include "search.hpp"
 #include "steve.hpp"
 #include "store.hpp"
+#include "visibility.hpp"
 
 #include <algorithm>
 #include <array>
@@ -72,7 +75,8 @@ struct Link {
 // package is now installed at another version or slot. An update row is what emerge -u would do
 // to the page package, a held row the update the plan holds back; an unmatched row a dependency
 // the ebuild would add with flags toggled that nothing installed satisfies, its atom in
-// link.atom. A remedy row is a line of the commands past a held update.
+// link.atom. A remedy row is a line of the commands past a held update. A version row is one of
+// the package's versions in the repositories, or installed.
 enum class RowType : std::uint8_t {
     heading,
     note,
@@ -85,7 +89,8 @@ enum class RowType : std::uint8_t {
     update,
     held,
     unmatched,
-    remedy
+    remedy,
+    version
 };
 
 // A page row. Links at depth 0 are the page package's own; unfolding a link puts its links,
@@ -114,6 +119,7 @@ struct Row {
     std::optional<PendingUpdate> update;
     // For a remedy row, its label padded to the others'.
     std::optional<RemedyLine> remedy;
+    std::optional<PackageVersion> version;
 };
 
 // Sets each row's last and rails, walking up from the bottom: a level's line continues past a
@@ -165,6 +171,9 @@ using Staleness = std::function<std::optional<std::string>(const Stores&)>;
 using RefreshResult = std::expected<std::shared_ptr<const Stores>, std::string>;
 // Brings the stores up to date: the job ends with current ones, or why it could not.
 using Refresher = std::function<Job<RefreshResult>()>;
+using IndexResult = std::expected<std::shared_ptr<const RepositoryIndex>, std::string>;
+// Loads the repository index, building it first where it is missing or stale.
+using IndexLoader = std::function<Job<IndexResult>()>;
 // The time, which says when to look at the stores' inputs again.
 using Clock = std::function<std::chrono::steady_clock::time_point()>;
 
@@ -215,6 +224,8 @@ struct Services {
     // Empty where the stores are not to be refreshed.
     Staleness stale{};
     Refresher refresh{};
+    // Empty where there is no repository index to search.
+    IndexLoader load_index{};
     // The steady clock when empty.
     Clock now{};
 };
@@ -356,6 +367,25 @@ class App {
         std::vector<std::uint32_t> shown;
         Cursor cursor;
     };
+    // The search through the repositories: the key as typed, and what the last one run found.
+    struct Search {
+        std::string query;
+        bool typing = true;
+        // As emerge --searchdesc.
+        bool descriptions = false;
+        // The key the results are for, once one ran; one waiting for the index, before.
+        std::optional<std::string> ran;
+        bool pending = false;
+        std::vector<Found> results;
+        Cursor cursor;
+    };
+    // A package of the repositories that is not installed: what its best version's ebuild says,
+    // and every version.
+    struct Listing {
+        Found found;
+        std::vector<Row> rows;
+        Cursor cursor;
+    };
     // One package's page: why depclean keeps it, what it needs that is not installed, what it
     // depends on, then what depends on it, the last two as trees that unfold.
     struct Page {
@@ -373,6 +403,15 @@ class App {
         return !evaluated().packages.empty() &&
                evaluated().packages.size() == installed().packages.size();
     }
+    // Open from the list, under any pages opened from it.
+    [[nodiscard]] const std::optional<Search>& search() const { return search_; }
+    // Opened from the search, under any pages opened from it.
+    [[nodiscard]] const std::optional<Listing>& listing() const { return listing_; }
+    // The repository index's packages, once loaded.
+    [[nodiscard]] const std::optional<Catalogue>& catalogue() const { return catalogue_; }
+    // Whether the search waits for the repository index, which run() then loads.
+    [[nodiscard]] bool index_requested() const { return search_ && !indexed_ && !index_failed_; }
+    void finish_index(IndexResult result);
     // What emerge -uD would merge for the package, as the plan weighs it.
     [[nodiscard]] const std::optional<PendingUpdate>& update_of(std::uint32_t package) const {
         return updates_.at(package);
@@ -499,6 +538,15 @@ class App {
     void filter();
     void recompute();
     void open(std::uint32_t package);
+    // The search's results for its key, or nothing until the index is loaded.
+    void run_search();
+    void open_listing(const Found& found);
+    // A cp's versions as rows, under a heading, where the index has any.
+    [[nodiscard]] std::vector<Row> version_rows(std::string_view cp) const;
+    void handle_search(const Key& key);
+    void handle_listing(const Key& key);
+    // Whether the view on top takes keys as text: the filter or the search being typed.
+    [[nodiscard]] bool typing() const;
     void unfold(Page& page);
     void fold(Page& page);
     void handle_list(const Key& key);
@@ -520,6 +568,19 @@ class App {
     std::reference_wrapper<const Graph> graph_;
     // Behind a pointer so the references stay valid when the app moves.
     std::unique_ptr<const Loaded> owned_;
+    // The repository index and its masks, behind a pointer as the stores are.
+    struct Indexed {
+        explicit Indexed(std::shared_ptr<const RepositoryIndex> loaded)
+            : index{std::move(loaded)}, masks{*index} {}
+        std::shared_ptr<const RepositoryIndex> index;
+        VersionMasks masks;
+    };
+    std::unique_ptr<const Indexed> indexed_;
+    // Over indexed_ and the installed store shown.
+    std::optional<Catalogue> catalogue_;
+    bool index_failed_ = false;
+    std::optional<Search> search_;
+    std::optional<Listing> listing_;
     bool dynamic_deps_ = false;
     Update update_;
     Source source_ = Source::opened;
@@ -818,6 +879,10 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
     }
 }
 
+// A version of a package: whether it is installed, the version (in the bad tone when masked),
+// slot, repository, and why it is masked.
+[[nodiscard]] std::vector<Span> version_spans(const PackageVersion& version, const Glyphs& glyph);
+
 // The column before a link's package: whether it unfolds, is unfolded, or closes a cycle.
 inline Span fold_span(const App& app, const Row& row, const Glyphs& glyph) {
     if (row.cycle) {
@@ -935,6 +1000,11 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
                           {{row.remedy->label, tone_pen(Tone::heading)},
                            {row.remedy->text, tone_pen(row.remedy->tone)}},
                           size.cols);
+            }
+            break;
+        case RowType::version:
+            if (row.version) {
+                put_spans(screen, at, 3, version_spans(*row.version, glyph), size.cols);
             }
             break;
         case RowType::unmatched: {
@@ -1223,6 +1293,139 @@ template <class S> void draw_plan(S& screen, App& app, const Glyphs& glyph, Size
         hints.insert(hints.begin(), {{glyph.move, "move"}, {glyph.enter, "open"}});
     }
     draw_hints(screen, size.rows - 1, size.cols, hints);
+}
+
+// A search result: whether it is installed, its cp, best version (in the bad tone when masked),
+// the latest installed, and its description.
+[[nodiscard]] std::vector<Span> found_spans(const Found& found, const Glyphs& glyph);
+
+template <class S> void draw_search(S& screen, App& app, const Glyphs& glyph, Size size) {
+    const auto& open = app.search();
+    if (!open) {
+        return;
+    }
+    const auto& search = *open;
+    std::vector<Span> title{{std::format(" {} egraph ", glyph.package),
+                             {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
+                            {std::format(" {} ", glyph.trail), tone_pen(Tone::note)},
+                            {"search", tone_pen(Tone::name)}};
+    if (search.ran) {
+        title.push_back({std::format("  {} found", search.results.size()), tone_pen(Tone::count)});
+    }
+    if (search.descriptions) {
+        title.push_back({"  descriptions too", tone_pen(Tone::note)});
+    }
+    draw_title(screen, app, size.cols, title, glyph);
+
+    std::vector<Span> box{{std::format(" {} ", glyph.search), tone_pen(Tone::heading)}};
+    if (search.typing || !search.query.empty()) {
+        box.push_back({search.query, {.fg = palette::text, .bg = std::nullopt, .bold = true}});
+        if (search.typing) {
+            box.push_back({" ", {.fg = std::nullopt, .bg = palette::mauve}});
+        }
+    } else {
+        box.push_back({"/ to search", tone_pen(Tone::note)});
+    }
+    put_spans(screen, 1, 0, box, size.cols);
+
+    const unsigned first = 3;
+    const unsigned height = size.rows - first - 1;
+    app.set_height(height);
+    if (app.index_requested()) {
+        put_spans(screen, first, 3,
+                  {{spinner_frame(app.frame(), glyph), tone_pen(Tone::heading)},
+                   {" Loading the repository index; building it the first time takes a while",
+                    tone_pen(Tone::note)}},
+                  size.cols);
+    } else if (search.ran && search.results.empty()) {
+        put_spans(screen, first, 5, {{"no package matches", tone_pen(Tone::note)}}, size.cols);
+    } else if (search.ran) {
+        put_spans(
+            screen, 2, 0,
+            {{std::format("{:<47}{:<15}{:<15}description", "     package", "version", "installed"),
+              tone_pen(Tone::note)}},
+            size.cols);
+    }
+    for (unsigned line = 0; line < height && !app.index_requested(); ++line) {
+        const auto index = search.cursor.top + line;
+        if (index >= search.results.size()) {
+            break;
+        }
+        const bool selected = index == search.cursor.at;
+        const auto bg = selected ? std::optional<Color>{palette::surface} : std::nullopt;
+        if (selected) {
+            screen.fill_row(first + line, {.fg = std::nullopt, .bg = palette::surface});
+        }
+        std::vector<Span> spans{marker(selected, glyph)};
+        std::ranges::move(found_spans(search.results.at(index), glyph), std::back_inserter(spans));
+        put_spans(screen, first + line, 0, spans, size.cols, bg);
+    }
+    if (search.typing) {
+        draw_hints(screen, size.rows - 1, size.cols,
+                   {{glyph.enter, "search"},
+                    {"tab", search.descriptions ? "names only" : "descriptions too"},
+                    {"esc", "stop"}});
+    } else {
+        std::vector<std::pair<std::string_view, std::string_view>> hints{
+            {"/", "search again"},
+            {"tab", search.descriptions ? "names only" : "descriptions too"},
+            {"esc", "back"},
+            {"q", "quit"},
+            {":", "command"}};
+        if (!search.results.empty()) {
+            hints.insert(hints.begin(), {{glyph.move, "move"}, {glyph.enter, "open"}});
+        }
+        draw_hints(screen, size.rows - 1, size.cols, hints);
+    }
+}
+
+template <class S> void draw_listing(S& screen, App& app, const Glyphs& glyph, Size size) {
+    const auto& open = app.listing();
+    if (!open) {
+        return;
+    }
+    const auto& listing = *open;
+    const auto cp = split_cpv(listing.found.cp);
+    draw_title(screen, app, size.cols,
+               {{std::format(" {} egraph ", glyph.package),
+                 {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
+                {std::format(" {} ", glyph.trail), tone_pen(Tone::note)},
+                {"search", tone_pen(Tone::category)},
+                {std::format(" {} ", glyph.trail), tone_pen(Tone::note)},
+                {std::string{cp.name}, tone_pen(Tone::name)}},
+               glyph);
+    auto heading = cpv_spans(listing.found.cp);
+    heading.insert(heading.begin(), {std::format(" {} ", glyph.package), tone_pen(Tone::heading)});
+    heading.push_back({"  not installed", tone_pen(Tone::note)});
+    put_spans(screen, 1, 0, heading, size.cols);
+
+    const unsigned first = 3;
+    const unsigned height = size.rows - first - 1;
+    app.set_height(height);
+    for (unsigned line = 0; line < height; ++line) {
+        const auto index = listing.cursor.top + line;
+        if (index >= listing.rows.size()) {
+            break;
+        }
+        const auto& row = listing.rows.at(index);
+        const unsigned at = first + line;
+        if (row.type == RowType::heading) {
+            put_spans(screen, at, 1, {{row.text, tone_pen(Tone::heading)}}, size.cols);
+        } else if (row.type == RowType::version && row.version) {
+            const bool selected = index == listing.cursor.at;
+            const auto bg = selected ? std::optional<Color>{palette::surface} : std::nullopt;
+            if (selected) {
+                screen.fill_row(at, {.fg = std::nullopt, .bg = palette::surface});
+            }
+            std::vector<Span> spans{marker(selected, glyph)};
+            std::ranges::move(version_spans(*row.version, glyph), std::back_inserter(spans));
+            put_spans(screen, at, 0, spans, size.cols, bg);
+        } else {
+            put_spans(screen, at, 3, {{row.text, tone_pen(Tone::note)}}, size.cols);
+        }
+    }
+    draw_hints(screen, size.rows - 1, size.cols,
+               {{glyph.move, "move"}, {"esc", "back"}, {"q", "quit"}, {":", "command"}});
 }
 
 // text repeated count times.
@@ -1582,8 +1785,12 @@ template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
     if (size.rows >= 5 && size.cols >= 10) {
         if (!app.pages().empty()) {
             draw_page(screen, app, glyph, size);
+        } else if (app.listing()) {
+            draw_listing(screen, app, glyph, size);
         } else if (app.output()) {
             draw_output(screen, app, glyph, size);
+        } else if (app.search()) {
+            draw_search(screen, app, glyph, size);
         } else if (app.checked()) {
             draw_check(screen, app, glyph, size);
         } else if (app.watched()) {
@@ -1637,6 +1844,7 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
     std::optional<Job<CheckResult>> check;
     std::optional<Job<RebuildResult>> rebuild;
     std::optional<Job<RefreshResult>> refresh;
+    std::optional<Job<IndexResult>> index;
     draw(screen, app, glyph);
     while (!app.done()) {
         const auto refreshed = poll(
@@ -1645,6 +1853,15 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
                 app.finish_refresh(std::move(result));
                 next_check = now() + (app.refresh_error() ? retry_interval : stale_interval);
             });
+        const auto indexed = poll(
+            index, app.index_requested(),
+            [&] {
+                return services.load_index
+                           ? services.load_index()
+                           : ready(IndexResult{std::unexpected(std::string{
+                                 "this egraph has no way to load the repository index"})});
+            },
+            [&](IndexResult result) { app.finish_index(std::move(result)); });
         bool found_stale = false;
         if (watches && !app.stale() && now() >= next_check) {
             next_check = now() + stale_interval;
@@ -1668,7 +1885,7 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
             },
             [&](RebuildResult result) { app.finish_rebuild(std::move(result)); });
         if (checked == Polled::finished || rebuilt == Polled::finished ||
-            refreshed == Polled::finished || found_stale) {
+            refreshed == Polled::finished || indexed == Polled::finished || found_stale) {
             // Drawn below before any key is read.
         } else if (const auto change = app.steve_change_requested()) {
             app.finish_steve_change(services.set_steve

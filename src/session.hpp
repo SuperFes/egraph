@@ -44,6 +44,12 @@ class Session {
     void adopt(std::shared_ptr<const Stores> stores, std::filesystem::path used);
     // The repository index, beside the installed store, refreshed on its own inputs.
     [[nodiscard]] Loaded<RepositoryIndex> repository() EGRAPH_LIFETIMEBOUND;
+    // The repository index once loaded, shared; empty before.
+    [[nodiscard]] std::shared_ptr<const RepositoryIndex> loaded_repository() const {
+        return repository_;
+    }
+    // Answers from index from now on, as repository() would after loading it.
+    std::shared_ptr<const RepositoryIndex> adopt_repository(RepositoryIndex index);
     // What the dependency queries read: with dynamic, the installed store with the evaluated
     // store's dependency trees; without, installed().
     [[nodiscard]] Loaded<Store> dependencies(bool dynamic) EGRAPH_LIFETIMEBOUND;
@@ -80,7 +86,7 @@ class Session {
     std::filesystem::path used_;
     std::optional<Store> installed_;
     std::shared_ptr<const Stores> stores_;
-    std::optional<RepositoryIndex> repository_;
+    std::shared_ptr<const RepositoryIndex> repository_;
     std::optional<Store> dynamic_;
     std::array<std::optional<Graph>, 2> graphs_;
     // By build_deps, then dynamic.
@@ -109,6 +115,11 @@ builder_error(const Invocation& invocation, const std::expected<int, os::SpawnEr
 // else the one at store_path(invocation) while it is; used says which, or where to build.
 [[nodiscard]] std::optional<Stores> current_stores(const Invocation& invocation,
                                                    std::filesystem::path& used);
+
+// The repository index a session could answer from without building, as current_stores finds
+// the stores; used says which, or where to build.
+[[nodiscard]] std::optional<RepositoryIndex> current_repository(const Invocation& invocation,
+                                                                std::filesystem::path& used);
 
 // Both stores as a session loads them, for a caller that keeps them itself.
 [[nodiscard]] std::expected<Stores, std::string> open_stores(const Invocation& invocation,

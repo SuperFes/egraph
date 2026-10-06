@@ -228,6 +228,16 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   that keeps what it replaces (or what pulls a new package in), with its place in the merge order
   and the places it waits for. Installed packages open their pages; a new one says what pulls it
   in.
+- `s` searches the repositories as `egraph search` does (`Catalogue` in `src/search.hpp`, over
+  the repository index and the installed store), on `enter`; `tab` adds descriptions (`-S`).
+  The index is loaded the first time, in the background with a spinner: a current one as it
+  is, else the one at `--store`'s side after `egraph-build --repository` (or as it is, with
+  `--no-refresh`); the session's commands then answer from the same one. Each result shows its
+  best version, the latest installed and its description. An installed one opens its page; any
+  other a listing of its ebuild (description, homepage, license) and every version with its
+  slot, repository and why it is masked. Pages of installed packages list their versions too,
+  once the index is loaded. A refresh keeps the search and the listing, run again over the
+  refreshed stores; the index itself is not looked at again while the interface is open.
 - The stores stay current while the interface is open. Every two seconds without a key
   (`stale_interval`), `run()` looks at their inputs as a query's freshness check does (a few
   milliseconds of `lstat`); once they changed, it opens current stores as a session would, in

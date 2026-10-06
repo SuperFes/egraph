@@ -578,6 +578,41 @@ Job<tui::RefreshResult> background_refresh(const Invocation& invocation, Session
     };
 }
 
+// The repository index in the background, as a session opens it: a current one, else the user's
+// after a build (or as it is, with --no-refresh). The session answers from it too.
+Job<tui::IndexResult> background_index(const Invocation& invocation, Session& session) {
+    if (auto loaded = session.loaded_repository()) {
+        return ready(tui::IndexResult{std::move(loaded)});
+    }
+    std::filesystem::path used;
+    if (auto current = current_repository(invocation, used)) {
+        return ready(tui::IndexResult{session.adopt_repository(std::move(*current))});
+    }
+    const auto builder = builder_program(invocation);
+    const auto adopt = [&session, builder](std::expected<RepositoryIndex, StoreError> loaded,
+                                           bool built) -> tui::IndexResult {
+        if (!loaded) {
+            return std::unexpected(built ? built_store_error(builder, loaded.error())
+                                         : stored_store_error(loaded.error()));
+        }
+        return session.adopt_repository(std::move(*loaded));
+    };
+    if (invocation.no_refresh) {
+        return ready(adopt(load_repository(repository_index_path(used)), false));
+    }
+    return [build = background_build(invocation, "--repository", used), used,
+            adopt]() mutable -> std::optional<tui::IndexResult> {
+        auto ended = build();
+        if (!ended) {
+            return std::nullopt;
+        }
+        if (*ended) {
+            return tui::IndexResult{std::unexpected(std::move(**ended))};
+        }
+        return adopt(load_repository(repository_index_path(used)), true);
+    };
+}
+
 Exit execute(const Check&, Session&, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
     // Deliberately not refreshed: the point is to compare what queries would read.
@@ -2357,6 +2392,7 @@ Exit execute(const Tui&, Session& session, const Invocation& invocation, std::os
          .command = command,
          .stale = stale,
          .refresh = refresh,
+         .load_index = [&invocation, &session] { return background_index(invocation, session); },
          .now = {}},
         warnings, err);
 }

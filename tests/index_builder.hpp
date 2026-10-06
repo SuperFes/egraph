@@ -4,6 +4,7 @@
 
 #include "repository.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <sstream>
@@ -41,9 +42,11 @@ struct VersionSpec {
 // says otherwise.
 class IndexBuilder {
   public:
-    IndexBuilder() {
+    // Repositories by priority, highest first.
+    explicit IndexBuilder(std::vector<std::string> repositories = {"gentoo", "overlay"})
+        : names_{std::move(repositories)} {
         intern("");
-        for (const auto* name : {"gentoo", "overlay"}) {
+        for (const auto& name : names_) {
             index_.repositories.push_back({.name = intern(name), .location = intern("/")});
         }
         auto& vis = index_.visibility;
@@ -69,7 +72,8 @@ class IndexBuilder {
         version.sub_slot =
             intern(slash == std::string::npos ? spec.slot : spec.slot.substr(slash + 1));
         version.eapi = intern(spec.eapi);
-        version.repository = spec.repo == "gentoo" ? 0 : 1;
+        version.repository =
+            static_cast<std::uint32_t>(std::ranges::find(names_, spec.repo) - names_.begin());
         version.keywords = ids(spec.keywords);
         version.license = ids(spec.license);
         version.properties = ids(spec.properties);
@@ -98,6 +102,11 @@ class IndexBuilder {
     }
 
     egraph::VisibilityConfig& config() { return index_.visibility; }
+    // The repository's descriptions come from a metadata/pkg_desc_index.
+    void describe(std::string_view repository) {
+        const auto at = std::ranges::find(names_, repository) - names_.begin();
+        index_.repositories.at(static_cast<std::size_t>(at)).description_index = true;
+    }
     [[nodiscard]] const RepositoryIndex& index() const { return index_; }
 
   private:
@@ -112,6 +121,7 @@ class IndexBuilder {
         return found->second;
     }
 
+    std::vector<std::string> names_;
     RepositoryIndex index_;
     std::map<std::string, std::uint32_t, std::less<>> ids_;
 };

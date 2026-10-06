@@ -1,5 +1,6 @@
 #include "tui.hpp"
 
+#include "index_builder.hpp"
 #include "store_writer.hpp"
 #include "system_builder.hpp"
 
@@ -1999,4 +2000,280 @@ TEST_CASE("refreshed stores keep the plan view on its package") {
     REQUIRE(app.planned().has_value());
     CHECK(app.planned()->rows.size() == 3);
     CHECK(selected_label(app) == "app-misc/glibmm-1");
+}
+
+namespace {
+
+// dev-libs/lib at 1 (installed with app_with_lib("1")), 2 and ~x86 3; app-misc/new-tool at 1.0
+// and ~x86 2.0, not installed.
+std::shared_ptr<const egraph::RepositoryIndex> repository_index() {
+    egraph::test::IndexBuilder b{{"test_repo", "overlay"}};
+    for (const auto* version : {"1", "2"}) {
+        b.version({.cpv = std::format("dev-libs/lib-{}", version),
+                   .repo = "test_repo",
+                   .description = "A library"});
+    }
+    b.version({.cpv = "dev-libs/lib-3", .keywords = "~x86", .repo = "test_repo"});
+    b.version({.cpv = "app-misc/new-tool-1.0",
+               .license = "MIT",
+               .repo = "overlay",
+               .description = "A new tool",
+               .homepage = "https://example.org"});
+    b.version({.cpv = "app-misc/new-tool-2.0", .keywords = "~x86", .repo = "overlay"});
+    return std::make_shared<const egraph::RepositoryIndex>(b.index());
+}
+
+void type(egraph::tui::App& app, std::string_view text) {
+    for (const char c : text) {
+        app.handle(character(static_cast<char32_t>(c)));
+    }
+}
+
+std::vector<std::string> result_cps(const egraph::tui::App& app) {
+    std::vector<std::string> cps;
+    for (const auto& found : app.search()->results) {
+        cps.push_back(found.cp);
+    }
+    return cps;
+}
+
+} // namespace
+
+TEST_CASE("s searches the repositories, once the index is loaded") {
+    egraph::tui::App app{shared(app_with_lib("1")), false};
+    app.handle(character(U's'));
+    REQUIRE(app.search().has_value());
+    CHECK(app.search()->typing);
+    CHECK(app.index_requested());
+    // : is part of the key while typing.
+    type(app, "tool:");
+    CHECK_FALSE(app.prompt().has_value());
+    app.handle(key(KeyKind::backspace));
+    app.handle(key(KeyKind::enter));
+    CHECK_FALSE(app.search()->typing);
+    CHECK(app.search()->pending);
+    CHECK(app.search()->results.empty());
+
+    app.finish_index(repository_index());
+    CHECK_FALSE(app.index_requested());
+    REQUIRE(app.catalogue().has_value());
+    CHECK_FALSE(app.search()->pending);
+    CHECK(app.search()->ran == "tool");
+    REQUIRE(result_cps(app) == std::vector<std::string>{"app-misc/new-tool"});
+    const auto& found = app.search()->results.front();
+    CHECK(found.version == "1.0");
+    CHECK(found.visible);
+    CHECK(found.installed.empty());
+    CHECK(found.description == "A new tool");
+
+    // A new search, with the index already there.
+    app.handle(character(U'/'));
+    CHECK(app.search()->typing);
+    for (int i = 0; i < 4; ++i) {
+        app.handle(key(KeyKind::backspace));
+    }
+    type(app, "lib");
+    app.handle(key(KeyKind::enter));
+    CHECK(result_cps(app) == std::vector<std::string>{"dev-libs/lib"});
+    CHECK(app.search()->results.front().installed == "1");
+    CHECK(app.search()->results.front().version == "2");
+}
+
+TEST_CASE("tab searches descriptions too, and esc before any search closes it") {
+    egraph::tui::App app{shared(app_with_lib("1")), false};
+    app.handle(character(U's'));
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.search().has_value());
+
+    app.handle(character(U's'));
+    app.finish_index(repository_index());
+    type(app, "library");
+    app.handle(key(KeyKind::enter));
+    CHECK(app.search()->results.empty());
+    app.handle(key(KeyKind::tab));
+    CHECK(app.search()->descriptions);
+    CHECK(result_cps(app) == std::vector<std::string>{"dev-libs/lib"});
+    // Esc after a search stops typing but keeps the results; again, back to the list.
+    app.handle(character(U'/'));
+    app.handle(key(KeyKind::escape));
+    CHECK(app.search().has_value());
+    CHECK(result_cps(app) == std::vector<std::string>{"dev-libs/lib"});
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.search().has_value());
+}
+
+TEST_CASE("an installed result opens its page, with the versions in the repositories") {
+    egraph::tui::App app{shared(app_with_lib("1")), false};
+    app.handle(character(U's'));
+    app.finish_index(repository_index());
+    type(app, "lib");
+    app.handle(key(KeyKind::enter));
+    // Drawn first, as run() does, so the page knows its height.
+    FakeScreen screen{30, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    CHECK(cpv_of(app, app.pages().back().package) == "dev-libs/lib-1");
+    std::vector<std::string> versions;
+    for (const auto& row : app.pages().back().rows) {
+        if (row.type == RowType::version) {
+            REQUIRE(row.version.has_value());
+            versions.push_back(row.version->version);
+        }
+    }
+    CHECK(versions == std::vector<std::string>{"1", "2", "3"});
+
+    egraph::tui::draw(screen, app, ascii);
+    const auto text = screen.text();
+    INFO(text);
+    CHECK(contains(text, "Versions  3"));
+    CHECK(contains(text, "::test_repo"));
+    CHECK(contains(text, "masked: ~x86 keyword"));
+
+    app.handle(key(KeyKind::escape));
+    CHECK(app.pages().empty());
+    CHECK(app.search().has_value());
+}
+
+TEST_CASE("a result not installed opens a listing of its ebuild and versions") {
+    egraph::tui::App app{shared(app_with_lib("1")), false};
+    app.handle(character(U's'));
+    app.finish_index(repository_index());
+    type(app, "tool");
+    app.handle(key(KeyKind::enter));
+    FakeScreen screen{20, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    app.handle(key(KeyKind::enter));
+    CHECK(app.pages().empty());
+    REQUIRE(app.listing().has_value());
+    const auto& listing = *app.listing();
+    CHECK(listing.found.cp == "app-misc/new-tool");
+    std::size_t versions = 0;
+    for (const auto& row : listing.rows) {
+        versions += row.type == RowType::version ? 1 : 0;
+    }
+    CHECK(versions == 2);
+    REQUIRE(listing.cursor.at < listing.rows.size());
+    CHECK(listing.rows.at(listing.cursor.at).type == RowType::version);
+
+    egraph::tui::draw(screen, app, ascii);
+    const auto text = screen.text();
+    INFO(text);
+    CHECK(contains(text, "search > new-tool"));
+    CHECK(contains(text, "app-misc/new-tool  not installed"));
+    CHECK(contains(text, "A new tool"));
+    CHECK(contains(text, "https://example.org"));
+    CHECK(contains(text, "MIT"));
+    CHECK(contains(text, "::overlay"));
+    CHECK(contains(text, "masked: ~x86 keyword"));
+
+    // On the version the search shows, the best visible one.
+    CHECK(listing.rows.at(listing.cursor.at).version->version == "1.0");
+    app.handle(key(KeyKind::down));
+    CHECK(listing.rows.at(listing.cursor.at).version->version == "2.0");
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.listing().has_value());
+    CHECK(app.search().has_value());
+}
+
+TEST_CASE("the search view shows its results, and a wait while the index loads") {
+    egraph::tui::App app{shared(app_with_lib("1")), false};
+    FakeScreen screen{12, 120, {}};
+    app.handle(character(U's'));
+    type(app, "tool");
+    app.handle(key(KeyKind::enter));
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "Loading the repository index"));
+    app.finish_index(repository_index());
+    egraph::tui::draw(screen, app, ascii);
+    const auto text = screen.text();
+    INFO(text);
+    CHECK(contains(text, "search  1 found"));
+    CHECK(contains(text, "app-misc/new-tool"));
+    CHECK(contains(text, "1.0"));
+    CHECK(contains(text, "A new tool"));
+}
+
+TEST_CASE("run loads the index in the background, and a failure says why") {
+    SECTION("loaded") {
+        egraph::tui::App app{shared(app_with_lib("1")), false};
+        FakeScreen screen{12,
+                          120,
+                          {character(U's'), character(U'l'), character(U'i'), character(U'b'),
+                           key(KeyKind::enter), key(KeyKind::tick), key(KeyKind::tick)}};
+        int loads = 0;
+        std::string waiting;
+        const egraph::tui::Services services{
+            .load_index = [&]() -> egraph::Job<egraph::tui::IndexResult> {
+                ++loads;
+                return [&, polls = 0]() mutable -> std::optional<egraph::tui::IndexResult> {
+                    if (++polls < 3) {
+                        return std::nullopt;
+                    }
+                    waiting = screen.text();
+                    return repository_index();
+                };
+            }};
+        egraph::tui::run(screen, app, ascii, services);
+        CHECK(loads == 1);
+        CHECK(contains(waiting, "Loading the repository index"));
+        REQUIRE(app.search().has_value());
+        CHECK(result_cps(app) == std::vector<std::string>{"dev-libs/lib"});
+        CHECK(std::ranges::find(screen.timeouts, egraph::tui::wait_interval) !=
+              screen.timeouts.end());
+    }
+    SECTION("failed") {
+        egraph::tui::App app{shared(app_with_lib("1")), false};
+        FakeScreen screen{12, 120, {character(U's'), key(KeyKind::tick)}};
+        int loads = 0;
+        const egraph::tui::Services services{
+            .load_index = [&]() -> egraph::Job<egraph::tui::IndexResult> {
+                ++loads;
+                return egraph::ready(
+                    egraph::tui::IndexResult{std::unexpected("egraph-build exited with status 1")});
+            }};
+        egraph::tui::run(screen, app, ascii, services);
+        CHECK(loads == 1);
+        CHECK_FALSE(app.index_requested());
+        REQUIRE(app.dialog().has_value());
+        CHECK(app.dialog()->title == "The repository index could not be loaded");
+        // Opening the search again tries again.
+        app.handle(key(KeyKind::escape));
+        app.handle(key(KeyKind::escape));
+        app.handle(character(U's'));
+        CHECK(app.index_requested());
+    }
+}
+
+TEST_CASE("refreshed stores keep the search, its results now as installed") {
+    egraph::tui::App app{shared(app_with_lib("1")), false};
+    app.handle(character(U's'));
+    app.finish_index(repository_index());
+    type(app, "lib");
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.search()->results.front().installed == "1");
+    app.finish_refresh(shared(app_with_lib("2")));
+    REQUIRE(app.search().has_value());
+    CHECK(app.search()->results.front().installed == "2");
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    CHECK(cpv_of(app, app.pages().back().package) == "dev-libs/lib-2");
+}
+
+TEST_CASE("a command's output from the search replaces a listing over it") {
+    egraph::tui::App app{shared(app_with_lib("1")), false};
+    app.handle(character(U's'));
+    app.finish_index(repository_index());
+    type(app, "tool");
+    app.handle(key(KeyKind::enter));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.listing().has_value());
+    app.handle(character(U':'));
+    type(app, "orphans");
+    app.handle(key(KeyKind::enter));
+    app.finish_command({.exit = egraph::Exit::ok, .out = "x/other-1\n", .err = {}, .quit = false});
+    CHECK_FALSE(app.listing().has_value());
+    REQUIRE(app.output().has_value());
+    app.handle(key(KeyKind::escape));
+    CHECK(app.search().has_value());
 }

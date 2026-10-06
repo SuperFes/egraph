@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import time
@@ -9,8 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from conftest import System, write_stores
-from egraph_build import installed
+from conftest import System, portdb, write_stores
+from egraph_build import installed, repository
+from egraph_build import store as egraph_store
 from test_build import add_package, fresh_vardb
 from test_refresh import builds, query, system  # noqa: F401 (a fixture)
 
@@ -118,6 +120,40 @@ def test_tui_lists_and_shows_pending_updates(playgrounds, tmp_path):
         wait_for(socket, "1 updates")
         tmux(socket, "send-keys", "-t", "t", "p")
         wait_for(socket, " merges", "dev-libs/lib  2 ", "2.1  ::test_repo")
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")
+
+
+def test_tui_searches_the_repositories(playgrounds, tmp_path):
+    system = playgrounds("visibility")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path)
+    meta = egraph_store.RepositoryMeta("0", "0", "/", 0)
+    index = repository.read(portdb(system))
+    egraph_store.write(
+        egraph_store.repository_path(path), egraph_store.encode_repository(index, meta)
+    )
+    skip_without_tui()
+
+    socket = f"egraph-test-{os.getpid()}"
+    command = f"{EGRAPH} --store {path} --no-refresh tui; echo EXIT=$?; sleep 30"
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "120", "-y", "30", command)
+    try:
+        wait_for(socket, "/ to search")
+        tmux(socket, "send-keys", "-t", "t", "s", "testing", "Enter")
+        wait_for(socket, "1 found", "app-misc/testing", "A toolkit still in testing")
+        # Not installed: its versions and why each is masked.
+        tmux(socket, "send-keys", "-t", "t", "Enter")
+        wait_for(socket, "app-misc/testing  not installed", "masked: ~x86 keyword")
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        wait_for(socket, "1 found", gone=["not installed"])
+        tmux(socket, "send-keys", "-t", "t", "/", *["BSpace"] * 7, "stable", "Enter")
+        wait_for(socket, "app-misc/stable", gone=["app-misc/testing"])
+        # Installed: its own page, with the versions in the repositories.
+        tmux(socket, "send-keys", "-t", "t", "Enter")
+        wait_for(socket, "Kept by", "Versions  2", "::test_repo", "::overlay")
         tmux(socket, "send-keys", "-t", "t", "q")
         wait_for(socket, "EXIT=0")
     finally:
@@ -234,6 +270,42 @@ def test_tui_refreshes_the_store_when_the_system_changes(system, tmp_path):
         wait_for(socket, "command  esc back", "dev-libs/alt-b-1")
         tmux(socket, "send-keys", "-t", "t", "Escape")
         wait_for(socket, gone=["command  esc back"])
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")
+
+
+def test_tui_builds_the_repository_index_the_first_time_it_searches(system, tmp_path):
+    skip_without_tui()
+    playground, path, builder, log = system
+    assert query(system).returncode == 0
+    # The playground's repositories, which only its environment names.
+    repositories = playground.settings.environ()["PORTAGE_REPOSITORIES"]
+
+    socket = f"egraph-test-{os.getpid()}"
+    command = (
+        f"env PORTAGE_REPOSITORIES={shlex.quote(repositories)}"
+        f" {EGRAPH} --store {path} --config-root {playground.eroot}"
+        f" --eprefix {playground.eprefix} --builder {builder} tui;"
+        " echo EXIT=$?; sleep 30"
+    )
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "120", "-y", "20", command)
+    try:
+        wait_for(socket, " updates")
+        tmux(socket, "send-keys", "-t", "t", "s", "alt-a", "Enter")
+        wait_for(socket, "1 found", "dev-libs/alt-a", seconds=120)
+        # A command's search answers from the same index, built once.
+        tmux(socket, "send-keys", "-t", "t", ":", "search alt-a", "Enter")
+        wait_for(socket, "command  esc back", "dev-libs/alt-a")
+        repository_builds = [
+            line
+            for line in log.read_text().splitlines()
+            if line.startswith("--repository")
+        ]
+        assert len(repository_builds) == 1
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        wait_for(socket, "1 found", gone=["command  esc back"])
         tmux(socket, "send-keys", "-t", "t", "q")
         wait_for(socket, "EXIT=0")
     finally:

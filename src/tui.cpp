@@ -611,6 +611,8 @@ App::App(std::shared_ptr<const Stores> stores, bool dynamic_deps, Update update)
 }
 
 void App::own(std::unique_ptr<const Loaded> loaded) {
+    // It reads the stores being replaced; index() makes it anew.
+    catalogue_.reset();
     store_ = loaded->dynamic ? *loaded->dynamic : loaded->stores->installed;
     installed_ = loaded->stores->installed;
     evaluated_ = loaded->stores->evaluated;
@@ -685,6 +687,9 @@ void App::index() {
         for (std::uint32_t i = 0; i < plan_.held.size(); ++i) {
             held_.at(plan_.held.at(i).package) = i;
         }
+    }
+    if (indexed_ && !catalogue_) {
+        catalogue_.emplace(installed(), evaluated(), *indexed_->index, indexed_->masks);
     }
 }
 
@@ -845,6 +850,21 @@ void App::replace(std::shared_ptr<const Stores> stores) {
             output_->links.at(i) = link_of(output_->rows.at(i));
         }
     }
+    if (search_ && search_->ran) {
+        const auto was = search_->cursor;
+        run_search();
+        if (!search_->results.empty()) {
+            restore(search_->cursor, was, std::min(was.at, search_->results.size() - 1));
+        }
+    }
+    if (listing_ && catalogue_ && catalogue_->contains(listing_->found.cp)) {
+        const auto was = listing_->cursor;
+        open_listing(catalogue_->found(listing_->found.cp));
+        if (!listing_->rows.empty()) {
+            listing_->cursor = was;
+            listing_->cursor.at = std::min(was.at, listing_->rows.size() - 1);
+        }
+    }
 }
 
 std::optional<std::uint32_t> App::link_of(const std::vector<std::string>& fields) const {
@@ -897,6 +917,8 @@ void App::open(std::uint32_t package) {
         std::ranges::move(held_rows(store(), graph_.get(), evaluated(), plan_, remedies_.at(*held)),
                           std::back_inserter(page.rows));
     }
+    std::ranges::move(version_rows(store().string(store().packages.at(package).cp)),
+                      std::back_inserter(page.rows));
     std::ranges::move(unsatisfied_rows(store(), package, build_deps_),
                       std::back_inserter(page.rows));
     std::ranges::move(page_rows(store(), graph_.get(), package), std::back_inserter(page.rows));
@@ -921,6 +943,16 @@ void App::open(std::uint32_t package) {
     pages_.push_back(std::move(page));
 }
 
+bool App::typing() const {
+    if (!pages_.empty() || listing_ || output_) {
+        return false;
+    }
+    if (search_) {
+        return search_->typing;
+    }
+    return list_.searching && !checked_ && !watched_ && !planned_;
+}
+
 void App::handle(const Key& key) {
     if (key.kind == KeyKind::closed) {
         done_ = true;
@@ -932,15 +964,14 @@ void App::handle(const Key& key) {
                          checked_->stage == Checked::Stage::rebuilding)) {
             ++checked_->frame;
         }
-        if (refresh_requested()) {
+        if (refresh_requested() || index_requested()) {
             ++frame_;
         }
     } else if (dialog_) {
         dialog_.reset();
     } else if (prompt_) {
         handle_prompt(*prompt_, key);
-    } else if (is(key, U':') && !(list_.searching && pages_.empty() && !output_ && !checked_ &&
-                                  !watched_ && !planned_)) {
+    } else if (is(key, U':') && !typing()) {
         prompt_.emplace();
     } else if (!pages_.empty()) {
         handle_page(key);
@@ -948,8 +979,12 @@ void App::handle(const Key& key) {
         if (pages_.empty() && !output_ && watched_) {
             watched_->due = true;
         }
+    } else if (listing_) {
+        handle_listing(key);
     } else if (output_) {
         handle_output(*output_, key);
+    } else if (search_) {
+        handle_search(key);
     } else if (checked_) {
         handle_check(key);
     } else if (watched_) {
@@ -1004,6 +1039,7 @@ void App::finish_command(const Answer& answer) {
         output.rows.push_back(std::move(fields));
     }
     pages_.clear();
+    listing_.reset();
     output_ = std::move(output);
     if (!problems.empty()) {
         dialog_ =
@@ -1214,7 +1250,7 @@ void App::handle_steve(const Key& key) {
 }
 
 std::optional<std::chrono::milliseconds> App::refresh() const {
-    if (check_requested() || rebuild_requested() || refresh_requested()) {
+    if (check_requested() || rebuild_requested() || refresh_requested() || index_requested()) {
         return wait_interval;
     }
     if (watched_ && pages_.empty()) {
@@ -1354,6 +1390,9 @@ void App::handle_list(const Key& key) {
         done_ = true;
     } else if (is(key, U'/')) {
         list_.searching = true;
+    } else if (is(key, U's')) {
+        search_ = Search{};
+        index_failed_ = false;
     } else if (is(key, U'o')) {
         list_.only = list_.only == Only::orphans ? Only::all : Only::orphans;
         filter();
@@ -1458,6 +1497,174 @@ void App::handle_plan(const Key& key) {
             }
         }
         move_among(planned.cursor, stops, key, height_);
+    }
+}
+
+void App::finish_index(IndexResult result) {
+    if (!result) {
+        index_failed_ = true;
+        show({.error = true,
+              .title = "The repository index could not be loaded",
+              .lines = lines(result.error())});
+        return;
+    }
+    catalogue_.reset();
+    indexed_ = std::make_unique<const Indexed>(std::move(*result));
+    catalogue_.emplace(installed(), evaluated(), *indexed_->index, indexed_->masks);
+    if (search_ && search_->pending) {
+        run_search();
+    }
+}
+
+void App::run_search() {
+    if (!search_) {
+        return;
+    }
+    auto& search = *search_;
+    search.ran.reset();
+    search.results.clear();
+    search.cursor = {};
+    search.pending = !catalogue_;
+    if (!catalogue_) {
+        return;
+    }
+    const auto found = catalogue_->search(search.query, {.description = search.descriptions});
+    if (!found) {
+        show({.error = true, .title = "The search could not run", .lines = {found.error()}});
+        return;
+    }
+    search.ran = search.query;
+    search.results.reserve(found->size());
+    for (const auto cp : *found) {
+        search.results.push_back(catalogue_->found(cp));
+    }
+}
+
+std::vector<Row> App::version_rows(std::string_view cp) const {
+    if (!catalogue_ || !catalogue_->contains(cp)) {
+        return {};
+    }
+    const auto versions = catalogue_->versions(cp);
+    std::vector<Row> rows{text_row(RowType::heading, std::format("Versions  {}", versions.size()))};
+    for (const auto& version : versions) {
+        auto row = text_row(RowType::version, "");
+        row.version = version;
+        rows.push_back(std::move(row));
+    }
+    rows.push_back(text_row(RowType::note, ""));
+    return rows;
+}
+
+namespace {
+
+std::vector<std::size_t> version_stops(const std::vector<Row>& rows) {
+    std::vector<std::size_t> stops;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (rows.at(i).type == RowType::version) {
+            stops.push_back(i);
+        }
+    }
+    return stops;
+}
+
+} // namespace
+
+void App::open_listing(const Found& found) {
+    Listing listing{.found = found, .rows = {}, .cursor = {}};
+    auto& rows = listing.rows;
+    for (const auto& [label, text] :
+         {std::pair{"", found.description}, std::pair{"", found.homepage},
+          std::pair{"License: ", found.license}}) {
+        if (!text.empty()) {
+            rows.push_back(text_row(RowType::note, std::format("{}{}", label, text)));
+        }
+    }
+    if (!rows.empty()) {
+        rows.push_back(text_row(RowType::note, ""));
+    }
+    std::ranges::move(version_rows(found.cp), std::back_inserter(rows));
+    // On the version a search shows, else the first.
+    const auto stops = version_stops(rows);
+    const auto best = std::ranges::find_if(stops, [&](std::size_t at) {
+        const auto& version = rows.at(at).version;
+        return version && version->ebuild &&
+               (version->version == found.version || version->version == found.version + "-r0");
+    });
+    listing.cursor.at = best != stops.end() ? *best : stops.empty() ? 0 : stops.front();
+    keep_visible(listing.cursor, height_);
+    listing_ = std::move(listing);
+}
+
+void App::handle_search(const Key& key) {
+    if (!search_) {
+        return;
+    }
+    auto& search = *search_;
+    if (key.kind == KeyKind::tab) {
+        search.descriptions = !search.descriptions;
+        if (search.ran || search.pending) {
+            run_search();
+        }
+        return;
+    }
+    if (search.typing) {
+        if (key.kind == KeyKind::character && key.code >= U' ') {
+            append_utf8(search.query, key.code);
+        } else if (key.kind == KeyKind::backspace) {
+            pop_code_point(search.query);
+        } else if (key.kind == KeyKind::enter) {
+            search.typing = false;
+            // An empty key would list every package.
+            if (!search.query.empty()) {
+                run_search();
+            }
+        } else if (key.kind == KeyKind::escape) {
+            search.typing = false;
+            if (!search.ran && !search.pending) {
+                search_.reset();
+            }
+        }
+        return;
+    }
+    if (is(key, U'q') || is(key, U'Q')) {
+        done_ = true;
+    } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace ||
+               key.kind == KeyKind::left || is(key, U'h')) {
+        search_.reset();
+    } else if (is(key, U'/') || is(key, U's')) {
+        search.typing = true;
+    } else if (key.kind == KeyKind::enter || key.kind == KeyKind::right || is(key, U'l')) {
+        if (search.cursor.at >= search.results.size()) {
+            return;
+        }
+        const auto found = search.results.at(search.cursor.at);
+        if (found.installed.empty()) {
+            open_listing(found);
+            return;
+        }
+        if (const auto id = find(std::format("{}-{}", found.cp, found.installed))) {
+            open(*id);
+        } else if (const auto installed = resolve(store(), found.cp);
+                   installed && !installed->empty()) {
+            open(installed->back());
+        }
+    } else if (is_move(key)) {
+        move(search.cursor, search.results.size(), key, height_);
+    }
+}
+
+void App::handle_listing(const Key& key) {
+    if (!listing_) {
+        return;
+    }
+    auto& listing = *listing_;
+    if (is(key, U'q') || is(key, U'Q')) {
+        done_ = true;
+    } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace ||
+               key.kind == KeyKind::left || is(key, U'h')) {
+        listing_.reset();
+    } else if (is_move(key)) {
+        move_among(listing.cursor, version_stops(listing.rows), key, height_);
     }
 }
 
@@ -1918,6 +2125,42 @@ std::vector<Span> cpv_spans(std::string_view cpv) {
         spans.push_back({"-", tone_pen(Tone::note)});
         spans.push_back({std::string{parts.version}, tone_pen(Tone::version)});
     }
+    return spans;
+}
+
+std::vector<Span> version_spans(const PackageVersion& version, const Glyphs& glyph) {
+    const auto slot = version.sub_slot.empty() || version.sub_slot == version.slot
+                          ? std::format(":{}", version.slot)
+                          : std::format(":{}/{}", version.slot, version.sub_slot);
+    std::vector<Span> spans{
+        {version.installed ? std::string{glyph.good} : std::string{" "}, tone_pen(Tone::good)},
+        {std::format(" {:<16}", version.version),
+         tone_pen(version.visible ? Tone::version : Tone::bad)},
+        {std::format("{:<12}", slot), tone_pen(Tone::note)},
+        {std::format("{:<18}", std::format("::{}", version.repo)), tone_pen(Tone::repo)}};
+    if (!version.ebuild) {
+        spans.push_back({"installed, no ebuild", tone_pen(Tone::note)});
+    } else if (!version.reasons.empty()) {
+        std::string reasons;
+        for (const auto& reason : version.reasons) {
+            reasons += std::format("{}{}", reasons.empty() ? "" : ", ", reason);
+        }
+        spans.push_back({std::format("masked: {}", reasons), tone_pen(Tone::bad)});
+    }
+    return spans;
+}
+
+std::vector<Span> found_spans(const Found& found, const Glyphs& glyph) {
+    std::vector<Span> spans{{found.installed.empty() ? std::string{" "} : std::string{glyph.good},
+                             tone_pen(Tone::good)},
+                            {" ", {}}};
+    std::ranges::move(cpv_spans(found.cp), std::back_inserter(spans));
+    const auto used = columns(found.cp);
+    spans.push_back({std::string(used < 40 ? 42 - used : 2, ' '), {}});
+    spans.push_back({std::format("{:<15}", found.version),
+                     tone_pen(found.visible ? Tone::version : Tone::bad)});
+    spans.push_back({std::format("{:<15}", found.installed), tone_pen(Tone::good)});
+    spans.push_back({found.description, tone_pen(Tone::note)});
     return spans;
 }
 

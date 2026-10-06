@@ -128,6 +128,24 @@ std::optional<Stores> current_stores(const Invocation& invocation, std::filesyst
     return fresh<Stores>(path, load_stores);
 }
 
+std::optional<RepositoryIndex> current_repository(const Invocation& invocation,
+                                                  std::filesystem::path& used) {
+    const auto load_index = [](const std::filesystem::path& path) {
+        return load_repository(repository_index_path(path));
+    };
+    const auto path = store_path(invocation);
+    if (!invocation.store) {
+        const auto system = system_store_path(invocation);
+        if (auto loaded =
+                system != path ? fresh<RepositoryIndex>(system, load_index) : std::nullopt) {
+            used = system;
+            return loaded;
+        }
+    }
+    used = path;
+    return fresh<RepositoryIndex>(path, load_index);
+}
+
 std::expected<Stores, std::string> open_stores(const Invocation& invocation,
                                                std::ostream& warnings) {
     std::filesystem::path used;
@@ -180,9 +198,14 @@ Loaded<RepositoryIndex> Session::repository() {
         if (!loaded) {
             return std::unexpected(std::move(loaded.error()));
         }
-        repository_ = std::move(*loaded);
+        repository_ = std::make_shared<const RepositoryIndex>(std::move(*loaded));
     }
     return std::cref(*repository_);
+}
+
+std::shared_ptr<const RepositoryIndex> Session::adopt_repository(RepositoryIndex index) {
+    repository_ = std::make_shared<const RepositoryIndex>(std::move(index));
+    return repository_;
 }
 
 void Session::reload() {
