@@ -1131,18 +1131,18 @@ void App::finish_run(RunResult result) {
         return;
     }
     const auto command = std::format("egraph {}", action_arguments(*action).front());
-    if (!result) {
+    if (!result.error.empty()) {
         show({.error = true,
               .title = std::format("{} could not start", command),
-              .lines = lines(result.error())});
+              .lines = lines(result.error)});
         return;
     }
-    if (result->status == 0) {
+    if (result.status == 0) {
         show({.error = false, .title = std::format("{} finished", command), .lines = {}});
         return;
     }
     std::vector<std::string> shown;
-    for (const auto& failure : result->failures) {
+    for (const auto& failure : result.failures) {
         shown.push_back(failure.log.empty()
                             ? std::format("{} failed", failure.cpv)
                             : std::format("{} failed; its log, {}:", failure.cpv, failure.log));
@@ -1151,9 +1151,9 @@ void App::finish_run(RunResult result) {
         }
         shown.emplace_back();
     }
-    shown.push_back(std::format("{} exited with status {}; its output, {}:", command,
-                                result->status, result->output));
-    for (const auto& line : result->tail) {
+    shown.push_back(std::format("{} exited with status {}; its output, {}:", command, result.status,
+                                result.output));
+    for (const auto& line : result.tail) {
         shown.push_back(std::format("  {}", line));
     }
     show({.error = true, .title = std::format("{} failed", command), .lines = std::move(shown)});

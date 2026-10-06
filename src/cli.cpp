@@ -713,7 +713,7 @@ Job<tui::RunResult> start_action(const Invocation& invocation, const std::filesy
     const auto since = std::filesystem::file_time_type::clock::now();
     auto child = os::start(argv, output);
     if (!child) {
-        return ready(tui::RunResult{std::unexpected(child.error().message)});
+        return ready(tui::RunResult{.error = child.error().message});
     }
     return [running = Detached{std::move(*child)}, state, output, since,
             merges = action.kind !=
@@ -723,10 +723,10 @@ Job<tui::RunResult> start_action(const Invocation& invocation, const std::filesy
             return std::nullopt;
         }
         if (!*ended) {
-            return tui::RunResult{std::unexpected(std::move(ended->error().message))};
+            return tui::RunResult{.error = std::move(ended->error().message)};
         }
-        tui::RunOutcome outcome{
-            .status = **ended, .failures = {}, .output = output.string(), .tail = {}};
+        tui::RunResult outcome{
+            .error = {}, .status = **ended, .failures = {}, .output = output.string(), .tail = {}};
         if (outcome.status != 0) {
             if (merges) {
                 outcome.failures = recorded_failures(state, since);

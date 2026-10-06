@@ -241,15 +241,15 @@ struct RunFailure {
     std::string log{};
     std::vector<std::string> tail{};
 };
-// How a run ended: its exit status, and after a failure what failed, then where the run's output
-// went and its last lines.
-struct RunOutcome {
+// How a run ended: why it could not start or be waited for, else its exit status, and after a
+// failure what failed, then where the run's output went and its last lines.
+struct RunResult {
+    std::string error{};
     int status = 0;
     std::vector<RunFailure> failures{};
     std::string output{};
     std::vector<std::string> tail{};
 };
-using RunResult = std::expected<RunOutcome, std::string>;
 // Starts a confirmed action beside the interface; the job ends with the run. Dropped, as when the
 // interface quits, it leaves the run going.
 using Runner = std::function<Job<RunResult>(const Action&)>;
@@ -1988,9 +1988,9 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
         const auto ran = poll(
             running, app.run_requested().has_value(),
             [&] {
-                return services.run ? services.run(*app.run_requested())
-                                    : ready(RunResult{std::unexpected(
-                                          std::string{"this egraph has no way to run actions"})});
+                return services.run
+                           ? services.run(*app.run_requested())
+                           : ready(RunResult{.error = "this egraph has no way to run actions"});
             },
             [&](RunResult result) { app.finish_run(std::move(result)); });
         bool found_stale = false;

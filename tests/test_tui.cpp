@@ -2473,7 +2473,7 @@ TEST_CASE("a finished run says so, and a failed one shows the end of each failur
     FakeScreen screen{12, 160, {}};
     app.handle(character(U'U'));
     confirm(app);
-    app.finish_run(egraph::tui::RunOutcome{});
+    app.finish_run(egraph::tui::RunResult{});
     CHECK_FALSE(app.run_requested().has_value());
     REQUIRE(app.dialog().has_value());
     CHECK_FALSE(app.dialog()->error);
@@ -2487,7 +2487,7 @@ TEST_CASE("a finished run says so, and a failed one shows the end of each failur
     for (int i = 1; i <= 12; ++i) {
         tail.push_back(std::format("line {}", i));
     }
-    app.finish_run(egraph::tui::RunOutcome{
+    app.finish_run(egraph::tui::RunResult{
         .status = 1,
         .failures = {{.cpv = "dev-libs/b-2", .log = "/var/tmp/b.log", .tail = tail},
                      {.cpv = "app-misc/a-1", .log = "", .tail = {}}},
@@ -2522,6 +2522,18 @@ TEST_CASE("a finished run says so, and a failed one shows the end of each failur
     CHECK(app.dialog()->top == 0);
     app.handle(character(U'x'));
     CHECK_FALSE(app.dialog().has_value());
+}
+
+TEST_CASE("a run that cannot start says why") {
+    egraph::tui::App app{both(), true};
+    app.handle(character(U'U'));
+    confirm(app);
+    app.finish_run({.error = "egraph: No such file or directory"});
+    CHECK_FALSE(app.run_requested().has_value());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->error);
+    CHECK(app.dialog()->title == "egraph exec could not start");
+    CHECK(app.dialog()->lines == std::vector<std::string>{"egraph: No such file or directory"});
 }
 
 TEST_CASE("r removes the picked packages, or every orphan shown") {
@@ -2621,7 +2633,7 @@ TEST_CASE("run previews an action once the screen says it plans, then runs it to
                 if (++polls < 3) {
                     return std::nullopt;
                 }
-                return egraph::tui::RunOutcome{};
+                return egraph::tui::RunResult{};
             };
         }};
     egraph::tui::run(screen, app, ascii, services);
