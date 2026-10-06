@@ -31,24 +31,21 @@ def tmux(socket, *args):
     )
 
 
-def wait_for(socket, text, seconds=10):
+def wait_for(socket, *shown, gone=(), seconds=30):
+    """The screen once it shows every text in shown and none in gone. A capture can land
+    partway through a redraw, so everything a check reads is waited for."""
     deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
+    while True:
         screen = tmux(socket, "capture-pane", "-p", "-t", "t").stdout
-        if text in screen:
+        missing = [text for text in shown if text not in screen]
+        left = [text for text in gone if text in screen]
+        if not missing and not left:
             return screen
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"never showed {missing!r}, still showed {left!r}:\n{screen}"
+            )
         time.sleep(0.1)
-    raise AssertionError(f"{text!r} never appeared:\n{screen}")
-
-
-def wait_gone(socket, text, seconds=10):
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        screen = tmux(socket, "capture-pane", "-p", "-t", "t").stdout
-        if text not in screen:
-            return screen
-        time.sleep(0.1)
-    raise AssertionError(f"{text!r} never went away:\n{screen}")
 
 
 def skip_without_tui():
@@ -78,23 +75,23 @@ def test_tui_shows_the_store_and_quits(playgrounds, tmp_path):
         tmux(socket, "send-keys", "-t", "t", "/", "world", "Enter")
         wait_for(socket, "1 of")
         tmux(socket, "send-keys", "-t", "t", "Enter")
-        screen = wait_for(socket, "Depends on")
-        assert "dev-libs/a-1" in screen
-        assert "Needed by  0" in screen
-        assert "@selected  app-misc/world" in screen
+        wait_for(
+            socket,
+            "Depends on",
+            "dev-libs/a-1",
+            "Needed by  0",
+            "@selected  app-misc/world",
+        )
         # Unfold dev-libs/a-1, the first link, in place.
         tmux(socket, "send-keys", "-t", "t", "Space")
-        screen = wait_for(socket, "╰─ dev-libs/alt-y-1")
-        assert "├─ dev-libs/alt-x-1" in screen
+        wait_for(socket, "╰─ dev-libs/alt-y-1", "├─ dev-libs/alt-x-1")
         tmux(socket, "send-keys", "-t", "t", "Escape")
         wait_for(socket, "1 of")
         # Clear the search, then only what depclean would remove.
         tmux(socket, "send-keys", "-t", "t", "Escape")
         wait_for(socket, "/ to search")
         tmux(socket, "send-keys", "-t", "t", "o")
-        screen = wait_for(socket, " orphans")
-        assert "app-misc/orphan-1" in screen
-        assert "app-misc/world-1" not in screen
+        wait_for(socket, " orphans", "app-misc/orphan-1", gone=["app-misc/world-1"])
         tmux(socket, "send-keys", "-t", "t", "q")
         wait_for(socket, "EXIT=0")
     finally:
@@ -111,21 +108,16 @@ def test_tui_lists_and_shows_pending_updates(playgrounds, tmp_path):
     tmux(socket, "new-session", "-d", "-s", "t", "-x", "110", "-y", "30", command)
     try:
         # It opens on the updates.
-        screen = wait_for(socket, " updates")
-        assert "dev-libs/lib-2" in screen
-        assert "app-misc/eula-1" not in screen
+        wait_for(socket, " updates", "dev-libs/lib-2", gone=["app-misc/eula-1"])
         tmux(socket, "send-keys", "-t", "t", "/", "lib-2", "Enter")
         wait_for(socket, "1 updates")
         tmux(socket, "send-keys", "-t", "t", "Enter")
-        screen = wait_for(socket, "upgrade to dev-libs/lib-2.1  ::test_repo")
-        assert "Update" in screen
+        wait_for(socket, "upgrade to dev-libs/lib-2.1  ::test_repo", "Update")
         # Sent apart, so that they are not read as one Alt key.
         tmux(socket, "send-keys", "-t", "t", "Escape")
         wait_for(socket, "1 updates")
         tmux(socket, "send-keys", "-t", "t", "p")
-        screen = wait_for(socket, " merges")
-        assert "dev-libs/lib  2 " in screen
-        assert "2.1  ::test_repo" in screen
+        wait_for(socket, " merges", "dev-libs/lib  2 ", "2.1  ::test_repo")
         tmux(socket, "send-keys", "-t", "t", "q")
         wait_for(socket, "EXIT=0")
     finally:
@@ -144,7 +136,13 @@ def test_bare_egraph_opens_the_interface_and_runs_commands(playgrounds, tmp_path
         wait_for(socket, "/ to search")
         tmux(socket, "send-keys", "-t", "t", ":", "updates -N", "Enter")
         # The output view's own hints: the prompt shows the command while it runs.
-        screen = wait_for(socket, "command  esc back")
+        screen = wait_for(
+            socket,
+            "command  esc back",
+            "dev-libs/lib-2 ",
+            "dev-libs/lib-2.1",
+            "test_repo",
+        )
         (row,) = [line for line in screen.splitlines() if "dev-libs/lib-2 " in line]
         assert row.split()[-4:] == [
             "dev-libs/lib-2",
@@ -185,17 +183,19 @@ def test_tui_previews_a_fresh_build_without_saving_it(system, tmp_path):
     try:
         wait_for(socket, " updates")
         # --no-refresh's warning would be lost under the interface, which repeats it.
-        screen = wait_for(socket, "answering from a stale store")
-        assert " Warning " in screen
+        wait_for(socket, "answering from a stale store", " Warning ")
         tmux(socket, "send-keys", "-t", "t", "Escape")
-        wait_gone(socket, " Warning ")
+        wait_for(socket, gone=[" Warning "])
         tmux(socket, "send-keys", "-t", "t", "c")
-        screen = wait_for(socket, "differs from a fresh build", seconds=60)
-        assert "dev-libs/alt-b-1" in screen
-        assert "u preview" in screen
+        wait_for(
+            socket,
+            "differs from a fresh build",
+            "dev-libs/alt-b-1",
+            "u preview",
+            seconds=60,
+        )
         tmux(socket, "send-keys", "-t", "t", "u")
-        screen = wait_for(socket, "Showing the fresh build")
-        assert "preview, not saved" in screen
+        wait_for(socket, "Showing the fresh build", "preview, not saved")
         tmux(socket, "send-keys", "-t", "t", "Escape")
         tmux(socket, "send-keys", "-t", "t", "u")
         wait_for(socket, f"{packages} of {packages} packages")
@@ -231,9 +231,9 @@ def test_tui_refreshes_the_store_when_the_system_changes(system, tmp_path):
         assert builds(system)[-1].startswith("--incremental --store ")
         # Commands answer from the refreshed store too.
         tmux(socket, "send-keys", "-t", "t", ":", "orphans", "Enter")
-        assert "dev-libs/alt-b-1" in wait_for(socket, "command  esc back")
+        wait_for(socket, "command  esc back", "dev-libs/alt-b-1")
         tmux(socket, "send-keys", "-t", "t", "Escape")
-        wait_gone(socket, "command  esc back")
+        wait_for(socket, gone=["command  esc back"])
         tmux(socket, "send-keys", "-t", "t", "q")
         wait_for(socket, "EXIT=0")
     finally:
@@ -280,14 +280,10 @@ def test_tui_watches_running_emerges(playgrounds, tmp_path):
     try:
         wait_for(socket, "/ to search")
         tmux(socket, "send-keys", "-t", "t", "e")
-        screen = wait_for(socket, f"emerge {pid}")
-        assert "1 of 4 done" in screen
-        assert "dev-libs/a-2" in screen
-        assert "compile" in screen
+        wait_for(socket, f"emerge {pid}", "1 of 4 done", "dev-libs/a-2", "compile")
         # Read again on its own, with no key pressed.
         publish(3, "install")
-        screen = wait_for(socket, "3 of 4 done")
-        assert "install" in screen
+        wait_for(socket, "3 of 4 done", "install")
         # The installed version's page.
         tmux(socket, "send-keys", "-t", "t", "Enter")
         wait_for(socket, "Depends on")
@@ -347,9 +343,14 @@ def test_tui_shows_the_merge_list_as_a_tree(gnupg_home, tmp_path):
         try:
             wait_for(socket, "/ to search")
             tmux(socket, "send-keys", "-t", "t", "e")
-            screen = wait_for(socket, "waits for 1", seconds=30)
-            assert "dev-libs/lib-1" in screen
-            assert "compile" in screen
+            screen = wait_for(
+                socket,
+                "waits for 1",
+                "dev-libs/lib-1",
+                "compile",
+                "app-misc/app-1",
+                "app-misc/plugin-1",
+            )
             lines = screen.splitlines()
             app = next(line for line in lines if "app-misc/app-1" in line)
             plugin = next(line for line in lines if "app-misc/plugin-1" in line)
