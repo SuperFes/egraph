@@ -33,7 +33,7 @@ INPUT_FILE, INPUT_DIRECTORY, INPUT_SYMLINK, INPUT_MISSING = range(4)
 DEFAULT_PATH = "var/cache/egraph/installed.egraph"
 
 EVALUATED_MAGIC = b"EGRAPHEV"
-EVALUATED_FORMAT_VERSION = 8
+EVALUATED_FORMAT_VERSION = 9
 (
     SECTION_DEPENDENCIES,
     SECTION_CANDIDATES,
@@ -283,6 +283,10 @@ def encode_evaluated(layer, meta, inputs=()):
         w.varint(int(pkg.vdb_masked))
         w.varint(0 if pkg.target is None else candidate_index[pkg.target] + 1)
         w.ids([strings(flag) for flag in pkg.rebuild])
+        for reasons in (pkg.mask_reasons, pkg.vdb_mask_reasons):
+            w.ids([strings(reason) for reason in reasons])
+        w.varint(strings(pkg.mask_file))
+        w.varint(strings(pkg.mask_comment))
     sections[SECTION_DEPENDENCIES] = w.out
 
     w = _Writer()
@@ -558,6 +562,10 @@ def decode_evaluated(data):
             bool(r.varint(2)),
             r.varint(),
             tuple(strings[i] for i in r.ids(nstrings)),
+            tuple(strings[i] for i in r.ids(nstrings)),
+            tuple(strings[i] for i in r.ids(nstrings)),
+            s(),
+            s(),
         )
         raw.append((cpv, source, eapi, errors, deps, possible, weighed))
     r.done()
@@ -596,7 +604,7 @@ def decode_evaluated(data):
 
     packages = []
     for cpv, source, eapi, errors, deps, possible, weighed in raw:
-        visible, masked, vdb_masked, target, rebuild = weighed
+        visible, masked, vdb_masked, target, rebuild, *mask = weighed
         if target > len(candidates):
             raise StoreError(f"dependencies: {cpv}'s target {target} out of range")
         packages.append(
@@ -619,6 +627,7 @@ def decode_evaluated(data):
                     else None
                 ),
                 rebuild,
+                *mask,
             )
         )
     return meta, inputs, EvaluatedLayer(packages, candidates, *listed)

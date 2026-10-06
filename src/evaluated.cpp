@@ -76,6 +76,10 @@ std::optional<StoreError> read_dependencies(std::span<const std::byte> section,
             pkg.target = target - 1;
         }
         pkg.rebuild = read_ids(r, evaluated.ids, strings, "string");
+        pkg.mask_reasons = read_ids(r, evaluated.ids, strings, "string");
+        pkg.vdb_mask_reasons = read_ids(r, evaluated.ids, strings, "string");
+        pkg.mask_file = r.index(strings, "string");
+        pkg.mask_comment = r.index(strings, "string");
         evaluated.packages.push_back(pkg);
     }
     r.finish();

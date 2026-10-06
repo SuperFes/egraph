@@ -1,6 +1,6 @@
 # Store format
 
-Status: format version 5 (evaluated store: 8), implemented by `builder/egraph_build/store.py`
+Status: format version 5 (evaluated store: 9), implemented by `builder/egraph_build/store.py`
 (writer and a Python reader) and `src/store.cpp` and `src/evaluated.cpp` (C++ readers). Any
 layout change bumps the version.
 
@@ -114,7 +114,7 @@ The installed packages as emerge sees them against the repositories: their depen
 store it was built against, named after it (`installed.egraph` → `installed.evaluated.egraph`:
 the last extension replaced by `.evaluated.egraph`), and is written by the same builder run.
 
-It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 8.
+It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 9.
 Package ids are the installed store's, so an evaluated store is current only while the installed
 store beside it has the build start recorded in its meta, and its own inputs stat the same.
 
@@ -177,6 +177,14 @@ weighs the package against its repositories under `--update`:
     state, `flag%*` and `-flag%` new in IUSE, `(-flag%*)` and `(-flag%)` gone from IUSE, with a
     `*` when the flag's state changed. Those with a `*` are `--changed-use`'s. Flags new in or
     gone from IUSE count only when the profile neither masks nor forces them on the target.
+12. Mask reasons: list of string ids, why the package is masked where field 8 is 1, as emerge's
+    `get_masking_status` words them for an installed package (portage's `_getmaskingstatus`,
+    then `invalid: KEY: error` for each string that does not parse, naming the vdb file for all
+    but PROVIDES and REQUIRES, and `invalid: SLOT is undefined`); empty elsewhere.
+13. VDB mask reasons: the same where field 9 is 1.
+14. Mask file and comment: two string ids, the `package.mask` file and the comment above the
+    entry (each line ending in a newline) as `getmaskingreason` gives them, when `package.mask`
+    is among either's reasons; both the empty string otherwise.
 
 A candidate is one version of a cp in one repository: every visible one, and each masked one
 that is installed. The cps are the installed ones, and every cp that emerge could have to pull

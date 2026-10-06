@@ -783,6 +783,16 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   records the reasons, file and comment for each masked installed package (format bump);
   `updates` and `plan` show them in the human layout and the tree, and `--verify` holds the
   list to emerge's.
+  - 16p1 (done): the evaluated store's mask reasons for each masked installed package (where `masked`
+    or `vdb_masked` is computed), under both dynamic-deps views, as emerge's
+    `get_masking_status` words them for an installed `Package` (portage's `_getmaskingstatus`,
+    then its invalid metadata and an undefined SLOT), and the `package.mask` file and comment
+    when that is among them; evaluated format 9. Held to `get_masking_status` and
+    `getmaskingreason` on a scenario masking installed packages each way.
+  - 16p2: which ones emerge lists (`_masked_installed`): kept by the plan, masked, and in
+    emerge's graph or masked by LICENSE; a `masked` row in `updates` and `plan`, emerge's block
+    in the human layout, held to depgraph's list on every scenario, and `--verify` comparing
+    the cpvs with emerge's warning.
 
 ## 17. `egraphd`, the service
 

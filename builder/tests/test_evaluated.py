@@ -437,6 +437,37 @@ def test_masked_is_emerges(scenario, dynamic_deps):
         assert found[cpv] == (expected[cpv] if cpv in weighed(layer) else False), cpv
 
 
+def test_mask_reasons_are_emerges(scenario, dynamic_deps):
+    """Each masked installed package's reasons and package.mask comment, as emerge's warning
+    about them words them."""
+    layer = build(scenario)
+    expected = update.mask_reasons(scenario.trees, scenario.eroot, dynamic_deps)
+    for pkg in layer:
+        reasons = pkg.mask_reasons if dynamic_deps else pkg.vdb_mask_reasons
+        if pkg.cpv not in weighed(layer) or pkg.cpv not in expected:
+            assert reasons == (), pkg.cpv
+            continue
+        want, (filename, comment) = expected[pkg.cpv]
+        assert reasons == want, pkg.cpv
+        if "package.mask" in reasons:
+            assert (pkg.mask_file, pkg.mask_comment) == (filename, comment), pkg.cpv
+
+
+def test_a_package_mask_comment_is_kept(playgrounds):
+    """The repository scenario's package.mask entry has a comment, as gentoo's have."""
+    system = playgrounds("repository")
+    pkg = next(p for p in build(system) if p.cpv == "app-misc/masked-2")
+    assert pkg.mask_reasons == ("package.mask",)
+    assert pkg.mask_file.endswith("/etc/portage/package.mask")
+    assert (
+        pkg.mask_comment
+        == "# A Developer <dev@example.org> (2026-10-02)\n# Masked for testing.\n"
+    )
+    eula = next(p for p in build(system) if p.cpv == "app-misc/eula-1")
+    assert eula.mask_reasons == ("EULA license(s)",)
+    assert (eula.mask_file, eula.mask_comment) == ("", "")
+
+
 @pytest.mark.parametrize(
     "cpv, masked, vdb_masked, visible",
     [

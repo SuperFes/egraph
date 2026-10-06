@@ -30,9 +30,11 @@ KEYS = DEP_KINDS + (
 )
 
 
-def _invalid(metadata):
-    """Package.invalid for an installed package: a string portage cannot parse even leniently,
-    as it reads an installed package's (no EAPI rules, no IUSE check)."""
+def _invalid_messages(metadata, path=lambda key: key):
+    """Package.invalid's messages for an installed package: a string portage cannot parse even
+    leniently, as it reads an installed package's (no EAPI rules, no IUSE check), a string's
+    naming path(key), the file holding it."""
+    messages = []
     for key in DEP_KINDS + ("LICENSE", "PROPERTIES", "RESTRICT"):
         try:
             use_reduce(
@@ -41,14 +43,18 @@ def _invalid(metadata):
                 token_class=Atom if key in DEP_KINDS else None,
                 flat=True,
             )
-        except InvalidDependString:
-            return True
+        except InvalidDependString as e:
+            messages.append(f"{key}: {e} in '{path(key)}'")
     for key in ("PROVIDES", "REQUIRES"):
         try:
             tuple(parse_soname_deps(metadata[key]))
-        except InvalidData:
-            return True
-    return False
+        except InvalidData as e:
+            messages.append(f"{key}: {e}")
+    return messages
+
+
+def _invalid(metadata):
+    return bool(_invalid_messages(metadata))
 
 
 # What invalid_ebuild reads of an ebuild.
@@ -129,6 +135,47 @@ def invalid_ebuild(portdb, cpv, metadata):
     if metadata["SRC_URI"]:
         check("SRC_URI", is_src_uri=True)
     return messages
+
+
+class _Installed:
+    """What portage's _getmaskingstatus reads of emerge's Package for an installed one."""
+
+    installed = True
+
+    def __init__(self, cpv, metadata):
+        self.cpv = cpv
+        self._metadata = metadata
+
+
+def reasons(settings, vardb, portdb, cpv, metadata):
+    """Why emerge masks an installed package with metadata (KEYS), as its get_masking_status
+    words it: portage's own reasons, then each invalid string and an undefined SLOT."""
+    from portage.package.ebuild.getmaskingstatus import _getmaskingstatus
+
+    try:
+        pkg = _pkg_str(cpv, metadata=metadata, settings=settings)
+        found = [
+            reason.message
+            for reason in _getmaskingstatus(_Installed(pkg, metadata), settings, portdb)
+        ]
+    except (InvalidData, ValueError):
+        found = []
+    path = lambda key: vardb.getpath(cpv, filename=key)  # noqa: E731
+    found.extend(f"invalid: {message}" for message in _invalid_messages(metadata, path))
+    if not metadata["SLOT"]:
+        found.append("invalid: SLOT is undefined")
+    return tuple(found)
+
+
+def mask_comment(settings, portdb, cpv, metadata):
+    """(file, comment) of the package.mask entry masking an installed package, as emerge shows
+    them; empty strings when there is none."""
+    import portage
+
+    comment, filename = portage.getmaskingreason(
+        cpv, metadata=metadata, settings=settings, portdb=portdb, return_location=True
+    )
+    return filename or "", comment or ""
 
 
 def masked(settings, cpv, metadata):

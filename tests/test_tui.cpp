@@ -158,10 +158,10 @@ egraph::Stores only_b_updates() {
     dependencies.varint(2);
     dependencies.varints({4, 13, 0}).list({1}).list({8});
     dependencies.varints({0, 14, 1}).list({}).list({8, 15});
-    dependencies.varints({1, 0, 1, 0}).list({});
+    dependencies.varints({1, 0, 1, 0}).list({}).varints({0, 0, 0, 0});
     dependencies.varints({2, 1, 3}).varint(0);
     dependencies.varint(0).varint(0).varint(0).varint(0).varint(0).varint(0);
-    dependencies.varints({0, 1, 1, 3}).list({});
+    dependencies.varints({0, 1, 1, 3}).list({}).varints({0, 0, 0, 0});
     return {.installed = sample(), .evaluated = evaluated_sample(dependencies)};
 }
 
@@ -1402,10 +1402,10 @@ TEST_CASE("the list says when nothing is pending") {
     dependencies.varint(2);
     dependencies.varints({1, 0, 3}).varint(0);
     dependencies.varint(0).varint(0).varint(0).varint(0).varint(0).varint(0);
-    dependencies.varints({1, 0, 0, 0}).list({});
+    dependencies.varints({1, 0, 0, 0}).list({}).varints({0, 0, 0, 0});
     dependencies.varints({2, 1, 3}).varint(0);
     dependencies.varint(0).varint(0).varint(0).varint(0).varint(0).varint(0);
-    dependencies.varints({1, 0, 0, 0}).list({});
+    dependencies.varints({1, 0, 0, 0}).list({}).varints({0, 0, 0, 0});
     egraph::tui::App app{
         egraph::Stores{.installed = sample(), .evaluated = evaluated_sample(dependencies)}, true};
     FakeScreen screen{10, 120, {}};

@@ -313,7 +313,11 @@ SCENARIOS = {
             "app-misc/over-1::overlay": {"EAPI": "8"},
         },
         "user_config": {
-            "package.mask": ("=app-misc/masked-2",),
+            "package.mask": (
+                "# A Developer <dev@example.org> (2026-10-02)",
+                "# Masked for testing.",
+                "=app-misc/masked-2",
+            ),
             "make.conf": ('ACCEPT_LICENSE="* -EULA"',),
         },
         # Written to the repository's profiles/updates by the fixtures.

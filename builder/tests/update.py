@@ -266,6 +266,49 @@ def masked(trees, eroot, dynamic_deps=True):
     }
 
 
+def mask_reasons(trees, eroot, dynamic_deps=True):
+    """{installed cpv: (reasons, (file, comment))} for each masked one, as emerge's warning about
+    masked installed packages gives them: get_masking_status's words, and getmaskingreason's
+    file and comment for package.mask (else empty)."""
+    import portage
+    from _emerge.create_depgraph_params import create_depgraph_params
+    from _emerge.depgraph import depgraph, get_masking_status
+
+    root_config = trees[eroot]["root_config"]
+    options = {"--pretend": True, "--dynamic-deps": "y" if dynamic_deps else "n"}
+    graph = depgraph(
+        root_config.settings,
+        trees,
+        options,
+        create_depgraph_params(options, None),
+        None,
+    )
+    graph._load_vdb()
+    pkgsettings = graph._frozen_config.pkgsettings[eroot]
+    vardb = trees[eroot]["vartree"].dbapi
+    found = {}
+    for cpv in vardb.cpv_all():
+        pkg = graph._pkg(cpv, "installed", root_config, installed=True)
+        if not pkg.masks:
+            continue
+        reasons = tuple(
+            get_masking_status(
+                pkg, pkgsettings, root_config, use=graph._pkg_use_enabled
+            )
+        )
+        comment, filename = "", ""
+        if "package.mask" in reasons:
+            comment, filename = portage.getmaskingreason(
+                pkg.cpv,
+                metadata=pkg._metadata,
+                settings=pkgsettings,
+                portdb=root_config.trees["porttree"].dbapi,
+                return_location=True,
+            )
+        found[str(cpv)] = (reasons, (filename or "", comment or ""))
+    return found
+
+
 def candidate_matches(trees, eroot, atom, candidates):
     """The candidates ("cpv::repo") that atom matches as depgraph matches an ebuild against a
     dependency: its Package, with the USE it would be built with now."""

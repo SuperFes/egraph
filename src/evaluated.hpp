@@ -13,7 +13,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t evaluated_format_version = 8;
+inline constexpr std::uint32_t evaluated_format_version = 9;
 
 // Where an installed package's dependency strings came from under --dynamic-deps=y.
 enum class DepSource : std::uint8_t { ebuild, vdb, moved };
@@ -44,6 +44,13 @@ struct Dependencies {
     // String ids in Evaluated::ids: the flags --newuse rebuilds it for, as emerge shows them
     // ("flag*", "-flag%", "(-flag%*)"); those with a * are --changed-use's.
     Range rebuild;
+    // String ids in Evaluated::ids: why it is masked, where masked is computed and true, as
+    // emerge's warning about masked installed packages words it; the same for vdb_masked.
+    Range mask_reasons;
+    Range vdb_mask_reasons;
+    // String ids: the package.mask file and comment, when package.mask is among the reasons.
+    std::uint32_t mask_file = 0;
+    std::uint32_t mask_comment = 0;
 };
 
 // A dependency the ebuild would add with flags toggled that the installed build left as they are.

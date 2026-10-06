@@ -88,6 +88,14 @@ class Dependencies(NamedTuple):
     # them: "flag*" or "-flag*" changed, "flag%*" or "-flag%" new in IUSE, "(-flag%*)" or
     # "(-flag%)" gone from it (* when it was on). Those with a * are --changed-use's.
     rebuild: tuple = ()
+    # Why it is masked, where masked is computed and true, as emerge's warning about masked
+    # installed packages words it (get_masking_status); the same under --dynamic-deps=n.
+    mask_reasons: tuple = ()
+    vdb_mask_reasons: tuple = ()
+    # The package.mask file and comment getmaskingreason gives, when package.mask is among
+    # either's reasons; else empty.
+    mask_file: str = ""
+    mask_comment: str = ""
 
 
 # Candidate.deps of a masked candidate: one empty node tuple per kind.
@@ -406,16 +414,34 @@ def rebuild_flags(old_use, old_iuse, use, iuse, forced):
 
 
 def read_masked(vardb, portdb, settings, cpv, updates):
-    """cpv's masked and vdb_masked (Dependencies); settings is a config clone of vardb's."""
-    metadata = dict(zip(masks.KEYS, vardb.aux_get(cpv, list(masks.KEYS))))
-    vdb_masked = masks.masked(settings, cpv, metadata)
+    """cpv's masked and vdb_masked, their reasons and the package.mask comment (Dependencies);
+    settings is a config clone of vardb's."""
+    vdb_metadata = dict(zip(masks.KEYS, vardb.aux_get(cpv, list(masks.KEYS))))
+    metadata = dict(vdb_metadata)
     source, strings, eapi = dynamic.dependency_strings(vardb, portdb, cpv, updates)
-    if source != "ebuild":
-        return {"masked": vdb_masked, "vdb_masked": vdb_masked}
-    # FakeVartree's view: the ebuild's EAPI, KEYWORDS and dependencies.
-    (keywords,) = portdb.aux_get(cpv, ["KEYWORDS"], myrepo=metadata["repository"])
-    metadata.update(strings, EAPI=eapi, KEYWORDS=keywords)
-    return {"masked": masks.masked(settings, cpv, metadata), "vdb_masked": vdb_masked}
+    if source == "ebuild":
+        # FakeVartree's view: the ebuild's EAPI, KEYWORDS and dependencies.
+        (keywords,) = portdb.aux_get(cpv, ["KEYWORDS"], myrepo=metadata["repository"])
+        metadata.update(strings, EAPI=eapi, KEYWORDS=keywords)
+    found = {}
+    for view, key, reasons_key in (
+        (vdb_metadata, "vdb_masked", "vdb_mask_reasons"),
+        (metadata, "masked", "mask_reasons"),
+    ):
+        found[key] = masks.masked(settings, cpv, view)
+        found[reasons_key] = (
+            masks.reasons(settings, vardb, portdb, cpv, view) if found[key] else ()
+        )
+    for view, reasons_key in (
+        (metadata, "mask_reasons"),
+        (vdb_metadata, "vdb_mask_reasons"),
+    ):
+        if "package.mask" in found[reasons_key]:
+            found["mask_file"], found["mask_comment"] = masks.mask_comment(
+                settings, portdb, cpv, view
+            )
+            break
+    return found
 
 
 def read_update(vardb, cpv, candidates, repositories, ebuild_use):
@@ -822,6 +848,10 @@ def to_json(layer):
                 else {"cpv": pkg.target[0], "repo": pkg.target[1]}
             ),
             "rebuild": list(pkg.rebuild),
+            "mask_reasons": list(pkg.mask_reasons),
+            "vdb_mask_reasons": list(pkg.vdb_mask_reasons),
+            "mask_file": pkg.mask_file,
+            "mask_comment": pkg.mask_comment,
         }
         for pkg in layer
     ]
@@ -845,7 +875,7 @@ def to_json(layer):
         for c in layer.candidates()
     ]
     document = {
-        "format": 8,
+        "format": 9,
         "packages": packages,
         "candidates": candidates,
         "repository_cps": list(layer.repository_cps()),
