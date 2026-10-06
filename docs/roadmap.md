@@ -846,18 +846,38 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
 
 ## 17. `egraphd`, the service
 
-The stores kept current by a service rather than by hooks, and served from memory.
+The stores kept current by a service rather than by hooks, and what follows from always being
+there when something changes. Decided with the user (2026-10-06): no query socket, since loading
+and checking the stores costs 10–30 ms of a query (findings.md, 16k8) and a user already reads a
+current system store; the store files stay the shared interface. Read-only: nothing it does
+changes the system (the acting jobs, distfile prefetch and `egencache`, are vision items).
 
-- Refresh on change: inotify on the vdb, the repositories and `/etc/portage`, debounced, an
-  incremental build at low priority (nice, ionice, its own cgroup). It replaces the hooks and
-  notices hand edits to `package.use` too.
-- Unprivileged: its own user, only `/var/cache/egraph` writable (`ProtectSystem=strict`); a
-  systemd unit and an OpenRC script.
-- Queries over a Unix socket, the stores loaded once: the CLI and TUI are clients when the
-  service runs, and read the store themselves when it does not. Users who cannot write the
-  system store get current answers without building their own.
-- History: earlier generations of the stores kept, for `diff` against a point in time and "when
-  did this get pulled in, and by what".
+- 17a: `egraphd` (a link to `egraph`, as `egraph-exec`), in the foreground for the init systems:
+  inotify on cheap signals, debounced, running the incremental refresh at low priority (nice,
+  ionice). Merges: the vdb's category directories and `/var/cache/edb/counter`; syncs: each
+  repository's `metadata/timestamp.chk` (or its `.git`); hand edits: `/etc/portage`,
+  recursively. Never the repositories' trees (20,000+ watches). inotify behind a value-typed
+  wrapper in `os.cpp`; the debounce and the signal-to-refresh mapping tested with fake events.
+  The hooks stay, for systems without the service: the refresh is locked and a no-op when
+  current.
+- 17b: the service: its own `egraph` user, in the `portage` group (the preserved-libs registry
+  the notices read is root's and portage's), only `/var/cache/egraph` writable; a systemd unit
+  (`ProtectSystem=strict`) and an OpenRC script, installed by meson; the ebuild's
+  acct-user/acct-group.
+- 17c: history: each refresh keeps the previous store generation (whole files, the last N,
+  configurable), and the vdb watch logs every merge and uninstall as it lands, whatever ran it
+  (emerge's too; times from the vdb's BUILD_TIME, coarser than exec's step 20 records).
+  `diff` against a generation or a date, and "when did this get pulled in, and by what".
+- 17d: the precomputed plan: after each refresh, `-uDN @world` planned once and a small status
+  file written (updates, rebuilds, held, security, the last sync's age), which the living app
+  opens on and a status bar reads without running anything.
+- 17e: notifications, moved here from step 20: GLSAs matched against the store, a stale sync,
+  broken soname dependencies after a merge, unread news, masked installed packages; in the
+  status file and the log, and on the desktop through a user-side `egraph notify` (the service
+  cannot reach a user's session bus).
+- 17f: what a configuration edit did: on a change under `/etc/portage`, the plan before and
+  after compared ("+4 rebuilds for USE=foo on media-libs/bar, 1 new, the plan now refuses: ..."),
+  in the status file and as a notification. Linting proper stays step 18.
 
 ## 18. Explaining and checking the configuration
 
@@ -906,7 +926,7 @@ an emerge run (`docs/vision.md`).
     an index) is the first thing to map out; C APIs stay behind `os.cpp`-style wrappers.
 - GLSAs matched against the store at once, and a filter in the list.
 - Space: what removing a package frees with the orphans it leaves (the vdb's SIZE).
-- Notifications: security fixes pending, a stale sync, broken soname dependencies after a merge.
+- Notifications: moved to step 17e.
 
 ## 21. The fork's speedups upstream
 

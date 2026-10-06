@@ -15,6 +15,11 @@ build knowledge are now roadmap steps 16 to 20 (2026-09-29).
   user sees what would happen and says yes or no.
 - The app keeps itself current: it notices changed inputs, refreshes in the background, and
   swaps the new stores in without losing the user's place. Roadmap step 13.
+- The service could act as an optimization, opt-in and through the `portage` group: prefetch
+  the pending plan's distfiles after a sync, at low bandwidth or when idle, so a run starts
+  compiling at once (beside native fetching); keep metadata caches (`egencache`) for overlays
+  that ship none, which speeds emerge and egraph's index alike. Not scheduled (2026-10-06):
+  egraphd stays read-only until these prove worth it.
 
 ## What-if configuration
 
