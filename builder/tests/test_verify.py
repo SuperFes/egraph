@@ -46,7 +46,8 @@ def script(path, body):
 
 
 def real_emerge(system, tmp_path):
-    """The emerge of the portage under test, seeing the playground as its system."""
+    """The emerge of the portage under test, seeing the playground as its system and leaving
+    it as it was."""
     program = os.path.join(portage.const.PORTAGE_BIN_PATH, "emerge")
     if not os.path.exists(program):
         program = shutil.which("emerge")
@@ -59,7 +60,12 @@ def real_emerge(system, tmp_path):
     exports = "".join(
         f"export {name}={shlex.quote(value)}\n" for name, value in environment.items()
     )
-    return script(tmp_path / "emerge", f'{exports}exec {shlex.quote(program)} "$@"\n')
+    # The playgrounds are shared: emerge must not apply package moves to their vdbs, which later
+    # tests read as the scenario wrote them.
+    return script(
+        tmp_path / "emerge",
+        f'{exports}exec {shlex.quote(program)} --package-moves=n "$@"\n',
+    )
 
 
 def fake_emerge(tmp_path, printed, status=0):
@@ -74,6 +80,16 @@ def fake_emerge(tmp_path, printed, status=0):
 
 
 UPDATE_MODES = {"u": [], "uDN": ["-D", "-N"], "world": ["--world", "-D"]}
+
+
+def test_the_real_emerge_leaves_the_shared_playground_as_it_was(playgrounds, tmp_path):
+    """The repository scenario's package move stays out of its vdb: emerge would apply it there,
+    and the tests that run after on the same playground would read another system."""
+    system = playgrounds("repository")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path)
+    egraph(path, "updates", "--verify", emerge=real_emerge(system, tmp_path))
+    assert system.vardb.aux_get("app-misc/gone-1", ["RDEPEND"]) == ["app-misc/oldname"]
 
 
 @pytest.mark.parametrize("mode", sorted(UPDATE_MODES))
