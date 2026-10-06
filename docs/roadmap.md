@@ -502,8 +502,9 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     precomputed by the builder, so that what-if questions need no builder run.
     - 16i2a (done): the index written by the builder, read by egraph (freshness, refresh, `export
       --repository`), held to portage's own metadata on every scenario and to the builder's JSON.
-    - 16i2b: visibility and its reasons evaluated in C++, shadowed against portdb's
-      match-visible and getmaskingstatus on every version of every scenario and the live system.
+    - 16i2b (done): visibility and its reasons evaluated in C++ (`versions`), shadowed against
+      portdb's match-visible and getmaskingstatus on every version of every scenario and the
+      live system, which agree on all 38,544.
     - 16i2c: incremental refreshes: only the visibility configuration after a configuration
       change, only the changed categories after a sync.
     - 16i2d: completion offers every version and slot from it; the portage hooks refresh it

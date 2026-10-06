@@ -221,6 +221,25 @@ The packages providing it instead.
 Installed dependencies that nothing installed satisfies.
 .TP
 .B \-\-dynamic\-deps
+.SS versions \fR[\fIpackage\fR ...]
+Every version in the repositories of each
+.I package
+(an atom, or a name without its category for every category's), or of every package without
+any, with its slot, its repository and, for a masked one, why, as
+.B emerge
+words it
+.RB ( package.mask ,
+.BR "~amd64 keyword" ,
+.BR "EULA license(s)" ).
+egraph decides visibility itself, from the repository index; portage's decisions are the tests'
+reference.
+In lines,
+.IR cpv :: repo ,
+the slot (with its sub-slot when that differs), and
+.B visible
+or
+.B masked
+followed by the reasons, tab-separated.
 .SS blockers \fR[\fIpackage\fR ...]
 Blockers
 .RB ( ! atom

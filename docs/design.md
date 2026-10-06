@@ -40,6 +40,17 @@ its own builder run (`egraph-build --repository`) and refreshed on its own input
 with syncs and configuration edits rather than with merges. It holds no visibility verdicts:
 egraph evaluates keywords, licenses, masks, properties and restrictions from what portage parsed
 (the safety-over-precompute rule), and the shadow tests hold that to portdb's match-visible.
+`src/visibility.cpp` ports `portdbapi._visible` and the managers it calls: EAPI support, an
+empty SLOT, package.mask less package.unmask, keywords (KEYWORDS stacked with the profiles'
+package.keywords, accepted by ACCEPT_KEYWORDS, the profiles' and the user's
+package.accept_keywords ordered by atom specificity as `ordered_by_atom_specificity` orders them,
+and the environment's ACCEPT_KEYWORDS), licenses (`|| ( )` and conditionals, under the USE the
+index keeps for the few that need it), properties and restrictions; and `_getmaskingstatus`'s
+reasons, whose keyword logic differs from the visibility check's and is ported as it is.
+Wildcard atoms in the user's files match as `extended_cp_match` does, but for the
+`=cat/pkg-*ver*` form, which matches nothing here. A LICENSE, PROPERTIES or RESTRICT that does
+not parse masks the version as in portage, its reason worded by egraph.
+`egraph versions` lists every version with its verdict.
 
 The installed layer needs no resolver decisions: installed packages have fixed USE, so every
 conditional reduces to plain atoms. Only `||` groups remain, and on an installed system each group

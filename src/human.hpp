@@ -189,6 +189,10 @@ void human_blockers(std::ostream& out, std::span<const std::string> records, boo
 void human_soname(std::ostream& out, std::span<const std::string> records, std::string_view soname,
                   bool providers, const Theme& theme);
 
+// version_lines' records under each cp: version, slot and repository aligned, and why a masked
+// one is.
+void human_versions(std::ostream& out, std::span<const std::string> records, const Theme& theme);
+
 // A held update's holder as a sentence: the installed packages depending on it, and the root
 // sets ("@selected", "@system") whose atoms select it.
 [[nodiscard]] std::string holder_note(std::span<const std::string_view> dependents,

@@ -14,7 +14,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t repository_format_version = 1;
+inline constexpr std::uint32_t repository_format_version = 2;
 
 struct RepositoryMeta {
     std::string egraph_version;
@@ -42,7 +42,8 @@ struct IndexVersion {
     Range license;
     Range properties;
     Range restrict;
-    // The flags enabled that LICENSE's or PROPERTIES's conditionals test, where they have any.
+    // The flags enabled that LICENSE's, PROPERTIES's or RESTRICT's conditionals test, where
+    // LICENSE or PROPERTIES has one.
     Range use;
     std::uint32_t description = 0;
     std::uint32_t homepage = 0;
@@ -61,10 +62,11 @@ struct ConfigEntry {
 };
 
 // String ids and ranges of RepositoryIndex::entries, as docs/store-format.md lists them.
-struct Visibility {
+struct VisibilityConfig {
     std::vector<Eapi> eapis;
     Range accept_keywords;
     Range environment_keywords;
+    std::uint32_t arch = 0;
     std::vector<Range> profile_keywords;
     std::vector<Range> profile_accept_keywords;
     Range accept_keywords_entries;
@@ -85,7 +87,7 @@ struct RepositoryIndex : Tables {
     std::vector<Repository> repositories;
     std::vector<IndexVersion> versions;
     std::vector<ConfigEntry> entries;
-    Visibility visibility;
+    VisibilityConfig visibility;
 
     [[nodiscard]] std::span<const ConfigEntry> entries_in(Range range) const EGRAPH_LIFETIMEBOUND;
 };

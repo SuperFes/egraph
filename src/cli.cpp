@@ -37,6 +37,7 @@
 #include "steve.hpp"
 #include "store.hpp"
 #include "tui.hpp"
+#include "visibility.hpp"
 
 #include <CLI/CLI.hpp>
 
@@ -892,6 +893,25 @@ Exit execute(const Broken&, Session& session, const Invocation& invocation, std:
         human_broken(out, records.broken, records.replaced, style.theme);
     } else {
         write_lines(out, broken(*store));
+    }
+    return Exit::ok;
+}
+
+Exit execute(const Versions& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    const auto index = session.repository();
+    if (!index) {
+        return fail(err, index.error());
+    }
+    const VersionMasks masking{*index};
+    const auto lines = version_lines(*index, masking, command.packages);
+    if (!lines) {
+        return fail(err, lines.error());
+    }
+    if (const auto style = output(invocation); style.human) {
+        human_versions(out, *lines, style.theme);
+    } else {
+        write_lines(out, *lines);
     }
     return Exit::ok;
 }
@@ -2623,6 +2643,12 @@ void configure(CLI::App& app, Invocation& invocation) {
         "List the packages providing it instead");
     add_dynamic_deps(
         add_command<Broken>(app, invocation, "Installed dependencies nothing installed satisfies"));
+    add_field(add_command<Versions>(app, invocation,
+                                    "Every version in the repositories of packages, with its "
+                                    "slot, repository and why it is masked"),
+              invocation, "packages", &Versions::packages,
+              "Atoms, or names without a category; every version without any")
+        ->type_name("ATOM");
     CLI::App* blockers_cmd = add_dynamic_deps(
         add_command<Blockers>(app, invocation, "Blockers between installed packages"));
     add_field(blockers_cmd, invocation, "packages", &Blockers::packages,

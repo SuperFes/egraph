@@ -60,7 +60,7 @@ EVALUATED_SECTIONS = (
 )
 
 REPOSITORY_MAGIC = b"EGRAPHRI"
-REPOSITORY_FORMAT_VERSION = 1
+REPOSITORY_FORMAT_VERSION = 2
 SECTION_REPOSITORIES, SECTION_VERSIONS, SECTION_VISIBILITY = range(4, 7)
 REPOSITORY_SECTIONS = (
     SECTION_META,
@@ -410,6 +410,7 @@ def encode_repository(index, meta, inputs=()):
         w.varint(int(eapi.deprecated))
     for values in (vis.accept_keywords, vis.environment_keywords):
         w.ids([strings(value) for value in values])
+    w.varint(strings(vis.arch))
     for layers in (vis.profile_keywords, vis.profile_accept_keywords):
         w.varint(len(layers))
         for layer in layers:
@@ -808,7 +809,7 @@ def decode_repository(data):
     eapis = tuple(
         Eapi(s(), bool(r.varint(2)), bool(r.varint(2))) for _ in range(r.count())
     )
-    accept_keywords, environment_keywords = listed(), listed()
+    accept_keywords, environment_keywords, arch = listed(), listed(), s()
     profile_keywords, profile_accept_keywords = (
         tuple(entries() for _ in range(r.count())) for _ in range(2)
     )
@@ -823,6 +824,7 @@ def decode_repository(data):
         eapis,
         accept_keywords,
         environment_keywords,
+        arch,
         profile_keywords,
         profile_accept_keywords,
         accept_keywords_entries,

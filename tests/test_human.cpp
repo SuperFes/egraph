@@ -779,3 +779,19 @@ TEST_CASE("every glyph set fills every glyph") {
         }
     }
 }
+
+TEST_CASE("versions align under their cp, and say why a masked one is") {
+    std::ostringstream out;
+    egraph::human_versions(out,
+                           std::vector<std::string>{
+                               "dev-libs/a-1::gentoo\t0\tvisible",
+                               "dev-libs/a-10.2::overlay\t0/2\tmasked\tpackage.mask\t~x86 keyword",
+                               "dev-libs/b-1::gentoo\t1\tmasked",
+                           },
+                           plain);
+    CHECK(out.str() == "* dev-libs/a\n"
+                       "    1     :0    ::gentoo\n"
+                       "    10.2  :0/2  ::overlay  masked: package.mask, ~x86 keyword\n"
+                       "* dev-libs/b\n"
+                       "    1  :1  ::gentoo  masked\n");
+}

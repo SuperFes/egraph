@@ -466,3 +466,8 @@ process including load and the freshness check of 2,575 inputs.
 - ACCEPT_LICENSE as portage expands it changes order between runs (a group's members come
   from a set); the index keeps its net effect instead.
 - `egraph complete` on the stores alone: 27 ms a key press with all 21,875 repository cps.
+- `egraph versions`, every version's visibility and reasons: 2.4 s at first, 20 G
+  instructions, most of it every package.mask atom (thousands, stacked from the profiles)
+  matched against every version. Filing the atoms by cp and keeping the global accept lists'
+  net effect, copied only for a package a package.* line names: 72 ms, 0.75 G instructions,
+  the load and the output included. All 38,544 agree with portage.

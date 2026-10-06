@@ -93,6 +93,7 @@ std::optional<StoreError> read_visibility(std::span<const std::byte> section,
     }
     vis.accept_keywords = read_ids(r, index.ids, strings, "string");
     vis.environment_keywords = read_ids(r, index.ids, strings, "string");
+    vis.arch = r.index(strings, "string");
     for (auto* layers : {&vis.profile_keywords, &vis.profile_accept_keywords}) {
         const auto count = r.count();
         for (std::uint32_t i = 0; i < count && r.ok(); ++i) {

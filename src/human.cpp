@@ -1606,6 +1606,50 @@ void human_soname(std::ostream& out, std::span<const std::string> records, std::
     }
 }
 
+void human_versions(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto rows = split_all(records);
+    const auto parts = [](const Fields& row) {
+        const auto cpv = row.at(0).substr(0, row.at(0).find("::"));
+        return std::pair{split_cpv(cpv), row.at(0).substr(cpv.size() + 2)};
+    };
+    for (std::size_t first = 0; first < rows.size();) {
+        const auto cpv = parts(rows.at(first)).first;
+        auto last = first;
+        std::size_t version_width = 0;
+        std::size_t slot_width = 0;
+        while (last < rows.size() && parts(rows.at(last)).first.name == cpv.name &&
+               parts(rows.at(last)).first.category == cpv.category) {
+            version_width = std::max(version_width, parts(rows.at(last)).first.version.size());
+            slot_width = std::max(slot_width, rows.at(last).at(1).size());
+            ++last;
+        }
+        out << paint(theme.glyph().package, Tone::heading) << ' '
+            << paint(cpv.category, Tone::category) << paint("/", Tone::note)
+            << paint(cpv.name, Tone::name) << '\n';
+        for (auto i = first; i < last; ++i) {
+            const auto& row = rows.at(i);
+            const auto [split, repo] = parts(row);
+            const bool visible = row.at(2) == "visible";
+            out << "    " << paint(split.version, visible ? Tone::version : Tone::bad)
+                << std::string(version_width - split.version.size(), ' ') << "  "
+                << paint(":", Tone::note) << paint(row.at(1), Tone::slot)
+                << std::string(slot_width - row.at(1).size(), ' ') << "  "
+                << paint("::", Tone::note) << paint(repo, Tone::repo);
+            if (!visible) {
+                std::string reasons;
+                for (std::size_t field = 3; field < row.size(); ++field) {
+                    reasons +=
+                        std::string{reasons.empty() ? "" : ", "} + std::string{row.at(field)};
+                }
+                out << "  " << paint(reasons.empty() ? "masked" : "masked: " + reasons, Tone::note);
+            }
+            out << '\n';
+        }
+        first = last;
+    }
+}
+
 void human_match(std::ostream& out, std::span<const std::string> records,
                  std::span<const std::string> atoms, const Theme& theme) {
     const auto& paint = theme.paint;

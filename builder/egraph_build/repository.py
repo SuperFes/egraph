@@ -34,7 +34,8 @@ class Version(NamedTuple):
     license: tuple
     properties: tuple
     restrict: tuple
-    # The flags enabled that LICENSE's or PROPERTIES's conditionals test, where they have any.
+    # The flags enabled that LICENSE's, PROPERTIES's or RESTRICT's conditionals test, where
+    # LICENSE or PROPERTIES has one, as portdbapi's _visible reads its USE only then.
     use: tuple
     description: str
     homepage: str
@@ -58,6 +59,7 @@ class Visibility(NamedTuple):
     accept_keywords: tuple
     # ACCEPT_KEYWORDS in the environment, which keyword checks stack last.
     environment_keywords: tuple
+    arch: str
     # Layers of entries, in the profiles' stacking order.
     profile_keywords: tuple
     profile_accept_keywords: tuple
@@ -106,9 +108,10 @@ def read_versions(portdb, cps):
                     continue
                 license_tokens = _tokens(metadata["LICENSE"])
                 properties = _tokens(metadata["PROPERTIES"])
+                restrict = _tokens(metadata["RESTRICT"])
                 use = ()
-                tested = _tested(license_tokens + properties)
-                if tested:
+                if _tested(license_tokens + properties):
+                    tested = _tested(license_tokens + properties + restrict)
                     if settings is None:
                         settings = portage.config(clone=portdb.settings)
                     use = _use(portdb, settings, cpv, repo) & tested
@@ -124,7 +127,7 @@ def read_versions(portdb, cps):
                         keywords=_tokens(metadata["KEYWORDS"]),
                         license=license_tokens,
                         properties=properties,
-                        restrict=_tokens(metadata["RESTRICT"]),
+                        restrict=restrict,
                         use=tuple(sorted(use)),
                         description=metadata["DESCRIPTION"],
                         homepage=metadata["HOMEPAGE"],
@@ -197,6 +200,7 @@ def read_visibility(settings, eapis):
         environment_keywords=_tokens(
             settings.configdict["backupenv"].get("ACCEPT_KEYWORDS", "")
         ),
+        arch=settings.get("ARCH", ""),
         profile_keywords=tuple(_layer(layer) for layer in keywords._pkeywords_list),
         profile_accept_keywords=tuple(
             _layer(layer) for layer in keywords._p_accept_keywords
@@ -233,7 +237,7 @@ def to_json(index):
     """The index as canonical JSON: sorted keys, everything in the store's order."""
     v = index.visibility
     document = {
-        "format": 1,
+        "format": 2,
         "repositories": [
             {"name": name, "location": location}
             for name, location in index.repositories
@@ -263,6 +267,7 @@ def to_json(index):
             ],
             "accept_keywords": list(v.accept_keywords),
             "environment_keywords": list(v.environment_keywords),
+            "arch": v.arch,
             "profile_keywords": [_entries_json(layer) for layer in v.profile_keywords],
             "profile_accept_keywords": [
                 _entries_json(layer) for layer in v.profile_accept_keywords

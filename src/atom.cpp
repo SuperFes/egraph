@@ -372,6 +372,14 @@ std::expected<Atom, std::string> parse_atom(std::string_view text) {
     return atom;
 }
 
+bool matches(const Atom& atom, std::string_view cp, const Version& version, std::string_view slot,
+             std::string_view sub_slot, std::string_view repo) {
+    return atom.cp == cp && atom.use.empty() &&
+           (!atom.version || version_matches(atom.op, *atom.version, version)) &&
+           (!atom.slot || (slot == *atom.slot && (!atom.sub_slot || sub_slot == *atom.sub_slot))) &&
+           (!atom.repo || repo == *atom.repo);
+}
+
 bool matches(const Store& store, const Package& pkg, const Atom& atom) {
     // Most atoms name another cp; that needs no subject.
     if (store.string(pkg.cp) != atom.cp) {

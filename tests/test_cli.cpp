@@ -274,6 +274,12 @@ TEST_CASE("select and deselect take atoms and --yes") {
     CHECK_THROWS(parse("deselect --dynamic-deps n a/b"));
 }
 
+TEST_CASE("versions takes any number of packages") {
+    CHECK(std::get<egraph::Versions>(parse("versions").command).packages.empty());
+    CHECK(std::get<egraph::Versions>(parse("versions a/b openssl").command).packages ==
+          std::vector<std::string>{"a/b", "openssl"});
+}
+
 TEST_CASE("complete takes what it completes and the word, which may be empty") {
     const auto atoms = std::get<egraph::Complete>(parse("complete -- =a/b-1").command);
     CHECK(atoms.what == egraph::Completing::atoms);

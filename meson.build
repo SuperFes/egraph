@@ -114,6 +114,7 @@ egraph_lib = static_library(
   'src/use_reduce.cpp',
   'src/verify.cpp',
   'src/version.cpp',
+  'src/visibility.cpp',
   build_info_hpp,
   dependencies: [cli11, json, notcurses, libsystemd],
 )
@@ -282,6 +283,7 @@ unit_tests = executable(
   'tests/test_use_changes.cpp',
   'tests/test_use_reduce.cpp',
   'tests/test_verify.cpp',
+  'tests/test_visibility.cpp',
   dependencies: [egraph_dep, catch2],
   cpp_args: '-DEGRAPH_SOURCE_DIR="' + meson.project_source_root() + '"',
 )

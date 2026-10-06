@@ -590,3 +590,32 @@ def test_every_repository_dependency_string_reduces_as_portage_does(live_databas
             )
     assert cases
     assert not test_use_reduce.disagreements(cases)
+
+
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+def test_every_repository_version_is_visible_or_masked_as_portage_has_it(
+    live_databases, live_layer, tmp_path
+):
+    from test_visibility import portage_view
+
+    from egraph_build import repository
+
+    _, db = live_databases
+    path = tmp_path / "installed.egraph"
+    store.write(path, store.encode(live_layer, store.Meta("0", "0", "/", 0)))
+    index = repository.read(db)
+    meta = store.RepositoryMeta("0", "0", "/", 0)
+    store.write(store.repository_path(path), store.encode_repository(index, meta))
+    lines = subprocess.run(
+        [os.environ["EGRAPH"], "--store", str(path), "--no-refresh", "versions"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    ours = {
+        fields[0]: (fields[2] == "visible", tuple(fields[3:]))
+        for fields in (line.split("\t") for line in lines)
+    }
+    assert ours == portage_view(db)

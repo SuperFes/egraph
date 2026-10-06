@@ -59,6 +59,11 @@ struct Atom {
 [[nodiscard]] bool matches(const Store& installed, const Evaluated& evaluated,
                            const Candidate& candidate, const Atom& atom);
 
+// Whether a version of cp in slot/sub_slot from repo satisfies atom, as match_from_list matches a
+// configuration file's atom against a package: USE dependencies, which those never have, fail.
+[[nodiscard]] bool matches(const Atom& atom, std::string_view cp, const Version& version,
+                           std::string_view slot, std::string_view sub_slot, std::string_view repo);
+
 // Whether flag is in the ebuild's IUSE or implied, as Package.iuse.get_flag has it.
 [[nodiscard]] bool has_flag(const Store& installed, const Evaluated& evaluated,
                             const Candidate& candidate, std::string_view flag);
