@@ -115,7 +115,14 @@ def test_possible_dependencies_name_their_flags(playgrounds, tmp_path):
 
 
 # The rows after the merges: blockers, and what refuses the plan.
-TRAILING_KINDS = ("uninstall", "blocks", "unsatisfied", "required-use", "use-change")
+TRAILING_KINDS = (
+    "uninstall",
+    "blocks",
+    "unsatisfied",
+    "required-use",
+    "use-change",
+    "masked",
+)
 
 
 # A new package's kinds: alone in its cp, or beside installed packages in other slots.
@@ -321,11 +328,19 @@ def test_updates_are_emerges(
     assert merged(output) == (expected.replaced, expected.rebuilt, expected.new)
     assert new_use(output) == expected.use
     assert new_slots_agree(scenario.vardb, output)
+    assert masked_rows(output) == expected.masked
     for cpv, (kind, replacement) in parse_updates(output).items():
         order = vercmp(cpv_getversion(replacement.cpv), cpv_getversion(cpv))
         assert kind == (
             "upgrade" if order > 0 else "downgrade" if order < 0 else "rebuild"
         )
+
+
+def masked_rows(output):
+    """The installed cpvs updates says emerge warns are masked."""
+    return frozenset(
+        line.split("\t")[0] for line in output.splitlines() if "\tmasked\t" in line
+    )
 
 
 def plan_requests(name):
@@ -870,3 +885,47 @@ def test_use_changes_once_made_are_emerges(playgrounds, tmp_path, mode):
         assert expected.success, (target, lines)
         assert ties(plan_merges(result.stdout), expected.merges), target
     assert checked
+
+
+def test_masked_installed_packages_are_warned_of(playgrounds, tmp_path):
+    """The repository scenario's license-masked package is warned of whatever the graph holds,
+    with its reasons; its package.mask one emerge keeps only where the graph holds it, with the
+    comment above the entry; and the one it downgrades never."""
+    import update
+
+    scenario = playgrounds("repository")
+    path = tmp_path / "installed.egraph"
+    write_stores(scenario, path)
+    for args, deep, target, pinned in (
+        ((), False, "@installed", True),
+        (("--world", "-D"), True, "@world", False),
+    ):
+        output = egraph(path, "updates", *args).stdout
+        expected = update.updates(
+            scenario.trees, scenario.eroot, deep=deep, target=target
+        )
+        assert masked_rows(output) == expected.masked
+        rows = {
+            line.split("\t")[0]: line.split("\t")[2:]
+            for line in output.splitlines()
+            if "\tmasked\t" in line
+        }
+        assert rows["app-misc/eula-1"] == ["test_repo", "EULA license(s)", ""]
+        assert "app-misc/masked-2" not in rows
+        assert ("app-misc/pinned-1" in rows) == pinned
+    repo, reasons, filename, *comment = rows_of(path)["app-misc/pinned-1"]
+    assert (reasons, comment) == (
+        "package.mask",
+        ["# A Developer <dev@example.org> (2026-10-02)", "# Masked for testing."],
+    )
+    assert filename.endswith("/etc/portage/package.mask")
+
+
+def rows_of(path):
+    """updates' masked rows, by cpv: the fields after the kind."""
+    output = egraph(path, "updates").stdout
+    return {
+        line.split("\t")[0]: line.split("\t")[2:]
+        for line in output.splitlines()
+        if "\tmasked\t" in line
+    }

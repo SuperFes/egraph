@@ -145,9 +145,18 @@ TEST_CASE("the same merge lists in any order do not differ") {
         {.cpv = "dev-libs/b-1", .repo = "r", .kind = "new", .use = R"(USE="x")"},
         // emerge shows a replacement's USE, which egraph does not compare.
         {.cpv = "app-misc/a-2", .repo = "r", .kind = "upgrade", .use = R"(USE="doc*")"}};
-    CHECK(egraph::merge_differences(
-              {.merges = ours, .blocks = {}, .unsatisfied = {}, .unmet = {}, .use_changes = {}},
-              {.merges = theirs, .blocks = {}, .unsatisfied = {}, .unmet = {}, .use_changes = {}})
+    CHECK(egraph::merge_differences({.merges = ours,
+                                     .blocks = {},
+                                     .unsatisfied = {},
+                                     .unmet = {},
+                                     .use_changes = {},
+                                     .masked = {}},
+                                    {.merges = theirs,
+                                     .blocks = {},
+                                     .unsatisfied = {},
+                                     .unmet = {},
+                                     .use_changes = {},
+                                     .masked = {}})
               .empty());
 }
 
@@ -166,20 +175,28 @@ TEST_CASE("merge lists differ in cpvs, repositories, kinds and new packages' USE
         {.cpv = "app-misc/kind-1", .repo = "r", .kind = "new", .use = ""},
         {.cpv = "app-misc/repo-2", .repo = "r", .kind = "upgrade", .use = ""},
         {.cpv = "app-misc/only-theirs-3", .repo = "r", .kind = "downgrade", .use = ""}};
-    CHECK(
-        egraph::merge_differences(
-            {.merges = ours, .blocks = {}, .unsatisfied = {}, .unmet = {}, .use_changes = {}},
-            {.merges = theirs, .blocks = {}, .unsatisfied = {}, .unmet = {}, .use_changes = {}}) ==
-        std::vector<std::string>{
-            "app-misc/kind-1::r\tkind\trebuild\tnew",
-            "app-misc/only-ours-1::r\tegraph\tnew",
-            "app-misc/only-theirs-3::r\temerge\tdowngrade",
-            "app-misc/repo-2::overlay\tegraph\tupgrade",
-            "app-misc/repo-2::r\temerge\tupgrade",
-            "dev-libs/apart-2::r\tkind\tnew\tnew-slot",
-            "dev-libs/slot-2::r\tuse\tUSE=\"x\"\tUSE=\"-x\"",
-            "dev-libs/use-1::r\tuse\tUSE=\"x -y\"\tUSE=\"-x -y\"",
-        });
+    CHECK(egraph::merge_differences({.merges = ours,
+                                     .blocks = {},
+                                     .unsatisfied = {},
+                                     .unmet = {},
+                                     .use_changes = {},
+                                     .masked = {}},
+                                    {.merges = theirs,
+                                     .blocks = {},
+                                     .unsatisfied = {},
+                                     .unmet = {},
+                                     .use_changes = {},
+                                     .masked = {}}) ==
+          std::vector<std::string>{
+              "app-misc/kind-1::r\tkind\trebuild\tnew",
+              "app-misc/only-ours-1::r\tegraph\tnew",
+              "app-misc/only-theirs-3::r\temerge\tdowngrade",
+              "app-misc/repo-2::overlay\tegraph\tupgrade",
+              "app-misc/repo-2::r\temerge\tupgrade",
+              "dev-libs/apart-2::r\tkind\tnew\tnew-slot",
+              "dev-libs/slot-2::r\tuse\tUSE=\"x\"\tUSE=\"-x\"",
+              "dev-libs/use-1::r\tuse\tUSE=\"x -y\"\tUSE=\"-x -y\"",
+          });
 }
 
 TEST_CASE("equal versions spelled otherwise are the same merge, as emerge picks among them") {
@@ -187,17 +204,34 @@ TEST_CASE("equal versions spelled otherwise are the same merge, as emerge picks 
         {.cpv = "dev-libs/v-1.0", .repo = "r", .kind = "new", .use = ""}};
     const std::vector<PretendMerge> theirs = {
         {.cpv = "dev-libs/v-1.00", .repo = "r", .kind = "new", .use = ""}};
-    CHECK(egraph::merge_differences(
-              {.merges = ours, .blocks = {}, .unsatisfied = {}, .unmet = {}, .use_changes = {}},
-              {.merges = theirs, .blocks = {}, .unsatisfied = {}, .unmet = {}, .use_changes = {}})
+    CHECK(egraph::merge_differences({.merges = ours,
+                                     .blocks = {},
+                                     .unsatisfied = {},
+                                     .unmet = {},
+                                     .use_changes = {},
+                                     .masked = {}},
+                                    {.merges = theirs,
+                                     .blocks = {},
+                                     .unsatisfied = {},
+                                     .unmet = {},
+                                     .use_changes = {},
+                                     .masked = {}})
               .empty());
     const std::vector<PretendMerge> other_repo = {
         {.cpv = "dev-libs/v-1.00", .repo = "overlay", .kind = "new", .use = ""}};
-    CHECK(
-        egraph::merge_differences(
-            {.merges = ours, .blocks = {}, .unsatisfied = {}, .unmet = {}, .use_changes = {}},
-            {.merges = other_repo, .blocks = {}, .unsatisfied = {}, .unmet = {}, .use_changes = {}})
-            .size() == 2);
+    CHECK(egraph::merge_differences({.merges = ours,
+                                     .blocks = {},
+                                     .unsatisfied = {},
+                                     .unmet = {},
+                                     .use_changes = {},
+                                     .masked = {}},
+                                    {.merges = other_repo,
+                                     .blocks = {},
+                                     .unsatisfied = {},
+                                     .unmet = {},
+                                     .use_changes = {},
+                                     .masked = {}})
+              .size() == 2);
 }
 
 TEST_CASE("the plan's uninstalls and blocks in emerge's terms") {
@@ -230,13 +264,15 @@ TEST_CASE("blockers only one side cannot resolve differ") {
         .blocks = {{.atom = "a/x", .holder = "a/both-1"}, {.atom = "a/y", .holder = "a/ours-1"}},
         .unsatisfied = {},
         .unmet = {},
-        .use_changes = {}};
+        .use_changes = {},
+        .masked = {}};
     const egraph::Pretend theirs{
         .merges = {},
         .blocks = {{.atom = "a/x", .holder = "a/both-1"}, {.atom = "a/z", .holder = "a/theirs-1"}},
         .unsatisfied = {},
         .unmet = {},
-        .use_changes = {}};
+        .use_changes = {},
+        .masked = {}};
     CHECK(
         egraph::merge_differences(ours, theirs) ==
         std::vector<std::string>{"a/ours-1\tegraph\tblocks a/y", "a/theirs-1\temerge\tblocks a/z"});
@@ -277,26 +313,31 @@ TEST_CASE("a refusal differs only for what emerge names and ours lacks, or ours 
                                .blocks = {},
                                .unsatisfied = {"dev-libs/missing", "dev-libs/other"},
                                .unmet = {},
-                               .use_changes = {}};
+                               .use_changes = {},
+                               .masked = {}};
     // emerge names one of them and prints no merge list.
     CHECK(egraph::merge_differences(ours, {.merges = {},
                                            .blocks = {},
                                            .unsatisfied = {"dev-libs/missing"},
                                            .unmet = {},
-                                           .use_changes = {}})
+                                           .use_changes = {},
+                                           .masked = {}})
               .empty());
     CHECK(egraph::merge_differences(ours, {.merges = {},
                                            .blocks = {},
                                            .unsatisfied = {"dev-libs/gone"},
                                            .unmet = {},
-                                           .use_changes = {}}) ==
+                                           .use_changes = {},
+                                           .masked = {}}) ==
           std::vector<std::string>{"dev-libs/gone\temerge\tunsatisfied"});
-    CHECK(
-        egraph::merge_differences(
-            ours,
-            {.merges = merges, .blocks = {}, .unsatisfied = {}, .unmet = {}, .use_changes = {}}) ==
-        std::vector<std::string>{"dev-libs/missing\tegraph\tunsatisfied",
-                                 "dev-libs/other\tegraph\tunsatisfied"});
+    CHECK(egraph::merge_differences(ours, {.merges = merges,
+                                           .blocks = {},
+                                           .unsatisfied = {},
+                                           .unmet = {},
+                                           .use_changes = {},
+                                           .masked = {}}) ==
+          std::vector<std::string>{"dev-libs/missing\tegraph\tunsatisfied",
+                                   "dev-libs/other\tegraph\tunsatisfied"});
 }
 
 TEST_CASE("emerge's unmet REQUIRED_USE names the version it selected") {
@@ -323,26 +364,31 @@ TEST_CASE("unmet REQUIRED_USE differs only for what emerge names and ours lacks,
                                .blocks = {},
                                .unsatisfied = {},
                                .unmet = {"a/req-1::gentoo"},
-                               .use_changes = {}};
+                               .use_changes = {},
+                               .masked = {}};
     CHECK(egraph::merge_differences(ours, {.merges = {},
                                            .blocks = {},
                                            .unsatisfied = {},
                                            .unmet = {"a/req-1::gentoo"},
-                                           .use_changes = {}})
+                                           .use_changes = {},
+                                           .masked = {}})
               .empty());
     // emerge stops at the first refusal it finds, whichever kind.
     CHECK(egraph::merge_differences(ours, {.merges = {},
                                            .blocks = {},
                                            .unsatisfied = {"dev-libs/missing"},
                                            .unmet = {"a/other-1::gentoo"},
-                                           .use_changes = {}}) ==
+                                           .use_changes = {},
+                                           .masked = {}}) ==
           std::vector<std::string>{"a/other-1::gentoo\temerge\trequired-use",
                                    "dev-libs/missing\temerge\tunsatisfied"});
-    CHECK(
-        egraph::merge_differences(
-            ours,
-            {.merges = merges, .blocks = {}, .unsatisfied = {}, .unmet = {}, .use_changes = {}}) ==
-        std::vector<std::string>{"a/req-1::gentoo\tegraph\trequired-use"});
+    CHECK(egraph::merge_differences(ours, {.merges = merges,
+                                           .blocks = {},
+                                           .unsatisfied = {},
+                                           .unmet = {},
+                                           .use_changes = {},
+                                           .masked = {}}) ==
+          std::vector<std::string>{"a/req-1::gentoo\tegraph\trequired-use"});
 }
 
 TEST_CASE("emerge's USE changes are read as package and flags, flags by name") {
@@ -376,18 +422,53 @@ TEST_CASE("USE changes differ only as changes, emerge's merge list made before t
                                .blocks = {},
                                .unsatisfied = {},
                                .unmet = {},
-                               .use_changes = {"dev-libs/lib-2 gtk"}};
+                               .use_changes = {"dev-libs/lib-2 gtk"},
+                               .masked = {}};
     CHECK(egraph::merge_differences(ours, {.merges = {},
                                            .blocks = {},
                                            .unsatisfied = {},
                                            .unmet = {},
-                                           .use_changes = {"dev-libs/lib-2 gtk"}})
+                                           .use_changes = {"dev-libs/lib-2 gtk"},
+                                           .masked = {}})
               .empty());
     CHECK(egraph::merge_differences(ours, {.merges = {},
                                            .blocks = {},
                                            .unsatisfied = {},
                                            .unmet = {},
-                                           .use_changes = {"dev-libs/lib-2 -qt gtk"}}) ==
+                                           .use_changes = {"dev-libs/lib-2 -qt gtk"},
+                                           .masked = {}}) ==
           std::vector<std::string>{"dev-libs/lib-2\tegraph\tuse-change gtk",
                                    "dev-libs/lib-2\temerge\tuse-change -qt gtk"});
+}
+
+TEST_CASE("emerge's masked installed packages are read from its warning") {
+    const auto found = egraph::parse_pretend(
+        "[ebuild     U  ] app-misc/up-2::gentoo [1::gentoo] 0 KiB\n"
+        "\n"
+        "!!! The following installed packages are masked:\n"
+        "- dev-tex/biber-2.21::gentoo (masked by: package.mask)\n"
+        "/var/db/repos/gentoo/profiles/package.mask:\n"
+        "# Florian Schmaus <flow@gentoo.org> (2026-10-02)\n"
+        "# TeX Live 2026 is currently masked for testing.\n"
+        "\n"
+        "- dev-tex/biblatex-3.21::gentoo (masked by: package.mask)\n"
+        "For more information, see the MASKED PACKAGES section in the emerge\n"
+        "man page or refer to the Gentoo Handbook.\n"
+        "\n"
+        "- other/line-1::gentoo (masked by: package.mask)\n",
+        false);
+    CHECK(found.masked ==
+          std::vector<std::string>{"dev-tex/biber-2.21::gentoo", "dev-tex/biblatex-3.21::gentoo"});
+    CHECK(found.merges.size() == 1);
+}
+
+TEST_CASE("masked installed packages differ when one side alone warns of them") {
+    egraph::Pretend ours;
+    ours.masked = {"a/both-1::gentoo", "a/ours-1::gentoo"};
+    egraph::Pretend theirs;
+    theirs.masked = {"a/both-1::gentoo", "a/theirs-1::gentoo"};
+    CHECK(egraph::merge_differences(ours, theirs) ==
+          std::vector<std::string>{"a/ours-1::gentoo\tegraph\tmasked",
+                                   "a/theirs-1::gentoo\temerge\tmasked"});
+    CHECK(egraph::merge_differences(ours, ours).empty());
 }

@@ -245,11 +245,21 @@ Pretend parse_pretend(std::string_view output, bool failed) {
     bool unmet_next = false;
     // Inside the USE changes block, up to the blank line ending it.
     bool in_use_changes = false;
+    // Inside the masked installed packages' warning, up to its pointer to the man page.
+    bool in_masked = false;
     while (!output.empty()) {
         const auto newline = std::min(output.find('\n'), output.size());
         const auto line = output.substr(0, newline);
         const bool unmet_line = std::exchange(unmet_next, false);
-        if (in_use_changes) {
+        if (in_masked) {
+            in_masked = !line.starts_with("For more information, see the MASKED PACKAGES");
+            if (const auto end = line.find(" (masked by: ");
+                in_masked && line.starts_with("- ") && end != std::string_view::npos) {
+                found.masked.emplace_back(line.substr(2, end - 2));
+            }
+        } else if (line == "!!! The following installed packages are masked:") {
+            in_masked = true;
+        } else if (in_use_changes) {
             in_use_changes = !line.empty();
             if (in_use_changes && !line.starts_with('#') && !line.starts_with(' ')) {
                 if (auto change = parse_use_change(line)) {
@@ -279,6 +289,7 @@ Pretend parse_pretend(std::string_view output, bool failed) {
     sort_unique(found.unsatisfied);
     sort_unique(found.unmet);
     sort_unique(found.use_changes);
+    sort_unique(found.masked);
     return found;
 }
 
@@ -331,8 +342,14 @@ Pretend planned_merges(const Store& store, const Evaluated& original, const Plan
     }
     sort_unique(found.blocks);
     sort_unique(found.unsatisfied);
+    for (const auto id : plan.masked) {
+        const auto& pkg = store.packages.at(id);
+        found.masked.push_back(
+            std::format("{}::{}", store.string(pkg.cpv), store.string(pkg.repo)));
+    }
     sort_unique(found.unmet);
     sort_unique(found.use_changes);
+    sort_unique(found.masked);
     return found;
 }
 
@@ -431,6 +448,17 @@ std::vector<std::string> merge_differences(const Pretend& our_list, const Preten
     }
     for (const auto& key : our_list.unmet) {
         lines.push_back(std::format("{}\tegraph\trequired-use", key));
+    }
+    // Both sorted.
+    std::vector<std::string> warned;
+    std::ranges::set_difference(our_list.masked, their_list.masked, std::back_inserter(warned));
+    for (const auto& key : warned) {
+        lines.push_back(std::format("{}\tegraph\tmasked", key));
+    }
+    warned.clear();
+    std::ranges::set_difference(their_list.masked, our_list.masked, std::back_inserter(warned));
+    for (const auto& key : warned) {
+        lines.push_back(std::format("{}\temerge\tmasked", key));
     }
     std::ranges::sort(lines);
     return lines;

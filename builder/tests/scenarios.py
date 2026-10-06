@@ -279,6 +279,8 @@ SCENARIOS = {
             # The installed version is now in package.mask.
             "app-misc/masked-1": {"EAPI": "8", "KEYWORDS": "x86"},
             "app-misc/masked-2": {"EAPI": "8", "KEYWORDS": "x86"},
+            # The only version, in package.mask: kept, and warned of.
+            "app-misc/pinned-1": {"EAPI": "8", "KEYWORDS": "x86"},
             # A license nobody accepted.
             "app-misc/eula-1": {"EAPI": "8", "KEYWORDS": "x86", "LICENSE": "EULA"},
             "app-misc/newname-1": {"EAPI": "8", "KEYWORDS": "x86"},
@@ -306,6 +308,7 @@ SCENARIOS = {
             "app-misc/testing-1": {"EAPI": "8"},
             "app-misc/masked-2": {"EAPI": "8"},
             "app-misc/eula-1": {"EAPI": "8", "LICENSE": "EULA"},
+            "app-misc/pinned-1": {"EAPI": "8"},
             # Gone from the repository, and depending on a package that moved since.
             "app-misc/gone-1": {"EAPI": "8", "RDEPEND": "app-misc/oldname"},
             "app-misc/newname-1": {"EAPI": "8"},
@@ -317,6 +320,7 @@ SCENARIOS = {
                 "# A Developer <dev@example.org> (2026-10-02)",
                 "# Masked for testing.",
                 "=app-misc/masked-2",
+                "=app-misc/pinned-1",
             ),
             "make.conf": ('ACCEPT_LICENSE="* -EULA"',),
         },

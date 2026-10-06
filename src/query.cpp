@@ -11,6 +11,7 @@
 #include <format>
 #include <map>
 #include <ostream>
+#include <ranges>
 #include <set>
 #include <string_view>
 
@@ -482,6 +483,23 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& origi
                                package_use_line(store, evaluated, needed.change));
         for (const auto& link : required_by(store, evaluated, plan, needed)) {
             row += std::format("\t{}", link);
+        }
+        trailing_rows.push_back(std::move(row));
+    }
+    for (const auto id : plan.masked) {
+        const auto& pkg = store.packages.at(id);
+        const auto& found = evaluated.packages.at(id);
+        std::string reasons;
+        for (const auto reason :
+             evaluated.ids_in(targets.dynamic_deps ? found.mask_reasons : found.vdb_mask_reasons)) {
+            reasons += std::format("{}{}", reasons.empty() ? "" : ", ", evaluated.string(reason));
+        }
+        auto row = std::format("{}\tmasked\t{}\t{}\t{}", store.string(pkg.cpv),
+                               store.string(pkg.repo), reasons, evaluated.string(found.mask_file));
+        for (const auto line : std::views::split(evaluated.string(found.mask_comment), '\n')) {
+            if (!line.empty()) {
+                row += std::format("\t{}", std::string_view{line.begin(), line.end()});
+            }
         }
         trailing_rows.push_back(std::move(row));
     }

@@ -33,7 +33,7 @@ INPUT_FILE, INPUT_DIRECTORY, INPUT_SYMLINK, INPUT_MISSING = range(4)
 DEFAULT_PATH = "var/cache/egraph/installed.egraph"
 
 EVALUATED_MAGIC = b"EGRAPHEV"
-EVALUATED_FORMAT_VERSION = 9
+EVALUATED_FORMAT_VERSION = 10
 (
     SECTION_DEPENDENCIES,
     SECTION_CANDIDATES,
@@ -287,6 +287,8 @@ def encode_evaluated(layer, meta, inputs=()):
             w.ids([strings(reason) for reason in reasons])
         w.varint(strings(pkg.mask_file))
         w.varint(strings(pkg.mask_comment))
+        w.varint(pkg.hidden)
+        w.varint(pkg.vdb_hidden)
     sections[SECTION_DEPENDENCIES] = w.out
 
     w = _Writer()
@@ -566,6 +568,8 @@ def decode_evaluated(data):
             tuple(strings[i] for i in r.ids(nstrings)),
             s(),
             s(),
+            r.varint(3),
+            r.varint(3),
         )
         raw.append((cpv, source, eapi, errors, deps, possible, weighed))
     r.done()

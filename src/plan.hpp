@@ -165,6 +165,9 @@ struct Plan {
     // USE changes to merges, by candidate, that emerge's autounmask would ask for; it refuses
     // the plan until they are made.
     std::vector<NeededUseChange> use_changes;
+    // Installed package ids, sorted, that emerge warns are masked: kept (no merge replaces
+    // them), not visible as installed, and in its completed graph or masked by LICENSE.
+    std::vector<std::uint32_t> masked;
     // The evaluated store the plan was made against, with use_changes made; none without them.
     std::shared_ptr<const Evaluated> changed;
 

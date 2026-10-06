@@ -59,19 +59,22 @@ struct Pretend {
     std::vector<std::string> unmet;
     // "cpv flags" for each USE change autounmask asks for, the flags by name.
     std::vector<std::string> use_changes;
+    // "cpv::repo" of each installed package emerge warns is masked.
+    std::vector<std::string> masked;
     bool operator==(const Pretend&) const = default;
 };
 
 // What emerge --pretend --verbose --color=n printed: its merges in its order, each uninstall as
 // one of kind uninstall; the blockers it could not resolve, sorted; and the atoms it found no
 // ebuild, or only masked ones, to satisfy, sorted, when it failed: it names them for the updates
-// it skips too; the versions it found REQUIRED_USE unmet for, sorted; and the USE changes it asks
-// for, sorted. Everything else it printed (resolved blockers, messages) passed over.
+// it skips too; the versions it found REQUIRED_USE unmet for, sorted; the USE changes it asks
+// for, sorted; and the installed packages it warns are masked, sorted. Everything else it printed
+// (resolved blockers, messages) passed over.
 [[nodiscard]] Pretend parse_pretend(std::string_view output, bool failed);
 
 // What plan merges and uninstalls (but for the slots it replaces), its blocks, its unsatisfied
-// dependencies, its unmet REQUIRED_USE and the USE changes it needs, in the same terms; only a new
-// package has its USE.
+// dependencies, its unmet REQUIRED_USE, the USE changes it needs and the masked installed packages
+// it warns of, in the same terms; only a new package has its USE.
 [[nodiscard]] Pretend planned_merges(const Store& store, const Evaluated& evaluated,
                                      const Plan& plan);
 
@@ -86,7 +89,9 @@ struct Pretend {
 // refuses, each of its own does, "atom<TAB>egraph<TAB>unsatisfied" or
 // "cpv::repo<TAB>egraph<TAB>required-use". emerge asking for USE changes prints a merge list made
 // before some of them (upstream-notes.md): then only the changes differ, a change one side alone
-// asks for "cpv<TAB>emerge<TAB>use-change flags" or "cpv<TAB>egraph<TAB>use-change flags".
+// asks for "cpv<TAB>emerge<TAB>use-change flags" or "cpv<TAB>egraph<TAB>use-change flags". With
+// the merge lists, a masked installed package one side alone warns of is
+// "cpv::repo<TAB>egraph<TAB>masked" or "cpv::repo<TAB>emerge<TAB>masked".
 [[nodiscard]] std::vector<std::string> merge_differences(const Pretend& ours,
                                                          const Pretend& theirs);
 

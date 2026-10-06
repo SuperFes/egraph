@@ -775,24 +775,27 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     world file left alone; `update`/`install` hand `emerge --depclean =cpv...` the replaced
     versions once emerge succeeds, in the same run (its own logged hand-over), so emerge's
     depclean has the last word on what still needs them. Held to each other on a playground.
-- 16p: emerge's "The following installed packages are masked" warning (requested 2026-10-05,
+- 16p (done): emerge's "The following installed packages are masked" warning (requested 2026-10-05,
   for TeX Live's package.mask): each installed package the plan keeps whose installed metadata
   is masked, when emerge's graph reaches it or LICENSE masks it (`depgraph.py`'s
   `_masked_installed`), with its reasons and, for package.mask, the file and comment
   (`getmaskingreason(..., return_location=True)`), a comment shown once. The evaluated store
   records the reasons, file and comment for each masked installed package (format bump);
-  `updates` and `plan` show them in the human layout and the tree, and `--verify` holds the
-  list to emerge's.
+  `updates` and `plan` show them in the human layout, and `--verify` holds the list to
+  emerge's.
   - 16p1 (done): the evaluated store's mask reasons for each masked installed package (where `masked`
     or `vdb_masked` is computed), under both dynamic-deps views, as emerge's
     `get_masking_status` words them for an installed `Package` (portage's `_getmaskingstatus`,
     then its invalid metadata and an undefined SLOT), and the `package.mask` file and comment
     when that is among them; evaluated format 9. Held to `get_masking_status` and
     `getmaskingreason` on a scenario masking installed packages each way.
-  - 16p2: which ones emerge lists (`_masked_installed`): kept by the plan, masked, and in
-    emerge's graph or masked by LICENSE; a `masked` row in `updates` and `plan`, emerge's block
-    in the human layout, held to depgraph's list on every scenario, and `--verify` comparing
-    the cpvs with emerge's warning.
+  - 16p2 (done): which ones emerge lists (`_masked_installed`): kept by the plan (no merge
+    replaces them; emerge's tracker drops a replaced one), not visible as installed
+    (`_eval_visibility`: package.mask, LICENSE, invalid, an unsupported EAPI; the evaluated
+    store's `hidden`, format 10), and in the completed graph the blocker pass builds or masked
+    by LICENSE; a `masked` row in `updates` and `plan` with the reasons, file and comment lines,
+    emerge's block in the human layout (also with nothing to update), held to depgraph's list
+    on every scenario and update mode, and `--verify` comparing the cpvs with emerge's warning.
 
 ## 17. `egraphd`, the service
 

@@ -281,12 +281,13 @@ inline std::vector<Section> evaluated_sections() {
     dependencies.varints({4, 13, 0}).list({1}).list({8});
     dependencies.varints({0, 14, 1}).list({}).list({8, 15});
     // Visible, masked, masked without dynamic deps, target (candidate 0 plus 1), rebuild, the
-    // reasons with and without dynamic deps, the package.mask file and comment.
-    dependencies.varints({1, 0, 1, 1}).list({16, 17}).list({}).list({}).varints({0, 0});
+    // reasons with and without dynamic deps, the package.mask file and comment, how emerge sees
+    // it with and without dynamic deps.
+    dependencies.varints({1, 0, 1, 1}).list({16, 17}).list({}).list({}).varints({0, 0, 0, 1});
     // b-1.
     dependencies.varints({2, 1, 3}).varint(0);
     dependencies.varint(0).varint(0).varint(0).varint(0).varint(0).varint(0);
-    dependencies.varints({0, 1, 1, 3}).list({}).list({}).list({}).varints({0, 0});
+    dependencies.varints({0, 1, 1, 3}).list({}).list({}).list({}).varints({0, 0, 0, 0});
 
     Bytes candidates;
     candidates.varint(3);

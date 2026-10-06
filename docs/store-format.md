@@ -1,6 +1,6 @@
 # Store format
 
-Status: format version 5 (evaluated store: 9), implemented by `builder/egraph_build/store.py`
+Status: format version 5 (evaluated store: 10), implemented by `builder/egraph_build/store.py`
 (writer and a Python reader) and `src/store.cpp` and `src/evaluated.cpp` (C++ readers). Any
 layout change bumps the version.
 
@@ -114,7 +114,7 @@ The installed packages as emerge sees them against the repositories: their depen
 store it was built against, named after it (`installed.egraph` → `installed.evaluated.egraph`:
 the last extension replaced by `.evaluated.egraph`), and is written by the same builder run.
 
-It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 9.
+It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 10.
 Package ids are the installed store's, so an evaluated store is current only while the installed
 store beside it has the build start recorded in its meta, and its own inputs stat the same.
 
@@ -185,6 +185,12 @@ weighs the package against its repositories under `--update`:
 14. Mask file and comment: two string ids, the `package.mask` file and the comment above the
     entry (each line ending in a newline) as `getmaskingreason` gives them, when `package.mask`
     is among either's reasons; both the empty string otherwise.
+15. Hidden: how emerge sees the installed package where field 8 is computed, as depgraph's
+    `Package._eval_visibility` decides it for an installed one: 0 visible (no masks, or only
+    keywords, CHOST, a deprecated EAPI, properties or restrictions), 1 not (`package.mask`, an
+    invalid string, an unsupported EAPI), 2 not and its license among its masks, which emerge
+    warns of whatever its graph holds.
+16. VDB hidden: the same where field 9 is computed.
 
 A candidate is one version of a cp in one repository: every visible one, and each masked one
 that is installed. The cps are the installed ones, and every cp that emerge could have to pull

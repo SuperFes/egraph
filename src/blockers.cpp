@@ -48,6 +48,22 @@ class Weigher {
         complete();
     }
 
+    // The masked installed packages emerge warns of (_masked_installed): kept, not visible, and
+    // in the completed graph or masked by LICENSE.
+    [[nodiscard]] std::vector<std::uint32_t> masked() const {
+        std::vector<std::uint32_t> found;
+        for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
+            const auto& pkg = evaluated().packages.at(id);
+            const auto hidden = targets_ref_.get().dynamic_deps ? pkg.hidden : pkg.vdb_hidden;
+            if (kept_.at(id) && (hidden == Hidden::license ||
+                                 (hidden == Hidden::hidden &&
+                                  needed_.contains({.candidate = false, .index = id})))) {
+                found.push_back(id);
+            }
+        }
+        return found;
+    }
+
     void run(Plan& plan) {
         // By installed package: the first blocker needing it gone, and the merges in its way.
         std::map<std::uint32_t, std::pair<Block, std::set<std::uint32_t>>> uninstalls;
@@ -417,7 +433,9 @@ std::vector<std::string> blocker_lines(const Store& store, std::span<const std::
 
 void weigh_blockers(const Store& store, const Evaluated& evaluated, const Targets& targets,
                     Plan& plan) {
-    Weigher(store, evaluated, targets, plan).run(plan);
+    Weigher weigher(store, evaluated, targets, plan);
+    weigher.run(plan);
+    plan.masked = weigher.masked();
 }
 
 } // namespace egraph

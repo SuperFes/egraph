@@ -13,10 +13,14 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t evaluated_format_version = 9;
+inline constexpr std::uint32_t evaluated_format_version = 10;
 
 // Where an installed package's dependency strings came from under --dynamic-deps=y.
 enum class DepSource : std::uint8_t { ebuild, vdb, moved };
+
+// How emerge sees an installed package: visible, not (package.mask, an invalid string, an
+// unsupported EAPI), or not and masked by LICENSE, which it warns of whatever its graph holds.
+enum class Hidden : std::uint8_t { visible, hidden, license };
 
 // An installed package's dependencies as emerge reads them by default.
 struct Dependencies {
@@ -51,6 +55,9 @@ struct Dependencies {
     // String ids: the package.mask file and comment, when package.mask is among the reasons.
     std::uint32_t mask_file = 0;
     std::uint32_t mask_comment = 0;
+    // How emerge sees it, where masked is computed, under --dynamic-deps=y and =n.
+    Hidden hidden = Hidden::visible;
+    Hidden vdb_hidden = Hidden::visible;
 };
 
 // A dependency the ebuild would add with flags toggled that the installed build left as they are.

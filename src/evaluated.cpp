@@ -80,6 +80,8 @@ std::optional<StoreError> read_dependencies(std::span<const std::byte> section,
         pkg.vdb_mask_reasons = read_ids(r, evaluated.ids, strings, "string");
         pkg.mask_file = r.index(strings, "string");
         pkg.mask_comment = r.index(strings, "string");
+        pkg.hidden = static_cast<Hidden>(r.index(3, "hidden"));
+        pkg.vdb_hidden = static_cast<Hidden>(r.index(3, "hidden"));
         evaluated.packages.push_back(pkg);
     }
     r.finish();

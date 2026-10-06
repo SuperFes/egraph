@@ -266,7 +266,7 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string_list(out, evaluated, candidate.use);
         out << '}';
     }
-    out << R"(],"format":9,"packages":[)";
+    out << R"(],"format":10,"packages":[)";
     first = true;
     for (const auto& pkg : evaluated.packages) {
         out << (first ? "{\"cpv\":" : ",{\"cpv\":");
@@ -278,7 +278,7 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string(out, evaluated, pkg.eapi);
         out << ",\"errors\":";
         write_pairs(out, evaluated, pkg.errors);
-        out << ",\"mask_comment\":";
+        out << ",\"hidden\":" << static_cast<int>(pkg.hidden) << ",\"mask_comment\":";
         write_string(out, evaluated, pkg.mask_comment);
         out << ",\"mask_file\":";
         write_string(out, evaluated, pkg.mask_file);
@@ -315,7 +315,7 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         } else {
             out << "null";
         }
-        out << ",\"vdb_mask_reasons\":";
+        out << ",\"vdb_hidden\":" << static_cast<int>(pkg.vdb_hidden) << ",\"vdb_mask_reasons\":";
         write_string_list(out, evaluated, pkg.vdb_mask_reasons);
         out << ",\"vdb_masked\":" << (pkg.vdb_masked ? "true" : "false")
             << ",\"visible\":" << (pkg.visible ? "true" : "false") << '}';

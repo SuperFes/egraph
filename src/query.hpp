@@ -111,6 +111,8 @@ struct Targets {
     std::vector<Atom> replace_slots = {};
     // Installed packages, by id, sorted, that are never replaced so: the running kernel's sources.
     std::vector<std::uint32_t> kept_slots = {};
+    // emerge's --dynamic-deps, for which of the evaluated store's mask views counts.
+    bool dynamic_deps = true;
 };
 
 // "@set atom", or the atom alone.
@@ -155,7 +157,10 @@ struct RemedyInputs {
 // REQUIRED_USE when they are only part of it (else empty), then
 // "cpv<TAB>use-change<TAB>repo<TAB>package.use line<TAB>required by..." for each USE change the
 // plan needs (package_use_line, then a field per link of required_by); in the table led by two
-// empty fields too, but for an uninstall's second: the places of the merges it waits for.
+// empty fields too, but for an uninstall's second: the places of the merges it waits for. Last,
+// "cpv<TAB>masked<TAB>repo<TAB>reasons<TAB>file<TAB>comment line..." for each installed package
+// emerge warns is masked: its reasons comma-separated as emerge joins them, then for
+// package.mask the file and a field per line of the comment above the entry.
 [[nodiscard]] std::vector<std::string>
 update_lines(const Store& store, const Evaluated& evaluated, UseRebuilds rebuilds,
              bool held = false, bool table = false, const Targets& targets = {},

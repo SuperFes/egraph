@@ -1020,6 +1020,7 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
         }
     }
     targets.running_root = running_root(invocation);
+    targets.dynamic_deps = invocation.dynamic_deps;
     auto replace = replace_list(invocation, "updates", err);
     if (!replace) {
         return std::unexpected(replace.error());
@@ -1241,6 +1242,7 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
                                                : Selection::reinstall;
     Targets targets{.scope = {}, .roots = false, .deep = command.deep, .selection = selection};
     targets.running_root = running_root(invocation);
+    targets.dynamic_deps = invocation.dynamic_deps;
     if (request->installed) {
         if (!request->arguments.empty() || selection != Selection::update) {
             err << "egraph: " << name << ": @installed is only planned alone and with -u\n";

@@ -11,6 +11,7 @@
 #include <optional>
 #include <ostream>
 #include <ranges>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -1001,16 +1002,18 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     std::vector<Fields> unsatisfied;
     std::vector<Fields> unmet;
     std::vector<Fields> use_changes;
+    std::vector<Fields> masked;
     for (std::size_t i = rows.size(); i-- > 0;) {
         const auto kind = rows.at(i).size() > 1 ? rows.at(i).at(1) : std::string_view{};
         if (kind != "uninstall" && kind != "blocks" && kind != "unsatisfied" &&
-            kind != "required-use" && kind != "use-change") {
+            kind != "required-use" && kind != "use-change" && kind != "masked") {
             continue;
         }
         auto& into = kind == "uninstall"      ? uninstalls
                      : kind == "blocks"       ? blocks
                      : kind == "unsatisfied"  ? unsatisfied
                      : kind == "required-use" ? unmet
+                     : kind == "masked"       ? masked
                                               : use_changes;
         into.push_back(std::move(rows.at(i)));
         if (kind == "uninstall") {
@@ -1020,6 +1023,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
     }
     std::ranges::reverse(uninstalls);
+    std::ranges::reverse(masked);
     std::ranges::reverse(uninstall_waits);
     std::ranges::reverse(blocks);
     std::ranges::reverse(unsatisfied);
@@ -1161,7 +1165,8 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             out << paint(glyph.good, Tone::good) << ' ' << paint("Nothing to update.", Tone::good)
                 << '\n';
         }
-        if (counts.at(5) == 0 && !refusals) {
+        // emerge warns of masked installed packages with nothing to merge too.
+        if (counts.at(5) == 0 && !refusals && masked.empty()) {
             return;
         }
     }
@@ -1296,7 +1301,25 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         }
         out << paint("emerge refuses the plan until package.use makes them", Tone::bad) << '\n';
     }
-    constexpr std::array<std::array<std::string_view, 2>, 11> nouns{
+    if (!masked.empty()) {
+        // As emerge warns of them: each package.mask comment once.
+        out << '\n' << paint("Masked, installed", Tone::heading) << '\n';
+        std::set<std::vector<std::string_view>> shown;
+        for (const auto& row : masked) {
+            out << paint(glyph.broken, Tone::bad) << ' ' << paint_cpv(row.at(0), paint)
+                << paint(std::format("::{}", row.at(2)), Tone::repo) << "  "
+                << paint("masked by", Tone::note) << ' ' << paint(row.at(3), Tone::bad) << '\n';
+            const auto comment = row | std::views::drop(5) | std::ranges::to<std::vector>();
+            if (comment.empty() || !shown.insert(comment).second) {
+                continue;
+            }
+            out << "    " << paint(std::format("{}:", row.at(4)), Tone::note) << '\n';
+            for (const auto line : comment) {
+                out << "    " << paint(line, Tone::note) << '\n';
+            }
+        }
+    }
+    constexpr std::array<std::array<std::string_view, 2>, 12> nouns{
         {{" upgrade", " upgrades"},
          {" downgrade", " downgrades"},
          {" rebuild", " rebuilds"},
@@ -1307,14 +1330,16 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
          {" blocker", " blockers"},
          {" unsatisfied", " unsatisfied"},
          {" unmet", " unmet"},
-         {" USE change", " USE changes"}}};
-    std::array<std::size_t, 11> all{};
+         {" USE change", " USE changes"},
+         {" masked", " masked"}}};
+    std::array<std::size_t, 12> all{};
     std::ranges::copy(counts, all.begin());
     all.at(6) = uninstalls.size();
     all.at(7) = blocks.size();
     all.at(8) = unsatisfied.size();
     all.at(9) = unmet.size();
     all.at(10) = use_changes.size();
+    all.at(11) = masked.size();
     out << '\n';
     bool first = true;
     for (std::size_t i = 0; i < all.size(); ++i) {

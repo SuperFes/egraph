@@ -453,6 +453,15 @@ def test_mask_reasons_are_emerges(scenario, dynamic_deps):
             assert (pkg.mask_file, pkg.mask_comment) == (filename, comment), pkg.cpv
 
 
+def test_hidden_is_emerges(scenario, dynamic_deps):
+    """How emerge sees each installed package whose masks the layer weighs."""
+    layer = build(scenario)
+    expected = update.hidden(scenario.trees, scenario.eroot, dynamic_deps)
+    for pkg in layer:
+        found = pkg.hidden if dynamic_deps else pkg.vdb_hidden
+        assert found == (expected[pkg.cpv] if pkg.cpv in weighed(layer) else 0), pkg.cpv
+
+
 def test_a_package_mask_comment_is_kept(playgrounds):
     """The repository scenario's package.mask entry has a comment, as gentoo's have."""
     system = playgrounds("repository")
@@ -465,6 +474,7 @@ def test_a_package_mask_comment_is_kept(playgrounds):
     )
     eula = next(p for p in build(system) if p.cpv == "app-misc/eula-1")
     assert eula.mask_reasons == ("EULA license(s)",)
+    assert (pkg.hidden, eula.hidden) == (1, 2)
     assert (eula.mask_file, eula.mask_comment) == ("", "")
 
 

@@ -262,6 +262,13 @@ and the blockers it could not resolve, for which it refuses the whole plan (exit
 the running system's root, emerge only resolves a strong blocker
 .RB ( !! atom)
 by a replacement.
+Last, the installed packages emerge warns are masked: those the plan keeps that are not visible
+as installed
+.RI ( package.mask ,
+an unaccepted license, invalid metadata or an unsupported EAPI) and that its graph holds, or
+that a license masks, each with the reasons emerge gives and, for
+.IR package.mask ,
+the file and the comment above the entry, as emerge shows them (a comment once).
 A merge whose dependency nothing satisfies, or an ebuild with invalid metadata, is passed over for
 another version, as emerge backtracks; when what emerge must merge has none left, the plan ends
 with the dependencies no visible version matches, and emerge refuses it too.

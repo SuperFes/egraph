@@ -178,31 +178,60 @@ def mask_comment(settings, portdb, cpv, metadata):
     return filename or "", comment or ""
 
 
+def categories(settings, cpv, metadata):
+    """Package.masks' keys for an installed package with metadata (KEYS), as depgraph's
+    Package._compute_masks finds them: invalid, CHOST, EAPI.unsupported, EAPI.deprecated,
+    KEYWORDS, PROPERTIES, RESTRICT, package.mask and LICENSE."""
+    try:
+        pkg = _pkg_str(cpv, metadata=metadata, settings=settings)
+    except InvalidData:
+        return frozenset({"invalid"})
+    found = set()
+    if hasattr(pkg, "slot_invalid") or _invalid(metadata):
+        found.add("invalid")
+    if not settings._accept_chost(pkg, metadata):
+        found.add("CHOST")
+    eapi = metadata["EAPI"]
+    if not eapi_is_supported(eapi):
+        found.add("EAPI.unsupported")
+    if _eapi_is_deprecated(eapi):
+        found.add("EAPI.deprecated")
+    if settings._getMissingKeywords(pkg, metadata):
+        found.add("KEYWORDS")
+    for key, missing in (
+        ("PROPERTIES", settings._getMissingProperties),
+        ("RESTRICT", settings._getMissingRestrict),
+    ):
+        # A string that does not parse made the package invalid above.
+        try:
+            if missing(pkg, metadata):
+                found.add(key)
+        except InvalidDependString:
+            pass
+    if settings._getMaskAtom(pkg, metadata) is not None:
+        found.add("package.mask")
+    try:
+        if settings._getMissingLicenses(pkg, metadata):
+            found.add("LICENSE")
+    except InvalidDependString:
+        pass
+    return frozenset(found)
+
+
 def masked(settings, cpv, metadata):
     """Whether an installed package with metadata (KEYS) has any of Package.masks: invalid
     metadata, an unaccepted CHOST, an unsupported or deprecated EAPI, keywords, properties,
     restrictions, package.mask or a license the configuration does not accept."""
-    try:
-        pkg = _pkg_str(cpv, metadata=metadata, settings=settings)
-    except InvalidData:
-        return True
-    if hasattr(pkg, "slot_invalid") or _invalid(metadata):
-        return True
-    eapi = metadata["EAPI"]
-    if not eapi_is_supported(eapi) or _eapi_is_deprecated(eapi):
-        return True
-    if not settings._accept_chost(pkg, metadata):
-        return True
-    if settings._getMissingKeywords(pkg, metadata):
-        return True
-    if settings._getMaskAtom(pkg, metadata) is not None:
-        return True
-    for missing in (
-        settings._getMissingProperties,
-        settings._getMissingRestrict,
-        settings._getMissingLicenses,
-    ):
-        # A string that does not parse made the package invalid above.
-        if missing(pkg, metadata):
-            return True
-    return False
+    return bool(categories(settings, cpv, metadata))
+
+
+# Not visible as installed: Package._eval_visibility passes over the rest for one.
+_HIDING = frozenset({"EAPI.unsupported", "invalid", "package.mask", "LICENSE"})
+
+
+def hidden(found):
+    """How emerge sees an installed package masked by found (categories): 0 visible, 1 not, 2
+    not and LICENSE among its masks, which emerge warns of whatever its graph holds."""
+    if "LICENSE" in found:
+        return 2
+    return int(bool(found & _HIDING))

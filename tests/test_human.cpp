@@ -550,6 +550,44 @@ TEST_CASE("a replaced slot is uninstalled, replaced by the merge of its new slot
     CHECK(out.str().ends_with("1 uninstall\n"));
 }
 
+TEST_CASE("masked installed packages are warned of, each package.mask comment once") {
+    std::ostringstream out;
+    egraph::human_updates(
+        out,
+        std::vector<std::string>{
+            "a/user-1\tupgrade\ta/user-2\tgentoo",
+            "dev-tex/biber-2.21\tmasked\tgentoo\tpackage.mask\t/repo/profiles/package.mask"
+            "\t# A Developer (2026-10-02)\t# TeX Live 2026 is masked for testing.",
+            "dev-tex/biblatex-3.21\tmasked\tgentoo\tpackage.mask\t/repo/profiles/package.mask"
+            "\t# A Developer (2026-10-02)\t# TeX Live 2026 is masked for testing.",
+            "a/eula-1\tmasked\tgentoo\tEULA license(s)\t",
+        },
+        plain);
+    CHECK(out.str() == "U a/user  1 > 2  ::gentoo\n"
+                       "\n"
+                       "Masked, installed\n"
+                       "! dev-tex/biber-2.21::gentoo  masked by package.mask\n"
+                       "    /repo/profiles/package.mask:\n"
+                       "    # A Developer (2026-10-02)\n"
+                       "    # TeX Live 2026 is masked for testing.\n"
+                       "! dev-tex/biblatex-3.21::gentoo  masked by package.mask\n"
+                       "! a/eula-1::gentoo  masked by EULA license(s)\n"
+                       "\n"
+                       "1 upgrade, 3 masked\n");
+}
+
+TEST_CASE("masked installed packages are warned of with nothing to update") {
+    std::ostringstream out;
+    egraph::human_updates(
+        out, std::vector<std::string>{"a/eula-1\tmasked\tgentoo\tEULA license(s)\t"}, plain);
+    CHECK(out.str() == "+ Nothing to update.\n"
+                       "\n"
+                       "Masked, installed\n"
+                       "! a/eula-1::gentoo  masked by EULA license(s)\n"
+                       "\n"
+                       "1 masked\n");
+}
+
 TEST_CASE("the table lists the merges each uninstall waits for") {
     std::ostringstream out;
     egraph::human_updates(out,

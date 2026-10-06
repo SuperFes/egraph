@@ -96,6 +96,11 @@ class Dependencies(NamedTuple):
     # either's reasons; else empty.
     mask_file: str = ""
     mask_comment: str = ""
+    # How emerge sees it, where masked is computed: 0 visible, 1 not (package.mask, an invalid
+    # string, an unsupported EAPI), 2 not and LICENSE among its masks; vdb_hidden under
+    # --dynamic-deps=n.
+    hidden: int = 0
+    vdb_hidden: int = 0
 
 
 # Candidate.deps of a masked candidate: one empty node tuple per kind.
@@ -428,9 +433,11 @@ def read_masked(vardb, portdb, settings, cpv, updates):
         (vdb_metadata, "vdb_masked", "vdb_mask_reasons"),
         (metadata, "masked", "mask_reasons"),
     ):
-        found[key] = masks.masked(settings, cpv, view)
+        masked_by = masks.categories(settings, cpv, view)
+        found[key] = bool(masked_by)
+        found[key.replace("masked", "hidden")] = masks.hidden(masked_by)
         found[reasons_key] = (
-            masks.reasons(settings, vardb, portdb, cpv, view) if found[key] else ()
+            masks.reasons(settings, vardb, portdb, cpv, view) if masked_by else ()
         )
     for view, reasons_key in (
         (metadata, "mask_reasons"),
@@ -852,6 +859,8 @@ def to_json(layer):
             "vdb_mask_reasons": list(pkg.vdb_mask_reasons),
             "mask_file": pkg.mask_file,
             "mask_comment": pkg.mask_comment,
+            "hidden": pkg.hidden,
+            "vdb_hidden": pkg.vdb_hidden,
         }
         for pkg in layer
     ]
@@ -875,7 +884,7 @@ def to_json(layer):
         for c in layer.candidates()
     ]
     document = {
-        "format": 9,
+        "format": 10,
         "packages": packages,
         "candidates": candidates,
         "repository_cps": list(layer.repository_cps()),

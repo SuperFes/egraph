@@ -46,6 +46,8 @@ class Updates(NamedTuple):
     unmet: frozenset = frozenset()
     # "cpv::repo" -> the flags autounmask asks package.use to change for it ("flag", "-flag").
     use_changes: dict = None
+    # The installed cpvs emerge warns are masked (_masked_installed).
+    masked: frozenset = frozenset()
 
 
 def updates(
@@ -199,6 +201,7 @@ def updates(
         unsatisfied,
         unmet,
         use_changes,
+        frozenset(str(pkg.cpv) for pkg in dynamic._masked_installed),
     )
 
 
@@ -264,6 +267,32 @@ def masked(trees, eroot, dynamic_deps=True):
         str(cpv): bool(graph._pkg(cpv, "installed", root_config, installed=True).masks)
         for cpv in vardb.cpv_all()
     }
+
+
+def hidden(trees, eroot, dynamic_deps=True):
+    """{installed cpv: 0 when depgraph sees it as visible, 1 when not, 2 when not and LICENSE
+    is among its masks}."""
+    from _emerge.create_depgraph_params import create_depgraph_params
+    from _emerge.depgraph import depgraph
+
+    root_config = trees[eroot]["root_config"]
+    options = {"--pretend": True, "--dynamic-deps": "y" if dynamic_deps else "n"}
+    graph = depgraph(
+        root_config.settings,
+        trees,
+        options,
+        create_depgraph_params(options, None),
+        None,
+    )
+    graph._load_vdb()
+    found = {}
+    for cpv in trees[eroot]["vartree"].dbapi.cpv_all():
+        pkg = graph._pkg(cpv, "installed", root_config, installed=True)
+        if pkg.visible:
+            found[str(cpv)] = 0
+        else:
+            found[str(cpv)] = 2 if pkg.masks and "LICENSE" in pkg.masks else 1
+    return found
 
 
 def mask_reasons(trees, eroot, dynamic_deps=True):

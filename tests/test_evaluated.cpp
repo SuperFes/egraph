@@ -269,8 +269,10 @@ TEST_CASE("an evaluated store loads only beside its installed store") {
     // b-1's record names another package.
     Bytes swapped;
     swapped.varint(2);
-    swapped.varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0});
-    swapped.varints({1, 1, 3}).varint(0).varints({0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0});
+    swapped.varints({1, 0, 3}).varint(0).varints(
+        {0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
+    swapped.varints({1, 1, 3}).varint(0).varints(
+        {0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
     egraph::test::write_bytes(path, evaluated_with_section(4, swapped));
     const auto mismatched = egraph::load_evaluated(path, store);
     REQUIRE_FALSE(mismatched.has_value());
@@ -279,7 +281,7 @@ TEST_CASE("an evaluated store loads only beside its installed store") {
 
     Bytes one;
     one.varint(1).varints({1, 0, 3}).varint(0).varints(
-        {0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0});
+        {0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
     egraph::test::write_bytes(path, evaluated_with_section(4, one));
     const auto short_one = egraph::load_evaluated(path, store);
     REQUIRE_FALSE(short_one.has_value());
@@ -334,9 +336,9 @@ TEST_CASE("groups keep the empty atom through the merge") {
     dependencies.varint(2);
     dependencies.varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 2});
     dependencies.varints({1, 0, 0}).list({});
-    dependencies.varints({0, 1, 4}).list({1}).varints({0, 1, 0, 0, 0, 0, 0, 0, 0, 0});
+    dependencies.varints({0, 1, 4}).list({1}).varints({0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
     dependencies.varints({2, 1, 3}).varint(0).varints(
-        {0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0});
+        {0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
     auto evaluated = egraph::decode_evaluated(evaluated_with_section(4, dependencies));
     REQUIRE(evaluated.has_value());
     const auto store = egraph::with_dynamic_deps(installed(), *evaluated);
@@ -401,9 +403,9 @@ TEST_CASE("an update's kind follows the versions") {
         Bytes dependencies;
         dependencies.varint(2);
         dependencies.varints({1, 0, 3}).varint(0).varints({0, 0, 0, 0, 0, 0});
-        dependencies.varints({visible, 0, 0, target}).list({}).varints({0, 0, 0, 0});
+        dependencies.varints({visible, 0, 0, target}).list({}).varints({0, 0, 0, 0, 0, 0});
         dependencies.varints({2, 1, 3}).varint(0).varints(
-            {0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0});
+            {0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
         const auto evaluated = egraph::decode_evaluated(evaluated_with_section(4, dependencies));
         REQUIRE(evaluated.has_value());
         return egraph::update_lines(installed(), *evaluated, egraph::UseRebuilds::none);

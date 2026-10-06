@@ -29,7 +29,7 @@ namespace egraph {
 // sets, emerge's arguments (every installed package without targets.roots) or a merge, through
 // dependencies of every kind, each atom taking the best version left that matches and a || its
 // first alternative left satisfied. What cannot be resolved so, and a blocker between two
-// merges, is a block.
+// merges, is a block. Sets plan's masked from the same completed graph.
 void weigh_blockers(const Store& store, const Evaluated& evaluated, const Targets& targets,
                     Plan& plan);
 
