@@ -2130,9 +2130,44 @@ TEST_CASE("an installed result opens its page, with the versions in the reposito
     CHECK(contains(text, "::test_repo"));
     CHECK(contains(text, "masked: ~x86 keyword"));
 
+    // Last on the page, after the dependencies, and the cursor reaches them.
+    const auto& rows = app.pages().back().rows;
+    CHECK(rows.back().type == RowType::version);
+    CHECK(rows.at(app.pages().back().cursor.at).type == RowType::link);
+    app.handle(character(U'G'));
+    CHECK(app.pages().back().cursor.at == rows.size() - 1);
+    app.handle(key(KeyKind::up));
+    app.handle(key(KeyKind::up));
+    CHECK(rows.at(app.pages().back().cursor.at).version->version == "1");
+    // This very version: nothing to open.
+    app.handle(key(KeyKind::enter));
+    CHECK(app.pages().size() == 1);
+
     app.handle(key(KeyKind::escape));
     CHECK(app.pages().empty());
     CHECK(app.search().has_value());
+}
+
+TEST_CASE("enter on another installed version opens its page") {
+    // dev-libs/lib in two slots, both installed.
+    auto system = egraph::test::make_system(
+        {{.cpv = "dev-libs/lib-1", .slot = "1"}, {.cpv = "dev-libs/lib-2", .slot = "2"}},
+        {{.cpv = "dev-libs/lib-1", .slot = "1"}, {.cpv = "dev-libs/lib-2", .slot = "2"}});
+    egraph::tui::App app{shared(std::move(system)), false};
+    egraph::test::IndexBuilder b{{"test_repo"}};
+    b.version({.cpv = "dev-libs/lib-1", .slot = "1", .repo = "test_repo"});
+    b.version({.cpv = "dev-libs/lib-2", .slot = "2", .repo = "test_repo"});
+    app.finish_index(std::make_shared<const egraph::RepositoryIndex>(b.index()));
+    FakeScreen screen{30, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    REQUIRE(cpv_of(app, app.pages().back().package) == "dev-libs/lib-1");
+    app.handle(character(U'G'));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 2);
+    CHECK(cpv_of(app, app.pages().back().package) == "dev-libs/lib-2");
 }
 
 TEST_CASE("a result not installed opens a listing of its ebuild and versions") {

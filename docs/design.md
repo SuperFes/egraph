@@ -236,8 +236,10 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   best version, the latest installed and its description. An installed one opens its page; any
   other a listing of its ebuild (description, homepage, license) and every version with its
   slot, repository and why it is masked. Pages of installed packages list their versions too,
-  once the index is loaded. A refresh keeps the search and the listing, run again over the
-  refreshed stores; the index itself is not looked at again while the interface is open.
+  once the index is loaded: last, so that the page still opens on what keeps the package and
+  its dependencies, the cursor reaching them (`G`), another installed one opening its page. A
+  refresh keeps the search and the listing, run again over the refreshed stores; the index
+  itself is not looked at again while the interface is open.
 - The stores stay current while the interface is open. Every two seconds without a key
   (`stale_interval`), `run()` looks at their inputs as a query's freshness check does (a few
   milliseconds of `lstat`); once they changed, it opens current stores as a session would, in

@@ -152,11 +152,11 @@ void move_among(Cursor& cursor, const std::vector<std::size_t>& stops, const Key
     }
 }
 
-// Moves over a page, landing only on packages.
+// Moves over a page, landing only on packages and versions.
 void move_on_page(App::Page& page, const Key& key, std::size_t height) {
     std::vector<std::size_t> stops;
     for (std::size_t i = 0; i < page.rows.size(); ++i) {
-        if (selectable(page.rows.at(i))) {
+        if (selectable(page.rows.at(i)) || page.rows.at(i).type == RowType::version) {
             stops.push_back(i);
         }
     }
@@ -917,8 +917,7 @@ void App::open(std::uint32_t package) {
         std::ranges::move(held_rows(store(), graph_.get(), evaluated(), plan_, remedies_.at(*held)),
                           std::back_inserter(page.rows));
     }
-    std::ranges::move(version_rows(store().string(store().packages.at(package).cp)),
-                      std::back_inserter(page.rows));
+
     std::ranges::move(unsatisfied_rows(store(), package, build_deps_),
                       std::back_inserter(page.rows));
     std::ranges::move(page_rows(store(), graph_.get(), package), std::back_inserter(page.rows));
@@ -927,6 +926,12 @@ void App::open(std::uint32_t package) {
             std::ranges::move(possible_rows(store(), evaluated(), package, reverse),
                               std::back_inserter(page.rows));
         }
+    }
+    // Last, so that what keeps the package and its dependencies open in view.
+    if (auto versions = version_rows(store().string(store().packages.at(package).cp));
+        !versions.empty()) {
+        page.rows.push_back(text_row(RowType::note, ""));
+        std::ranges::move(versions, std::back_inserter(page.rows));
     }
     thread(page.rows);
     // On the first dependency, else on whatever can be selected.
@@ -1551,7 +1556,6 @@ std::vector<Row> App::version_rows(std::string_view cp) const {
         row.version = version;
         rows.push_back(std::move(row));
     }
-    rows.push_back(text_row(RowType::note, ""));
     return rows;
 }
 
@@ -1727,8 +1731,19 @@ void App::handle_page(const Key& key) {
     } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace) {
         pages_.pop_back();
     } else if (!on_link) {
+        // On a version: another installed one opens its page.
+        std::optional<std::uint32_t> installed;
+        if (page.cursor.at < page.rows.size()) {
+            if (const auto& version = page.rows.at(page.cursor.at).version) {
+                installed = version->installed;
+            }
+        }
         if (key.kind == KeyKind::left || is(key, U'h')) {
             pages_.pop_back();
+        } else if (key.kind == KeyKind::enter && installed && *installed != page.package) {
+            open(*installed);
+        } else if (is_move(key)) {
+            move_on_page(page, key, height_);
         }
     } else if (key.kind == KeyKind::enter) {
         if (const auto target = page.rows.at(page.cursor.at).link.package; target != page.package) {
