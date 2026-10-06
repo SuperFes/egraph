@@ -308,7 +308,8 @@ TEST_CASE("a blocker between two merges is a block") {
                                    "block app-misc/a-1 !app-misc/b app-misc/b-1"});
 }
 
-TEST_CASE("-u's greedy slots leave out an installed slot the best version blocks") {
+TEST_CASE("-u's greedy slots, for an atom named alone, leave out an installed slot the best "
+          "version blocks") {
     const auto slotted = [](std::string_view blocker) {
         return make_system({Installed{.cpv = "dev-libs/s-1", .slot = "1"}},
                            {Available{.cpv = "dev-libs/s-1", .slot = "1"},
@@ -318,12 +319,22 @@ TEST_CASE("-u's greedy slots leave out an installed slot the best version blocks
                                       .slot = "2"}},
                            {"dev-libs/s"});
     };
+    // emerge -u dev-libs/s.
+    auto alone = world();
+    alone.request = {{.set = "", .atom = "dev-libs/s"}};
+    CHECK(outcome(slotted("!dev-libs/s:1"), alone) ==
+          std::vector<std::string>{
+              "merge dev-libs/s-2",
+              "uninstall dev-libs/s-1: dev-libs/s-2 !dev-libs/s:1 dev-libs/s-1"});
+    CHECK(outcome(slotted("!dev-libs/other"), alone) ==
+          std::vector<std::string>{"merge dev-libs/s-1.1", "merge dev-libs/s-2"});
+    // A set's atom goes only to the best version's slot; the blocker still uninstalls s-1.
     CHECK(outcome(slotted("!dev-libs/s:1"), world()) ==
           std::vector<std::string>{
               "merge dev-libs/s-2",
               "uninstall dev-libs/s-1: dev-libs/s-2 !dev-libs/s:1 dev-libs/s-1"});
     CHECK(outcome(slotted("!dev-libs/other"), world()) ==
-          std::vector<std::string>{"merge dev-libs/s-1.1", "merge dev-libs/s-2"});
+          std::vector<std::string>{"merge dev-libs/s-2"});
 }
 
 TEST_CASE("update lines end with the uninstalls, then the blocks") {
