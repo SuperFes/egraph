@@ -208,7 +208,11 @@ def evaluations(system):
 def test_plan_evaluates_a_cp_only_the_repositories_know(repository_system):
     result = in_repository(repository_system, "plan", "www-apps/unused")
     assert result.returncode == 0, result.stderr
-    merges = {line.split("\t")[2] for line in result.stdout.splitlines()}
+    merges = {
+        line.split("\t")[2]
+        for line in result.stdout.splitlines()
+        if line.split("\t")[1] != "masked"
+    }
     assert merges == {"www-apps/unused-1", "www-apps/helper-1"}
     assert len(evaluations(repository_system)) == 1
     assert "www-apps/unused" in evaluations(repository_system)[0].split()

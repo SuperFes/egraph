@@ -571,7 +571,8 @@ def test_update_order_is_valid(scenario, system, dynamic_deps):
         pytest.skip("emerge cannot resolve @installed here")
     _, path = system
     output = egraph(path, "updates", "-t", "-D", *dynamic_option(dynamic_deps)).stdout
-    rows = [line.split("\t") for line in output.splitlines()]
+    # Merges only: the rows after them lead with an empty place.
+    rows = [fields for line in output.splitlines() if (fields := line.split("\t"))[0]]
     target = {fields[0]: fields[4] for fields in rows}
     place = {fields[4]: int(fields[0]) for fields in rows}
     # The earlier merges each waits for by a dependency of its own.
