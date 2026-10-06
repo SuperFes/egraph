@@ -3,6 +3,7 @@
 #include "evaluated.hpp"
 #include "store.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -27,5 +28,14 @@ inline constexpr std::uint64_t racy_window_ns = 1'000'000'000;
 
 // Either store's reason.
 [[nodiscard]] std::optional<std::string> staleness(const Stores& stores);
+
+// How long a build starting at now_ns should wait for the store it writes to trust its inputs:
+// until the newest of them, as they stat now, is older than the racy window. At most the window,
+// for an input dated in the future. A refresh right after an emerge would otherwise write a store
+// the next query refreshes again.
+[[nodiscard]] std::chrono::nanoseconds settle_wait(std::span<const Input> inputs,
+                                                   std::uint64_t now_ns);
+[[nodiscard]] std::chrono::nanoseconds settle_wait(const Store& store, std::uint64_t now_ns);
+[[nodiscard]] std::chrono::nanoseconds settle_wait(const Stores& stores, std::uint64_t now_ns);
 
 } // namespace egraph

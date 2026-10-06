@@ -159,6 +159,19 @@ def test_refresh_brings_the_store_up_to_date_and_prints_nothing(system):
     assert query(system, "--no-refresh").stdout == expected(playground)
 
 
+def test_a_refresh_right_after_a_change_writes_a_store_that_stays_current(system):
+    """As the post_emerge hook refreshes: the change is under a second old, so the refresh
+    waits until it is not, and the next query trusts the store rather than refresh again.
+    """
+    playground = system[0]
+    assert egraph(system, "refresh").returncode == 0
+    add_package(playground, "dev-libs/alt-b-1")
+    assert egraph(system, "refresh").returncode == 0
+    assert len(builds(system)) == 2
+    assert query(system).stdout == expected(playground)
+    assert len(builds(system)) == 2
+
+
 @pytest.fixture
 def repository_system(mutable_playground, tmp_path):
     """The repository scenario, whose www-apps cps are in no store until asked for."""

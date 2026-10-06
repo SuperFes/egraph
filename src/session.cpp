@@ -3,8 +3,12 @@
 #include "freshness.hpp"
 #include "os.hpp"
 
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <format>
 #include <ostream>
+#include <thread>
 #include <utility>
 
 namespace egraph {
@@ -52,6 +56,12 @@ std::expected<Loaded, std::string> open_current(const Invocation& invocation, st
         }
     } else if (invocation.no_refresh) {
         return std::unexpected(stored_store_error(loaded.error()));
+    }
+    if (loaded) {
+        // Else a refresh right after an emerge writes a store the next query refreshes again.
+        const std::chrono::nanoseconds now = std::chrono::system_clock::now().time_since_epoch();
+        std::this_thread::sleep_for(settle_wait(
+            *loaded, static_cast<std::uint64_t>(std::max<std::int64_t>(now.count(), 0))));
     }
     if (auto error = run_builder(invocation, "--incremental", path)) {
         return std::unexpected(std::move(*error));

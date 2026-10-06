@@ -2,6 +2,7 @@
 
 #include "os.hpp"
 
+#include <algorithm>
 #include <format>
 #include <system_error>
 
@@ -72,6 +73,30 @@ std::optional<std::string> staleness(const Stores& stores) {
         return reason;
     }
     return staleness(stores.evaluated, stores.installed);
+}
+
+std::chrono::nanoseconds settle_wait(std::span<const Input> inputs, std::uint64_t now_ns) {
+    std::uint64_t newest = 0;
+    for (const auto& input : inputs) {
+        if (const auto status = os::lstat(input.path)) {
+            newest = std::max(newest, status->mtime_ns);
+        }
+    }
+    const auto settled = newest + racy_window_ns;
+    if (settled <= now_ns) {
+        return std::chrono::nanoseconds{0};
+    }
+    return std::chrono::nanoseconds{
+        static_cast<std::int64_t>(std::min(settled - now_ns, racy_window_ns))};
+}
+
+std::chrono::nanoseconds settle_wait(const Store& store, std::uint64_t now_ns) {
+    return settle_wait(store.inputs, now_ns);
+}
+
+std::chrono::nanoseconds settle_wait(const Stores& stores, std::uint64_t now_ns) {
+    return std::max(settle_wait(stores.installed, now_ns),
+                    settle_wait(stores.evaluated.inputs, now_ns));
 }
 
 } // namespace egraph

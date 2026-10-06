@@ -715,8 +715,10 @@ user sets directory), and the builder's own modules. A path recorded as missing 
 it exists.
 
 Timestamps are coarse, so an input modified within 1 s before the build started is never trusted
-as unchanged (the racy-git rule); a store built right after a merge refreshes once more and then
-settles.
+as unchanged (the racy-git rule). A refresh therefore waits, before building, until the newest of
+its inputs is a second old (at most a second): the post_emerge hook runs within that second of the
+merge's last writes, and its store would otherwise be stale on arrival, the next query refreshing
+again.
 
 On load `egraph` stats every input (2,575 `lstat` calls on the dev box, about 2.6 ms):
 

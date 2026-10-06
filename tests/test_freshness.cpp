@@ -10,9 +10,11 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <span>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace fs = std::filesystem;
 using Catch::Matchers::ContainsSubstring;
@@ -101,6 +103,38 @@ TEST_CASE("inputs modified close to the build are not trusted") {
     store.meta.build_time_ns = store.inputs.front().mtime_ns + (second_ns / 2);
     CHECK_THAT(egraph::staleness(store).value_or(""),
                EndsWith("modified too close to the build to trust"));
+}
+
+TEST_CASE("a build waits until its newest input is older than the racy window") {
+    const TempDir dir;
+    write_text(dir.path() / "old", "");
+    write_text(dir.path() / "new", "");
+    const auto changed = egraph::os::lstat(dir.path() / "new")->mtime_ns;
+    fs::last_write_time(dir.path() / "old",
+                        fs::last_write_time(dir.path() / "old") - std::chrono::hours(1));
+    const std::vector<egraph::Input> inputs{
+        recorded(dir.path() / "old", egraph::InputKind::file),
+        {.path = (dir.path() / "absent").string(), .kind = egraph::InputKind::missing},
+        // Recorded before the change; the wait goes by the input as it is now.
+        {.path = (dir.path() / "new").string(), .kind = egraph::InputKind::file}};
+    using std::chrono::nanoseconds;
+    CHECK(egraph::settle_wait(inputs, changed + (second_ns / 4)) == nanoseconds{3 * second_ns / 4});
+    CHECK(egraph::settle_wait(inputs, changed + second_ns) == nanoseconds{0});
+    CHECK(egraph::settle_wait(inputs, changed + (2 * second_ns)) == nanoseconds{0});
+    // Dated in the future: never more than the window.
+    CHECK(egraph::settle_wait(inputs, changed - (5 * second_ns)) == nanoseconds{second_ns});
+    CHECK(egraph::settle_wait(std::span<const egraph::Input>{inputs}.first(2), changed) ==
+          nanoseconds{0});
+}
+
+TEST_CASE("both stores' inputs count toward the wait") {
+    const TempDir dir;
+    write_text(dir.path() / "repo", "");
+    const auto changed = egraph::os::lstat(dir.path() / "repo")->mtime_ns;
+    egraph::Stores stores;
+    stores.evaluated.inputs = {recorded(dir.path() / "repo", egraph::InputKind::file)};
+    CHECK(egraph::settle_wait(stores, changed) == std::chrono::nanoseconds{second_ns});
+    CHECK(egraph::settle_wait(stores.installed, changed) == std::chrono::nanoseconds{0});
 }
 
 TEST_CASE("processes run and report how they ended") {
