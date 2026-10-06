@@ -38,6 +38,8 @@ enum class Exit : std::uint8_t {
     // updates, plan and the actions: emerge would refuse the plan, for blockers it cannot
     // resolve, dependencies nothing satisfies, REQUIRED_USE unmet or USE changes it needs.
     refused = 6,
+    // Never a status egraph exits with: an action shown for the interface, ready to run.
+    previewed = 7,
 };
 
 struct Deps {
@@ -324,6 +326,8 @@ struct Invocation {
     // A command may ask a question on standard input: one given on the command line with both
     // ends a terminal, never a shell or interface line.
     bool ask = false;
+    // An action is only shown, to be confirmed by the interface (Exit::previewed).
+    bool preview = false;
     // USE changes were offered already, so they are not again when the command runs anew.
     bool use_offered = false;
     // The rebuild of what uses preserved libraries was offered already, by the action that runs.
@@ -442,6 +446,10 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
 // The emerge command line with arguments under the invocation's roots.
 [[nodiscard]] std::vector<std::string> emerge_command(const Invocation& invocation,
                                                       std::span<const std::string> arguments);
+
+// The global options an egraph run beside this one takes to work on the same system, with the
+// same programs and logs, as this one does.
+[[nodiscard]] std::vector<std::string> egraph_options(const Invocation& invocation);
 
 // Declares every option and subcommand on app; app.parse() then fills invocation, which must
 // outlive the parse.

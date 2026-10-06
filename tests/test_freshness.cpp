@@ -190,6 +190,22 @@ TEST_CASE("a process still running is stopped when dropped") {
     CHECK(std::chrono::steady_clock::now() - began < std::chrono::seconds{10});
 }
 
+TEST_CASE("a detached process runs on when dropped") {
+    const TempDir dir;
+    const auto done = dir.path() / "done";
+    {
+        auto child = egraph::os::start({"sh", "-c", "sleep 0.2; echo done > " + done.string()});
+        REQUIRE(child.has_value());
+        child->detach();
+    }
+    const auto began = std::chrono::steady_clock::now();
+    while (!std::filesystem::exists(done) &&
+           std::chrono::steady_clock::now() - began < std::chrono::seconds{10}) {
+        std::this_thread::sleep_for(std::chrono::milliseconds{10});
+    }
+    CHECK(std::filesystem::exists(done));
+}
+
 TEST_CASE("a file is replaced by a copy in one step") {
     namespace fs = std::filesystem;
     const TempDir dir;

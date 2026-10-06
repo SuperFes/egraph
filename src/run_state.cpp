@@ -42,8 +42,14 @@ std::filesystem::path run_state_path(const std::filesystem::path& eroot) {
 std::string run_state_json(const RunState& state) {
     const auto status =
         std::ranges::find(status_names, state.status, &decltype(status_names)::value_type::first);
-    return Json{
-        {"arguments", state.arguments}, {"merged", state.merged}, {"status", status->second}}
+    auto failed = Json::array();
+    for (const auto& failure : state.failed) {
+        failed.push_back({{"cpv", failure.cpv}, {"log", failure.log}});
+    }
+    return Json{{"arguments", state.arguments},
+                {"failed", std::move(failed)},
+                {"merged", state.merged},
+                {"status", status->second}}
         .dump();
 }
 
@@ -67,8 +73,25 @@ std::expected<RunState, std::string> parse_run_state(std::string_view text) {
     if (found == status_names.end()) {
         return std::unexpected("an unknown status: " + name);
     }
-    return RunState{
-        .arguments = std::move(*arguments), .merged = std::move(*merged), .status = found->first};
+    std::vector<RunState::Failure> failed;
+    if (const auto failures = json.find("failed"); failures != json.end()) {
+        if (!failures->is_array()) {
+            return std::unexpected("failed is not a list");
+        }
+        for (const auto& failure : *failures) {
+            const auto cpv = failure.find("cpv");
+            const auto log = failure.find("log");
+            if (!failure.is_object() || cpv == failure.end() || !cpv->is_string() ||
+                log == failure.end() || !log->is_string()) {
+                return std::unexpected("a failure without a cpv and a log");
+            }
+            failed.push_back({.cpv = cpv->get<std::string>(), .log = log->get<std::string>()});
+        }
+    }
+    return RunState{.arguments = std::move(*arguments),
+                    .merged = std::move(*merged),
+                    .failed = std::move(failed),
+                    .status = found->first};
 }
 
 std::vector<Step> resumed_steps(const Store& store, const Evaluated& evaluated, const Plan& plan,

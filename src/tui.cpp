@@ -1824,6 +1824,80 @@ std::string progress_bar(std::uint64_t done, std::uint64_t total, std::size_t wi
     return bar + repeat(glyph.bar_empty, width - used);
 }
 
+std::vector<std::string> action_arguments(const Action& action) {
+    std::vector<std::string> words;
+    switch (action.kind) {
+    case Action::Kind::install:
+        words = {"exec"};
+        break;
+    case Action::Kind::update:
+        words = {"exec", "--oneshot", "-u", "-N"};
+        if (action.targets.empty()) {
+            words.insert(words.end(), {"-D", "@installed"});
+        }
+        break;
+    case Action::Kind::remove:
+        words = {"remove"};
+        if (!action.build_deps) {
+            words.insert(words.end(), {"--with-bdeps", "n"});
+        }
+        break;
+    }
+    words.insert(words.end(), action.targets.begin(), action.targets.end());
+    return words;
+}
+
+std::vector<std::string> plain_tail(std::string_view text, std::size_t count) {
+    std::vector<std::string> lines;
+    std::string line;
+    for (std::size_t at = 0; at < text.size(); ++at) {
+        const auto c = text.at(at);
+        if (c == '\x1b') {
+            if (at + 1 < text.size() && text.at(at + 1) == '[') {
+                // A control sequence ends at its final byte.
+                at += 2;
+                while (at < text.size() && (text.at(at) < '@' || text.at(at) > '~')) {
+                    ++at;
+                }
+            } else if (at + 1 < text.size() && text.at(at + 1) == ']') {
+                // An operating system command ends at BEL or ST.
+                at += 2;
+                while (
+                    at < text.size() && text.at(at) != '\a' &&
+                    !(text.at(at) == '\x1b' && at + 1 < text.size() && text.at(at + 1) == '\\')) {
+                    ++at;
+                }
+                if (at < text.size() && text.at(at) == '\x1b') {
+                    ++at;
+                }
+            } else {
+                ++at;
+            }
+        } else if (c == '\n') {
+            lines.push_back(std::move(line));
+            line.clear();
+        } else if (c == '\r') {
+            if (at + 1 >= text.size() || text.at(at + 1) != '\n') {
+                line.clear();
+            }
+        } else if (c == '\t') {
+            line.append(8 - (columns(line) % 8), ' ');
+        } else if (static_cast<unsigned char>(c) >= 0x20 && c != '\x7f') {
+            line.push_back(c);
+        }
+    }
+    if (!line.empty()) {
+        lines.push_back(std::move(line));
+    }
+    while (!lines.empty() && lines.back().find_first_not_of(' ') == std::string::npos) {
+        lines.pop_back();
+    }
+    if (lines.size() > count) {
+        lines.erase(lines.begin(), lines.end() - static_cast<std::ptrdiff_t>(count));
+    }
+    return lines;
+}
+
 std::string spinner_frame(std::size_t count, const Glyphs& glyph) {
     const auto frames = columns(glyph.spinner);
     return frames == 0 ? std::string{} : code_points(glyph.spinner, count % frames, 1);

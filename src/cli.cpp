@@ -58,6 +58,7 @@
 #include <ranges>
 #include <sstream>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
 namespace egraph {
@@ -610,6 +611,129 @@ Job<tui::IndexResult> background_index(const Invocation& invocation, Session& se
             return tui::IndexResult{std::unexpected(std::move(**ended))};
         }
         return adopt(load_repository(repository_index_path(used)), true);
+    };
+}
+
+// The interface's action as this session's command shows it, stopped where it would ask.
+tui::Preview preview_action(Session& session, const Invocation& invocation, std::ostream& err,
+                            const tui::Action& action) {
+    auto command = invocation;
+    command.command = std::monostate{};
+    CLI::App app{"", "egraph"};
+    configure(app, command);
+    auto words = tui::action_arguments(action);
+    std::ranges::reverse(words);
+    try {
+        app.parse(words);
+    } catch (const CLI::ParseError& e) {
+        return {.ready = false, .out = {}, .err = e.what()};
+    }
+    // Set after parsing, which reads the environment's EGRAPH_LAYOUT.
+    command.ask = false;
+    command.preview = true;
+    command.layout = Layout::human;
+    command.color = ColorMode::never;
+    std::ostringstream shown;
+    std::ostringstream problems;
+    session.warn_to(problems);
+    const auto exit = dispatch(session, command, shown, problems);
+    session.warn_to(err);
+    return {.ready = exit == Exit::previewed, .out = shown.str(), .err = problems.str()};
+}
+
+// The last bytes of a file, enough for a log's last lines.
+std::optional<std::string> file_tail(const std::filesystem::path& path) {
+    constexpr std::streamoff most = std::streamoff{64} * 1024;
+    std::ifstream in{path, std::ios::binary};
+    if (!in) {
+        return std::nullopt;
+    }
+    in.seekg(0, std::ios::end);
+    in.seekg(std::max<std::streamoff>(0, static_cast<std::streamoff>(in.tellg()) - most));
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
+// How many of a log's last lines a failed run shows.
+constexpr std::size_t tail_lines = 20;
+
+// The failures exec recorded for the run started at since, each with its log's last lines; none
+// when the record is older, as when the run stopped before it began.
+std::vector<tui::RunFailure> recorded_failures(const std::filesystem::path& state,
+                                               std::filesystem::file_time_type since) {
+    std::error_code error;
+    if (std::filesystem::last_write_time(state, error) < since || error) {
+        return {};
+    }
+    const auto text = file_tail(state);
+    const auto recorded = parse_run_state(text.value_or(""));
+    if (!recorded) {
+        return {};
+    }
+    std::vector<tui::RunFailure> failures;
+    for (const auto& failure : recorded->failed) {
+        auto tail = failure.log.empty() || failure.log.ends_with(".gz")
+                        ? std::vector<std::string>{}
+                        : tui::plain_tail(file_tail(failure.log).value_or(""), tail_lines);
+        failures.push_back({.cpv = failure.cpv, .log = failure.log, .tail = std::move(tail)});
+    }
+    return failures;
+}
+
+// A run of its own an object owns, left running when the object goes.
+struct Detached {
+    explicit Detached(os::Child started) : child{std::move(started)} {}
+    Detached(const Detached&) = delete;
+    Detached& operator=(const Detached&) = delete;
+    Detached(Detached&&) noexcept = default;
+    Detached& operator=(Detached&&) noexcept = default;
+    ~Detached() { child.detach(); }
+    os::Child child;
+};
+
+// The interface's action carried out by an egraph of its own, its output to a file beside exec's
+// record: the job ends with the run, and the run outlives the job, so quitting the interface
+// leaves it to finish.
+Job<tui::RunResult> start_action(const Invocation& invocation, const std::filesystem::path& eroot,
+                                 const tui::Action& action) {
+    const auto program = os::executable();
+    std::vector<std::string> argv{program.empty() ? std::string{"egraph"} : program.string()};
+    std::ranges::move(egraph_options(invocation), std::back_inserter(argv));
+    argv.insert(argv.end(), {"--layout", "human", "--color", "never"});
+    std::ranges::move(tui::action_arguments(action), std::back_inserter(argv));
+    argv.emplace_back("--yes");
+    if (!invocation.dynamic_deps) {
+        argv.insert(argv.end(), {"--dynamic-deps", "n"});
+    }
+    const auto state = run_state_path(eroot);
+    const auto output = state.parent_path() / "interface.log";
+    std::error_code ignored;
+    std::filesystem::create_directories(output.parent_path(), ignored);
+    const auto since = std::filesystem::file_time_type::clock::now();
+    auto child = os::start(argv, output);
+    if (!child) {
+        return ready(tui::RunResult{std::unexpected(child.error().message)});
+    }
+    return [running = Detached{std::move(*child)}, state, output, since,
+            merges = action.kind !=
+                     tui::Action::Kind::remove]() mutable -> std::optional<tui::RunResult> {
+        auto ended = running.child.poll();
+        if (!ended) {
+            return std::nullopt;
+        }
+        if (!*ended) {
+            return tui::RunResult{std::unexpected(std::move(ended->error().message))};
+        }
+        tui::RunOutcome outcome{
+            .status = **ended, .failures = {}, .output = output.string(), .tail = {}};
+        if (outcome.status != 0) {
+            if (merges) {
+                outcome.failures = recorded_failures(state, since);
+            }
+            outcome.tail = tui::plain_tail(file_tail(output).value_or(""), tail_lines);
+        }
+        return outcome;
     };
 }
 
@@ -1583,6 +1707,8 @@ std::optional<Exit> stopped(std::optional<Stop> stop, std::string_view name,
         err << "egraph: " << name << ": " << words.gerund << " needs write access to "
             << vdb.string() << "; run egraph as root\n";
         return Exit::failure;
+    case Stop::previewed:
+        return Exit::previewed;
     case Stop::unconfirmed:
         err << "egraph: " << name << ": no terminal to ask on; give --yes to have emerge "
             << words.verb << " without asking\n";
@@ -1729,7 +1855,8 @@ Exit act_on_plan(std::string_view name, bool yes, Session& session, const Invoca
                          .empty = !selecting && plan.merges.empty() && plan.uninstalls.empty(),
                          .writable = os::can_create(vdb / "egraph"),
                          .yes = yes,
-                         .can_ask = invocation.ask}),
+                         .can_ask = invocation.ask,
+                         .preview = invocation.preview}),
                     name, merge_words, vdb, output(invocation).human, out, err)) {
         return *status;
     }
@@ -1963,6 +2090,12 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
             if (event.kind == WorkerEvent::Kind::phase) {
                 observer.phase(step, event.text);
             }
+            if (event.kind == WorkerEvent::Kind::failed || event.kind == WorkerEvent::Kind::error) {
+                state.failed.push_back(
+                    {.cpv = names.at(step),
+                     .log = event.kind == WorkerEvent::Kind::failed ? event.log : std::string{}});
+                record();
+            }
             publish(false);
             if (const auto logs = events.reported(step, event, now())) {
                 logger.write(*logs);
@@ -2157,7 +2290,8 @@ Exit execute(const Remove& command, Session& session, const Invocation& invocati
                                            .empty = removal.removed.empty(),
                                            .writable = os::can_create(vdb / "egraph"),
                                            .yes = command.yes,
-                                           .can_ask = invocation.ask}),
+                                           .can_ask = invocation.ask,
+                                           .preview = invocation.preview}),
                     Remove::name, remove_words, vdb, style.human, out, err)) {
         return *status;
     }
@@ -2243,7 +2377,8 @@ Exit execute(const Deselect& command, Session& session, const Invocation& invoca
                                                            .empty = atoms.empty(),
                                                            .writable = os::can_create(world),
                                                            .yes = command.yes,
-                                                           .can_ask = invocation.ask}),
+                                                           .can_ask = invocation.ask,
+                                                           .preview = invocation.preview}),
                                     Deselect::name, deselect_words, world, style.human, out, err)) {
         return *status;
     }
@@ -2363,11 +2498,12 @@ Exit execute(const Tui&, Session& session, const Invocation& invocation, std::os
         return output_of(steve::set_arguments(setting, value)).transform([](const auto&) {});
     };
     // What a command at the prompt prints, and its warnings, go to its answer.
-    const auto command = [&session, &invocation](const std::string& line) {
+    const auto command = [&session, &invocation, &err](const std::string& line) {
         std::ostringstream out;
         std::ostringstream problems;
         session.warn_to(problems);
         const auto result = run_line(session, invocation, line, out, problems, Context::interface);
+        session.warn_to(err);
         return tui::Answer{
             .exit = result.exit, .out = out.str(), .err = problems.str(), .quit = result.quit};
     };
@@ -2393,6 +2529,12 @@ Exit execute(const Tui&, Session& session, const Invocation& invocation, std::os
          .stale = stale,
          .refresh = refresh,
          .load_index = [&invocation, &session] { return background_index(invocation, session); },
+         .preview =
+             [&session, &invocation, &err](const tui::Action& action) {
+                 return preview_action(session, invocation, err, action);
+             },
+         .run = [&invocation, eroot = (*stores)->installed.meta.eroot](
+                    const tui::Action& action) { return start_action(invocation, eroot, action); },
          .now = {}},
         warnings, err);
 }
@@ -3088,6 +3230,44 @@ std::vector<std::string> emerge_command(const Invocation& invocation,
     }
     argv.insert(argv.end(), arguments.begin(), arguments.end());
     return argv;
+}
+
+std::vector<std::string> egraph_options(const Invocation& invocation) {
+    std::vector<std::string> options{"--root", invocation.root.string()};
+    const auto pass = [&options](std::string_view name, const auto& value) {
+        if (value) {
+            options.emplace_back(name);
+            if constexpr (std::is_same_v<std::decay_t<decltype(*value)>, std::filesystem::path>) {
+                options.push_back(value->string());
+            } else {
+                options.emplace_back(*value);
+            }
+        }
+    };
+    pass("--config-root", invocation.config_root);
+    pass("--eprefix", invocation.eprefix);
+    pass("--store", invocation.store);
+    pass("--replace-slots", invocation.replace_slots);
+    pass("--builder", invocation.builder);
+    pass("--emerge", invocation.emerge);
+    pass("--dispatch-conf", invocation.dispatch_conf);
+    pass("--emaint", invocation.emaint);
+    if (invocation.no_refresh) {
+        options.emplace_back("--no-refresh");
+    }
+    constexpr std::array<std::string_view, 5> sinks{"auto", "journal", "file", "both", "none"};
+    if (invocation.log != log::Sink::automatic) {
+        options.insert(options.end(),
+                       {"--log", std::string{sinks.at(std::to_underlying(invocation.log))}});
+    }
+    pass("--log-file", invocation.log_file);
+    if (invocation.glyphs) {
+        constexpr std::array<std::string_view, 3> glyphs{"nerd", "unicode", "ascii"};
+        options.insert(
+            options.end(),
+            {"--glyphs", std::string{glyphs.at(std::to_underlying(*invocation.glyphs))}});
+    }
+    return options;
 }
 
 std::vector<std::string> emerge_options_command(const Invocation& invocation,

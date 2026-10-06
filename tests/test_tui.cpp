@@ -2315,3 +2315,32 @@ TEST_CASE("a command's output from the search replaces a listing over it") {
     app.handle(key(KeyKind::escape));
     CHECK(app.search().has_value());
 }
+
+TEST_CASE("an action's command: exec for merges, remove for removals") {
+    using egraph::tui::Action;
+    using Words = std::vector<std::string>;
+    CHECK(egraph::tui::action_arguments({.kind = Action::Kind::install, .targets = {"a/b"}}) ==
+          Words{"exec", "a/b"});
+    CHECK(egraph::tui::action_arguments(
+              {.kind = Action::Kind::update, .targets = {"a/b:0", "c/d:2"}}) ==
+          Words{"exec", "--oneshot", "-u", "-N", "a/b:0", "c/d:2"});
+    CHECK(egraph::tui::action_arguments({.kind = Action::Kind::update}) ==
+          Words{"exec", "--oneshot", "-u", "-N", "-D", "@installed"});
+    CHECK(egraph::tui::action_arguments({.kind = Action::Kind::remove, .targets = {"=a/b-1"}}) ==
+          Words{"remove", "=a/b-1"});
+    CHECK(egraph::tui::action_arguments(
+              {.kind = Action::Kind::remove, .targets = {"=a/b-1"}, .build_deps = false}) ==
+          Words{"remove", "--with-bdeps", "n", "=a/b-1"});
+}
+
+TEST_CASE("a log's tail is what a terminal would leave of its last lines") {
+    using Lines = std::vector<std::string>;
+    CHECK(egraph::tui::plain_tail("a\nb\nc\nd\n", 2) == Lines{"c", "d"});
+    CHECK(egraph::tui::plain_tail("a\nb", 5) == Lines{"a", "b"});
+    // Colours, titles, progress redrawn over itself, and the blank lines at the end.
+    CHECK(egraph::tui::plain_tail("\x1b[32;01m * \x1b[39;49;00mok\r\n\x1b]0;title\a10%\r50%\r"
+                                  "100%\n\x1b]2;t\x1b\\x\ty\x07\n\n  \n",
+                                  10) == Lines{" * ok", "100%", "x       y"});
+    CHECK(egraph::tui::plain_tail("", 3).empty());
+    CHECK(egraph::tui::plain_tail("cut off \x1b[", 3) == Lines{"cut off "});
+}

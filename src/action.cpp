@@ -250,6 +250,9 @@ std::optional<Stop> stop_before_verifying(const Readiness& readiness) {
     if (!readiness.writable) {
         return Stop::unprivileged;
     }
+    if (readiness.preview) {
+        return Stop::previewed;
+    }
     if (!readiness.yes && !readiness.can_ask) {
         return Stop::unconfirmed;
     }

@@ -84,6 +84,8 @@ struct Readiness {
     bool yes = false;
     // A question can be asked on a terminal.
     bool can_ask = false;
+    // Only shown, for the interface to confirm itself before it runs the action.
+    bool preview = false;
 };
 
 // Why an action stops before asking emerge to verify its plan.
@@ -92,6 +94,8 @@ enum class Stop : std::uint8_t {
     refused,
     nothing,
     unprivileged,
+    // Shown for the interface, which asks itself.
+    previewed,
     // Neither --yes nor a terminal to ask on.
     unconfirmed,
 };

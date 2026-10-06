@@ -65,6 +65,38 @@ TEST_CASE("global options precede the command") {
     CHECK(invocation.no_refresh);
 }
 
+TEST_CASE("an egraph run beside this one takes its global options") {
+    const auto join = [](const std::vector<std::string>& words) {
+        std::string line;
+        for (const auto& word : words) {
+            line += word + ' ';
+        }
+        return line;
+    };
+    CHECK(egraph::egraph_options(parse("broken")) == std::vector<std::string>{"--root", "/"});
+    const auto given = parse("--root /mnt/r --config-root /mnt/c --eprefix /p --store /s "
+                             "--replace-slots /l --builder /b --emerge /e --dispatch-conf /d "
+                             "--emaint /m --no-refresh --log file --log-file /f --glyphs ascii "
+                             "--layout lines --color always broken");
+    const auto passed = parse(join(egraph::egraph_options(given)) + "broken");
+    CHECK(passed.root == given.root);
+    CHECK(passed.config_root == given.config_root);
+    CHECK(passed.eprefix == given.eprefix);
+    CHECK(passed.store == given.store);
+    CHECK(passed.replace_slots == given.replace_slots);
+    CHECK(passed.builder == given.builder);
+    CHECK(passed.emerge == given.emerge);
+    CHECK(passed.dispatch_conf == given.dispatch_conf);
+    CHECK(passed.emaint == given.emaint);
+    CHECK(passed.no_refresh);
+    CHECK(passed.log == egraph::log::Sink::file);
+    CHECK(passed.log_file == given.log_file);
+    CHECK(passed.glyphs == egraph::GlyphSet::ascii);
+    // Where its output goes decides those.
+    CHECK(passed.layout == egraph::Layout::automatic);
+    CHECK(passed.color == egraph::ColorMode::automatic);
+}
+
 TEST_CASE("egraph run as egraph-<command> runs the command") {
     CLI::App app;
     egraph::Invocation invocation;

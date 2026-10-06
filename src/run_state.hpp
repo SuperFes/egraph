@@ -21,10 +21,18 @@ namespace egraph {
 
 struct RunState {
     enum class Status : std::uint8_t { running, failed, done };
+    // A package whose build or merge failed, and portage's log of it.
+    struct Failure {
+        std::string cpv{};
+        std::string log{};
+        bool operator==(const Failure&) const = default;
+    };
     // exec's own arguments, its options and then its targets.
     std::vector<std::string> arguments{};
     // The cpvs it merged, and those of the runs it resumed, in merge order.
     std::vector<std::string> merged{};
+    // This run's failures, in the order they happened; a record without any reads as none.
+    std::vector<Failure> failed{};
     Status status = Status::running;
 };
 

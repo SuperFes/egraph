@@ -209,6 +209,55 @@ struct Answer {
 // Runs a command line, as `egraph shell` runs one.
 using Commander = std::function<Answer(const std::string&)>;
 
+// What the interface carries out once confirmed: merges through egraph exec, removals through
+// egraph remove.
+struct Action {
+    enum class Kind : std::uint8_t { install, update, remove };
+    Kind kind = Kind::install;
+    // Atoms; an update without any takes every update the list shows.
+    std::vector<std::string> targets{};
+    // For a removal, as remove --with-bdeps.
+    bool build_deps = true;
+    bool operator==(const Action&) const = default;
+};
+
+// The command carrying the action out, without the program and --yes: install as exec, update as
+// exec --oneshot -u -N (every update as -D @installed), remove as remove.
+[[nodiscard]] std::vector<std::string> action_arguments(const Action& action);
+
+// What the action would do, as its command shows it before asking, in the human layout.
+struct Preview {
+    // There is something to do, and the system can be changed: confirming runs it.
+    bool ready = false;
+    std::string out{};
+    std::string err{};
+};
+using Previewer = std::function<Preview(const Action&)>;
+
+// A package that failed in a run: portage's log of it and the log's last lines, or no log for a
+// worker that stopped without one.
+struct RunFailure {
+    std::string cpv{};
+    std::string log{};
+    std::vector<std::string> tail{};
+};
+// How a run ended: its exit status, and after a failure what failed, then where the run's output
+// went and its last lines.
+struct RunOutcome {
+    int status = 0;
+    std::vector<RunFailure> failures{};
+    std::string output{};
+    std::vector<std::string> tail{};
+};
+using RunResult = std::expected<RunOutcome, std::string>;
+// Starts a confirmed action beside the interface; the job ends with the run. Dropped, as when the
+// interface quits, it leaves the run going.
+using Runner = std::function<Job<RunResult>(const Action&)>;
+
+// The last count lines of text as a terminal would leave them: escape sequences and other
+// control characters dropped, each line what its last carriage return left.
+[[nodiscard]] std::vector<std::string> plain_tail(std::string_view text, std::size_t count);
+
 // What the interface asks of the world outside it: run() calls these, the app never does.
 struct Services {
     Checker check{};
@@ -226,6 +275,8 @@ struct Services {
     Refresher refresh{};
     // Empty where there is no repository index to search.
     IndexLoader load_index{};
+    Previewer preview{};
+    Runner run{};
     // The steady clock when empty.
     Clock now{};
 };

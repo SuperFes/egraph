@@ -128,7 +128,8 @@ TEST_CASE("emerge's depclean uninstalls the replaced slots, asking nothing") {
                                    "--depclean", "=app-misc/wine-1", "=sys-kernel/sources-2"});
 }
 
-TEST_CASE("an action stops before verifying for refusals, nothing, privileges, then a yes") {
+TEST_CASE(
+    "an action stops before verifying for refusals, nothing, privileges, a preview, then a yes") {
     const Readiness ready{
         .refused = false, .empty = false, .writable = true, .yes = false, .can_ask = true};
     CHECK_FALSE(stop_before_verifying(ready));
@@ -137,6 +138,8 @@ TEST_CASE("an action stops before verifying for refusals, nothing, privileges, t
     CHECK(stop_before_verifying(readiness) == Stop::unconfirmed);
     readiness.yes = true;
     CHECK_FALSE(stop_before_verifying(readiness));
+    readiness.preview = true;
+    CHECK(stop_before_verifying(readiness) == Stop::previewed);
     readiness.writable = false;
     CHECK(stop_before_verifying(readiness) == Stop::unprivileged);
     readiness.empty = true;

@@ -58,6 +58,8 @@ class Child {
     // How it ended, waiting for it.
     [[nodiscard]] std::expected<int, SpawnError> wait();
     [[nodiscard]] int pid() const { return pid_; }
+    // Lets it run on unwatched, past this object and this process.
+    void detach() noexcept { pid_ = -1; }
 
   private:
     friend std::expected<Child, SpawnError> start(const std::vector<std::string>& argv,

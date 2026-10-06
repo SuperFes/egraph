@@ -271,6 +271,11 @@ def test_a_failed_build_stops_the_run(machines):
     first = ran.stdout.splitlines()[0].split("\t")
     if first[1] == "app-misc/broken-1":
         assert not machine.installed("app-misc/lib-1")
+    # The record names it with the log the interface shows the end of.
+    (failure,) = run_state(system)["failed"]
+    assert failure["cpv"] == "app-misc/broken-1"
+    assert f"(log: {failure['log']})" in ran.stderr
+    assert os.path.isfile(failure["log"])
 
 
 def read_trace(path):

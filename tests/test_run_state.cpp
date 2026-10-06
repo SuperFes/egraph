@@ -17,16 +17,25 @@ TEST_CASE("the last run's record is kept under the root's /var/lib/egraph") {
 TEST_CASE("a run's record reads back as written") {
     const RunState state{.arguments = {"-u", "--jobs", "4", "@world"},
                          .merged = {"app-misc/a-1", "app-misc/b-2"},
+                         .failed = {{.cpv = "app-misc/c-1", .log = "/var/tmp/c.log"}},
                          .status = RunState::Status::failed};
     const auto read = egraph::parse_run_state(egraph::run_state_json(state));
     REQUIRE(read);
     CHECK(read->arguments == state.arguments);
     CHECK(read->merged == state.merged);
+    CHECK(read->failed == state.failed);
     CHECK(read->status == RunState::Status::failed);
     for (const auto status : {RunState::Status::running, RunState::Status::done}) {
         CHECK(egraph::parse_run_state(egraph::run_state_json({.status = status}))->status ==
               status);
     }
+}
+
+TEST_CASE("a record from before failures were kept has none") {
+    const auto read =
+        egraph::parse_run_state(R"({"arguments": [], "merged": [], "status": "failed"})");
+    REQUIRE(read);
+    CHECK(read->failed.empty());
 }
 
 TEST_CASE("a record that is not one is an error") {
@@ -36,6 +45,10 @@ TEST_CASE("a record that is not one is an error") {
     CHECK_FALSE(
         egraph::parse_run_state(R"({"arguments": [1], "merged": [], "status": "running"})"));
     CHECK_FALSE(egraph::parse_run_state(R"({"arguments": [], "merged": [], "status": "halfway"})"));
+    CHECK_FALSE(egraph::parse_run_state(
+        R"({"arguments": [], "merged": [], "failed": [{"cpv": "a/b-1"}], "status": "failed"})"));
+    CHECK_FALSE(egraph::parse_run_state(
+        R"({"arguments": [], "merged": [], "failed": {}, "status": "failed"})"));
 }
 
 TEST_CASE("a resumed run leaves out the merges of what it merged and is installed still") {
