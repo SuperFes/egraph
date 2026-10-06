@@ -1281,8 +1281,17 @@ SCENARIOS = {
     "visibility": {
         "world": ["app-misc/stable"],
         "ebuilds": {
-            "app-misc/stable-1": {"EAPI": "8", "KEYWORDS": "x86"},
-            "app-misc/testing-1": {"EAPI": "8", "KEYWORDS": "~x86"},
+            "app-misc/stable-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "DESCRIPTION": "A steady toolkit",
+                "HOMEPAGE": "https://example.org/stable",
+            },
+            "app-misc/testing-1": {
+                "EAPI": "8",
+                "KEYWORDS": "~x86",
+                "DESCRIPTION": "A toolkit still in testing",
+            },
             "app-misc/none-1": {"EAPI": "8", "KEYWORDS": ""},
             "app-misc/other-1": {"EAPI": "8", "KEYWORDS": "amd64 ~arm"},
             "app-misc/negated-1": {"EAPI": "8", "KEYWORDS": "-x86 amd64"},

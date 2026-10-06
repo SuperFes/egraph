@@ -901,6 +901,30 @@ Exit execute(const Broken&, Session& session, const Invocation& invocation, std:
     return Exit::ok;
 }
 
+Exit execute(const Search& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    const auto stores = session.stores();
+    if (!stores) {
+        return fail(err, stores.error());
+    }
+    const auto index = session.repository();
+    if (!index) {
+        return fail(err, index.error());
+    }
+    const VersionMasks masks{*index};
+    const auto lines = search_lines(stores->get().installed, stores->get().evaluated, *index, masks,
+                                    command.keys, command.options);
+    if (!lines) {
+        return fail(err, lines.error());
+    }
+    if (const auto style = output(invocation); style.human) {
+        human_search(out, *lines, command.keys, style.theme);
+    } else {
+        write_lines(out, *lines);
+    }
+    return Exit::ok;
+}
+
 Exit execute(const Versions& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     const auto index = session.repository();
@@ -2660,6 +2684,36 @@ void configure(CLI::App& app, Invocation& invocation) {
         "List the packages providing it instead");
     add_dynamic_deps(
         add_command<Broken>(app, invocation, "Installed dependencies nothing installed satisfies"));
+    CLI::App* search_cmd = add_command<Search>(
+        app, invocation,
+        "Packages in the repositories or installed whose names match, as emerge --search");
+    add_field(search_cmd, invocation, "keys", &Search::keys,
+              "Search keys: text, a regular expression after %, a category after @ or with a /")
+        ->required();
+    const auto options = [&invocation]() -> SearchOptions& {
+        return std::get<Search>(invocation.command).options;
+    };
+    search_cmd->add_flag_callback(
+        "-S,--searchdesc", [options] { options().description = true; },
+        "Match descriptions too, as emerge's option");
+    search_cmd
+        ->add_option_function<bool>(
+            "--fuzzy-search", [options](const bool& value) { options().fuzzy = value; },
+            "Also names alike, as emerge's option (default y)")
+        ->transform(yes_no);
+    search_cmd
+        ->add_option_function<bool>(
+            "--regex-search-auto", [options](const bool& value) { options().regex_auto = value; },
+            "Take a key that looks like a regular expression for one, as emerge's option "
+            "(default y)")
+        ->transform(yes_no);
+    search_cmd
+        ->add_option_function<std::uint32_t>(
+            "--search-similarity",
+            [options](const std::uint32_t& value) { options().similarity = value; },
+            "How alike a fuzzy match must be, in percent, as emerge's option (default 80)")
+        ->type_name("N")
+        ->check(CLI::Range(0, 100));
     add_field(add_command<Versions>(app, invocation,
                                     "Every version in the repositories of packages, with its "
                                     "slot, repository and why it is masked"),

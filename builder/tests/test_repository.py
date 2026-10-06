@@ -35,9 +35,9 @@ def test_every_version_in_every_repository_as_portage_reads_it(scenario):
             " ".join(license_.split()),
         )
         assert v.description == description
-    assert index.repositories == tuple(
+    assert [(r.name, r.location) for r in index.repositories] == [
         (name, db.getRepositoryPath(name)) for name in db.getRepositories()
-    )
+    ]
 
 
 def test_the_index_round_trips(scenario):
@@ -168,10 +168,30 @@ def test_a_configuration_change_reads_no_metadata_again(repository_playground):
     )
 
 
-def test_an_overlay_eclass_change_reads_everything_again(repository_playground):
+def test_an_overlay_eclass_change_reads_its_packages_again(repository_playground):
     previous = first_index(repository_playground)
     eclass = overlay(repository_playground, "eclass")
     os.makedirs(eclass, exist_ok=True)
     with open(os.path.join(eclass, "new.eclass"), "w") as f:
         f.write("# new\n")
+    result = rebuilt(repository_playground, previous)
+    assert not result.full
+    assert result.reread == {"app-misc/over", "dev-libs/new"}
+
+
+def test_a_make_conf_change_reads_everything_again(repository_playground):
+    previous = first_index(repository_playground)
+    path = os.path.join(repository_playground.eroot, "etc/portage/make.conf")
+    with open(path, "a") as f:
+        f.write('USE="${USE} new"\n')
     assert rebuilt(repository_playground, previous).full
+
+
+def test_an_invalid_ebuild_carries_what_depgraph_finds_wrong(playgrounds):
+    index = repository.read(portdb(playgrounds("refused")))
+    # Conditionals on flags outside IUSE.
+    assert {v.cpv for v in index.versions if v.invalid} == {
+        "app-misc/inv-1",
+        "app-misc/invfb-2",
+        "app-misc/invupd-2",
+    }

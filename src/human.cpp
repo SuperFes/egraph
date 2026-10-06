@@ -1650,6 +1650,53 @@ void human_versions(std::ostream& out, std::span<const std::string> records, con
     }
 }
 
+void human_search(std::ostream& out, std::span<const std::string> records,
+                  std::span<const std::string> keys, const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto& glyph = theme.glyph();
+    const auto rows = split_all(records);
+    bool first = true;
+    for (const auto& key : keys) {
+        std::vector<const Fields*> found;
+        for (const auto& row : rows) {
+            if (row.at(0) == key) {
+                found.push_back(&row);
+            }
+        }
+        out << (first ? "" : "\n") << paint(glyph.search, Tone::heading) << ' '
+            << paint(key, Tone::heading) << "  "
+            << paint(found.empty() ? std::string{"nothing found"}
+                                   : count(found.size(), "package", "packages"),
+                     Tone::note)
+            << '\n';
+        first = false;
+        for (const auto* row : found) {
+            const auto field = [row](std::size_t i) { return row->at(i); };
+            const bool masked = field(3) == "masked";
+            out << "  " << paint(glyph.package, Tone::note) << ' ' << paint_cpv(field(1), paint)
+                << '\n';
+            const auto detail = [&](std::string_view label, const std::string& value) {
+                out << "      " << paint(std::format("{:<11}", label), Tone::note) << value << '\n';
+            };
+            if (!field(2).empty()) {
+                detail("available", paint(field(2), masked ? Tone::bad : Tone::version) +
+                                        (masked ? " " + paint("masked", Tone::bad) : ""));
+            }
+            detail("installed", field(4).empty() ? paint("not installed", Tone::note)
+                                                 : paint(field(4), Tone::version));
+            if (!field(5).empty()) {
+                detail("homepage", std::string{field(5)});
+            }
+            if (!field(6).empty()) {
+                detail("license", std::string{field(6)});
+            }
+            if (!field(7).empty()) {
+                out << "      " << field(7) << '\n';
+            }
+        }
+    }
+}
+
 void human_match(std::ostream& out, std::span<const std::string> records,
                  std::span<const std::string> atoms, const Theme& theme) {
     const auto& paint = theme.paint;

@@ -795,3 +795,27 @@ TEST_CASE("versions align under their cp, and say why a masked one is") {
                        "* dev-libs/b\n"
                        "    1  :1  ::gentoo  masked\n");
 }
+
+TEST_CASE("search shows each key's packages with their versions and metadata") {
+    std::ostringstream out;
+    const std::vector<std::string> keys{"ssl", "none"};
+    egraph::human_search(
+        out,
+        std::vector<std::string>{
+            "ssl\tdev-libs/openssl\t3.5\tvisible\t3.4\thttps://o\tApache-2.0\tToolkit",
+            "ssl\tdev-libs/new\t2\tmasked\t\t\t\t",
+        },
+        keys, plain);
+    CHECK(out.str() == "? ssl  2 packages\n"
+                       "  * dev-libs/openssl\n"
+                       "      available  3.5\n"
+                       "      installed  3.4\n"
+                       "      homepage   https://o\n"
+                       "      license    Apache-2.0\n"
+                       "      Toolkit\n"
+                       "  * dev-libs/new\n"
+                       "      available  2 masked\n"
+                       "      installed  not installed\n"
+                       "\n"
+                       "? none  nothing found\n");
+}

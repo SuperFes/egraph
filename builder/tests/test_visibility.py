@@ -1,5 +1,6 @@
-"""egraph's visibility of every version in the repositories against portdb's match-visible, and
-its mask reasons against getmaskingstatus, on every scenario."""
+"""egraph's visibility of every version in the repositories against portage's: portdb's
+match-visible less what depgraph finds invalid, and the reasons as depgraph's get_masking_status
+words them (getmaskingstatus's, then each invalid string), on every scenario."""
 
 import os
 import subprocess
@@ -10,7 +11,7 @@ from conftest import portdb
 from portage.dep import Atom
 from portage.package.ebuild.getmaskingstatus import getmaskingstatus
 
-from egraph_build import installed, repository, store
+from egraph_build import installed, masks, repository, store
 
 EGRAPH = os.environ.get("EGRAPH")
 
@@ -33,7 +34,19 @@ def portage_view(db):
                     reasons = tuple(
                         getmaskingstatus(cpv, settings=settings, portdb=db, myrepo=repo)
                     )
-                found[f"{cpv}::{repo}"] = (cpv in visible, reasons)
+                keys = list(masks.EBUILD_KEYS)
+                metadata = dict(zip(keys, db.aux_get(cpv, keys, myrepo=repo)))
+                metadata["repository"] = repo
+                invalid = tuple(
+                    f"invalid: {message}"
+                    for message in masks.invalid_ebuild(db, cpv, metadata)
+                )
+                if not metadata["SLOT"]:
+                    invalid += ("SLOT: undefined",)
+                found[f"{cpv}::{repo}"] = (
+                    cpv in visible and not invalid,
+                    reasons + invalid,
+                )
     return found
 
 
@@ -69,6 +82,9 @@ def test_the_visibility_scenario_masks_by_every_rule(playgrounds, tmp_path):
         False,
         ("( EULA ) license(s)",),
     )
-    assert ours["app-misc/future-1::test_repo"] == (False, ("EAPI 99",))
+    assert ours["app-misc/future-1::test_repo"] == (
+        False,
+        ("EAPI 99", "invalid: SLOT: invalid value: ''", "SLOT: undefined"),
+    )
     assert ours["app-misc/repo-masked-1::test_repo"] == (False, ("package.mask",))
     assert ours["app-misc/over-1::overlay"] == (True, ())

@@ -274,6 +274,23 @@ TEST_CASE("select and deselect take atoms and --yes") {
     CHECK_THROWS(parse("deselect --dynamic-deps n a/b"));
 }
 
+TEST_CASE("search takes keys and emerge's search options") {
+    const auto plain = std::get<egraph::Search>(parse("search openssl %^lib").command);
+    CHECK(plain.keys == std::vector<std::string>{"openssl", "%^lib"});
+    CHECK_FALSE(plain.options.description);
+    CHECK(plain.options.fuzzy);
+    CHECK(plain.options.regex_auto);
+    CHECK(plain.options.similarity == 80);
+    const auto set = std::get<egraph::Search>(
+        parse("search -S --fuzzy-search n --regex-search-auto n --search-similarity 60 x").command);
+    CHECK(set.options.description);
+    CHECK_FALSE(set.options.fuzzy);
+    CHECK_FALSE(set.options.regex_auto);
+    CHECK(set.options.similarity == 60);
+    CHECK_THROWS(parse("search"));
+    CHECK_THROWS(parse("search --search-similarity 101 x"));
+}
+
 TEST_CASE("versions takes any number of packages") {
     CHECK(std::get<egraph::Versions>(parse("versions").command).packages.empty());
     CHECK(std::get<egraph::Versions>(parse("versions a/b openssl").command).packages ==

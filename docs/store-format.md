@@ -1,6 +1,6 @@
 # Store format
 
-Status: format version 5 (evaluated store: 10, repository index: 2), implemented by `builder/egraph_build/store.py`
+Status: format version 5 (evaluated store: 10, repository index: 3), implemented by `builder/egraph_build/store.py`
 (writer and a Python reader) and `src/store.cpp`, `src/evaluated.cpp` and `src/repository.cpp` (C++ readers). Any
 layout change bumps the version.
 
@@ -239,14 +239,14 @@ beside the installed store, named after it (`installed.egraph` → `installed.re
 and is written by its own builder run (`egraph-build --repository`), as it changes with the
 repositories and the configuration rather than with the installed packages.
 
-It uses the installed store's framing with magic `EGRAPHRI` and its own format version, now 2.
+It uses the installed store's framing with magic `EGRAPHRI` and its own format version, now 3.
 
 | Id | Section | Contents |
 |---|---|---|
 | 1 | Meta | egraph version, portage version, EROOT (length-prefixed), build start in ns |
 | 2 | Inputs | as in the installed store |
 | 3 | Strings | as in the installed store |
-| 4 | Repositories | count, then `(name, location)` string ids, in portage's order (`getRepositories`) |
+| 4 | Repositories | count, then `(name, location, description index)`: string ids, and 1 when emerge --search finds a `metadata/pkg_desc_index` for it (in the repository or under the dependency cache), else 0; in portage's order (`getRepositories`, the highest priority first) |
 | 5 | Versions | count, then the records below, sorted by cp, then by repository in section 4's order, then by version as `cp_list` gives them |
 | 6 | Visibility | the configuration records below |
 
@@ -263,6 +263,10 @@ A version record, for each ebuild whose metadata portage could read:
    empty elsewhere. portdbapi's `_visible` reads the ebuild's USE only then, and reduces all
    three strings under it.
 4. String ids: DESCRIPTION, HOMEPAGE.
+5. Invalid: list of string ids, what depgraph finds invalid in the ebuild (dependency strings
+   that do not parse under its EAPI, conditionals on flags outside its IUSE, an invalid SLOT),
+   as it words each after `invalid: `; empty for a valid one. depgraph masks an invalid ebuild
+   that portdb counts as visible.
 
 The visibility section holds, in order, each as portage's config parsed it:
 

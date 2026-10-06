@@ -35,8 +35,10 @@ std::optional<StoreError> read_repositories(std::span<const std::byte> section,
     const auto count = r.count();
     const auto strings = size32(index.strings.size());
     for (std::uint32_t i = 0; i < count && r.ok(); ++i) {
-        const auto name = r.index(strings, "string");
-        index.repositories.push_back({.name = name, .location = r.index(strings, "string")});
+        Repository repository{.name = r.index(strings, "string")};
+        repository.location = r.index(strings, "string");
+        repository.description_index = r.index(2, "description index") == 1;
+        index.repositories.push_back(repository);
     }
     r.finish();
     return r.error();
@@ -62,6 +64,7 @@ std::optional<StoreError> read_versions(std::span<const std::byte> section,
         }
         version.description = r.index(strings, "string");
         version.homepage = r.index(strings, "string");
+        version.invalid = read_ids(r, index.ids, strings, "string");
         index.versions.push_back(version);
     }
     r.finish();

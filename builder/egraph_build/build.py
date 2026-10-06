@@ -261,8 +261,9 @@ _CONFIGURATION = "configuration"
 
 
 def _index_scope(path, locations, categories):
-    """The category or cp an index input bears on alone, _CONFIGURATION, or None when it can
-    bear on any version. locations are the repositories', longest first."""
+    """The category or cp an index input bears on alone, _CONFIGURATION, ("eclass", location)
+    for a repository's eclasses, or None when it can bear on any version. locations are the
+    repositories', longest first."""
     for location in locations:
         if not path.startswith(location + os.sep):
             continue
@@ -272,6 +273,8 @@ def _index_scope(path, locations, categories):
             return parts[0] if len(parts) == 1 and parts[0] in categories else None
         if parts[0] in categories and len(parts) <= 3:
             return "/".join(parts[:2])
+        if parts == ["eclass"]:
+            return ("eclass", location)
         if parts[0] == "profiles" and parts[1:2] in (
             ["package.mask"],
             ["license_groups"],
@@ -287,10 +290,12 @@ def index_incremental(portdb, previous):
     metadata changed; after a configuration change, only the visibility configuration and the
     USE of the versions that keep one.
 
-    previous is that index's (RepositoryMeta, Inputs, RepositoryIndex). Another EROOT, egraph
-    or portage version, other repositories, a changed builder, or any change an input cannot
-    pin to a category or cp (an overlay's eclasses, the categories, repos.conf) mean a full
-    build.
+    previous is that index's (RepositoryMeta, Inputs, RepositoryIndex). A repository's eclasses
+    changing reads again every cp of the repositories inheriting them: the repository and those
+    naming it a master, and for the main repository every other one, whose metadata portage
+    regenerates rather than its cache. Another EROOT, egraph or portage version, other
+    repositories, a changed builder, make.conf or profile (implicit IUSE decides validity), or
+    any change an input cannot pin down (the categories, repos.conf) mean a full build.
     """
     settings = portdb.settings
     meta, inputs, old = previous
@@ -306,17 +311,18 @@ def index_incremental(portdb, previous):
     racy_after = meta.build_time_ns - RACY_WINDOW_NS
     recorded = {item.path: item for item in inputs}
     by_path = {item.path: item for item in current}
+    main = portdb.repositories.mainRepo()
     kind_only = _kind_only(portdb)
-    builder = set(builder_paths())
+    if main is not None:
+        kind_only.discard(os.path.join(main.location, "eclass"))
+    full_rebuild = set(builder_paths()) | set(config_paths(settings))
     user = os.path.join(settings["PORTAGE_CONFIGROOT"], portage.const.USER_CONFIG_PATH)
-    configuration = set(config_paths(settings))
+    configuration = set()
     for name in USER_VISIBILITY_CONFIG:
         if name not in ("categories", "repos.conf"):
             configuration.update(_tree(os.path.join(user, name)))
     categories = frozenset(settings.categories)
-    locations = sorted(
-        (location for _, location in old.repositories), key=len, reverse=True
-    )
+    locations = sorted((r.location for r in old.repositories), key=len, reverse=True)
     scopes = set()
     reconfigured = False
     for path in recorded.keys() | by_path.keys():
@@ -326,7 +332,7 @@ def index_incremental(portdb, previous):
                 continue
             if path in kind_only and before.kind == after.kind:
                 continue
-        if path in builder:
+        if path in full_rebuild:
             return index(portdb)
         scope = (
             _CONFIGURATION
@@ -341,8 +347,18 @@ def index_incremental(portdb, previous):
             scopes.add(scope)
     cps = set(portdb.cp_all())
     old_cps = {v.cp for v in old.versions}
+    inheriting = set()
+    for scope in scopes:
+        if isinstance(scope, tuple):
+            inheriting.update(_inheriting(portdb, scope[1]))
+    in_inheriting = {v.cp for v in old.versions if v.repo in inheriting}
+    if inheriting:
+        trees = [portdb.getRepositoryPath(name) for name in inheriting]
+        in_inheriting.update(portdb.cp_all(trees=trees))
     dirty = frozenset(
-        cp for cp in cps | old_cps if cp in scopes or cp.partition("/")[0] in scopes
+        cp
+        for cp in cps | old_cps
+        if cp in scopes or cp.partition("/")[0] in scopes or cp in in_inheriting
     )
     settings_holder = repository.UseReader(portdb)
     read = {}
@@ -358,6 +374,21 @@ def index_incremental(portdb, previous):
     return RepositoryBuild(
         repository.assemble(portdb, versions), current, started, dirty, False
     )
+
+
+def _inheriting(portdb, location):
+    """The names of the repositories whose ebuilds can inherit the eclasses of the repository
+    at location: itself and those naming it a master; for the main repository, every other.
+    """
+    main = portdb.repositories.mainRepo()
+    name = portdb.repositories.get_name_for_location(location)
+    if main is not None and name == main.name:
+        return {r.name for r in portdb.repositories if r.name != main.name}
+    return {name} | {
+        r.name
+        for r in portdb.repositories
+        if any(master.name == name for master in r.masters or ())
+    }
 
 
 def _kind_only(portdb):

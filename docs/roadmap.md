@@ -510,7 +510,11 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       after a sync, held to a full build under EGRAPH_STRICT.
     - 16i2d (done): completion offers every version, slot and repository from it; `refresh`,
       which the portage hooks run after every emerge and sync, keeps it current.
-  - 16i3: `search`, by name, or with `-S` by description, as `emerge --search`.
+  - 16i3 (done): `search`, by name, or with `-S` by description, as `emerge --search` (its
+    regex, category and fuzzy matching, its choice of version, and the description its
+    IndexedPortdb searches), held to emerge's own search on every scenario and the live
+    system; and depgraph's validity per version in the index (format 3), which search's
+    visibility and `versions` follow.
   - 16i4: pages for packages not installed in the living app, and search there.
 - 16j: the actions in the living app: updates picked, installs from search, orphans removed,
   a confirmation, the run in the emerge view, a failure's log tail.

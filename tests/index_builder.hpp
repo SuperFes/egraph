@@ -33,6 +33,8 @@ struct VersionSpec {
     std::string use = {};
     std::string eapi = "8";
     std::string repo = "gentoo";
+    std::string description = {};
+    std::string homepage = {};
 };
 
 // A repository index on x86, ACCEPT_KEYWORDS="x86" and everything else accepted unless a test
@@ -73,6 +75,8 @@ class IndexBuilder {
         version.properties = ids(spec.properties);
         version.restrict = ids(spec.restrict);
         version.use = ids(spec.use);
+        version.description = intern(spec.description);
+        version.homepage = intern(spec.homepage);
         index_.versions.push_back(version);
         return static_cast<std::uint32_t>(index_.versions.size() - 1);
     }

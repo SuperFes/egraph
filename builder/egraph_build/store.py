@@ -12,6 +12,7 @@ from egraph_build.profile import ImplicitIuse, has_iuse_effective
 from egraph_build.repository import (
     Eapi,
     Entry,
+    Repository,
     RepositoryIndex,
     Version,
     Visibility,
@@ -60,7 +61,7 @@ EVALUATED_SECTIONS = (
 )
 
 REPOSITORY_MAGIC = b"EGRAPHRI"
-REPOSITORY_FORMAT_VERSION = 2
+REPOSITORY_FORMAT_VERSION = 3
 SECTION_REPOSITORIES, SECTION_VERSIONS, SECTION_VISIBILITY = range(4, 7)
 REPOSITORY_SECTIONS = (
     SECTION_META,
@@ -371,7 +372,7 @@ def _write_entries(w, entries, strings):
 def encode_repository(index, meta, inputs=()):
     """The repository index bytes for a RepositoryIndex, its RepositoryMeta and its Inputs."""
     strings = _Strings()
-    repo_index = {name: i for i, (name, _) in enumerate(index.repositories)}
+    repo_index = {r.name: i for i, r in enumerate(index.repositories)}
     sections = {}
 
     w = _Writer()
@@ -384,9 +385,10 @@ def encode_repository(index, meta, inputs=()):
 
     w = _Writer()
     w.varint(len(index.repositories))
-    for name, location in index.repositories:
-        w.varint(strings(name))
-        w.varint(strings(location))
+    for r in index.repositories:
+        w.varint(strings(r.name))
+        w.varint(strings(r.location))
+        w.varint(int(r.description_index))
     sections[SECTION_REPOSITORIES] = w.out
 
     w = _Writer()
@@ -399,6 +401,7 @@ def encode_repository(index, meta, inputs=()):
             w.ids([strings(value) for value in values])
         w.varint(strings(v.description))
         w.varint(strings(v.homepage))
+        w.ids([strings(message) for message in v.invalid])
     sections[SECTION_VERSIONS] = w.out
 
     vis = index.visibility
@@ -775,14 +778,16 @@ def decode_repository(data):
         return r, s, listed, entries
 
     r, s, _, _ = reader(SECTION_REPOSITORIES, "repositories")
-    repositories = tuple((s(), s()) for _ in range(r.count()))
+    repositories = tuple(
+        Repository(s(), s(), bool(r.varint(2))) for _ in range(r.count())
+    )
     r.done()
 
     r, s, listed, _ = reader(SECTION_VERSIONS, "versions")
     versions = []
     for _ in range(r.count()):
         cp, cpv, slot, sub_slot, eapi = (s() for _ in range(5))
-        repo = repositories[r.varint(len(repositories))][0]
+        repo = repositories[r.varint(len(repositories))].name
         keywords, license_tokens, properties, restrict, use = (
             listed() for _ in range(5)
         )
@@ -801,6 +806,7 @@ def decode_repository(data):
                 use,
                 s(),
                 s(),
+                listed(),
             )
         )
     r.done()

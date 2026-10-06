@@ -6,20 +6,26 @@ That configuration is private to portage's config; this module is the one place 
 """
 
 import json
+import os
 from typing import NamedTuple
 
-from egraph_build import evaluated
+from egraph_build import evaluated, masks
 
-# What a version record holds of the ebuild's metadata.
-KEYS = (
-    "DESCRIPTION",
-    "EAPI",
-    "HOMEPAGE",
-    "KEYWORDS",
-    "LICENSE",
-    "PROPERTIES",
-    "RESTRICT",
-    "SLOT",
+# What a version record holds of the ebuild's metadata, and what its validity is checked on.
+KEYS = tuple(
+    sorted(
+        {
+            *masks.EBUILD_KEYS,
+            "DESCRIPTION",
+            "EAPI",
+            "HOMEPAGE",
+            "KEYWORDS",
+            "LICENSE",
+            "PROPERTIES",
+            "RESTRICT",
+            "SLOT",
+        }
+    )
 )
 
 
@@ -39,6 +45,8 @@ class Version(NamedTuple):
     use: tuple
     description: str
     homepage: str
+    # What depgraph finds invalid in it, as it words each after "invalid: ".
+    invalid: tuple
 
 
 class Entry(NamedTuple):
@@ -74,8 +82,15 @@ class Visibility(NamedTuple):
     restrict: tuple
 
 
+class Repository(NamedTuple):
+    name: str
+    location: str
+    # Whether emerge --search reads its descriptions from a metadata/pkg_desc_index.
+    description_index: bool
+
+
 class RepositoryIndex(NamedTuple):
-    # (name, location), in portage's order.
+    # Repository records, in portage's order: the highest priority first.
     repositories: tuple
     versions: tuple
     visibility: Visibility
@@ -136,6 +151,7 @@ def read_versions(portdb, cps, settings=None):
                     )
                 except KeyError:
                     continue
+                metadata["repository"] = repo
                 slot, _, sub_slot = metadata["SLOT"].partition("/")
                 version = Version(
                     cp=cp,
@@ -151,15 +167,27 @@ def read_versions(portdb, cps, settings=None):
                     use=(),
                     description=metadata["DESCRIPTION"],
                     homepage=metadata["HOMEPAGE"],
+                    invalid=tuple(masks.invalid_ebuild(portdb, cpv, metadata)),
                 )
                 found.append(with_use(version, settings))
     return tuple(found)
 
 
-def repositories(portdb):
-    return tuple(
-        (name, portdb.getRepositoryPath(name)) for name in portdb.getRepositories()
+def _description_index(portdb, location):
+    """Whether IndexedPortdb finds a pkg_desc_index for the repository at location."""
+    outside = os.path.join(portdb.depcachedir, location.lstrip(os.sep))
+    return any(
+        os.path.exists(os.path.join(parent, "metadata", "pkg_desc_index"))
+        for parent in (location, outside)
     )
+
+
+def repositories(portdb):
+    found = []
+    for name in portdb.getRepositories():
+        location = portdb.getRepositoryPath(name)
+        found.append(Repository(name, location, _description_index(portdb, location)))
+    return tuple(found)
 
 
 def assemble(portdb, versions):
@@ -254,10 +282,14 @@ def to_json(index):
     """The index as canonical JSON: sorted keys, everything in the store's order."""
     v = index.visibility
     document = {
-        "format": 2,
+        "format": 3,
         "repositories": [
-            {"name": name, "location": location}
-            for name, location in index.repositories
+            {
+                "name": r.name,
+                "location": r.location,
+                "description_index": r.description_index,
+            }
+            for r in index.repositories
         ],
         "versions": [
             {
@@ -274,6 +306,7 @@ def to_json(index):
                 "use": list(x.use),
                 "description": x.description,
                 "homepage": x.homepage,
+                "invalid": list(x.invalid),
             }
             for x in index.versions
         ],

@@ -148,6 +148,7 @@ TEST_CASE("EAPIs portage does not support or has deprecated, and an empty SLOT, 
     CHECK_FALSE(masking.visible(old));
     CHECK(masking.reasons(old) == Strings{"EAPI 6"});
     CHECK_FALSE(masking.visible(unslotted));
+    CHECK(masking.reasons(unslotted).back() == "SLOT: undefined");
 }
 
 TEST_CASE("licenses: refused, accepted per package, in || and under conditionals") {

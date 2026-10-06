@@ -193,6 +193,11 @@ void human_soname(std::ostream& out, std::span<const std::string> records, std::
 // one is.
 void human_versions(std::ostream& out, std::span<const std::string> records, const Theme& theme);
 
+// search_lines' records under each key: per package the version shown (masked or not), the one
+// installed, and its homepage, license and description.
+void human_search(std::ostream& out, std::span<const std::string> records,
+                  std::span<const std::string> keys, const Theme& theme);
+
 // A held update's holder as a sentence: the installed packages depending on it, and the root
 // sets ("@selected", "@system") whose atoms select it.
 [[nodiscard]] std::string holder_note(std::span<const std::string_view> dependents,

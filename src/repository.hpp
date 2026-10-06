@@ -14,7 +14,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t repository_format_version = 2;
+inline constexpr std::uint32_t repository_format_version = 3;
 
 struct RepositoryMeta {
     std::string egraph_version;
@@ -26,6 +26,8 @@ struct RepositoryMeta {
 struct Repository {
     std::uint32_t name = 0;
     std::uint32_t location = 0;
+    // Whether emerge --search reads its descriptions from a metadata/pkg_desc_index.
+    bool description_index = false;
 };
 
 // One version of a cp in one repository.
@@ -47,6 +49,8 @@ struct IndexVersion {
     Range use;
     std::uint32_t description = 0;
     std::uint32_t homepage = 0;
+    // String ids: what depgraph finds invalid in it, as it words each after "invalid: ".
+    Range invalid;
 };
 
 struct Eapi {

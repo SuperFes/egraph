@@ -1,8 +1,9 @@
 #pragma once
 
-// Which versions of the repository index portage shows, evaluated from what the index holds:
-// portdbapi's _visible (EAPI, SLOT, package.mask and package.unmask, keywords, licenses,
-// properties, restrictions), and why a version is masked as getmaskingstatus words it.
+// Which versions of the repository index emerge can install, evaluated from what the index
+// holds: portdbapi's _visible (EAPI, SLOT, package.mask and package.unmask, keywords, licenses,
+// properties, restrictions) less what depgraph finds invalid, and why a version is masked as
+// depgraph's get_masking_status words it.
 
 #include "repository.hpp"
 
@@ -26,12 +27,18 @@ class VersionMasks {
 
     // Of index.versions[version].
     [[nodiscard]] bool visible(std::uint32_t version) const;
-    // Why it is masked, as getmaskingstatus words it ("package.mask", "~amd64 keyword",
-    // "EULA license(s)", "EAPI 9"); empty for a visible version. getmaskingstatus reads a
-    // PROPERTIES conditional under no USE, so a version masked by one alone has none.
+    // As portdbapi's match-visible has it, invalid metadata aside.
+    [[nodiscard]] bool portdb_visible(std::uint32_t version) const;
+    // Why it is masked: getmaskingstatus's reasons ("package.mask", "~amd64 keyword", "EULA
+    // license(s)", "EAPI 9") where portdb masks it, then "invalid: " and each thing depgraph
+    // finds invalid, and "SLOT: undefined" for an empty SLOT; empty for a visible version.
+    // getmaskingstatus reads a PROPERTIES conditional under no USE, so a version masked by one
+    // alone has none.
     [[nodiscard]] std::vector<std::string> reasons(std::uint32_t version) const;
 
   private:
+    [[nodiscard]] std::vector<std::string> masking_status(std::uint32_t version) const;
+
     struct Rules;
     std::unique_ptr<const Rules> rules_;
 };

@@ -361,10 +361,12 @@ void write_layers(std::ostream& out, const RepositoryIndex& index, std::span<con
 } // namespace
 
 void write_repository_json(std::ostream& out, const RepositoryIndex& index) {
-    out << R"({"format":2,"repositories":[)";
+    out << R"({"format":3,"repositories":[)";
     bool first = true;
     for (const auto& repository : index.repositories) {
-        out << (first ? "{\"location\":" : ",{\"location\":");
+        out << (first ? "{" : ",{")
+            << "\"description_index\":" << (repository.description_index ? "true" : "false")
+            << ",\"location\":";
         first = false;
         write_string(out, index, repository.location);
         out << ",\"name\":";
@@ -385,6 +387,8 @@ void write_repository_json(std::ostream& out, const RepositoryIndex& index) {
         write_string(out, index, version.eapi);
         out << ",\"homepage\":";
         write_string(out, index, version.homepage);
+        out << ",\"invalid\":";
+        write_string_list(out, index, version.invalid);
         out << ",\"keywords\":";
         write_string_list(out, index, version.keywords);
         out << ",\"license\":";

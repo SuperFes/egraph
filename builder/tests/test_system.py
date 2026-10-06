@@ -619,3 +619,45 @@ def test_every_repository_version_is_visible_or_masked_as_portage_has_it(
         for fields in (line.split("\t") for line in lines)
     }
     assert ours == portage_view(db)
+
+
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+@pytest.mark.parametrize("searchdesc", [False, True], ids=["names", "descriptions"])
+def test_search_finds_and_shows_what_emerge_does_on_the_live_system(
+    live_databases, live_layer, tmp_path, searchdesc
+):
+    from collections import namedtuple
+
+    from _emerge.actions import load_emerge_config
+    from test_search import emerge_lines
+
+    from egraph_build import repository
+
+    vardb, db = live_databases
+    path = tmp_path / "installed.egraph"
+    store.write(path, store.encode(live_layer, store.Meta("0", "0", "/", 0)))
+    layer = evaluated.build(vardb, db)
+    meta = store.EvaluatedMeta("0", "0", "/", 0, 0)
+    store.write(store.evaluated_path(path), store.encode_evaluated(layer, meta))
+    index_meta = store.RepositoryMeta("0", "0", "/", 0)
+    index = repository.read(db)
+    store.write(store.repository_path(path), store.encode_repository(index, index_meta))
+    keys = ["openssl", "opnessl", "%^dev-libs/lib", "python$", "@sys-apps", "qt"]
+    if searchdesc:
+        keys = ["toolkit", "%^a ", "library"]
+    config = load_emerge_config()
+    eroot = config.target_config.root
+    System = namedtuple("System", "eroot vardb trees")
+    system = System(eroot, config.trees[eroot]["vartree"].dbapi, config.trees)
+    options = ["-S"] if searchdesc else []
+    ours = subprocess.run(
+        [os.environ["EGRAPH"], "--store", str(path), "--no-refresh", "search"]
+        + options
+        + ["--", *keys],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    assert ours == emerge_lines(system, keys, searchdesc)

@@ -221,6 +221,44 @@ The packages providing it instead.
 Installed dependencies that nothing installed satisfies.
 .TP
 .B \-\-dynamic\-deps
+.SS search \fIkey\fR...
+The packages in the repositories, and those installed, whose names match each
+.IR key ,
+as
+.B emerge \-\-search
+finds them: a
+.I key
+matches a name anywhere, ignoring case, or one alike (see
+.BR \-\-fuzzy\-search );
+it is a regular expression after a
+.BR % ,
+or when it looks like one; with a
+.B /
+in it, or after a
+.BR @ ,
+it matches the whole category/package name.
+Each package shows its best visible version (or its best, marked masked), the latest installed,
+and its ebuild's homepage, license and description.
+In lines, tab-separated: the key, the package, the version,
+.B visible
+or
+.BR masked ,
+the latest installed version (empty when none), the homepage, the license and the description.
+Unlike emerge, it shows no download sizes and matches no sets.
+.TP
+.BR \-S ", " \-\-searchdesc
+Match each package's description too, as emerge picks it.
+.TP
+.BR \-\-fuzzy\-search " y|n"
+Also match names alike, by difflib's similarity (default
+.BR y ).
+.TP
+.BI \-\-search\-similarity " n"
+How alike, in percent, a fuzzy match must be (default 80).
+.TP
+.BR \-\-regex\-search\-auto " y|n"
+Take a key that looks like a regular expression for one (default
+.BR y ).
 .SS versions \fR[\fIpackage\fR ...]
 Every version in the repositories of each
 .I package

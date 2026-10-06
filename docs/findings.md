@@ -473,3 +473,9 @@ process including load and the freshness check of 2,575 inputs.
   the load and the output included. All 38,544 agree with portage.
 - An incremental `egraph-build --repository` with nothing changed: 1.8 s (interpreter and
   portage start-up, 9,139 stats, the previous index decoded), against 15.7 s for a full one.
+- Depgraph's validity check (`masks.invalid_ebuild`) on every ebuild: 0 of 38,544 invalid on
+  this box, but it reads every dependency string and parses it, taking a full index build from
+  15.7 s to 36.8 s. Full builds are rare: an overlay's eclasses now re-read that overlay alone,
+  and only a profile, make.conf or builder change reads everything again.
+- `egraph search openssl`: 78 ms, `search -S toolkit`: 99 ms, against 0.83 s and 1.52 s for
+  emerge --search. Both agree on all 1,399 and 2,821 lines of a dozen keys.

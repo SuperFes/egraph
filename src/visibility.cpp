@@ -702,6 +702,10 @@ VersionMasks& VersionMasks::operator=(VersionMasks&&) noexcept = default;
 VersionMasks::~VersionMasks() = default;
 
 bool VersionMasks::visible(std::uint32_t id) const {
+    return rules_->index.get().versions.at(id).invalid.count == 0 && portdb_visible(id);
+}
+
+bool VersionMasks::portdb_visible(std::uint32_t id) const {
     const auto& rules = *rules_;
     const auto& index = rules.index.get();
     const auto& version = index.versions.at(id);
@@ -736,9 +740,18 @@ bool VersionMasks::visible(std::uint32_t id) const {
 }
 
 std::vector<std::string> VersionMasks::reasons(std::uint32_t id) const {
-    if (visible(id)) {
-        return {};
+    const auto& index = rules_->index.get();
+    auto found = portdb_visible(id) ? std::vector<std::string>{} : masking_status(id);
+    for (const auto message : index.ids_in(index.versions.at(id).invalid)) {
+        found.push_back(std::format("invalid: {}", index.string(message)));
     }
+    if (index.string(index.versions.at(id).slot).empty()) {
+        found.emplace_back("SLOT: undefined");
+    }
+    return found;
+}
+
+std::vector<std::string> VersionMasks::masking_status(std::uint32_t id) const {
     const auto& rules = *rules_;
     const auto& index = rules.index.get();
     const auto& version = index.versions.at(id);

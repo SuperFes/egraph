@@ -53,7 +53,20 @@ reasons, whose keyword logic differs from the visibility check's and is ported a
 Wildcard atoms in the user's files match as `extended_cp_match` does, but for the
 `=cat/pkg-*ver*` form, which matches nothing here. A LICENSE, PROPERTIES or RESTRICT that does
 not parse masks the version as in portage, its reason worded by egraph.
-`egraph versions` lists every version with its verdict.
+Validity (depgraph's `Package.invalid`: dependency strings under the EAPI, conditionals against
+IUSE) is the builder's, recorded per version, since checking it means parsing every dependency
+string; a version holding any is masked as depgraph masks it. `egraph versions` lists every
+version with its verdict, reasons as depgraph's `get_masking_status` words them.
+
+`egraph search` (`src/search.cpp`) is `emerge --search` over the index and the installed store:
+emerge's matching (a regular expression after `%` or when the key looks like one, the category
+with a `/` or after `@`, difflib's similarity for fuzzy matches, ported exactly), its choice of
+version (the best visible among the repositories' and the installed packages, as depgraph's
+`Package.visible` sees them, else the best), and for `-S` the description emerge's
+`IndexedPortdb` actually searches: the `pkg_desc_index` line of the lowest-priority repository
+that has one and holds the package, else the lowest version's. Sets are not searched and no
+download sizes are shown; a package only installed has no description to match or show, as the
+installed store keeps none.
 
 The installed layer needs no resolver decisions: installed packages have fixed USE, so every
 conditional reduces to plain atoms. Only `||` groups remain, and on an installed system each group
