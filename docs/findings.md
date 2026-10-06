@@ -438,3 +438,16 @@ process including load and the freshness check of 2,575 inputs.
   a build beside others only while PORTAGE_TMPDIR has `--jobs-tmpdir-require-free-gb` (18
   GiB, and 1 GiB per running build) free, and the playground's /tmp has 16 GiB. exec now
   holds builds back the same way; the comparison above sets the option to 0 for both.
+
+## The builder suite in parallel (2026-10-05)
+
+- 3943 tests on the fork, on this box's 8 cores (16 threads): 699 s serially. With
+  pytest-xdist's `-n auto` (8 workers), 313 s distributing by test (`--dist load`), 338 s by
+  file, 155 s with `--dist worksteal`; 16 workers (`-n logical`), 162 s.
+- `load` first hands out contiguous chunks, so `test_exec_run`'s 20 tests (260 s of the 695)
+  all went to one worker, which ran 308 s while the others were done by 150. With work
+  stealing every worker is busy 125–159 s of the 161.
+- Each test runs about 1.6 times slower beside 7 others (1075 s summed against 695): the
+  playgrounds' builds and merges compete for the cores, so 16 workers gain nothing.
+- Under 16 workers the TUI tests caught Notcurses partway through a redraw; their checks now
+  wait for everything they read.

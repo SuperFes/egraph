@@ -319,10 +319,16 @@ if pytest.found()
   if get_option('portage_test_keys') != ''
     builder_env.set('EGRAPH_TEST_KEYS', get_option('portage_test_keys'))
   endif
+  pytest_args = ['-p', 'no:cacheprovider', '-q']
+  # With pytest-xdist, a worker per core. The slowest tests sit together in one file, so idle
+  # workers take them from busy ones rather than wait at the end.
+  if run_command(pytest, '-p', 'xdist', '--version', check: false).returncode() == 0
+    pytest_args += ['-n', 'auto', '--dist', 'worksteal']
+  endif
   test(
     'builder',
     pytest,
-    args: ['-p', 'no:cacheprovider', '-q', meson.project_source_root() / 'builder' / 'tests'],
+    args: [pytest_args, meson.project_source_root() / 'builder' / 'tests'],
     env: builder_env,
     depends: [egraph_exe, completion_scripts, shadow_exe],
     timeout: 1800,

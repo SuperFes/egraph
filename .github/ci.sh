@@ -10,7 +10,7 @@ getuto
 # Only for this emerge: the tests' playgrounds set their own.
 FEATURES="getbinpkg -news" EMERGE_DEFAULT_OPTS="--quiet-build --jobs=4" emerge --noreplace --quiet \
     dev-build/meson dev-cpp/cli11 dev-cpp/nlohmann_json dev-cpp/catch dev-python/pytest \
-    dev-vcs/git app-shells/zsh app-text/mandoc
+    dev-python/pytest-xdist dev-vcs/git app-shells/zsh app-text/mandoc
 
 # The playground tests need portage's test keys, which only a checkout of the same release has.
 version=$(python3 -c 'import portage; print(portage.VERSION)')
