@@ -538,6 +538,18 @@ TEST_CASE("updates list uninstalls and blocks after the merges") {
                        "1 upgrade, 1 new, 2 uninstalls, 1 blocker\n");
 }
 
+TEST_CASE("a replaced slot is uninstalled, replaced by the merge of its new slot") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{
+                              "1\t\ta/wine-9\tnew-slot\ta/wine-9\tgentoo\t\t\ta/wine-8:8",
+                              "\t1\ta/wine-8\tuninstall\t\t\ta/wine-9",
+                          },
+                          plain, true);
+    CHECK(out.str().contains("Uninstalled\n- a/wine-8  replaced by a/wine-9  w 1\n"));
+    CHECK(out.str().ends_with("1 uninstall\n"));
+}
+
 TEST_CASE("the table lists the merges each uninstall waits for") {
     std::ostringstream out;
     egraph::human_updates(out,

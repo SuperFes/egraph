@@ -173,7 +173,7 @@ TEST_CASE("a merge waited for through a merge already done still holds a build b
 
 TEST_CASE("an uninstall goes first once the merges it waits for are done") {
     auto [plan, steps] = planned({{}, {}});
-    plan.uninstalls.push_back({.package = 0, .why = {}, .after = {0}});
+    plan.uninstalls.push_back({.package = 0, .why = egraph::Block{}, .after = {0}});
     steps.insert(steps.begin() + 1, egraph::UninstallStep{.uninstall = 0, .clean_world = false});
     egraph::Schedule schedule{plan, steps, std::nullopt};
     build(schedule, 0);
@@ -252,7 +252,7 @@ TEST_CASE("once gone on, a failed merge holds back no build waiting for it") {
 
 TEST_CASE("once gone on, an uninstall goes after its merges done and failed") {
     auto [plan, steps] = planned({{}, {}});
-    plan.uninstalls.push_back({.package = 0, .why = {}, .after = {0, 1}});
+    plan.uninstalls.push_back({.package = 0, .why = egraph::Block{}, .after = {0, 1}});
     steps.emplace_back(egraph::UninstallStep{.uninstall = 0, .clean_world = false});
     egraph::Schedule schedule{plan, steps, 2};
     build(schedule, 0);
@@ -498,7 +498,7 @@ TEST_CASE("a worker that ends fails its request and what it built") {
 
 TEST_CASE("an uninstall runs on an idle worker, beside a build") {
     auto planned_run = planned({{}, {}});
-    planned_run.plan.uninstalls.push_back({.package = 0, .why = {}, .after = {0}});
+    planned_run.plan.uninstalls.push_back({.package = 0, .why = egraph::Block{}, .after = {0}});
     planned_run.steps.insert(planned_run.steps.begin() + 1,
                              egraph::UninstallStep{.uninstall = 0, .clean_world = false});
     FakePool pool;

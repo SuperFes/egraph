@@ -94,6 +94,7 @@ egraph_lib = static_library(
   'src/query.cpp',
   'src/remedy.cpp',
   'src/remove.cpp',
+  'src/replace.cpp',
   'src/request.cpp',
   'src/exec.cpp',
   'src/resume.cpp',
@@ -257,6 +258,7 @@ unit_tests = executable(
   'tests/test_pressure.cpp',
   'tests/test_remedy.cpp',
   'tests/test_remove.cpp',
+  'tests/test_replace.cpp',
   'tests/test_request.cpp',
   'tests/test_exec.cpp',
   'tests/test_os.cpp',
@@ -295,6 +297,8 @@ unit_env = environment()
 foreach variable : egraph_variables
   unit_env.set(variable, '')
 endforeach
+# The host's replace-slots list stays out of the plans tests make.
+unit_env.set('EGRAPH_REPLACE_SLOTS', '/dev/null')
 test('unit', unit_tests, protocol: 'exitcode', env: unit_env)
 
 # The builder imports portage, so its tests run under whichever portage is on PYTHONPATH:
@@ -313,6 +317,7 @@ if pytest.found()
   builder_env.set('EGRAPH_SHADOW', shadow_exe.full_path())
   # Runs log to their playground's file, not the journal of the system running the tests.
   builder_env.set('EGRAPH_LOG', 'file')
+  builder_env.set('EGRAPH_REPLACE_SLOTS', '/dev/null')
   if get_option('portage_lib') != ''
     builder_env.set('PYTHONPATH', get_option('portage_lib'))
   endif

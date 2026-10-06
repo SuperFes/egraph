@@ -377,7 +377,7 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   and a merge may need a newer version of a package outside the scope. Equal to `emerge -pu` and
   `-puD` (@installed and @world, plain, -N, -U) on every scenario, `shallow` new among them, and
   on the dev box, where `--world` merges 5 against `-D`'s 23.
-- 16b: plans for any request, not only updates: atoms, `=cpv`, slots and sets as targets,
+- 16b (done): plans for any request, not only updates: atoms, `=cpv`, slots and sets as targets,
   `--oneshot` and `--noreplace`; a cp outside the store evaluated by the builder on demand and
   kept; a new package's USE shown.
   - 16b1 (done): `plan TARGET...` with `-u`, `-D`, `-n`, `-N`, `-U`: the targets resolved
@@ -565,9 +565,9 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       `test_worker.py` missed by running emerge with the same one; the worker now drops it, and
       emerge runs there as a user's would. Not yet: dispatch-conf and the preserved-libs rebuild
       offered after the run (emerge's action offers them), the display (16k6).
-  - 16k4: parallel builds; a trace holds the rules emerge depends on (never two merges at once,
+  - 16k4 (done): parallel builds; a trace holds the rules emerge depends on (never two merges at once,
     no build before what it builds against is merged, portage's locks taken as portage takes
-    them, tested against a concurrent emerge); timing compared with `emerge --jobs`. Workers
+    them, tested against a concurrent emerge); timing against `emerge --jobs` is 16k8's. Workers
     pooled, since each spends about a second loading portage's configuration.
     The number of jobs is `exec -j`, else EMERGE_DEFAULT_OPTS' `--jobs`; steve only queues
     them, a token taken before each build starts and given back when it ends, as emerge's
@@ -649,8 +649,8 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     before `_ignore_runtime`); the displays list it with the others. `test_waits.py` now holds
     PDEPEND's waits to emerge's order too (`slotops` broke it), and the plan's unit tests a
     PDEPEND alone and in a cycle with an RDEPEND.
-  - 16k6: the live view in the living app, through the status file the emerge view reads;
-    `emerge.log` written in emerge's format, so `qlop` still works.
+  - 16k6 (done): the live view in the living app, through the status file the emerge view reads;
+    egraph's own log, never `emerge.log` (16k6b3).
     - 16k6a (done): `emerge::snapshot_json` writes a snapshot as portage's `build_snapshot()`
       does (schema 1, keys sorted, `max` true for `--jobs` without a limit), read back the same
       by `parse_snapshot`, which now keeps each task's root, operation and start time.
@@ -714,8 +714,9 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       sysportage build), where the PYTHONPATH saved with the package shows the copy ran.
       Left for when egraph has a package in the tree: the same copy of `egraph-build` itself
       when the plan merges egraph.
-  - 16k8: side-by-side runs against emerge on the dev box.
-  - 16k9: resuming and reading back runs. Estimates come from the build history (20).
+  - 16k8: side-by-side runs against emerge on the dev box, timing against `emerge --jobs`
+    among them.
+  - 16k9 (done): resuming and reading back runs. Estimates come from the build history (20).
     - 16k9a (done): `exec --resume`: the last run's arguments and what it merged, kept in
       `${EROOT}/var/lib/egraph/exec.json`, planned and verified again without the merges of
       what that run merged (a target would be merged again otherwise); `--jobs`, `--keep-going`
@@ -751,7 +752,31 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   configuration file, empty by default, so the default stays emerge's (an old kernel's sources
   are kept while it runs); never the running kernel's sources. `updates` and `plan` show the
   replacement, `exec` uninstalls natively, `update`/`install` depclean after emerge. The first
-  of egraph's configurable defaults; to be mapped out with the user first.
+  of egraph's configurable defaults. Mapped out with the user (2026-10-05): the list is
+  `${PORTAGE_CONFIGROOT}/etc/egraph/replace-slots`, one atom per line; only world atoms; the old
+  slot goes in the same run, after the new one merges.
+  - 16o1 (done): the list read (blank lines and `#` comments skipped, a bad atom an error
+    naming its line; `--replace-slots FILE` or `EGRAPH_REPLACE_SLOTS` for another, which the
+    tests point at `/dev/null`), and a pass at the end of the plan (`replace_slots`) adding an
+    uninstall for each installed slot a world atom naming no slot leaves, after the merge of its
+    new slot, unless a root atom or a dependency of any kind of what stays needs it (satisfied
+    with it, not without). An uninstall's reason is then a blocker or none: `updates`, `plan`
+    and the human layout show the merge replacing it; `--verify` leaves replacements out, as
+    emerge only drops them at its depclean; `exec` leaves the world file alone. The living app
+    shows no uninstalls yet; it reads the list with 16j.
+  - 16o2: the running kernel: the store records the kernel directories each package owns
+    (`/usr/src/linux-*`, `/lib/modules/*`), and on the running root the pass keeps a package
+    owning `/lib/modules/$(uname -r)` or the directory its `build` link resolves to.
+  - 16o3: `exec` uninstalls a replaced slot as a step, the world file left alone;
+    `update`/`install` hand `emerge --depclean` the replaced versions once emerge succeeds.
+- 16p: emerge's "The following installed packages are masked" warning (requested 2026-10-05,
+  for TeX Live's package.mask): each installed package the plan keeps whose installed metadata
+  is masked, when emerge's graph reaches it or LICENSE masks it (`depgraph.py`'s
+  `_masked_installed`), with its reasons and, for package.mask, the file and comment
+  (`getmaskingreason(..., return_location=True)`), a comment shown once. The evaluated store
+  records the reasons, file and comment for each masked installed package (format bump);
+  `updates` and `plan` show them in the human layout and the tree, and `--verify` holds the
+  list to emerge's.
 
 ## 17. `egraphd`, the service
 

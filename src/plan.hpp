@@ -108,10 +108,12 @@ struct Block {
     auto operator<=>(const Block&) const = default;
 };
 
-// An installed package emerge uninstalls to resolve a blocker between it and a merge.
+// An installed package emerge uninstalls to resolve a blocker between it and a merge, or an old
+// slot the merges in after replace (replace_slots).
 struct Uninstall {
     std::uint32_t package = 0;
-    Block why;
+    // None for a replaced slot.
+    std::optional<Block> why;
     // Indices into Plan::merges, sorted: each merge whose blocker needs it gone. It goes once
     // they are all merged, the two installed at once meanwhile, as emerge reverses the blocker's
     // edge rather than uninstall first; and straight after, as emerge prefers an uninstall.
@@ -144,7 +146,8 @@ struct Plan {
     std::vector<std::uint32_t> order;
     // In the installed packages' order.
     std::vector<HeldBack> held;
-    // In the installed packages' order, each for the first blocker found to need it.
+    // In the installed packages' order, each for the first blocker found to need it; then the
+    // replaced slots, in the same order.
     std::vector<Uninstall> uninstalls;
     // The blockers emerge cannot resolve, which make it refuse the plan: each with every package
     // it matches that is in the way, sorted.

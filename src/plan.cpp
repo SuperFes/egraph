@@ -3,6 +3,7 @@
 #include "atom.hpp"
 #include "blockers.hpp"
 #include "graph.hpp"
+#include "replace.hpp"
 #include "version.hpp"
 
 #include <algorithm>
@@ -1965,6 +1966,7 @@ Plan plan_updates(const Store& store, const Evaluated& evaluated, UseRebuilds re
         auto proposed = std::move(planner).proposed();
         if (proposed.empty() || round == restarts) {
             weigh_blockers(store, current, targets, plan);
+            replace_slots(store, current, targets.replace_slots, plan);
             order_merges(store, current, plan);
             // Only what the plan merges, as emerge shows only what its graph holds.
             for (auto& each : needed) {

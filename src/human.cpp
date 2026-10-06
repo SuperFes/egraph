@@ -1229,8 +1229,10 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             const auto& row = uninstalls.at(i);
             out << paint(glyph.orphan, Tone::bad) << ' ' << paint_cpv(row.at(0), paint)
                 << spaces(row.at(0).size(), width) << "  ";
-            // Blocked by a merge, or blocking one itself.
-            if (row.at(2) == row.at(0)) {
+            // A replaced slot, blocked by a merge, or blocking one itself.
+            if (row.at(2).empty()) {
+                out << paint("replaced by", Tone::note) << ' ' << paint_cpv(row.at(4), paint);
+            } else if (row.at(2) == row.at(0)) {
                 out << paint("blocks", Tone::note) << ' ';
                 put_blocker(row.at(4), row.at(3));
             } else {

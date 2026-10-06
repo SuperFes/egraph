@@ -107,6 +107,8 @@ def portage_environment():
         "EGRAPH_GLYPHS",
     ):
         os.environ.pop(variable, None)
+    # Nor the host's replace-slots list, which egraph reads under / without --config-root.
+    os.environ["EGRAPH_REPLACE_SLOTS"] = os.devnull
     # The playgrounds' make.conf decides how portage behaves, not the caller's environment,
     # which portage lets override it.
     for variable in PORTAGE_OVERRIDES:

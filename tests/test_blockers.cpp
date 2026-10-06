@@ -84,7 +84,7 @@ std::vector<std::string> outcome(const egraph::test::System& system,
     for (const auto& each : plan.uninstalls) {
         lines.push_back(std::format("uninstall {}: {}",
                                     system.store.string(system.store.packages.at(each.package).cpv),
-                                    block(system, each.why)));
+                                    block(system, each.why.value())));
     }
     for (const auto& each : plan.blocks) {
         lines.push_back("block " + block(system, each));

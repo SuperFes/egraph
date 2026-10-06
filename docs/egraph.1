@@ -75,6 +75,16 @@ The store to read (default
 else the system store; see
 .BR FILES ).
 .TP
+.BI \-\-replace\-slots " file"
+The list of packages whose old slots a plan replaces (default
+.BR $EGRAPH_REPLACE_SLOTS ,
+else
+.I etc/egraph/replace\-slots
+under the configuration root; see
+.BR FILES );
+.I /dev/null
+keeps every slot, as emerge.
+.TP
 .BI \-\-builder " command"
 The
 .B egraph-build
@@ -238,6 +248,11 @@ built with as
 shows it; a new package beside installed ones in other slots of its name is a new slot
 .RB ( new\-slot ,
 emerge's NS), with those installed versions. Then the installed packages it would uninstall for a blocker between them and a merge,
+and the old slots it replaces: those
+.I replace\-slots
+lists, which a world atom naming no slot leaves for a new one, uninstalled once the new slot
+merges unless something left installed still needs them (emerge keeps them for
+.BR "emerge \-\-depclean" ),
 and the blockers it could not resolve, for which it refuses the whole plan (exit status 6). On
 the running system's root, emerge only resolves a strong blocker
 .RB ( !! atom)
@@ -910,6 +925,12 @@ asks for it.
 Where the user's own store goes (default
 .IR ~/.cache ).
 .SH FILES
+.TP
+.I ${PORTAGE_CONFIGROOT}/etc/egraph/replace\-slots
+Atoms, one a line
+.RB ( #
+starts a comment), of the packages whose old slots a plan replaces rather than keeps beside a new
+one; none by default, as emerge.
 .TP
 .I ${ROOT}${EPREFIX}/var/cache/egraph/installed.egraph
 The system store, with the evaluated store beside it; written by root.

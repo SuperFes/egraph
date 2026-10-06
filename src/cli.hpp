@@ -266,6 +266,8 @@ struct Invocation {
     std::optional<std::filesystem::path> config_root;
     std::optional<std::filesystem::path> eprefix;
     std::optional<std::filesystem::path> store;
+    // The replace-slots list; unset, the configuration root's.
+    std::optional<std::filesystem::path> replace_slots;
     // Run to refresh a stale store; unset, the egraph-build next to egraph, else the one in PATH.
     std::optional<std::string> builder;
     // Run to verify a plan; unset, the emerge in PATH.

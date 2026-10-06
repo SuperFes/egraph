@@ -26,6 +26,7 @@
 #include "pool.hpp"
 #include "pressure.hpp"
 #include "remove.hpp"
+#include "replace.hpp"
 #include "request.hpp"
 #include "resume.hpp"
 #include "run_log.hpp"
@@ -655,6 +656,22 @@ bool running_root(const Invocation& invocation) {
     return invocation.root.lexically_normal() == "/";
 }
 
+std::filesystem::path config_root(const Invocation& invocation) {
+    return invocation.config_root.value_or(invocation.eprefix.value_or(std::filesystem::path{"/"}));
+}
+
+// The replace-slots list a plan for command reads.
+std::expected<std::vector<Atom>, Exit> replace_list(const Invocation& invocation,
+                                                    std::string_view command, std::ostream& err) {
+    auto found = read_replace_slots(
+        invocation.replace_slots.value_or(replace_slots_path(config_root(invocation))));
+    if (!found) {
+        err << "egraph: " << command << ": " << found.error() << '\n';
+        return std::unexpected(Exit::failure);
+    }
+    return std::move(*found);
+}
+
 // A plan's exit status once shown: refused when emerge would refuse it and nothing else went
 // wrong.
 Exit finish(Exit status, const Plan& plan) {
@@ -892,8 +909,7 @@ Exit offer_use_changes(Exit status, const Plan& plan, const Store& store,
         !output(invocation).human) {
         return status;
     }
-    const auto path = package_use_path(
-        invocation.config_root.value_or(invocation.eprefix.value_or(std::filesystem::path{"/"})));
+    const auto path = package_use_path(config_root(invocation));
     if (!answered_yes(std::cin, out, std::format("Write the USE changes to {}?", path.string()))) {
         return status;
     }
@@ -956,6 +972,11 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
         }
     }
     targets.running_root = running_root(invocation);
+    auto replace = replace_list(invocation, "updates", err);
+    if (!replace) {
+        return std::unexpected(replace.error());
+    }
+    targets.replace_slots = std::move(*replace);
     Shown shown{.plan = plan_updates(*store, evaluated, command.rebuilds, targets),
                 .request = {.targets = {command.world ? "@world" : "@installed"},
                             .update = true,
@@ -1190,6 +1211,11 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
         targets.roots = true;
         targets.request = request->arguments;
     }
+    auto replace = replace_list(invocation, name, err);
+    if (!replace) {
+        return std::unexpected(replace.error());
+    }
+    targets.replace_slots = std::move(*replace);
     Shown shown{.plan = plan_updates(*store, evaluated, command.rebuilds, targets),
                 .request = {.targets = command.targets,
                             .update = command.update,
@@ -2359,6 +2385,11 @@ void configure(CLI::App& app, Invocation& invocation) {
                    "installed.egraph)")
         ->type_name("FILE")
         ->envname("EGRAPH_STORE");
+    app.add_option("--replace-slots", invocation.replace_slots,
+                   "Packages whose old slots a plan replaces (default: etc/egraph/replace-slots "
+                   "under the configuration root)")
+        ->type_name("FILE")
+        ->envname("EGRAPH_REPLACE_SLOTS");
     app.add_option("--builder", invocation.builder,
                    "egraph-build command that refreshes the store (default: the one next to "
                    "egraph, else egraph-build in PATH)")

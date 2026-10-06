@@ -161,7 +161,7 @@ TEST_CASE("each uninstall follows the merges it waits for, gone for the merges a
                    merge(candidate(system, "app-misc/lib-2"), installed(system, "app-misc/lib-1"))};
     plan.order = {1, 0, 2};
     plan.uninstalls = {
-        {.package = installed(system, "app-misc/old-1"), .why = {}, .after = {0, 1}}};
+        {.package = installed(system, "app-misc/old-1"), .why = egraph::Block{}, .after = {0, 1}}};
     const auto found = requests(system, plan, atoms({"app-misc/new", "app-misc/old"}), false);
     CHECK(found ==
           std::vector<Json>{Json::parse(R"({"cpv": "app-misc/also-1", "repo": "test_repo",
@@ -190,7 +190,7 @@ TEST_CASE("a build and its merge are requested apart, the merge's blockers as th
                    merge(candidate(system, "app-misc/lib-2"), installed(system, "app-misc/lib-1"))};
     plan.order = {1, 0, 2};
     plan.uninstalls = {
-        {.package = installed(system, "app-misc/old-1"), .why = {}, .after = {0, 1}}};
+        {.package = installed(system, "app-misc/old-1"), .why = egraph::Block{}, .after = {0, 1}}};
     const auto arguments = atoms({"app-misc/new", "app-misc/old"});
     egraph::StepRequests requests{
         system.store, system.evaluated, plan,

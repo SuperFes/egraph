@@ -297,6 +297,10 @@ Pretend planned_merges(const Store& store, const Evaluated& original, const Plan
             .use = merge.replaces ? std::string{} : use_display(evaluated, candidate)});
     }
     for (const auto& each : plan.uninstalls) {
+        // emerge leaves a replaced slot to its depclean.
+        if (!each.why) {
+            continue;
+        }
         const auto& pkg = store.packages.at(each.package);
         found.merges.push_back(PretendMerge{.cpv = std::string{store.string(pkg.cpv)},
                                             .repo = std::string{store.string(pkg.repo)},

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "atom.hpp"
 #include "depclean.hpp"
 #include "evaluated.hpp"
 #include "graph.hpp"
@@ -105,6 +106,9 @@ struct Targets {
     // The plan is for the running system's root, where emerge never uninstalls a package a
     // strong blocker matches: only a replacement resolves one.
     bool running_root = true;
+    // The replace-slots list (replace_slots): installed slots it matches that a root atom moves
+    // off are uninstalled once their replacement merges.
+    std::vector<Atom> replace_slots = {};
 };
 
 // "@set atom", or the atom alone.
@@ -140,7 +144,8 @@ struct RemedyInputs {
 // then a "@set atom" field per root atom selecting it; "cpv<TAB>remove<TAB>frees" when removing the
 // holders lets it through, with the held cpvs that frees besides, space-separated; "cpv<TAB>nodeps"
 // when only holders reject it. Last, "cpv<TAB>uninstall<TAB>holder<TAB>atom<TAB>blocked" for each
-// installed package the plan uninstalls, with the blocker that needs it, then
+// installed package the plan uninstalls, with the blocker that needs it (for a replaced slot, the
+// holder and atom empty and the replacing merge's cpv last), then
 // "holder<TAB>blocks<TAB>atom<TAB>blocked" for each blocker emerge cannot resolve, then
 // "cpv<TAB>unsatisfied<TAB>atom" for each dependency nothing satisfies, the cpv empty for an
 // argument, then "cpv<TAB>required-use<TAB>repo<TAB>USE<TAB>unsatisfied<TAB>complete" for each

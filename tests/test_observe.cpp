@@ -28,7 +28,7 @@ Run run() {
     Run found;
     found.plan.merges.resize(2);
     found.plan.order = {0, 1};
-    found.plan.uninstalls = {{.package = 0, .why = {}, .after = {0}}};
+    found.plan.uninstalls = {{.package = 0, .why = egraph::Block{}, .after = {0}}};
     found.steps = {egraph::MergeStep{.merge = 0, .blockers = {}, .world = {}},
                    egraph::MergeStep{.merge = 1, .blockers = {}, .world = {}},
                    egraph::UninstallStep{.uninstall = 0, .clean_world = false}};

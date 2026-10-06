@@ -323,3 +323,44 @@ def test_a_failed_emerge_says_why(playgrounds, tmp_path):
         + "".join(f"line {i}\n" for i in range(11, 30))
         + "!!! cannot resolve\n"
     )
+
+
+def test_replaced_slots_are_left_out_of_what_emerge_is_held_to(playgrounds, tmp_path):
+    """A listed world atom's old slot goes once its new one merges, unless something needs it;
+    emerge leaves it to its depclean, so --verify passes over it."""
+    system = playgrounds("world-slots")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path)
+    listed = tmp_path / "replace-slots"
+    listed.write_text("# old slots\napp-misc/wine\ndev-libs/libv\nsys-kernel/sources\n")
+    emerge = real_emerge(system, tmp_path)
+    shown = egraph(
+        path, "--replace-slots", str(listed), "updates", "-D", "--world", emerge=emerge
+    )
+    assert shown.returncode == 0, shown.stderr
+    uninstalls = [line for line in shown.stdout.splitlines() if "\tuninstall\t" in line]
+    # libv-1 stays for needs-1's dev-libs/libv:1.
+    assert uninstalls == [
+        "app-misc/wine-1\tuninstall\t\t\tapp-misc/wine-2",
+        "sys-kernel/sources-1\tuninstall\t\t\tsys-kernel/sources-3",
+        "sys-kernel/sources-2\tuninstall\t\t\tsys-kernel/sources-3",
+    ]
+    verified = egraph(
+        path,
+        "--replace-slots",
+        str(listed),
+        "updates",
+        "-D",
+        "--world",
+        "--verify",
+        emerge=emerge,
+    )
+    assert verified.returncode == 0, verified.stdout + verified.stderr
+    # Without the list, as emerge: every slot stays.
+    kept = egraph(path, "updates", "-D", "--world", emerge=emerge)
+    assert "\tuninstall\t" not in kept.stdout
+    bad = tmp_path / "bad"
+    bad.write_text("app-misc/wine\n!app-misc/wine\n")
+    refused = egraph(path, "--replace-slots", str(bad), "updates", emerge=emerge)
+    assert refused.returncode == 1
+    assert refused.stderr.startswith(f"egraph: updates: {bad}: line 2: ")

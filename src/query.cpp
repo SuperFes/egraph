@@ -447,8 +447,13 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& origi
         return std::format("{}\t{}\t{}", member(block.holder), block.atom, member(block.blocked));
     };
     for (const auto& each : plan.uninstalls) {
-        trailing_rows.push_back(
-            std::format("{}\tuninstall\t{}", package(each.package), block_fields(each.why)));
+        trailing_rows.push_back(std::format(
+            "{}\tuninstall\t{}", package(each.package),
+            each.why
+                ? block_fields(*each.why)
+                : std::format("\t\t{}",
+                              member({.candidate = true,
+                                      .index = plan.merges.at(each.after.front()).candidate}))));
     }
     for (const auto& each : plan.blocks) {
         trailing_rows.push_back(std::format("{}\tblocks\t{}\t{}", member(each.holder), each.atom,

@@ -69,8 +69,9 @@ struct Pretend {
 // for, sorted. Everything else it printed (resolved blockers, messages) passed over.
 [[nodiscard]] Pretend parse_pretend(std::string_view output, bool failed);
 
-// What plan merges and uninstalls, its blocks, its unsatisfied dependencies, its unmet
-// REQUIRED_USE and the USE changes it needs, in the same terms; only a new package has its USE.
+// What plan merges and uninstalls (but for the slots it replaces), its blocks, its unsatisfied
+// dependencies, its unmet REQUIRED_USE and the USE changes it needs, in the same terms; only a new
+// package has its USE.
 [[nodiscard]] Pretend planned_merges(const Store& store, const Evaluated& evaluated,
                                      const Plan& plan);
 

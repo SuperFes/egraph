@@ -182,7 +182,7 @@ TEST_CASE("an uninstall goes once none of the merges it waits for is done or lef
                      {.cpv = "app-misc/also-1", .deps = {{"RDEPEND", "!app-misc/old"}}}});
     auto plan = plan_of(system, {"app-misc/new-1", "app-misc/also-1"});
     plan.uninstalls = {
-        {.package = installed(system, "app-misc/old-1"), .why = {}, .after = {0, 1}}};
+        {.package = installed(system, "app-misc/old-1"), .why = egraph::Block{}, .after = {0, 1}}};
     CHECK(resume(system, plan, {Standing::gone, Standing::gone, Standing::left}).skipped ==
           Skips{{.step = 2, .atoms = {}}});
     CHECK(resume(system, plan, {Standing::gone, Standing::left, Standing::left}).skipped.empty());

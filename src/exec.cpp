@@ -319,7 +319,9 @@ std::vector<Step> run_steps(const Store& store, const Evaluated& original, const
                 const auto atom = parse_atom(text);
                 return atom && matches(store, pkg, *atom);
             });
-            steps.emplace_back(UninstallStep{.uninstall = u, .clean_world = !oneshot && argument});
+            // A replaced slot's atom now names its replacement.
+            steps.emplace_back(UninstallStep{
+                .uninstall = u, .clean_world = !oneshot && argument && uninstall.why.has_value()});
             run.uninstalled(uninstall.package);
             uninstalled.at(u) = true;
         }
