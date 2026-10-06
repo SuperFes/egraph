@@ -1,8 +1,14 @@
 """The repository index: every version as portage reads it, and its visibility configuration."""
 
-from conftest import portdb
+import os
+import shutil
 
-from egraph_build import repository, store
+import portage
+import pytest
+from conftest import portdb
+from test_build import fresh_databases
+
+from egraph_build import __version__, build, repository, store
 
 
 def test_every_version_in_every_repository_as_portage_reads_it(scenario):
@@ -91,3 +97,81 @@ def test_licenses_are_kept_as_their_net_effect():
     assert net(("A", "-B", "*", "-C", "D", "C")) == ("*", "C", "D")
     assert net(("-*", "B", "-B", "A")) == ("-*", "-B", "A")
     assert net(("B", "A", "-A")) == ("-A", "B")
+
+
+@pytest.fixture
+def repository_playground(mutable_playground):
+    from test_build import age
+
+    playground = mutable_playground("repository")
+    age(playground.eroot)
+    return playground
+
+
+def first_index(playground):
+    _, db = fresh_databases(playground)
+    first = build.index(db)
+    meta = store.RepositoryMeta(
+        __version__, portage.VERSION, db.settings["EROOT"], first.started_ns
+    )
+    return meta, first.inputs, first.index
+
+
+def rebuilt(playground, previous):
+    _, db = fresh_databases(playground)
+    result = build.index_incremental(db, previous)
+    assert repository.to_json(result.index) == repository.to_json(repository.read(db))
+    return result
+
+
+def overlay(playground, *parts):
+    _, db = fresh_databases(playground)
+    return os.path.join(db.getRepositoryPath("overlay"), *parts)
+
+
+def test_an_unchanged_index_reads_nothing_again(repository_playground):
+    result = rebuilt(repository_playground, first_index(repository_playground))
+    assert not result.full
+    assert result.reread == frozenset()
+
+
+def test_a_removed_ebuild_reads_its_cp_again(repository_playground):
+    previous = first_index(repository_playground)
+    os.unlink(overlay(repository_playground, "app-misc", "over", "over-2.ebuild"))
+    result = rebuilt(repository_playground, previous)
+    assert not result.full
+    assert result.reread == {"app-misc/over"}
+
+
+def test_a_removed_package_reads_its_category_again(repository_playground):
+    previous = first_index(repository_playground)
+    shutil.rmtree(overlay(repository_playground, "dev-libs", "new"))
+    result = rebuilt(repository_playground, previous)
+    assert not result.full
+    assert "dev-libs/new" in result.reread
+    assert all(cp.startswith("dev-libs/") for cp in result.reread)
+
+
+def test_a_configuration_change_reads_no_metadata_again(repository_playground):
+    previous = first_index(repository_playground)
+    path = os.path.join(
+        repository_playground.eroot, "etc/portage/package.accept_keywords"
+    )
+    with open(path, "a") as f:
+        f.write("app-misc/testing ~x86\n")
+    result = rebuilt(repository_playground, previous)
+    assert not result.full
+    assert result.reread == frozenset()
+    assert (
+        repository.Entry("app-misc/testing", ("~x86",))
+        in result.index.visibility.accept_keywords_entries
+    )
+
+
+def test_an_overlay_eclass_change_reads_everything_again(repository_playground):
+    previous = first_index(repository_playground)
+    eclass = overlay(repository_playground, "eclass")
+    os.makedirs(eclass, exist_ok=True)
+    with open(os.path.join(eclass, "new.eclass"), "w") as f:
+        f.write("# new\n")
+    assert rebuilt(repository_playground, previous).full

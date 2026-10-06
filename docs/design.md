@@ -37,7 +37,10 @@ package's repository, else the vdb's with the repositories' package moves applie
 
 The repository index is a third file beside them (`installed.repository.egraph`), written by
 its own builder run (`egraph-build --repository`) and refreshed on its own inputs, which change
-with syncs and configuration edits rather than with merges. It holds no visibility verdicts:
+with syncs and configuration edits rather than with merges. A refresh reads again only the
+categories and cps whose metadata cache or package directories changed, and after a
+configuration change only the configuration; an overlay's eclasses, the category list or the
+repositories changing mean a full build. It holds no visibility verdicts:
 egraph evaluates keywords, licenses, masks, properties and restrictions from what portage parsed
 (the safety-over-precompute rule), and the shadow tests hold that to portdb's match-visible.
 `src/visibility.cpp` ports `portdbapi._visible` and the managers it calls: EAPI support, an

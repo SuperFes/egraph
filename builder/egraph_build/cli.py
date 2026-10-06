@@ -63,7 +63,7 @@ def parser():
         action="store_const",
         const="repository",
         help="write the repository index beside the store: every version in the repositories, "
-        "and what decides their visibility",
+        "and what decides their visibility; only what changed is read again",
     )
     mode.add_argument(
         "--repository-json",
@@ -440,15 +440,22 @@ def write_repository(args):
 
     from egraph_build import __version__, build, store
 
+    from egraph_build import repository
+
     vardb, portdb = open_databases(args.config_root, args.root, args.eprefix)
     eroot = vardb.settings["EROOT"]
-    path = args.store or store.default_path(eroot)
-    result = build.index(portdb)
-    meta = store.RepositoryMeta(__version__, portage.VERSION, eroot, result.started_ns)
-    store.write(
-        store.repository_path(path),
-        store.encode_repository(result.index, meta, result.inputs),
+    path = store.repository_path(args.store or store.default_path(eroot))
+    previous = _previous(path, store.decode_repository)
+    result = (
+        build.index_incremental(portdb, previous) if previous else build.index(portdb)
     )
+    if not result.full and os.environ.get("EGRAPH_STRICT") == "1":
+        if repository.to_json(result.index) != repository.to_json(
+            repository.read(portdb)
+        ):
+            return _strict_failure("repository index")
+    meta = store.RepositoryMeta(__version__, portage.VERSION, eroot, result.started_ns)
+    store.write(path, store.encode_repository(result.index, meta, result.inputs))
     return EXIT_OK
 
 

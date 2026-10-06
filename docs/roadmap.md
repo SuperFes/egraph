@@ -505,8 +505,9 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     - 16i2b (done): visibility and its reasons evaluated in C++ (`versions`), shadowed against
       portdb's match-visible and getmaskingstatus on every version of every scenario and the
       live system, which agree on all 38,544.
-    - 16i2c: incremental refreshes: only the visibility configuration after a configuration
-      change, only the changed categories after a sync.
+    - 16i2c (done): incremental refreshes: only the visibility configuration (and the USE of the
+      versions keeping one) after a configuration change, only the changed categories and cps
+      after a sync, held to a full build under EGRAPH_STRICT.
     - 16i2d: completion offers every version and slot from it; the portage hooks refresh it
       after a sync.
   - 16i3: `search`, by name, or with `-S` by description, as `emerge --search`.

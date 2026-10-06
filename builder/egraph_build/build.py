@@ -243,13 +243,121 @@ class RepositoryBuild(NamedTuple):
     index: repository.RepositoryIndex
     inputs: tuple
     started_ns: int
+    # The cps read through portage; the others' versions were carried over.
+    reread: frozenset
+    full: bool
 
 
 def index(portdb):
     """A full build of the repository index."""
     started = time.time_ns()
     found = repository.read(portdb)
-    return RepositoryBuild(found, repository_inputs(portdb), started)
+    cps = frozenset(v.cp for v in found.versions)
+    return RepositoryBuild(found, repository_inputs(portdb), started, cps, True)
+
+
+# An index input that bears only on the visibility configuration.
+_CONFIGURATION = "configuration"
+
+
+def _index_scope(path, locations, categories):
+    """The category or cp an index input bears on alone, _CONFIGURATION, or None when it can
+    bear on any version. locations are the repositories', longest first."""
+    for location in locations:
+        if not path.startswith(location + os.sep):
+            continue
+        parts = path[len(location) + 1 :].split(os.sep)
+        if parts[:2] == ["metadata", "md5-cache"]:
+            parts = parts[2:]
+            return parts[0] if len(parts) == 1 and parts[0] in categories else None
+        if parts[0] in categories and len(parts) <= 3:
+            return "/".join(parts[:2])
+        if parts[0] == "profiles" and parts[1:2] in (
+            ["package.mask"],
+            ["license_groups"],
+            ["updates"],
+        ):
+            return _CONFIGURATION
+        return None
+    return None
+
+
+def index_incremental(portdb, previous):
+    """Rebuild the repository index from a previous one, reading again only the cps whose
+    metadata changed; after a configuration change, only the visibility configuration and the
+    USE of the versions that keep one.
+
+    previous is that index's (RepositoryMeta, Inputs, RepositoryIndex). Another EROOT, egraph
+    or portage version, other repositories, a changed builder, or any change an input cannot
+    pin to a category or cp (an overlay's eclasses, the categories, repos.conf) mean a full
+    build.
+    """
+    settings = portdb.settings
+    meta, inputs, old = previous
+    built_by = (meta.egraph_version, meta.portage_version)
+    if (
+        meta.eroot != settings["EROOT"]
+        or built_by != (__version__, portage.VERSION)
+        or old.repositories != repository.repositories(portdb)
+    ):
+        return index(portdb)
+    started = time.time_ns()
+    current = repository_inputs(portdb)
+    racy_after = meta.build_time_ns - RACY_WINDOW_NS
+    recorded = {item.path: item for item in inputs}
+    by_path = {item.path: item for item in current}
+    kind_only = _kind_only(portdb)
+    builder = set(builder_paths())
+    user = os.path.join(settings["PORTAGE_CONFIGROOT"], portage.const.USER_CONFIG_PATH)
+    configuration = set(config_paths(settings))
+    for name in USER_VISIBILITY_CONFIG:
+        if name not in ("categories", "repos.conf"):
+            configuration.update(_tree(os.path.join(user, name)))
+    categories = frozenset(settings.categories)
+    locations = sorted(
+        (location for _, location in old.repositories), key=len, reverse=True
+    )
+    scopes = set()
+    reconfigured = False
+    for path in recorded.keys() | by_path.keys():
+        before, after = recorded.get(path), by_path.get(path)
+        if before is not None and after is not None:
+            if before == after and before.mtime_ns < racy_after:
+                continue
+            if path in kind_only and before.kind == after.kind:
+                continue
+        if path in builder:
+            return index(portdb)
+        scope = (
+            _CONFIGURATION
+            if path in configuration
+            else _index_scope(path, locations, categories)
+        )
+        if scope is None:
+            return index(portdb)
+        if scope == _CONFIGURATION:
+            reconfigured = True
+        else:
+            scopes.add(scope)
+    cps = set(portdb.cp_all())
+    old_cps = {v.cp for v in old.versions}
+    dirty = frozenset(
+        cp for cp in cps | old_cps if cp in scopes or cp.partition("/")[0] in scopes
+    )
+    settings_holder = repository.UseReader(portdb)
+    read = {}
+    for version in repository.read_versions(portdb, dirty & cps, settings_holder):
+        read.setdefault(version.cp, []).append(version)
+    kept = {}
+    for version in old.versions:
+        if version.cp not in dirty:
+            if reconfigured:
+                version = repository.with_use(version, settings_holder)
+            kept.setdefault(version.cp, []).append(version)
+    versions = [v for cp in sorted(cps) for v in kept.get(cp) or read.get(cp, ())]
+    return RepositoryBuild(
+        repository.assemble(portdb, versions), current, started, dirty, False
+    )
 
 
 def _kind_only(portdb):

@@ -50,6 +50,8 @@ Write the repository index beside the store
 .RI ( installed.repository.egraph ):
 every version of every package in the repositories, and the configuration that decides which
 are visible, as portage parsed it.
+Of an index already there, only the packages whose metadata changed are read again, and after a
+configuration change only the configuration.
 .TP
 .B \-\-repository\-json
 Print the repository index as canonical JSON instead of writing it.

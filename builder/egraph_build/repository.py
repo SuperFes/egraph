@@ -89,16 +89,46 @@ def _tested(tokens):
     return {token.lstrip("!")[:-1] for token in tokens if token.endswith("?")}
 
 
-def read_versions(portdb, cps):
-    """The version records of cps, in the index's order; settings is cloned for the USE of the
-    few whose LICENSE or PROPERTIES has a conditional."""
-    import portage
+class UseReader:
+    """A config clone made on first use, for the USE of the few versions that need it."""
 
-    repositories = portdb.getRepositories()
-    settings = None
+    def __init__(self, portdb):
+        self._portdb = portdb
+        self._settings = None
+
+    def use(self, cpv, repo):
+        """The USE the ebuild would be built with now, as portdbapi's _visible takes it."""
+        import portage
+
+        if self._settings is None:
+            self._settings = portage.config(clone=self._portdb.settings)
+        keys = evaluated._CANDIDATE_KEYS
+        try:
+            metadata = dict(
+                zip(keys, self._portdb.aux_get(cpv, list(keys), myrepo=repo))
+            )
+        except KeyError:
+            return set()
+        self._settings.setcpv(cpv, mydb=metadata)
+        return set(self._settings["PORTAGE_USE"].split())
+
+
+def with_use(version, settings):
+    """version with the USE its LICENSE, PROPERTIES and RESTRICT conditionals test, where
+    LICENSE or PROPERTIES has one."""
+    if not _tested(version.license + version.properties):
+        return version._replace(use=())
+    tested = _tested(version.license + version.properties + version.restrict)
+    use = settings.use(version.cpv, version.repo) & tested
+    return version._replace(use=tuple(sorted(use)))
+
+
+def read_versions(portdb, cps, settings=None):
+    """The version records of cps in every repository, in the index's order."""
+    settings = settings or UseReader(portdb)
     found = []
     for cp in sorted(cps):
-        for repo in repositories:
+        for repo in portdb.getRepositories():
             for cpv in portdb.cp_list(cp, mytree=portdb.getRepositoryPath(repo)):
                 try:
                     metadata = dict(
@@ -106,45 +136,39 @@ def read_versions(portdb, cps):
                     )
                 except KeyError:
                     continue
-                license_tokens = _tokens(metadata["LICENSE"])
-                properties = _tokens(metadata["PROPERTIES"])
-                restrict = _tokens(metadata["RESTRICT"])
-                use = ()
-                if _tested(license_tokens + properties):
-                    tested = _tested(license_tokens + properties + restrict)
-                    if settings is None:
-                        settings = portage.config(clone=portdb.settings)
-                    use = _use(portdb, settings, cpv, repo) & tested
                 slot, _, sub_slot = metadata["SLOT"].partition("/")
-                found.append(
-                    Version(
-                        cp=cp,
-                        cpv=str(cpv),
-                        repo=repo,
-                        slot=slot,
-                        sub_slot=sub_slot or slot,
-                        eapi=metadata["EAPI"],
-                        keywords=_tokens(metadata["KEYWORDS"]),
-                        license=license_tokens,
-                        properties=properties,
-                        restrict=restrict,
-                        use=tuple(sorted(use)),
-                        description=metadata["DESCRIPTION"],
-                        homepage=metadata["HOMEPAGE"],
-                    )
+                version = Version(
+                    cp=cp,
+                    cpv=str(cpv),
+                    repo=repo,
+                    slot=slot,
+                    sub_slot=sub_slot or slot,
+                    eapi=metadata["EAPI"],
+                    keywords=_tokens(metadata["KEYWORDS"]),
+                    license=_tokens(metadata["LICENSE"]),
+                    properties=_tokens(metadata["PROPERTIES"]),
+                    restrict=_tokens(metadata["RESTRICT"]),
+                    use=(),
+                    description=metadata["DESCRIPTION"],
+                    homepage=metadata["HOMEPAGE"],
                 )
+                found.append(with_use(version, settings))
     return tuple(found)
 
 
-def _use(portdb, settings, cpv, repo):
-    """The USE the ebuild would be built with now, as portdbapi's _visible takes it."""
-    keys = evaluated._CANDIDATE_KEYS
-    try:
-        metadata = dict(zip(keys, portdb.aux_get(cpv, list(keys), myrepo=repo)))
-    except KeyError:
-        return set()
-    settings.setcpv(cpv, mydb=metadata)
-    return set(settings["PORTAGE_USE"].split())
+def repositories(portdb):
+    return tuple(
+        (name, portdb.getRepositoryPath(name)) for name in portdb.getRepositories()
+    )
+
+
+def assemble(portdb, versions):
+    """The index of versions, with the repositories and the visibility configuration now."""
+    return RepositoryIndex(
+        repositories=repositories(portdb),
+        versions=tuple(versions),
+        visibility=read_visibility(portdb.settings, {v.eapi for v in versions}),
+    )
 
 
 def _net(tokens):
@@ -219,14 +243,7 @@ def read_visibility(settings, eapis):
 
 def read(portdb):
     """The whole index."""
-    versions = read_versions(portdb, portdb.cp_all())
-    return RepositoryIndex(
-        repositories=tuple(
-            (name, portdb.getRepositoryPath(name)) for name in portdb.getRepositories()
-        ),
-        versions=versions,
-        visibility=read_visibility(portdb.settings, {v.eapi for v in versions}),
-    )
+    return assemble(portdb, read_versions(portdb, portdb.cp_all()))
 
 
 def _entries_json(entries):

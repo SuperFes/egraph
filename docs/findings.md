@@ -471,3 +471,5 @@ process including load and the freshness check of 2,575 inputs.
   matched against every version. Filing the atoms by cp and keeping the global accept lists'
   net effect, copied only for a package a package.* line names: 72 ms, 0.75 G instructions,
   the load and the output included. All 38,544 agree with portage.
+- An incremental `egraph-build --repository` with nothing changed: 1.8 s (interpreter and
+  portage start-up, 9,139 stats, the previous index decoded), against 15.7 s for a full one.
