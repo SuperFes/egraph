@@ -53,7 +53,8 @@ def egraph(system, *args):
         ],
         capture_output=True,
         text=True,
-        env=dict(os.environ, EGRAPH_STRICT="1"),
+        # The playground's environment, which names its repositories.
+        env=dict(playground.settings.environ(), EGRAPH_STRICT="1"),
     )
 
 
@@ -66,8 +67,10 @@ def expected(playground):
 
 
 def builds(system):
+    """The store builds, apart from the repository index's."""
     log = system[3]
-    return log.read_text().splitlines() if log.exists() else []
+    lines = log.read_text().splitlines() if log.exists() else []
+    return [line for line in lines if not line.startswith("--repository")]
 
 
 def test_first_query_builds_the_store(system):
@@ -150,6 +153,7 @@ def test_refresh_brings_the_store_up_to_date_and_prints_nothing(system):
     result = egraph(system, "refresh")
     assert (result.returncode, result.stdout) == (0, "")
     assert len(builds(system)) == 1
+    assert len(index_builds(system)) == 1
     # Current: nothing to do.
     assert egraph(system, "refresh").returncode == 0
     assert len(builds(system)) == 1
@@ -222,7 +226,9 @@ def index_json(system):
 
 
 def index_builds(system):
-    return [line for line in builds(system) if line.split()[0] == "--repository"]
+    log = system[3]
+    lines = log.read_text().splitlines() if log.exists() else []
+    return [line for line in lines if line.split()[0] == "--repository"]
 
 
 def test_the_repository_index_is_built_on_first_use_and_kept_while_current(

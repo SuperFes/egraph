@@ -178,8 +178,11 @@ What an option's value is comes from its type name: `DIR`, `FILE`, `COMMAND` and
 never refreshing them, so a key press never starts a build: categories with their `/` first, then
 cps (every cp in the repositories for atoms; the vdb alone offers too little), names without
 their category for atoms once a letter is typed, versions after an operator, slots after `:`,
-repositories after `::`, and sets after `@`. A store from another format offers nothing until a
-query or the portage hooks rebuild it. The variables choosing the store (`ROOT`, `EGRAPH_STORE`,
+repositories after `::`, and sets after `@`. Versions, slots and repositories come from the
+repository index when there is one (loaded only for a word that asks for them: 46 ms a key press
+against 26), else from what the stores hold. A store from another format offers nothing until a
+query or the portage hooks rebuild it. In zsh a leading `=` must be typed `\=`, as zsh's EQUALS
+option expands `=word` to a command's path (for emerge's atoms too); the script unquotes it. The variables choosing the store (`ROOT`, `EGRAPH_STORE`,
 ...) reach it from the environment; options on the command line being completed do not.
 
 ## Terminal interface

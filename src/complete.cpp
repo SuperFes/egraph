@@ -28,7 +28,8 @@ std::string_view category(std::string_view cp) {
 
 class Words {
   public:
-    Words(const Store& store, const Evaluated& evaluated, Completing what)
+    Words(const Store& store, const Evaluated& evaluated,
+          std::optional<std::reference_wrapper<const RepositoryIndex>> index, Completing what)
         : atoms_{what != Completing::installed} {
         for (const auto& pkg : store.packages) {
             entries_.push_back({.cp = store.string(pkg.cp),
@@ -39,6 +40,19 @@ class Words {
         }
         if (!atoms_) {
             return;
+        }
+        if (index) {
+            const RepositoryIndex& repository = *index;
+            for (const auto& version : repository.versions) {
+                entries_.push_back({.cp = repository.string(version.cp),
+                                    .cpv = repository.string(version.cpv),
+                                    .slot = repository.string(version.slot),
+                                    .repo = repository.string(
+                                        repository.repositories.at(version.repository).name)});
+            }
+            for (const auto& each : repository.repositories) {
+                repositories_.insert(repository.string(each.name));
+            }
         }
         for (const auto& candidate : evaluated.candidates) {
             entries_.push_back({.cp = evaluated.string(candidate.cp),
@@ -55,6 +69,9 @@ class Words {
         if (what == Completing::repositories) {
             for (const auto& entry : entries_) {
                 offer("", entry.repo, word);
+            }
+            for (const auto repo : repositories_) {
+                offer("", repo, word);
             }
         } else if (word.starts_with('@')) {
             if (atoms_) {
@@ -82,6 +99,9 @@ class Words {
             const auto head = std::string{op} + std::string{rest.substr(0, repo + 2)};
             for (const auto& entry : entries_) {
                 offer(head, entry.repo, word);
+            }
+            for (const auto name : repositories_) {
+                offer(head, name, word);
             }
             return;
         }
@@ -134,15 +154,26 @@ class Words {
 
     bool atoms_;
     std::vector<Entry> entries_;
+    std::set<std::string_view> repositories_;
     std::set<std::string_view> cps_;
     std::set<std::string> found_;
 };
 
 } // namespace
 
-std::vector<std::string> complete_word(const Store& store, const Evaluated& evaluated,
-                                       Completing what, std::string_view word) {
-    return Words{store, evaluated, what}.complete(what, word);
+std::vector<std::string>
+complete_word(const Store& store, const Evaluated& evaluated,
+              std::optional<std::reference_wrapper<const RepositoryIndex>> index, Completing what,
+              std::string_view word) {
+    return Words{store, evaluated, index, what}.complete(what, word);
+}
+
+bool needs_index(Completing what, std::string_view word) {
+    if (what == Completing::installed) {
+        return false;
+    }
+    return what == Completing::repositories || word.starts_with('=') || word.starts_with('<') ||
+           word.starts_with('>') || word.starts_with('~') || word.contains(':');
 }
 
 } // namespace egraph

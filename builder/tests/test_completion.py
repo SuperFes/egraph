@@ -9,7 +9,10 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import write_stores
+from conftest import portdb, write_stores
+
+from egraph_build import repository
+from egraph_build import store as egraph_store
 
 COMPLETIONS = os.environ.get("EGRAPH_COMPLETIONS")
 EGRAPH = os.environ.get("EGRAPH")
@@ -29,7 +32,13 @@ def needs(shell):
 def env(playgrounds, tmp_path):
     """What a shell completes in: egraph first in PATH, its stores the repository scenario's."""
     store = tmp_path / "installed.egraph"
-    write_stores(playgrounds("repository"), store)
+    system = playgrounds("repository")
+    write_stores(system, store)
+    meta = egraph_store.RepositoryMeta("0", "0", "/", 0)
+    index = repository.read(portdb(system))
+    egraph_store.write(
+        egraph_store.repository_path(store), egraph_store.encode_repository(index, meta)
+    )
     path = os.path.dirname(os.path.abspath(EGRAPH)) + os.pathsep + os.environ["PATH"]
     return {"PATH": path, "EGRAPH_STORE": str(store), "HOME": str(tmp_path)}
 
@@ -113,6 +122,10 @@ def test_bash_completes_commands_options_values_and_packages(env):
         "dev-libs/lib-2.1",
     ]
     assert bash(["egraph", "install", "dev-libs/lib:"], env) == [":1", ":2"]
+    # Versions only the repository index knows.
+    assert bash(["egraph", "install", "=www-apps/unused-"], env) == [
+        "www-apps/unused-1"
+    ]
 
 
 def test_fish_completes_commands_options_values_and_packages(env):
@@ -135,6 +148,7 @@ def test_fish_completes_commands_options_values_and_packages(env):
         "dev-libs/lib:2",
     ]
     assert fish("egraph sync o", env) == ["overlay"]
+    assert fish("egraph versions =www-apps/h", env) == ["=www-apps/helper-1"]
 
 
 def test_zsh_completes_commands_options_values_and_packages(env, tmp_path):
@@ -196,5 +210,9 @@ def test_zsh_completes_commands_options_values_and_packages(env, tmp_path):
         screen_after("egraph why dev-libs/o", "egraph why dev-libs/old")
         screen_after("egraph install www-apps/u", "egraph install www-apps/unused")
         screen_after("egraph install dev-libs/lib:", "dev-libs/lib:2")
+        # zsh expands a leading = to a command's path unless it is quoted.
+        screen_after(
+            "egraph install \\=www-apps/u", "egraph install \\=www-apps/unused-1"
+        )
     finally:
         tmux("kill-server")

@@ -936,7 +936,8 @@ choose the stores are taken from the command line only.
 .SS rebuild
 Rebuild the store from scratch.
 .SS refresh
-Bring the store up to date if what it was built from changed, printing nothing.
+Bring the stores and the repository index up to date if what they were built from changed,
+printing nothing; the portage hooks run it after every emerge and sync.
 .SS check
 Compare the store with a fresh build, exiting 4 when they differ.
 .SS affected

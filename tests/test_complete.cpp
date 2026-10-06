@@ -1,5 +1,6 @@
 #include "complete.hpp"
 
+#include "index_builder.hpp"
 #include "system_builder.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -30,7 +31,7 @@ egraph::test::System sample() {
 
 Words complete(Completing what, std::string_view word) {
     static const auto system = sample();
-    return egraph::complete_word(system.store, system.evaluated, what, word);
+    return egraph::complete_word(system.store, system.evaluated, std::nullopt, what, word);
 }
 
 } // namespace
@@ -99,4 +100,31 @@ TEST_CASE("after @, the sets, for atoms") {
 TEST_CASE("repositories by name") {
     CHECK(complete(Completing::repositories, "") == Words{"overlay", "test_repo"});
     CHECK(complete(Completing::repositories, "t") == Words{"test_repo"});
+}
+
+TEST_CASE("with the repository index, every version, slot and repository it holds") {
+    const auto system = sample();
+    egraph::test::IndexBuilder b;
+    b.version({.cpv = "dev-libs/libfoo-1"});
+    b.version({.cpv = "dev-libs/libfoo-2", .slot = "2/2.1"});
+    const auto complete_with = [&](Completing what, std::string_view word) {
+        return egraph::complete_word(system.store, system.evaluated, std::cref(b.index()), what,
+                                     word);
+    };
+    CHECK(complete_with(Completing::atoms, "=dev-libs/libfoo-") ==
+          Words{"=dev-libs/libfoo-1", "=dev-libs/libfoo-2"});
+    CHECK(complete_with(Completing::atoms, "libfoo:") == Words{"libfoo:0", "libfoo:2"});
+    // Every configured repository, versions or not.
+    CHECK(complete_with(Completing::repositories, "") == Words{"gentoo", "overlay", "test_repo"});
+    // Installed packages are the installed store's alone.
+    CHECK(complete_with(Completing::installed, "=dev-libs/libfoo").empty());
+}
+
+TEST_CASE("only versions, slots and repositories need the index") {
+    CHECK(egraph::needs_index(Completing::atoms, "=a"));
+    CHECK(egraph::needs_index(Completing::atoms, ">=a"));
+    CHECK(egraph::needs_index(Completing::atoms, "a/b:"));
+    CHECK(egraph::needs_index(Completing::repositories, ""));
+    CHECK_FALSE(egraph::needs_index(Completing::atoms, "dev-libs/"));
+    CHECK_FALSE(egraph::needs_index(Completing::installed, "=a"));
 }

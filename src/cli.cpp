@@ -269,6 +269,10 @@ Exit execute(const Refresh&, Session& session, const Invocation&, std::ostream&,
         err << "egraph: " << stores.error() << '\n';
         return Exit::failure;
     }
+    if (const auto index = session.repository(); !index) {
+        err << "egraph: " << index.error() << '\n';
+        return Exit::failure;
+    }
     return Exit::ok;
 }
 
@@ -2388,6 +2392,7 @@ Exit execute(const Complete& command, Session&, const Invocation& invocation, st
     }
     // The newer of the system's and the user's, whichever the queries last refreshed.
     std::optional<Stores> newest;
+    std::filesystem::path chosen;
     std::string error;
     for (const auto& path : paths) {
         auto loaded = load_stores(path);
@@ -2396,14 +2401,26 @@ Exit execute(const Complete& command, Session&, const Invocation& invocation, st
         } else if (!newest ||
                    loaded->installed.meta.build_time_ns > newest->installed.meta.build_time_ns) {
             newest = std::move(*loaded);
+            chosen = path;
         }
     }
     if (!newest) {
         err << "egraph: complete: " << error << '\n';
         return Exit::failure;
     }
-    write_lines(out,
-                complete_word(newest->installed, newest->evaluated, command.what, command.word));
+    // Only for the words that need it: it is the biggest of the three.
+    std::optional<RepositoryIndex> index;
+    if (needs_index(command.what, command.word)) {
+        if (auto loaded = load_repository(repository_index_path(chosen))) {
+            index = std::move(*loaded);
+        }
+    }
+    std::optional<std::reference_wrapper<const RepositoryIndex>> view;
+    if (index) {
+        view = std::cref(*index);
+    }
+    write_lines(
+        out, complete_word(newest->installed, newest->evaluated, view, command.what, command.word));
     return Exit::ok;
 }
 
@@ -2830,7 +2847,8 @@ void configure(CLI::App& app, Invocation& invocation) {
                        "once");
     add_command<Rebuild>(app, invocation, "Rebuild the store from scratch");
     add_command<Refresh>(app, invocation,
-                         "Bring the store up to date if its inputs changed, printing nothing");
+                         "Bring the stores and the repository index up to date if their inputs "
+                         "changed, printing nothing");
     add_command<Check>(app, invocation, "Diff the store against a fresh build");
     CLI::App* complete_cmd = add_command<Complete>(
         app, invocation, "The words a shell completes a package argument to, from the stores");

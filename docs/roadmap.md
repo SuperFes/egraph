@@ -508,8 +508,8 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     - 16i2c (done): incremental refreshes: only the visibility configuration (and the USE of the
       versions keeping one) after a configuration change, only the changed categories and cps
       after a sync, held to a full build under EGRAPH_STRICT.
-    - 16i2d: completion offers every version and slot from it; the portage hooks refresh it
-      after a sync.
+    - 16i2d (done): completion offers every version, slot and repository from it; `refresh`,
+      which the portage hooks run after every emerge and sync, keeps it current.
   - 16i3: `search`, by name, or with `-S` by description, as `emerge --search`.
   - 16i4: pages for packages not installed in the living app, and search there.
 - 16j: the actions in the living app: updates picked, installs from search, orphans removed,

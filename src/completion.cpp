@@ -299,7 +299,8 @@ _egraph_complete() {
     local -a found categories options
     local ret=1
     [[ ${@[-1]} == atoms ]] || options=(--${@[-1]})
-    found=(${(f)"$(egraph complete $options -- "$PREFIX$SUFFIX" 2>/dev/null)"})
+    # Unquoted: a leading = must be typed as \= in zsh, which expands =word to a command's path.
+    found=(${(f)"$(egraph complete $options -- "${(Q)PREFIX}${(Q)SUFFIX}" 2>/dev/null)"})
     categories=(${(M)found:#*/})
     found=(${found:#*/})
     compadd "${@[1,-2]}" -S '' -a categories && ret=0

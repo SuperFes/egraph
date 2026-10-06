@@ -75,6 +75,9 @@ def test_egraph_hook_refreshes_the_store_after_an_emerge(mutable_playground):
     store = Path(playground.eprefix) / "var" / "cache" / "egraph" / "installed.egraph"
     # As portage runs it: its roots in the environment, the binary where meson installs it.
     env = {"ROOT": "/", "EPREFIX": playground.eprefix, "EGRAPH": EGRAPH}
+    # And the playground's repositories, which only its environment names.
+    with open(Path(playground.eprefix) / "etc" / "portage" / "repos.conf") as f:
+        env["PORTAGE_REPOSITORIES"] = f.read()
     result = run_dispatcher(playground.eroot, **env)
     assert result.returncode == 0, result.stderr
     assert store.exists()
@@ -105,12 +108,20 @@ def test_egraph_hook_refreshes_the_stores_after_a_sync(mutable_playground):
             layer = egraph_store.decode_evaluated(f.read())[2]
         return layer.package("dev-libs/lib-2").target
 
+    def lib_2_1_keywords():
+        with open(egraph_store.repository_path(store), "rb") as f:
+            index = egraph_store.decode_repository(f.read())[2]
+        (version,) = (v for v in index.versions if v.cpv == "dev-libs/lib-2.1")
+        return version.keywords
+
     assert lib_2_target() == ("dev-libs/lib-2.1", "test_repo")
+    assert lib_2_1_keywords() == ("x86",)
     edit_ebuild(
         playground, "test_repo", "dev-libs/lib-2.1", 'KEYWORDS="x86"', 'KEYWORDS="~x86"'
     )
     sync(playground, "test_repo")
     assert lib_2_target() is None
+    assert lib_2_1_keywords() == ("~x86",)
 
 
 def test_every_builder_module_is_installed():
