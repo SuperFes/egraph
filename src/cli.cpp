@@ -1583,24 +1583,37 @@ Exit confirm_and_carry_out(std::string_view name, bool yes, std::string_view que
     return Exit::ok;
 }
 
+// What emerge runs with once it has carried out a plan, given EMERGE_DEFAULT_OPTS' execution
+// options; nothing when empty.
+using Cleanup = std::function<std::vector<std::string>(const std::vector<std::string>& passed)>;
+
 // An action on targets once verified: asks unless yes, runs emerge with arguments(passed),
-// passed being EMERGE_DEFAULT_OPTS' execution options, and refreshes the stores after.
+// passed being EMERGE_DEFAULT_OPTS' execution options, then once it succeeds with cleanup's
+// arguments for the cleaned targets, and refreshes the stores after.
 template <class Arguments>
 Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
                      const std::vector<std::string>& targets, const Arguments& arguments,
                      const Store& store, Session& session, const Invocation& invocation,
-                     std::ostream& out, std::ostream& err) {
+                     std::ostream& out, std::ostream& err, const Cleanup& cleanup = {},
+                     const std::vector<std::string>& cleaned = {}) {
     return confirm_and_carry_out(
         name, yes, question, "emerge", true,
         [&](const RunSettings& settings) {
-            return run_handed_over(
-                {.command = std::string{name},
-                 .targets = targets,
-                 .program = "emerge",
-                 .argv = with_elog_system(
-                     emerge_command(invocation, arguments(execution_options(settings.defaults))),
-                     settings)},
-                invocation, out);
+            const auto passed = execution_options(settings.defaults);
+            const auto run = [&](const std::vector<std::string>& these,
+                                 const std::vector<std::string>& argv) {
+                return run_handed_over(
+                    {.command = std::string{name},
+                     .targets = these,
+                     .program = "emerge",
+                     .argv = with_elog_system(emerge_command(invocation, argv), settings)},
+                    invocation, out);
+            };
+            auto ran = run(targets, arguments(passed));
+            if (!cleanup || !ran || *ran != 0) {
+                return ran;
+            }
+            return run(cleaned, cleanup(passed));
         },
         store, session, invocation, out, err);
 }
@@ -1656,12 +1669,28 @@ Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
     return act_on_plan(
         name, yes, session, invocation, out, err, show, act,
         [&](const Shown& shown) {
+            // emerge's depclean uninstalls the slots the plan replaces, once it has merged.
+            std::vector<std::string> replaced;
+            for (const auto id : replaced_slots(shown.plan)) {
+                replaced.emplace_back(
+                    shown.store.get().string(shown.store.get().packages.at(id).cpv));
+            }
+            Cleanup cleanup;
+            if (!replaced.empty()) {
+                cleanup = [&](const std::vector<std::string>& passed) {
+                    return depclean_arguments(shown.request, replaced, passed);
+                };
+            }
+            std::vector<std::string> cleaned;
+            for (const auto& cpv : replaced) {
+                cleaned.push_back("=" + cpv);
+            }
             return confirm_and_run(
                 name, yes, question, shown.request.targets,
                 [&](const std::vector<std::string>& passed) {
                     return run_arguments(shown.request, oneshot, passed);
                 },
-                shown.store, session, invocation, out, err);
+                shown.store, session, invocation, out, err, cleanup, cleaned);
         },
         selecting);
 }

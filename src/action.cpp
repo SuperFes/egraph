@@ -225,6 +225,21 @@ std::vector<std::string> run_arguments(const EmergeRequest& request, bool onesho
     return arguments;
 }
 
+std::vector<std::string> depclean_arguments(const EmergeRequest& request,
+                                            std::span<const std::string> cpvs,
+                                            std::span<const std::string> passed) {
+    std::vector<std::string> arguments{"--ignore-default-opts", "--ask=n"};
+    arguments.insert(arguments.end(), passed.begin(), passed.end());
+    if (!request.dynamic_deps) {
+        arguments.emplace_back("--dynamic-deps=n");
+    }
+    arguments.emplace_back("--depclean");
+    for (const auto& cpv : cpvs) {
+        arguments.push_back("=" + cpv);
+    }
+    return arguments;
+}
+
 std::optional<Stop> stop_before_verifying(const Readiness& readiness) {
     if (readiness.refused) {
         return Stop::refused;

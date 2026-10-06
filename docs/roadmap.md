@@ -746,7 +746,7 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   gentoo-sources slot with a USE change was rebuilt where emerge leaves it. The `world-slots`
   scenario holds an old slot with a USE change, one with a newer version in it, and one a
   dependency reaches.
-- 16o: replacing an old slot, per package and opt-in (the user's preference for wine-vanilla):
+- 16o (done): replacing an old slot, per package and opt-in (the user's preference for wine-vanilla):
   when a set's atom naming no slot moves to a new slot, the run uninstalls the installed slots
   it leaves once the new one merges, if nothing else needs them. A list of atoms in an egraph
   configuration file, empty by default, so the default stays emerge's (an old kernel's sources
@@ -771,8 +771,10 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     `/lib/modules/<release>/build` (else `source`) link points to; every one when egraph-build
     fails. Asked on demand rather than stored: every package's CONTENTS is 124 MB on the dev box,
     0.47 s of each full build even from the page cache.
-  - 16o3: `exec` uninstalls a replaced slot as a step, the world file left alone;
-    `update`/`install` hand `emerge --depclean` the replaced versions once emerge succeeds.
+  - 16o3 (done): `exec` uninstalls a replaced slot as a step after its new slot's merge, the
+    world file left alone; `update`/`install` hand `emerge --depclean =cpv...` the replaced
+    versions once emerge succeeds, in the same run (its own logged hand-over), so emerge's
+    depclean has the last word on what still needs them. Held to each other on a playground.
 - 16p: emerge's "The following installed packages are masked" warning (requested 2026-10-05,
   for TeX Live's package.mask): each installed package the plan keeps whose installed metadata
   is masked, when emerge's graph reaches it or LICENSE masks it (`depgraph.py`'s

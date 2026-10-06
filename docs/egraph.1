@@ -506,6 +506,14 @@ but for its options that change only how emerge carries out a plan
 .BR \-\-quiet ", " \-\-nospinner ),
 read through
 .BR "egraph\-build \-\-emerge\-options" .
+When the plan replaces old slots
+.RB ( replace\-slots ,
+under
+.BR updates ),
+.B emerge \-\-depclean
+is then given each as
+.BI = cpv
+once emerge has merged, with the same options.
 Messages the ebuilds logged follow, read from what elog's
 .B save_summary
 module appended to its log while emerge ran (emerge's own
@@ -595,7 +603,8 @@ schedules them with
 .B \-\-merge\-wait\-scope
 holds): a build starts once nothing it reaches through what each package waits for
 is still to merge, a built package merges once no build runs, in the order the builds finished,
-and each package a blocker needs gone is uninstalled once the merges that need it gone are done.
+and each package a blocker needs gone, or old slot the plan replaces, is uninstalled once the
+merges that need it gone are done.
 A line is shown for each phase as it starts. With more than one job, what the builds print goes
 only to their logs, and a build starts beside others only while
 .B PORTAGE_TMPDIR

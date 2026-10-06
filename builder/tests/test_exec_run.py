@@ -142,6 +142,40 @@ def test_exec_merges_as_install_does(machines, before, args, facts):
     assert ran.stdout.count("\tmerged") + ran.stdout.count("\tuninstalled") >= 1
 
 
+# Each slot installs a file of its own.
+SLOTTED = 'S="${WORKDIR}"\nsrc_install() { insinto /usr/share/${PN}-${SLOT}; echo x > "${T}"/x; doins "${T}"/x; }\n'
+
+
+@pytest.fixture
+def slotted(gnupg_home, tmp_path):
+    """A package in two slots, the old one installed, its world atom naming neither."""
+    ebuilds = {
+        "app-misc/slotted-1": {**PLAIN, "SLOT": "1", "MISC_CONTENT": SLOTTED},
+        "app-misc/slotted-2": {**PLAIN, "SLOT": "2", "MISC_CONTENT": SLOTTED},
+    }
+    yield from over(ebuilds, tmp_path, world=["app-misc/slotted"])
+
+
+def test_a_replaced_slot_goes_as_install_has_emerge_depclean_it(
+    slotted, tmp_path, monkeypatch
+):
+    """exec uninstalls the old slot after the new one merges; install has emerge merge it, then
+    depclean the old one. Both leave the world atom."""
+    system, machine = slotted
+    listed = tmp_path / "replace-slots"
+    listed.write_text("app-misc/slotted\n")
+    monkeypatch.setenv("EGRAPH_REPLACE_SLOTS", str(listed))
+    ran = carried_out_as_install(
+        system, machine, ["app-misc/slotted-1"], ["-u", "app-misc/slotted"]
+    )
+    assert "app-misc/slotted-1\tuninstalled" in ran.stdout
+    assert not os.path.lexists(machine.path("var/db/pkg/app-misc/slotted-1"))
+    assert os.path.isdir(machine.path("var/db/pkg/app-misc/slotted-2"))
+    assert system.world() == ["app-misc/slotted"]
+    # install ran emerge twice, the second time its depclean of the old slot.
+    assert system.emerged()[-1][-2:] == ["--depclean", "=app-misc/slotted-1"]
+
+
 def test_egraph_exec_is_exec(machines, tmp_path):
     """Through a link named egraph-exec, the global options among the command's own."""
     system, machine = machines

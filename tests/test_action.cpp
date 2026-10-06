@@ -110,6 +110,24 @@ TEST_CASE("emerge carries out the request as verified, asking nothing") {
                                    "@set"});
 }
 
+TEST_CASE("emerge's depclean uninstalls the replaced slots, asking nothing") {
+    egraph::EmergeRequest request{.targets = {"@world"},
+                                  .update = true,
+                                  .deep = true,
+                                  .noreplace = false,
+                                  .rebuilds = egraph::UseRebuilds::all,
+                                  .dynamic_deps = true};
+    const std::vector<std::string> cpvs{"app-misc/wine-1", "sys-kernel/sources-2"};
+    const std::vector<std::string> jobs{"--jobs=4"};
+    CHECK(egraph::depclean_arguments(request, cpvs, jobs) ==
+          std::vector<std::string>{"--ignore-default-opts", "--ask=n", "--jobs=4", "--depclean",
+                                   "=app-misc/wine-1", "=sys-kernel/sources-2"});
+    request.dynamic_deps = false;
+    CHECK(egraph::depclean_arguments(request, cpvs, {}) ==
+          std::vector<std::string>{"--ignore-default-opts", "--ask=n", "--dynamic-deps=n",
+                                   "--depclean", "=app-misc/wine-1", "=sys-kernel/sources-2"});
+}
+
 TEST_CASE("an action stops before verifying for refusals, nothing, privileges, then a yes") {
     const Readiness ready{
         .refused = false, .empty = false, .writable = true, .yes = false, .can_ask = true};

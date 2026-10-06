@@ -67,6 +67,12 @@ struct RunSettings {
 [[nodiscard]] std::vector<std::string> run_arguments(const EmergeRequest& request, bool oneshot,
                                                      std::span<const std::string> passed);
 
+// emerge's options and arguments to uninstall the slots a carried-out request replaced, as its
+// depclean does, asking nothing: each cpv as =cpv, under the request's dynamic deps.
+[[nodiscard]] std::vector<std::string> depclean_arguments(const EmergeRequest& request,
+                                                          std::span<const std::string> cpvs,
+                                                          std::span<const std::string> passed);
+
 // What an action knows once its plan is shown.
 struct Readiness {
     bool refused = false;
