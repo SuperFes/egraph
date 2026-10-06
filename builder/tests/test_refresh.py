@@ -1,9 +1,12 @@
 """egraph refreshing its store through egraph-build as the system changes."""
 
 import os
+import queue
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 
 import portage
 import pytest
@@ -161,6 +164,49 @@ def test_refresh_brings_the_store_up_to_date_and_prints_nothing(system):
     assert egraph(system, "refresh").returncode == 0
     assert builds(system)[-1].startswith("--incremental --store ")
     assert query(system, "--no-refresh").stdout == expected(playground)
+
+
+def test_watch_refreshes_once_a_change_settles_and_stops_on_sigterm(system):
+    """egraph watch builds the stores, refreshes them after a merge lands, and ends cleanly on
+    SIGTERM."""
+    playground, store, builder, _ = system
+    process = subprocess.Popen(
+        [
+            EGRAPH,
+            "--store",
+            str(store),
+            "--config-root",
+            playground.eroot,
+            "--eprefix",
+            playground.eprefix,
+            "--builder",
+            str(builder),
+            "watch",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=dict(playground.settings.environ(), EGRAPH_STRICT="1"),
+    )
+    lines = queue.Queue()
+    threading.Thread(
+        target=lambda: [lines.put(line) for line in process.stderr], daemon=True
+    ).start()
+    try:
+        assert "egraph: watch: watching " in lines.get(timeout=120)
+        assert len(builds(system)) == 1
+        add_package(playground, "dev-libs/alt-b-1")
+        assert "egraph: watch: refreshed in " in lines.get(timeout=120)
+        assert builds(system)[-1].startswith("--incremental --store ")
+        # Current: a query has nothing to build.
+        assert query(system).stdout == expected(playground)
+        assert len(builds(system)) == 2
+        process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=30) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
 
 
 def test_a_refresh_right_after_a_change_writes_a_store_that_stays_current(system):

@@ -172,6 +172,37 @@ wait_for(std::span<Talk> talks,
          const std::optional<std::reference_wrapper<const Jobserver>>& jobserver = std::nullopt,
          std::optional<std::chrono::milliseconds> timeout = std::nullopt);
 
+// What Watcher::wait() found.
+struct Woken {
+    bool changed = false;
+    bool stop = false;
+};
+
+// Directories watched (inotify) for an entry created, deleted, moved, written or changing its
+// attributes, and for the directory itself going; and for a stop catch_stop_signals() caught.
+class Watcher {
+  public:
+    [[nodiscard]] static std::expected<Watcher, std::error_code> open();
+    // An error for a directory gone or unreadable, or beyond the watches the system allows.
+    [[nodiscard]] std::expected<void, std::error_code> add(const std::filesystem::path& directory);
+    // Waits until a watched directory changes, a stop is asked, or the timeout passes; a stop
+    // asked before is found at once, every time.
+    [[nodiscard]] std::expected<Woken, std::error_code>
+    wait(std::optional<std::chrono::milliseconds> timeout);
+
+  private:
+    explicit Watcher(Descriptor fd) : fd_{std::move(fd)} {}
+
+    Descriptor fd_;
+};
+
+// Hands the heap's free memory back to the system, for a process that stays up idle.
+void release_memory();
+
+// Has SIGTERM, SIGINT and SIGHUP ask Watchers to stop rather than end the process. Programs
+// started after keep their default handling.
+[[nodiscard]] std::expected<void, std::error_code> catch_stop_signals();
+
 // Whether this process could create or replace a file at path by renaming a new one over it:
 // the nearest existing directory above it is writable.
 bool can_create(const std::filesystem::path& path);

@@ -1004,6 +1004,14 @@ Rebuild the store from scratch.
 .SS refresh
 Bring the stores and the repository index up to date if what they were built from changed,
 printing nothing; the portage hooks run it after every emerge and sync.
+.SS watch
+Keep the stores and the repository index fresh until stopped (SIGTERM, SIGINT or SIGHUP): the
+directories holding what they were built from are watched, and once changes to them have
+settled (3 seconds without another, or a minute after the first), they are refreshed as
+.B refresh
+does. A refresh that fails is logged and tried again on the next change. The
+.B egraphd
+service runs it.
 .SS check
 Compare the store with a fresh build, exiting 4 when they differ.
 .SS affected

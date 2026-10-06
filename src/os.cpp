@@ -13,12 +13,14 @@
 #include <fstream>
 #include <langinfo.h>
 #include <limits>
+#include <malloc.h>
 #include <poll.h>
 #include <random>
 #include <ranges>
 #include <span>
 #include <spawn.h>
 #include <string_view>
+#include <sys/inotify.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -468,6 +470,102 @@ std::optional<std::expected<int, SpawnError>> Child::reap(bool block) {
         ended_ = std::unexpected(SpawnError{std::format("{}: stopped", name_)});
     }
     return ended_;
+}
+
+namespace {
+
+// What the stop handler touches, the only things a signal handler may: a flag, and a pipe that
+// wakes a Watcher's poll(2) whenever the signal comes. Globals, as a handler reaches nothing else.
+// NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables)
+volatile std::sig_atomic_t stop_asked = 0;
+int stop_read = -1;
+int stop_write = -1;
+// NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables)
+
+void on_stop(int /*signal*/) {
+    stop_asked = 1;
+    const char byte = 0;
+    // A full pipe has a byte waiting already.
+    [[maybe_unused]] const auto written = ::write(stop_write, &byte, 1);
+}
+
+std::error_code last_error() {
+    return {errno, std::generic_category()};
+}
+
+} // namespace
+
+void release_memory() {
+    ::malloc_trim(0);
+}
+
+std::expected<void, std::error_code> catch_stop_signals() {
+    if (stop_write >= 0) {
+        return {};
+    }
+    std::array<int, 2> ends{-1, -1};
+    if (::pipe2(ends.data(), O_CLOEXEC | O_NONBLOCK) != 0) {
+        return std::unexpected(last_error());
+    }
+    stop_read = ends.at(0);
+    stop_write = ends.at(1);
+    struct sigaction action{};
+    action.sa_handler = on_stop;
+    ::sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_RESTART;
+    for (const int signal : {SIGTERM, SIGINT, SIGHUP}) {
+        if (::sigaction(signal, &action, nullptr) != 0) {
+            return std::unexpected(last_error());
+        }
+    }
+    return {};
+}
+
+std::expected<Watcher, std::error_code> Watcher::open() {
+    const int fd = ::inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
+    if (fd < 0) {
+        return std::unexpected(last_error());
+    }
+    return Watcher{Descriptor{fd}};
+}
+
+std::expected<void, std::error_code> Watcher::add(const std::filesystem::path& directory) {
+    // Written files count once closed, not at every write.
+    constexpr std::uint32_t events = IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO |
+                                     IN_CLOSE_WRITE | IN_ATTRIB | IN_DELETE_SELF | IN_MOVE_SELF |
+                                     IN_ONLYDIR;
+    if (::inotify_add_watch(fd_.get(), directory.c_str(), events) < 0) {
+        return std::unexpected(last_error());
+    }
+    return {};
+}
+
+std::expected<Woken, std::error_code>
+Watcher::wait(std::optional<std::chrono::milliseconds> timeout) {
+    if (stop_asked != 0) {
+        return Woken{.changed = false, .stop = true};
+    }
+    std::array<pollfd, 2> watched{{{.fd = fd_.get(), .events = POLLIN, .revents = 0},
+                                   {.fd = stop_read, .events = POLLIN, .revents = 0}}};
+    int wait = -1;
+    if (timeout) {
+        wait = static_cast<int>(std::clamp<std::chrono::milliseconds::rep>(
+            timeout->count(), 0, std::numeric_limits<int>::max()));
+    }
+    // poll(2) skips a negative descriptor, as the pipe is before catch_stop_signals().
+    const auto events = ::poll(watched.data(), watched.size(), wait);
+    if (events < 0 && errno != EINTR) {
+        return std::unexpected(last_error());
+    }
+    Woken woken{.changed = false, .stop = stop_asked != 0};
+    if (events > 0 && watched.at(0).revents != 0) {
+        // What changed matters less than that something did: the refresh finds out.
+        std::array<std::byte, 16384> events_read{};
+        while (::read(fd_.get(), events_read.data(), events_read.size()) > 0) {
+        }
+        woken.changed = true;
+    }
+    return woken;
 }
 
 bool can_create(const std::filesystem::path& path) {

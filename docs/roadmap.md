@@ -852,14 +852,18 @@ and checking the stores costs 10–30 ms of a query (findings.md, 16k8) and a us
 current system store; the store files stay the shared interface. Read-only: nothing it does
 changes the system (the acting jobs, distfile prefetch and `egencache`, are vision items).
 
-- 17a: `egraphd` (a link to `egraph`, as `egraph-exec`), in the foreground for the init systems:
-  inotify on cheap signals, debounced, running the incremental refresh at low priority (nice,
-  ionice). Merges: the vdb's category directories and `/var/cache/edb/counter`; syncs: each
-  repository's `metadata/timestamp.chk` (or its `.git`); hand edits: `/etc/portage`,
-  recursively. Never the repositories' trees (20,000+ watches). inotify behind a value-typed
-  wrapper in `os.cpp`; the debounce and the signal-to-refresh mapping tested with fake events.
-  The hooks stay, for systems without the service: the refresh is locked and a no-op when
-  current.
+- 17a (done): `egraph watch`, which the `egraphd` services run (a command, not a link, as
+  multi-call names are `egraph-<command>`): the directories holding the stores' recorded inputs
+  watched with inotify (a directory input itself, the parent of any other: 6,219 on the dev
+  box, from 14,164 inputs), so that what it watches is exactly what freshness checks, never
+  the repositories' whole trees. Changes settle (3 s quiet, or a minute after the first) before
+  the refresh `refresh` runs; a refresh that fails is logged and retried after a minute,
+  doubling to an hour, or on the next change; one that leaves the stores stale (a change during
+  it) counts as a change. SIGTERM, SIGINT and SIGHUP end it with status 0, through a pipe the
+  handler writes (no signal mask, which the builder would inherit). The stores are let go
+  between refreshes: 13 MB idle. The loop is a template over its watcher and clock, tested with
+  fakes; the watcher (`os::Watcher`) on a real directory; the whole on a playground. The shell
+  and the interface refuse it. The hooks stay, for systems without the service.
 - 17b: the service: its own `egraph` user, in the `portage` group (the preserved-libs registry
   the notices read is root's and portage's), only `/var/cache/egraph` writable; a systemd unit
   (`ProtectSystem=strict`) and an OpenRC script, installed by meson; the ebuild's
@@ -874,7 +878,8 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
 - 17e: notifications, moved here from step 20: GLSAs matched against the store, a stale sync,
   broken soname dependencies after a merge, unread news, masked installed packages; in the
   status file and the log, and on the desktop through a user-side `egraph notify` (the service
-  cannot reach a user's session bus).
+  cannot reach a user's session bus): XDG desktop notifications (org.freedesktop.Notifications
+  over the session bus), started by an XDG autostart entry.
 - 17f: what a configuration edit did: on a change under `/etc/portage`, the plan before and
   after compared ("+4 rebuilds for USE=foo on media-libs/bar, 1 new, the plan now refuses: ..."),
   in the status file and as a notification. Linting proper stays step 18.

@@ -38,6 +38,7 @@
 #include "store.hpp"
 #include "tui.hpp"
 #include "visibility.hpp"
+#include "watch.hpp"
 
 #include <CLI/CLI.hpp>
 
@@ -272,6 +273,99 @@ Exit execute(const Refresh&, Session& session, const Invocation&, std::ostream&,
     }
     if (const auto index = session.repository(); !index) {
         err << "egraph: " << index.error() << '\n';
+        return Exit::failure;
+    }
+    return Exit::ok;
+}
+
+// A watcher on each directory, or on the nearest one above that exists, for an input not made
+// yet; one that cannot be read goes unwatched, as its inputs cannot change for this user either.
+std::expected<os::Watcher, std::string>
+watch_all(std::span<const std::filesystem::path> directories, std::size_t& unreadable) {
+    auto watcher = os::Watcher::open();
+    if (!watcher) {
+        return std::unexpected("inotify: " + watcher.error().message());
+    }
+    unreadable = 0;
+    for (const auto& directory : directories) {
+        for (auto at = directory;; at = at.parent_path()) {
+            const auto added = watcher->add(at);
+            if (added) {
+                break;
+            }
+            if (added.error() == std::errc::no_space_on_device) {
+                return std::unexpected(std::format(
+                    "inotify: more directories ({}) than fs.inotify.max_user_watches allows",
+                    directories.size()));
+            }
+            if (added.error() == std::errc::permission_denied) {
+                ++unreadable;
+                break;
+            }
+            if (!at.has_relative_path()) {
+                break;
+            }
+        }
+    }
+    return std::move(*watcher);
+}
+
+Exit execute(const Watch&, Session& session, const Invocation& invocation, std::ostream&,
+             std::ostream& err) {
+    if (const auto caught = os::catch_stop_signals(); !caught) {
+        err << "egraph: watch: " << caught.error().message() << '\n';
+        return Exit::failure;
+    }
+    using Clock = std::chrono::steady_clock;
+    bool first = true;
+    std::size_t unreadable = 0;
+    std::size_t reported = 0;
+    const auto refresh = [&]() -> std::expected<std::vector<std::filesystem::path>, std::string> {
+        const auto started = Clock::now();
+        session.reload();
+        const auto stores = session.stores();
+        if (!stores) {
+            return std::unexpected(stores.error());
+        }
+        const auto index = session.repository();
+        if (!index) {
+            return std::unexpected(index.error());
+        }
+        const std::array<std::span<const Input>, 3> layers{
+            stores->get().installed.inputs, stores->get().evaluated.inputs, index->get().inputs};
+        auto directories = watch_directories(layers);
+        // Nothing reads them until the next refresh.
+        session.reload();
+        const auto took = std::chrono::duration<double>(Clock::now() - started).count();
+        if (first) {
+            err << std::format("egraph: watch: watching {} directories for {}\n",
+                               directories.size(), session.used().string());
+            first = false;
+        } else {
+            err << std::format("egraph: watch: refreshed in {:.1f} s\n", took);
+        }
+        return directories;
+    };
+    const auto watch = [&](const std::vector<std::filesystem::path>& directories) {
+        auto watcher = watch_all(directories, unreadable);
+        if (watcher && unreadable != reported) {
+            err << std::format("egraph: watch: {} directories cannot be read, so go unwatched\n",
+                               unreadable);
+            reported = unreadable;
+        }
+        return watcher;
+    };
+    // Asked once after each refresh, the last to load the stores before a wait.
+    const auto stale = [&invocation] {
+        std::filesystem::path used;
+        const bool went_stale =
+            !current_stores(invocation, used) || !current_repository(invocation, used);
+        os::release_memory();
+        return went_stale;
+    };
+    const auto kept = keep_fresh(refresh, watch, stale, [] { return Clock::now(); }, err);
+    if (!kept) {
+        err << "egraph: watch: " << kept.error() << '\n';
         return Exit::failure;
     }
     return Exit::ok;
@@ -3081,6 +3175,9 @@ void configure(CLI::App& app, Invocation& invocation) {
     add_command<Refresh>(app, invocation,
                          "Bring the stores and the repository index up to date if their inputs "
                          "changed, printing nothing");
+    add_command<Watch>(app, invocation,
+                       "Keep the stores and the repository index fresh as their inputs change, "
+                       "until stopped");
     add_command<Check>(app, invocation, "Diff the store against a fresh build");
     CLI::App* complete_cmd = add_command<Complete>(
         app, invocation, "The words a shell completes a package argument to, from the stores");
@@ -3476,6 +3573,9 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
         std::holds_alternative<Shell>(command.command) ||
         std::holds_alternative<Tui>(command.command)) {
         return usage(std::format("already in the {}", where));
+    }
+    if (std::holds_alternative<Watch>(command.command)) {
+        return usage("watch runs on its own until stopped, as the egraphd service runs it");
     }
     // emerge would write over the interface's screen.
     if (context == Context::interface && (std::holds_alternative<Update>(command.command) ||

@@ -74,6 +74,13 @@ TEST_CASE("the stores stay the session's") {
     CHECK(ran.err.find("--root") != std::string::npos);
 }
 
+TEST_CASE("watch, which runs until stopped, runs on its own rather than from the shell") {
+    const auto ran = shell("match dev-libs/b\nwatch\n");
+    CHECK(ran.out == "dev-libs/b\tdev-libs/b-1\n");
+    CHECK(ran.err.find("egraph: shell: watch runs on its own") != std::string::npos);
+    CHECK(ran.exit == egraph::Exit::usage);
+}
+
 TEST_CASE("quit ends the shell, and help prints the usage") {
     const auto ran = shell("help\nquit\nmatch dev-libs/b\n");
     CHECK(ran.out.find("SUBCOMMANDS:") != std::string::npos);

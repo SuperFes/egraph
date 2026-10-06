@@ -149,6 +149,35 @@ TEST_CASE("free space is that of the nearest directory that exists") {
     CHECK(free == egraph::os::free_bytes(dir.path()));
 }
 
+TEST_CASE("a watcher wakes for an entry made, written or removed in a directory it watches") {
+    const egraph::test::TempDir dir;
+    std::filesystem::create_directory(dir.path() / "watched");
+    std::filesystem::create_directory(dir.path() / "other");
+    auto watcher = egraph::os::Watcher::open();
+    REQUIRE(watcher.has_value());
+    REQUIRE(watcher->add(dir.path() / "watched"));
+    CHECK_FALSE(watcher->add(dir.path() / "missing"));
+    const auto quiet = [&] {
+        const auto woken = watcher->wait(std::chrono::milliseconds{0});
+        REQUIRE(woken.has_value());
+        return !woken->changed && !woken->stop;
+    };
+    const auto changed = [&] {
+        const auto woken = watcher->wait(std::chrono::milliseconds{5000});
+        REQUIRE(woken.has_value());
+        return woken->changed;
+    };
+    CHECK(quiet());
+    egraph::test::write_text(dir.path() / "other/file", "x");
+    CHECK(quiet());
+    egraph::test::write_text(dir.path() / "watched/file", "x");
+    CHECK(changed());
+    // The events are drained: one wake for all that came.
+    CHECK(quiet());
+    std::filesystem::remove(dir.path() / "watched/file");
+    CHECK(changed());
+}
+
 TEST_CASE("appending under the file's lock adds to what is there, and makes it if need be") {
     const egraph::test::TempDir dir;
     const auto path = dir.path() / "a/b/log";
