@@ -240,6 +240,19 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   its dependencies, the cursor reaching them (`G`), another installed one opening its page. A
   refresh keeps the search and the listing, run again over the refreshed stores; the index
   itself is not looked at again while the interface is open.
+- It changes the system through egraph's own commands, so that every action is the command
+  line's: `space` picks packages in the list (by cpv, kept across refreshes while installed),
+  `U` updates them as `exec --oneshot -u -N` on their slots (every update, with none picked, as
+  `-D @installed`, the list's own plan), `r` removes them as `remove` (every orphan shown, with
+  none picked, under the list's `--with-bdeps`), and `i` installs a search result as `exec`
+  (the version under the cursor of a listing or page as `=cpv::repo`). The command first runs
+  in the session as a preview (`Invocation::preview`: shown in the human layout, stopped where
+  it would ask, `Exit::previewed`), drawn as a question; refusals, nothing to do, and missing
+  privileges are said instead. Confirmed, it runs as `egraph <command> --yes` with the global
+  options passed on, its output to `var/lib/egraph/interface.log`, and the emerge view opens on
+  it (exec's own snapshot). One runs at a time. Unlike a build job, dropping the run's job
+  detaches it, so quitting (which asks first) leaves it to finish. A failed run shows the end of
+  each failed package's log, from the failures exec records in its run state, and of its output.
 - The stores stay current while the interface is open. Every two seconds without a key
   (`stale_interval`), `run()` looks at their inputs as a query's freshness check does (a few
   milliseconds of `lstat`); once they changed, it opens current stores as a session would, in
@@ -271,8 +284,8 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
   its tasks under it with a spinner, kind, phase, elapsed time and, with `FEATURES=cgroup`, CPU
   parallelism and peak memory. The view reads them again every second (the screen's read takes a
   timeout, and a tick with no key is a key of its own), and not while a page covers it. A task
-  opens the page of its package's installed version. egraph only watches; it never starts an
-  emerge. Below the emerges, where the terminal has room, a panel graphs the system over the
+  opens the page of its package's installed version. Only the interface's own actions start
+  runs; other emerges are only watched. Below the emerges, where the terminal has room, a panel graphs the system over the
   last four minutes (`src/pressure.hpp`): CPU use between readings of `/proc/stat`, memory in
   use against `MemAvailable`, the one-minute load, and PSI's stall percentages when the kernel
   keeps them. Readings past steve's limits (load average, minimum available memory) are drawn

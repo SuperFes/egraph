@@ -974,6 +974,23 @@ adds descriptions) whose packages not installed open a listing of their versions
 .B :
 prompt taking these commands. It keeps the store current while it is open, and loads the
 repository index the first time it searches, building it where it is missing or stale.
+It also changes the system:
+.B space
+picks packages in the list,
+.B U
+updates them (every update with none picked) as
+.BR "exec \-\-oneshot \-u \-N" ,
+.B r
+removes them (every orphan shown with none picked) as
+.BR remove ,
+and
+.B i
+installs a search result, or the version under the cursor, as
+.BR exec .
+Each shows what its command would do and runs it once confirmed, beside the interface, in the
+emerge view; the run goes on if the interface quits. Its output goes to
+.IR ${ROOT}${EPREFIX}/var/lib/egraph/interface.log ,
+and a failed build shows the end of its log.
 .SS shell
 Commands read one per line from standard input, the stores loaded once; the global options that
 choose the stores are taken from the command line only.

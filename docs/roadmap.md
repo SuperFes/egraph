@@ -518,8 +518,10 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   - 16i4 (done): search in the living app (`s`, as `egraph search`, the index loaded or built
     in the background the first time), listings of packages not installed (their ebuild and
     every version with why it is masked), and versions on installed packages' pages.
-- 16j: the actions in the living app: updates picked, installs from search, orphans removed,
-  a confirmation, the run in the emerge view, a failure's log tail.
+- 16j (done): the actions in the living app: updates picked, installs from search, orphans
+  removed, a confirmation, the run in the emerge view, a failure's log tail. Each is egraph's
+  own command (`exec`, `remove`), previewed in the session and run beside the interface once
+  confirmed; exec's run state records each failure with its log.
 - 16k: egraph's own execution: `egraph exec` (`egraph-exec`, a link to `egraph`), which holds the
   order, the parallelism (with steve), priorities, failures and the display, and drives long-lived
   Python workers that call portage's public phase and merge functions; the ebuild machinery stays

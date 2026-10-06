@@ -691,6 +691,7 @@ void App::index() {
     if (indexed_ && !catalogue_) {
         catalogue_.emplace(installed(), evaluated(), *indexed_->index, indexed_->masks);
     }
+    std::erase_if(picked_, [this](const std::string& cpv) { return !find(cpv); });
 }
 
 void App::adopt(std::shared_ptr<const Stores> stores, Source source) {
@@ -959,6 +960,7 @@ bool App::typing() const {
 }
 
 void App::handle(const Key& key) {
+    const bool answering = dialog_.has_value();
     if (key.kind == KeyKind::closed) {
         done_ = true;
     } else if (key.kind == KeyKind::tick) {
@@ -969,11 +971,11 @@ void App::handle(const Key& key) {
                          checked_->stage == Checked::Stage::rebuilding)) {
             ++checked_->frame;
         }
-        if (refresh_requested() || index_requested()) {
+        if (refresh_requested() || index_requested() || running_) {
             ++frame_;
         }
     } else if (dialog_) {
-        dialog_.reset();
+        handle_dialog(key);
     } else if (prompt_) {
         handle_prompt(*prompt_, key);
     } else if (is(key, U':') && !typing()) {
@@ -999,6 +1001,162 @@ void App::handle(const Key& key) {
     } else {
         handle_list(key);
     }
+    if (done_ && running_ && key.kind != KeyKind::closed && !answering) {
+        done_ = false;
+        show({.error = false,
+              .title = "A run is going",
+              .lines = {"It goes on after egraph quits, in the emerge view of the next one.",
+                        "Quit?"},
+              .question = true});
+    }
+}
+
+void App::handle_dialog(const Key& key) {
+    if (!dialog_) {
+        return;
+    }
+    auto& dialog = *dialog_;
+    const auto last =
+        dialog.lines.size() > dialog_height_ ? dialog.lines.size() - dialog_height_ : 0;
+    if (last > 0 && is_move(key)) {
+        if (key.kind == KeyKind::up || is(key, U'k')) {
+            dialog.top -= std::min<std::size_t>(dialog.top, 1);
+        } else if (key.kind == KeyKind::down || is(key, U'j')) {
+            dialog.top = std::min(dialog.top + 1, last);
+        } else if (key.kind == KeyKind::page_up) {
+            dialog.top -= std::min(dialog.top, dialog_height_);
+        } else if (key.kind == KeyKind::page_down) {
+            dialog.top = std::min(dialog.top + dialog_height_, last);
+        } else if (key.kind == KeyKind::home || is(key, U'g')) {
+            dialog.top = 0;
+        } else {
+            dialog.top = last;
+        }
+        return;
+    }
+    if (!dialog.question) {
+        dialog_.reset();
+        return;
+    }
+    if (is(key, U'y') || is(key, U'Y')) {
+        dialog_.reset();
+        if (!confirming_) {
+            done_ = true;
+            return;
+        }
+        running_ = std::move(confirming_);
+        confirming_.reset();
+        picked_.clear();
+        // The run shows in the emerge view.
+        pages_.clear();
+        listing_.reset();
+        output_.reset();
+        search_.reset();
+        checked_.reset();
+        if (watched_) {
+            watched_->due = true;
+        } else {
+            watched_.emplace();
+        }
+    } else if (is(key, U'n') || is(key, U'N') || is(key, U'q') || is(key, U'Q') ||
+               key.kind == KeyKind::escape) {
+        dialog_.reset();
+        confirming_.reset();
+    }
+}
+
+void App::act(Action action) {
+    if (running_) {
+        show({.error = false,
+              .title = "A run is going",
+              .lines = {"One runs at a time; the emerge view shows this one."}});
+        return;
+    }
+    previewing_ = std::move(action);
+}
+
+void App::install(std::string_view cp, const PackageVersion& version) {
+    const auto cpv = std::format("{}-{}", cp, version.version);
+    if (!version.ebuild) {
+        show({.error = false,
+              .title = std::format("No repository holds {}", cpv),
+              .lines = {"Only an ebuild can be installed."}});
+        return;
+    }
+    act({.kind = Action::Kind::install,
+         .targets = {std::format("={}::{}", cpv, version.repo)},
+         .build_deps = true});
+}
+
+namespace {
+
+// Text's lines without the blank ones at its end.
+std::vector<std::string> trimmed_lines(std::string_view text) {
+    auto found = lines(text);
+    while (!found.empty() && found.back().empty()) {
+        found.pop_back();
+    }
+    return found;
+}
+
+} // namespace
+
+void App::finish_preview(const Preview& preview) {
+    auto action = std::move(previewing_);
+    previewing_.reset();
+    if (!action) {
+        return;
+    }
+    auto shown = trimmed_lines(preview.out);
+    const auto problems = trimmed_lines(preview.err);
+    if (!shown.empty() && !problems.empty()) {
+        shown.emplace_back();
+    }
+    shown.insert(shown.end(), problems.begin(), problems.end());
+    if (preview.ready) {
+        const auto title = std::format("Run egraph {}?", action_arguments(*action).front());
+        confirming_ = std::move(action);
+        show({.error = false, .title = title, .lines = std::move(shown), .question = true});
+    } else {
+        show({.error = !problems.empty(),
+              .title = problems.empty() ? "Nothing to do" : "It cannot run",
+              .lines = std::move(shown)});
+    }
+}
+
+void App::finish_run(RunResult result) {
+    auto action = std::move(running_);
+    running_.reset();
+    if (!action) {
+        return;
+    }
+    const auto command = std::format("egraph {}", action_arguments(*action).front());
+    if (!result) {
+        show({.error = true,
+              .title = std::format("{} could not start", command),
+              .lines = lines(result.error())});
+        return;
+    }
+    if (result->status == 0) {
+        show({.error = false, .title = std::format("{} finished", command), .lines = {}});
+        return;
+    }
+    std::vector<std::string> shown;
+    for (const auto& failure : result->failures) {
+        shown.push_back(failure.log.empty()
+                            ? std::format("{} failed", failure.cpv)
+                            : std::format("{} failed; its log, {}:", failure.cpv, failure.log));
+        for (const auto& line : failure.tail) {
+            shown.push_back(std::format("  {}", line));
+        }
+        shown.emplace_back();
+    }
+    shown.push_back(std::format("{} exited with status {}; its output, {}:", command,
+                                result->status, result->output));
+    for (const auto& line : result->tail) {
+        shown.push_back(std::format("  {}", line));
+    }
+    show({.error = true, .title = std::format("{} failed", command), .lines = std::move(shown)});
 }
 
 namespace {
@@ -1255,7 +1413,8 @@ void App::handle_steve(const Key& key) {
 }
 
 std::optional<std::chrono::milliseconds> App::refresh() const {
-    if (check_requested() || rebuild_requested() || refresh_requested() || index_requested()) {
+    if (check_requested() || rebuild_requested() || refresh_requested() || index_requested() ||
+        running_) {
         return wait_interval;
     }
     if (watched_ && pages_.empty()) {
@@ -1417,6 +1576,46 @@ void App::handle_list(const Key& key) {
         build_deps_ = !build_deps_;
         recompute();
         filter();
+    } else if (is(key, U' ')) {
+        if (list_.cursor.at < list_.shown.size()) {
+            const auto& store = this->store();
+            std::string cpv{store.string(store.packages.at(list_.shown.at(list_.cursor.at)).cpv)};
+            if (const auto at = std::ranges::find(picked_, cpv); at != picked_.end()) {
+                picked_.erase(at);
+            } else {
+                picked_.push_back(std::move(cpv));
+            }
+            move(list_.cursor, list_.shown.size(), {.kind = KeyKind::down, .code = 0}, height_);
+        }
+    } else if (is(key, U'U') && has_evaluated()) {
+        Action action{.kind = Action::Kind::update, .targets = {}, .build_deps = true};
+        for (const auto& cpv : picked_) {
+            if (const auto id = find(cpv)) {
+                const auto& pkg = store().packages.at(*id);
+                action.targets.push_back(
+                    std::format("{}:{}", store().string(pkg.cp), store().string(pkg.slot)));
+            }
+        }
+        act(std::move(action));
+    } else if (is(key, U'r')) {
+        Action action{.kind = Action::Kind::remove, .targets = {}, .build_deps = build_deps_};
+        if (picked_.empty() && list_.only == Only::orphans) {
+            for (const auto id : list_.shown) {
+                action.targets.push_back(
+                    std::format("={}", store().string(store().packages.at(id).cpv)));
+            }
+        }
+        for (const auto& cpv : picked_) {
+            action.targets.push_back(std::format("={}", cpv));
+        }
+        if (action.targets.empty()) {
+            show({.error = false,
+                  .title = "Nothing picked to remove",
+                  .lines = {
+                      "Pick packages with space, or show the orphans with o to remove them all."}});
+        } else {
+            act(std::move(action));
+        }
     } else if (key.kind == KeyKind::escape && !list_.query.empty()) {
         list_.query.clear();
         filter();
@@ -1637,6 +1836,12 @@ void App::handle_search(const Key& key) {
         search_.reset();
     } else if (is(key, U'/') || is(key, U's')) {
         search.typing = true;
+    } else if (is(key, U'i')) {
+        if (search.cursor.at < search.results.size()) {
+            act({.kind = Action::Kind::install,
+                 .targets = {search.results.at(search.cursor.at).cp},
+                 .build_deps = true});
+        }
     } else if (key.kind == KeyKind::enter || key.kind == KeyKind::right || is(key, U'l')) {
         if (search.cursor.at >= search.results.size()) {
             return;
@@ -1667,6 +1872,12 @@ void App::handle_listing(const Key& key) {
     } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace ||
                key.kind == KeyKind::left || is(key, U'h')) {
         listing_.reset();
+    } else if (is(key, U'i')) {
+        if (listing.cursor.at < listing.rows.size()) {
+            if (const auto& version = listing.rows.at(listing.cursor.at).version) {
+                install(listing.found.cp, *version);
+            }
+        }
     } else if (is_move(key)) {
         move_among(listing.cursor, version_stops(listing.rows), key, height_);
     }
@@ -1731,17 +1942,18 @@ void App::handle_page(const Key& key) {
     } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace) {
         pages_.pop_back();
     } else if (!on_link) {
-        // On a version: another installed one opens its page.
-        std::optional<std::uint32_t> installed;
+        // On a version: another installed one opens its page, and i installs it.
+        std::optional<PackageVersion> version;
         if (page.cursor.at < page.rows.size()) {
-            if (const auto& version = page.rows.at(page.cursor.at).version) {
-                installed = version->installed;
-            }
+            version = page.rows.at(page.cursor.at).version;
         }
+        const auto installed = version ? version->installed : std::nullopt;
         if (key.kind == KeyKind::left || is(key, U'h')) {
             pages_.pop_back();
         } else if (key.kind == KeyKind::enter && installed && *installed != page.package) {
             open(*installed);
+        } else if (is(key, U'i') && version) {
+            install(store().string(store().packages.at(page.package).cp), *version);
         } else if (is_move(key)) {
             move_on_page(page, key, height_);
         }

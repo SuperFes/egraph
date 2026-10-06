@@ -362,11 +362,15 @@ struct Checked {
 // How often the check view polls a build it waits for.
 inline constexpr std::chrono::milliseconds wait_interval{100};
 
-// A message over whatever is on screen, which the next key dismisses.
+// A message over whatever is on screen, which the next key dismisses; a question waits for y or
+// n. The move keys scroll one taller than the screen.
 struct Dialog {
     bool error = true;
     std::string title;
     std::vector<std::string> lines;
+    bool question = false;
+    // The first line shown.
+    std::size_t top = 0;
 };
 
 // A line of the plan view: a root set at depth 0, then the packages down the chain from it to
@@ -525,6 +529,14 @@ class App {
     // A command typed at the prompt, waiting for run() to answer it.
     [[nodiscard]] const std::optional<std::string>& command_requested() const { return command_; }
     void finish_command(const Answer& answer);
+    // The installed packages picked in the list, by cpv, for an update or a removal.
+    [[nodiscard]] const std::vector<std::string>& picked() const { return picked_; }
+    // An action waiting for run() to preview it, for a dialog to confirm.
+    [[nodiscard]] const std::optional<Action>& preview_requested() const { return previewing_; }
+    void finish_preview(const Preview& preview);
+    // The confirmed action, which run() starts and polls to its end.
+    [[nodiscard]] const std::optional<Action>& run_requested() const { return running_; }
+    void finish_run(RunResult result);
     // What the last command printed: rows of its tab-separated fields, each linked to the first
     // installed package a field names.
     struct Output {
@@ -562,6 +574,8 @@ class App {
     [[nodiscard]] bool can_unfold(const Row& row) const;
     // Rows the list or page has on screen; drawing sets it, and paging and scrolling use it.
     void set_height(std::size_t rows) { height_ = std::max<std::size_t>(rows, 1); }
+    // Lines a dialog has room for; drawing sets it, and scrolling uses it.
+    void set_dialog_height(std::size_t rows) { dialog_height_ = std::max<std::size_t>(rows, 1); }
 
   private:
     // Stores the app owns, the one its queries read, and that one's graph.
@@ -612,6 +626,11 @@ class App {
     void handle_output(Output& output, const Key& key);
     // The package with this cpv, if the store has it.
     [[nodiscard]] std::optional<std::uint32_t> find(std::string_view cpv) const;
+    // Has run() preview action, unless a run is going.
+    void act(Action action);
+    // Installs the version, which a repository must hold.
+    void install(std::string_view cp, const PackageVersion& version);
+    void handle_dialog(const Key& key);
 
     std::reference_wrapper<const Store> store_;
     std::reference_wrapper<const Store> installed_;
@@ -656,6 +675,12 @@ class App {
     std::optional<Planned> planned_;
     std::vector<Page> pages_;
     std::optional<Dialog> dialog_;
+    std::vector<std::string> picked_;
+    std::optional<Action> previewing_;
+    // The action the dialog asks to run; while a run goes, an empty one asks to quit.
+    std::optional<Action> confirming_;
+    std::optional<Action> running_;
+    std::size_t dialog_height_ = 1;
     std::optional<std::string> prompt_;
     std::optional<std::string> command_;
     std::optional<Output> output_;
@@ -722,6 +747,11 @@ void draw_title(S& screen, const App& app, unsigned width, const std::vector<Spa
     screen.fill_row(0, {.fg = palette::text, .bg = palette::crust});
     put_spans(screen, 0, 0, trail, width, palette::crust);
     std::vector<Span> badges;
+    if (const auto& action = app.run_requested()) {
+        badges.push_back({std::format(" {} egraph {} ", spinner_frame(app.frame(), glyph),
+                                      action_arguments(*action).front()),
+                          {.fg = palette::crust, .bg = palette::mauve, .bold = true}});
+    }
     if (app.refresh_requested()) {
         badges.push_back({std::format(" {} refreshing ", spinner_frame(app.frame(), glyph)),
                           {.fg = palette::overlay, .bg = palette::crust}});
@@ -856,6 +886,9 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
     if (!app.build_deps()) {
         title.push_back({"  run-time deps only", tone_pen(Tone::note)});
     }
+    if (!app.picked().empty()) {
+        title.push_back({std::format("  {} picked", app.picked().size()), tone_pen(Tone::choice)});
+    }
     if (list.only == Only::orphans && (store.roots.empty() || !app.kept().unresolved.empty())) {
         title.push_back(
             {std::format("  {} depclean would refuse to run", glyph.broken), tone_pen(Tone::bad)});
@@ -890,10 +923,12 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
         if (selected) {
             screen.fill_row(first + line, {.fg = std::nullopt, .bg = palette::surface});
         }
-        std::vector<Span> spans{marker(selected, glyph),
-                                keep_mark(app, id, glyph),
-                                broken_mark(app, id, glyph),
-                                {" ", {}}};
+        auto mark = marker(selected, glyph);
+        if (std::ranges::contains(app.picked(), store.string(store.packages.at(id).cpv))) {
+            mark.text = std::format(" {}{}", selected ? glyph.cursor : " ", glyph.good);
+        }
+        std::vector<Span> spans{
+            mark, keep_mark(app, id, glyph), broken_mark(app, id, glyph), {" ", {}}};
         std::ranges::move(cpv_spans(store.string(store.packages.at(id).cpv)),
                           std::back_inserter(spans));
         std::ranges::move(update_mark(app, id, glyph), std::back_inserter(spans));
@@ -925,7 +960,12 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
                                    {"c", "check"},
                                    {"e", "emerges"},
                                    {"q", "quit"},
-                                   {":", "command"}});
+                                   {":", "command"},
+                                   {"space", "pick"}});
+        if (app.has_evaluated()) {
+            hints.emplace_back("U", "update");
+        }
+        hints.emplace_back("r", "remove");
         draw_hints(screen, size.rows - 1, size.cols, hints);
     }
 }
@@ -1136,12 +1176,17 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
         }
         }
     }
-    draw_hints(screen, size.rows - 1, size.cols,
-               {{glyph.move, "move"},
-                {"space", "unfold"},
-                {glyph.enter, "open"},
-                {"esc", "back"},
-                {"q", "quit"}});
+    if (page.cursor.at < page.rows.size() && page.rows.at(page.cursor.at).version) {
+        draw_hints(screen, size.rows - 1, size.cols,
+                   {{glyph.move, "move"}, {"i", "install"}, {"esc", "back"}, {"q", "quit"}});
+    } else {
+        draw_hints(screen, size.rows - 1, size.cols,
+                   {{glyph.move, "move"},
+                    {"space", "unfold"},
+                    {glyph.enter, "open"},
+                    {"esc", "back"},
+                    {"q", "quit"}});
+    }
 }
 
 // A drift line's sign, as a glyph and what it means.
@@ -1431,7 +1476,8 @@ template <class S> void draw_search(S& screen, App& app, const Glyphs& glyph, Si
             {"q", "quit"},
             {":", "command"}};
         if (!search.results.empty()) {
-            hints.insert(hints.begin(), {{glyph.move, "move"}, {glyph.enter, "open"}});
+            hints.insert(hints.begin(),
+                         {{glyph.move, "move"}, {glyph.enter, "open"}, {"i", "install"}});
         }
         draw_hints(screen, size.rows - 1, size.cols, hints);
     }
@@ -1482,8 +1528,9 @@ template <class S> void draw_listing(S& screen, App& app, const Glyphs& glyph, S
             put_spans(screen, at, 3, {{row.text, tone_pen(Tone::note)}}, size.cols);
         }
     }
-    draw_hints(screen, size.rows - 1, size.cols,
-               {{glyph.move, "move"}, {"esc", "back"}, {"q", "quit"}, {":", "command"}});
+    draw_hints(
+        screen, size.rows - 1, size.cols,
+        {{glyph.move, "move"}, {"i", "install"}, {"esc", "back"}, {"q", "quit"}, {":", "command"}});
 }
 
 // text repeated count times.
@@ -1498,7 +1545,12 @@ void draw_dialog(S& screen, const Dialog& dialog, const Glyphs& glyph, Size size
     auto title_pen = tone_pen(dialog.error ? Tone::bad : Tone::heading);
     title_pen.bg = palette::mantle;
     title_pen.bold = true;
-    const std::string closing = " any key ";
+    const auto shown = std::min<std::size_t>(dialog.lines.size(), size.rows - 4);
+    const auto top = std::min(dialog.top, dialog.lines.size() - shown);
+    std::string closing = dialog.question ? " y yes  n no " : " any key ";
+    if (shown < dialog.lines.size()) {
+        closing = std::format(" {} scroll {}", glyph.move, closing.substr(1));
+    }
     std::string title = dialog.error ? std::format(" {} {} ", glyph.broken, dialog.title)
                                      : std::format(" {} ", dialog.title);
     std::size_t widest = columns(title) + columns(closing);
@@ -1507,36 +1559,35 @@ void draw_dialog(S& screen, const Dialog& dialog, const Glyphs& glyph, Size size
     }
     const auto width = std::min<std::size_t>(widest + 2, size.cols - 2);
     const auto inner = width - 2;
-    const auto shown = std::min<std::size_t>(dialog.lines.size(), size.rows - 4);
     const auto height = shown + 4;
-    const auto top = static_cast<unsigned>((size.rows - height) / 2);
+    const auto row = static_cast<unsigned>((size.rows - height) / 2);
     const auto left = static_cast<unsigned>((size.cols - width) / 2);
     const auto right = static_cast<unsigned>(left + width);
 
     title = clip(title, inner - 1);
-    put_spans(screen, top, left,
+    put_spans(screen, row, left,
               {{std::format("{}{}", glyph.frame.top_left, glyph.frame.across), edge},
                {title, title_pen},
                {std::format("{}{}", repeat(glyph.frame.across, inner - 1 - columns(title)),
                             glyph.frame.top_right),
                 edge}},
               right);
-    const auto blank = [&](unsigned row, std::string_view text) {
+    const auto blank = [&](unsigned at, std::string_view text) {
         const auto cut = clip(text, inner - 4);
-        put_spans(screen, row, left,
+        put_spans(screen, at, left,
                   {{std::string{glyph.frame.down}, edge},
                    {std::format("  {}{}", cut, std::string(inner - 2 - columns(cut), ' ')), body},
                    {std::string{glyph.frame.down}, edge}},
                   right);
     };
-    blank(top + 1, "");
+    blank(row + 1, "");
     for (std::size_t line = 0; line < shown; ++line) {
-        blank(top + 2 + static_cast<unsigned>(line), dialog.lines.at(line));
+        blank(row + 2 + static_cast<unsigned>(line), dialog.lines.at(top + line));
     }
-    blank(static_cast<unsigned>(top + height - 2), "");
+    blank(static_cast<unsigned>(row + height - 2), "");
     const auto key_room = std::min(columns(closing), inner - 1);
     put_spans(
-        screen, static_cast<unsigned>(top + height - 1), left,
+        screen, static_cast<unsigned>(row + height - 1), left,
         {{std::format("{}{}", glyph.frame.bottom_left,
                       repeat(glyph.frame.across, inner - 1 - key_room)),
           edge},
@@ -1861,8 +1912,21 @@ template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
         if (app.prompt() || app.command_requested()) {
             draw_prompt(screen, app, size);
         }
+        app.set_dialog_height(size.rows - 4);
         if (app.dialog()) {
             draw_dialog(screen, *app.dialog(), glyph, size);
+        } else if (const auto& action = app.preview_requested()) {
+            std::string command = "egraph";
+            for (const auto& word : action_arguments(*action)) {
+                command += ' ' + word;
+            }
+            draw_dialog(screen,
+                        {.error = false,
+                         .title = "Planning",
+                         .lines = {command},
+                         .question = false,
+                         .top = 0},
+                        glyph, size);
         }
     }
     screen.render();
@@ -1903,6 +1967,7 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
     std::optional<Job<RebuildResult>> rebuild;
     std::optional<Job<RefreshResult>> refresh;
     std::optional<Job<IndexResult>> index;
+    std::optional<Job<RunResult>> running;
     draw(screen, app, glyph);
     while (!app.done()) {
         const auto refreshed = poll(
@@ -1920,6 +1985,14 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
                                  "this egraph has no way to load the repository index"})});
             },
             [&](IndexResult result) { app.finish_index(std::move(result)); });
+        const auto ran = poll(
+            running, app.run_requested().has_value(),
+            [&] {
+                return services.run ? services.run(*app.run_requested())
+                                    : ready(RunResult{std::unexpected(
+                                          std::string{"this egraph has no way to run actions"})});
+            },
+            [&](RunResult result) { app.finish_run(std::move(result)); });
         bool found_stale = false;
         if (watches && !app.stale() && now() >= next_check) {
             next_check = now() + stale_interval;
@@ -1943,7 +2016,8 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
             },
             [&](RebuildResult result) { app.finish_rebuild(std::move(result)); });
         if (checked == Polled::finished || rebuilt == Polled::finished ||
-            refreshed == Polled::finished || indexed == Polled::finished || found_stale) {
+            refreshed == Polled::finished || indexed == Polled::finished ||
+            ran == Polled::finished || found_stale) {
             // Drawn below before any key is read.
         } else if (const auto change = app.steve_change_requested()) {
             app.finish_steve_change(services.set_steve
@@ -1955,6 +2029,12 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
                              services.steve ? services.steve() : std::nullopt,
                              services.merge_list ? services.merge_list()
                                                  : std::vector<emerge::Pending>{});
+        } else if (const auto& action = app.preview_requested()) {
+            app.finish_preview(services.preview
+                                   ? services.preview(*action)
+                                   : Preview{.ready = false,
+                                             .out = {},
+                                             .err = "this egraph has no way to run actions"});
         } else if (const auto& line = app.command_requested()) {
             app.finish_command(
                 services.command

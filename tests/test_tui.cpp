@@ -2344,3 +2344,301 @@ TEST_CASE("a log's tail is what a terminal would leave of its last lines") {
     CHECK(egraph::tui::plain_tail("", 3).empty());
     CHECK(egraph::tui::plain_tail("cut off \x1b[", 3) == Lines{"cut off "});
 }
+
+namespace {
+
+using egraph::tui::Action;
+
+std::string slot_atom(const egraph::tui::App& app, std::uint32_t id) {
+    const auto& pkg = app.store().packages.at(id);
+    return std::format("{}:{}", app.store().string(pkg.cp), app.store().string(pkg.slot));
+}
+
+// Previews the requested action as ready to run, and answers y.
+void confirm(egraph::tui::App& app) {
+    REQUIRE(app.preview_requested().has_value());
+    app.finish_preview({.ready = true, .out = "the plan\n\n", .err = ""});
+    app.handle(character(U'y'));
+}
+
+} // namespace
+
+TEST_CASE("space picks packages in the list, and U updates them, or every update") {
+    egraph::tui::App app{both(), true};
+    FakeScreen screen{12, 160, {}};
+    egraph::tui::draw(screen, app, ascii);
+    app.handle(character(U' '));
+    CHECK(app.picked() == std::vector<std::string>{"app-misc/a-1"});
+    CHECK(app.list().cursor.at == 1);
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(0), "1 picked"));
+    CHECK(screen.line(3).starts_with("  +"));
+    CHECK(screen.line(4).starts_with(" > "));
+    app.handle(character(U' '));
+    CHECK(app.picked().size() == 2);
+    // At the last row, the cursor stays to take the pick back.
+    app.handle(character(U' '));
+    CHECK(app.picked() == std::vector<std::string>{"app-misc/a-1"});
+
+    app.handle(character(U'U'));
+    REQUIRE(app.preview_requested().has_value());
+    CHECK(*app.preview_requested() ==
+          Action{.kind = Action::Kind::update, .targets = {slot_atom(app, 0)}, .build_deps = true});
+    app.finish_preview({.ready = true, .out = "the plan\n\n", .err = ""});
+    CHECK_FALSE(app.preview_requested().has_value());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->question);
+    CHECK(app.dialog()->title == "Run egraph exec?");
+    CHECK(app.dialog()->lines == std::vector<std::string>{"the plan"});
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "y yes  n no"));
+    // Any other key leaves the question up.
+    app.handle(character(U'x'));
+    CHECK(app.dialog().has_value());
+    app.handle(character(U'n'));
+    CHECK_FALSE(app.dialog().has_value());
+    CHECK_FALSE(app.run_requested().has_value());
+    CHECK(app.picked().size() == 1);
+
+    app.handle(key(KeyKind::home));
+    app.handle(character(U' '));
+    CHECK(app.picked().empty());
+    app.handle(character(U'U'));
+    CHECK(*app.preview_requested() ==
+          Action{.kind = Action::Kind::update, .targets = {}, .build_deps = true});
+}
+
+TEST_CASE("a preview with nothing to do, or that cannot run, only says so") {
+    egraph::tui::App app{both(), true};
+    app.handle(character(U'U'));
+    app.finish_preview({.ready = false, .out = "Nothing to merge.\n", .err = ""});
+    REQUIRE(app.dialog().has_value());
+    CHECK_FALSE(app.dialog()->error);
+    CHECK_FALSE(app.dialog()->question);
+    CHECK(app.dialog()->title == "Nothing to do");
+    app.handle(character(U'y'));
+    CHECK_FALSE(app.run_requested().has_value());
+
+    app.handle(character(U'U'));
+    app.finish_preview(
+        {.ready = false,
+         .out = "the plan\n",
+         .err = "egraph: exec: merging needs write access to /var/db/pkg; run egraph as root\n"});
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->error);
+    CHECK(app.dialog()->title == "It cannot run");
+    CHECK(app.dialog()->lines ==
+          std::vector<std::string>{
+              "the plan", "",
+              "egraph: exec: merging needs write access to /var/db/pkg; run egraph as root"});
+}
+
+TEST_CASE("a confirmed action runs in the emerge view, one at a time, and outlives quitting") {
+    egraph::tui::App app{both(), true};
+    FakeScreen screen{12, 160, {}};
+    app.handle(character(U' '));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    app.handle(key(KeyKind::escape));
+    app.handle(character(U'U'));
+    confirm(app);
+    REQUIRE(app.run_requested().has_value());
+    CHECK(app.run_requested()->kind == Action::Kind::update);
+    CHECK(app.picked().empty());
+    CHECK(app.watched().has_value());
+    CHECK(app.refresh() == egraph::tui::wait_interval);
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(0), "egraph exec"));
+
+    app.handle(key(KeyKind::escape));
+    app.handle(character(U'U'));
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "A run is going");
+    CHECK_FALSE(app.preview_requested().has_value());
+    app.handle(character(U'x'));
+
+    app.handle(character(U'q'));
+    CHECK_FALSE(app.done());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->question);
+    app.handle(character(U'n'));
+    CHECK_FALSE(app.done());
+    app.handle(character(U'q'));
+    app.handle(character(U'y'));
+    CHECK(app.done());
+}
+
+TEST_CASE("a finished run says so, and a failed one shows the end of each failure's log") {
+    egraph::tui::App app{both(), true};
+    FakeScreen screen{12, 160, {}};
+    app.handle(character(U'U'));
+    confirm(app);
+    app.finish_run(egraph::tui::RunOutcome{});
+    CHECK_FALSE(app.run_requested().has_value());
+    REQUIRE(app.dialog().has_value());
+    CHECK_FALSE(app.dialog()->error);
+    CHECK(app.dialog()->title == "egraph exec finished");
+    app.handle(character(U'x'));
+
+    app.handle(key(KeyKind::escape));
+    app.handle(character(U'U'));
+    confirm(app);
+    std::vector<std::string> tail;
+    for (int i = 1; i <= 12; ++i) {
+        tail.push_back(std::format("line {}", i));
+    }
+    app.finish_run(egraph::tui::RunOutcome{
+        .status = 1,
+        .failures = {{.cpv = "dev-libs/b-2", .log = "/var/tmp/b.log", .tail = tail},
+                     {.cpv = "app-misc/a-1", .log = "", .tail = {}}},
+        .output = "/var/lib/egraph/interface.log",
+        .tail = {"egraph: exec: dev-libs/b-2: compile failed"}});
+    REQUIRE(app.dialog().has_value());
+    const auto& dialog = *app.dialog();
+    CHECK(dialog.error);
+    CHECK(dialog.title == "egraph exec failed");
+    REQUIRE(dialog.lines.size() == 18);
+    CHECK(dialog.lines.at(0) == "dev-libs/b-2 failed; its log, /var/tmp/b.log:");
+    CHECK(dialog.lines.at(1) == "  line 1");
+    CHECK(dialog.lines.at(14) == "app-misc/a-1 failed");
+    CHECK(dialog.lines.at(16) ==
+          "egraph exec exited with status 1; its output, /var/lib/egraph/interface.log:");
+    CHECK(dialog.lines.at(17) == "  egraph: exec: dev-libs/b-2: compile failed");
+
+    // Taller than the screen: the move keys scroll it, any other key closes it.
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "scroll any key"));
+    CHECK(contains(screen.text(), "dev-libs/b-2 failed"));
+    app.handle(key(KeyKind::down));
+    CHECK(app.dialog()->top == 1);
+    app.handle(character(U'G'));
+    CHECK(app.dialog()->top == 18 - 8);
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "compile failed"));
+    CHECK_FALSE(contains(screen.text(), "dev-libs/b-2 failed;"));
+    app.handle(key(KeyKind::page_up));
+    CHECK(app.dialog()->top == 2);
+    app.handle(character(U'g'));
+    CHECK(app.dialog()->top == 0);
+    app.handle(character(U'x'));
+    CHECK_FALSE(app.dialog().has_value());
+}
+
+TEST_CASE("r removes the picked packages, or every orphan shown") {
+    const auto store = build_only();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    app.handle(character(U'r'));
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "Nothing picked to remove");
+    app.handle(character(U'x'));
+
+    app.handle(character(U'b'));
+    app.handle(character(U'o'));
+    app.handle(character(U'r'));
+    REQUIRE(app.preview_requested().has_value());
+    CHECK(*app.preview_requested() ==
+          Action{.kind = Action::Kind::remove, .targets = {"=dev-libs/b-1"}, .build_deps = false});
+    app.finish_preview({});
+    app.handle(character(U'x'));
+
+    app.handle(character(U'o'));
+    app.handle(character(U' '));
+    app.handle(character(U'b'));
+    app.handle(character(U'r'));
+    CHECK(*app.preview_requested() ==
+          Action{.kind = Action::Kind::remove, .targets = {"=app-misc/a-1"}, .build_deps = true});
+}
+
+TEST_CASE("i installs a search result, a listing's version, or a page's") {
+    egraph::tui::App app{shared(app_with_lib("1")), false};
+    app.handle(character(U's'));
+    app.finish_index(repository_index());
+    type(app, "tool");
+    app.handle(key(KeyKind::enter));
+    app.handle(character(U'i'));
+    REQUIRE(app.preview_requested().has_value());
+    CHECK(*app.preview_requested() == Action{.kind = Action::Kind::install,
+                                             .targets = {"app-misc/new-tool"},
+                                             .build_deps = true});
+    app.finish_preview({});
+    app.handle(character(U'x'));
+
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.listing().has_value());
+    app.handle(character(U'i'));
+    CHECK(app.preview_requested()->targets ==
+          std::vector<std::string>{"=app-misc/new-tool-1.0::overlay"});
+    app.finish_preview({});
+    app.handle(character(U'x'));
+
+    app.handle(key(KeyKind::escape));
+    app.handle(key(KeyKind::escape));
+    app.handle(key(KeyKind::escape));
+    // dev-libs/lib-1's page, its versions last.
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    app.handle(character(U'G'));
+    app.handle(character(U'i'));
+    CHECK(app.preview_requested()->targets ==
+          std::vector<std::string>{"=dev-libs/lib-3::test_repo"});
+}
+
+TEST_CASE("i on a version no repository holds says it cannot be installed") {
+    // x/other-1 is installed, but the index has no ebuild of it.
+    egraph::tui::App app{shared(app_with_lib("1")), false};
+    app.handle(character(U's'));
+    app.finish_index(repository_index());
+    app.handle(key(KeyKind::escape));
+    app.handle(character(U'u'));
+    app.handle(character(U'G'));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    REQUIRE(cpv_of(app, app.pages().back().package) == "x/other-1");
+    app.handle(character(U'G'));
+    app.handle(character(U'i'));
+    CHECK_FALSE(app.preview_requested().has_value());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "No repository holds x/other-1");
+}
+
+TEST_CASE("run previews an action once the screen says it plans, then runs it to its end") {
+    egraph::tui::App app{both(), true};
+    FakeScreen screen{12, 160, {character(U'U'), character(U'y'), key(KeyKind::tick)}};
+    std::string planning;
+    std::vector<Action> runs;
+    const egraph::tui::Services services{
+        .preview =
+            [&](const Action&) {
+                planning = screen.text();
+                return egraph::tui::Preview{.ready = true, .out = "the plan", .err = ""};
+            },
+        .run = [&](const Action& action) -> egraph::Job<egraph::tui::RunResult> {
+            runs.push_back(action);
+            return [polls = 0]() mutable -> std::optional<egraph::tui::RunResult> {
+                if (++polls < 3) {
+                    return std::nullopt;
+                }
+                return egraph::tui::RunOutcome{};
+            };
+        }};
+    egraph::tui::run(screen, app, ascii, services);
+    CHECK(contains(planning, "Planning"));
+    CHECK(contains(planning, "egraph exec --oneshot -u -N -D @installed"));
+    REQUIRE(runs.size() == 1);
+    CHECK(runs.front().kind == Action::Kind::update);
+    CHECK_FALSE(app.run_requested().has_value());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "egraph exec finished");
+}
+
+TEST_CASE("without a way to preview, an action says so") {
+    egraph::tui::App app{both(), true};
+    FakeScreen screen{12, 160, {character(U'U')}};
+    egraph::tui::run(screen, app, ascii, {});
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->error);
+    CHECK(app.dialog()->lines == std::vector<std::string>{"this egraph has no way to run actions"});
+}

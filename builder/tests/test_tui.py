@@ -13,7 +13,7 @@ import pytest
 from conftest import System, portdb, write_stores
 from egraph_build import installed, repository
 from egraph_build import store as egraph_store
-from test_build import add_package, fresh_vardb
+from test_build import add_package, age, fresh_vardb
 from test_refresh import builds, query, system  # noqa: F401 (a fixture)
 
 EGRAPH = os.environ.get("EGRAPH")
@@ -438,3 +438,68 @@ def test_tui_shows_the_merge_list_as_a_tree(gnupg_home, tmp_path):
             tmux(socket, "kill-server")
     finally:
         playground.cleanup()
+
+
+@pytest.fixture
+def merges(gnupg_home, tmp_path):
+    """A playground real merges happen in, with the worker's ebuilds."""
+    from test_exec_run import over
+    from test_worker import EBUILDS
+
+    yield from over(EBUILDS, tmp_path)
+
+
+def test_tui_removes_installs_and_shows_a_failed_build(merges, tmp_path):
+    """Each action previewed, confirmed and run beside the interface, as egraph remove and
+    egraph exec would run it; a failed build shows the end of its log."""
+    skip_without_tui()
+    system, machine = merges
+    # depclean refuses to run with @world empty.
+    machine.emerge("=app-misc/lib-1")
+    machine.emerge("-1 =app-misc/files-1")
+    age(system.playground.eroot)
+
+    socket = f"egraph-test-{os.getpid()}"
+    command = shlex.join(system.command("tui")) + "; echo EXIT=$?; sleep 30"
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "120", "-y", "30", command)
+    try:
+        wait_for(socket, " updates")
+        tmux(socket, "send-keys", "-t", "t", "o")
+        wait_for(socket, "1 orphans", "app-misc/files-1")
+        tmux(socket, "send-keys", "-t", "t", "r")
+        wait_for(socket, "Run egraph remove?", "1 package to remove", seconds=60)
+        tmux(socket, "send-keys", "-t", "t", "y")
+        wait_for(socket, "egraph remove finished", seconds=120)
+        assert not machine.installed("app-misc/files-1")
+
+        # The dialog, then the emerge view the run showed in.
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        tmux(socket, "send-keys", "-t", "t", "s", "needs", "Enter")
+        wait_for(socket, "1 found", "app-misc/needs", seconds=120)
+        tmux(socket, "send-keys", "-t", "t", "i")
+        wait_for(socket, "Run egraph exec?", "app-misc/needs", seconds=60)
+        tmux(socket, "send-keys", "-t", "t", "y")
+        wait_for(socket, "egraph exec finished", seconds=120)
+        assert machine.installed("app-misc/needs-1")
+
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        tmux(socket, "send-keys", "-t", "t", "s", "broken", "Enter")
+        wait_for(socket, "1 found", "app-misc/broken")
+        tmux(socket, "send-keys", "-t", "t", "i")
+        wait_for(socket, "Run egraph exec?", seconds=60)
+        tmux(socket, "send-keys", "-t", "t", "y")
+        wait_for(
+            socket,
+            "egraph exec failed",
+            "app-misc/broken-1 failed; its log",
+            "cannot compile",
+            seconds=120,
+        )
+        assert not machine.installed("app-misc/broken-1")
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")
