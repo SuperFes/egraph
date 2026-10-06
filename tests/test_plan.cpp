@@ -145,6 +145,78 @@ TEST_CASE("a slot nothing occupies is pulled in beside the installed one") {
                                    "new dev-lang/py-3.14.1 <- app-misc/slotty-2 dev-lang/py:3.14"});
 }
 
+TEST_CASE("-uD moves a dependency naming no slot to a newer slot beside the installed one") {
+    // As virtual/wine's || ( ... app-emulation/wine-vanilla[wow64(-)] ... ): a satisfied atom
+    // goes to its best visible version, whatever slot it is in.
+    const std::vector<std::pair<std::string, std::string>> dependents{
+        {"app-misc/plain-1", "app-misc/w"},
+        {"app-misc/either-1", "|| ( app-misc/z[abi] app-misc/z )"},
+        {"app-misc/stuck-1", "app-misc/v"},
+        {"app-misc/older-1", "app-misc/y"},
+        {"app-misc/ranged-1", "<app-misc/r-2"},
+        {"app-misc/pinned-1", "app-misc/p:1"}};
+    std::vector<Installed> installed{
+        {.cpv = "app-misc/w-1", .slot = "1"}, {.cpv = "app-misc/z-1", .slot = "1", .iuse = "abi"},
+        {.cpv = "app-misc/v-1", .slot = "1"}, {.cpv = "app-misc/y-3", .slot = "1"},
+        {.cpv = "app-misc/r-1", .slot = "1"}, {.cpv = "app-misc/p-1", .slot = "1"}};
+    std::vector<Available> available{
+        {.cpv = "app-misc/w-1", .slot = "1"},
+        {.cpv = "app-misc/w-2", .slot = "2"},
+        {.cpv = "app-misc/z-1", .slot = "1", .iuse = "abi"},
+        {.cpv = "app-misc/z-2", .slot = "2", .iuse = "abi"},
+        {.cpv = "app-misc/v-1", .slot = "1"},
+        // Nothing satisfies its dependency: emerge masks it and keeps v-1.
+        {.cpv = "app-misc/v-2", .deps = {{"RDEPEND", "app-misc/missing"}}, .slot = "2"},
+        // y-3 has no ebuild left, which emerge passes over for y-2 once that matched, unless
+        // y-3 is in its graph already as an argument.
+        {.cpv = "app-misc/y-2", .slot = "2"},
+        {.cpv = "app-misc/r-1", .slot = "1"},
+        {.cpv = "app-misc/r-2", .slot = "2"},
+        {.cpv = "app-misc/p-1", .slot = "1"},
+        {.cpv = "app-misc/p-2", .slot = "2"}};
+    std::vector<std::string> world;
+    for (const auto& [cpv, dep] : dependents) {
+        installed.push_back({.cpv = cpv, .deps = {{"RDEPEND", dep}}});
+        available.push_back({.cpv = cpv, .deps = {{"RDEPEND", dep}}});
+        world.push_back(cpv.substr(0, cpv.rfind('-')));
+    }
+    const auto system = make_system(installed, available, world);
+    const auto sorted = [](std::vector<std::string> lines) {
+        std::ranges::sort(lines);
+        return lines;
+    };
+    CHECK(sorted(plan(system, egraph::UseRebuilds::none,
+                      egraph::Targets{.scope = {}, .roots = true, .deep = true})) ==
+          std::vector<std::string>{
+              "new app-misc/w-2 <- app-misc/plain-1 app-misc/w",
+              "new app-misc/y-2 <- app-misc/older-1 app-misc/y",
+              "new app-misc/z-2 <- app-misc/either-1 app-misc/z",
+          });
+    // @installed: every installed package is an argument, y-3 too.
+    CHECK(sorted(plan(system)) == std::vector<std::string>{
+                                      "new app-misc/w-2 <- app-misc/plain-1 app-misc/w",
+                                      "new app-misc/z-2 <- app-misc/either-1 app-misc/z",
+                                  });
+    // Plain -u keeps a satisfied dependency.
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               egraph::Targets{.scope = {}, .roots = true, .deep = false})
+              .empty());
+}
+
+TEST_CASE(
+    "an argument whose new slot is masked falls back to the version an installed slot holds") {
+    const auto system = make_system(
+        {{.cpv = "app-misc/v-1", .slot = "1"}},
+        {{.cpv = "app-misc/v-1", .slot = "1"},
+         {.cpv = "app-misc/v-2", .deps = {{"RDEPEND", "app-misc/missing"}}, .slot = "2"}});
+    // Plain emerge reinstalls it, as it would had v-1 been the best version.
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/v"})) ==
+          std::vector<std::string>{"app-misc/v-1 -> app-misc/v-1"});
+    auto update = reinstall({"app-misc/v"});
+    update.selection = egraph::Selection::update;
+    CHECK(plan(system, egraph::UseRebuilds::none, update).empty());
+}
+
 TEST_CASE("a merge new in its slot lists its cp's installed packages in their other slots") {
     const auto system = make_system(
         {{.cpv = "app-misc/slotty-1",

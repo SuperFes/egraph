@@ -304,7 +304,12 @@ built with as
 .B emerge \-v
 shows it; a new package beside installed ones in other slots of its name is a new slot
 .RB ( new\-slot ,
-emerge's NS), with those installed versions. Then the installed packages it would uninstall for a blocker between them and a merge,
+emerge's NS), with those installed versions.
+With
+.BR \-D ,
+a dependency naming no slot goes to its best version as emerge's does, into a new slot beside
+the installed one when that is where the best version is.
+Then the installed packages it would uninstall for a blocker between them and a merge,
 and the old slots it replaces: those
 .I replace\-slots
 lists, which a world atom naming no slot leaves for a new one, uninstalled once the new slot

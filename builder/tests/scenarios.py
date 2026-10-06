@@ -1273,6 +1273,54 @@ SCENARIOS = {
         },
         "user_config": {"package.use": ("sys-kernel/sources symlink",)},
     },
+    # Dependencies naming no slot, each satisfied by an installed slot with a newer one
+    # available, as virtual/wine's wine-vanilla: -uD goes to the newer slot (w, and z through a
+    # ||), but not one nothing satisfies the dependency of (v), nor a lower one than an installed
+    # version kept as an argument (y-3, which has no ebuild: emerge passes over it otherwise),
+    # nor one the atom excludes (r).
+    "dep-slots": {
+        "world": [
+            "app-misc/plain",
+            "app-misc/either",
+            "app-misc/stuck",
+            "app-misc/older",
+            "app-misc/ranged",
+        ],
+        "ebuilds": {
+            "app-misc/w-1": {"EAPI": "8", "SLOT": "1"},
+            "app-misc/w-2": {"EAPI": "8", "SLOT": "2"},
+            "app-misc/z-1": {"EAPI": "8", "SLOT": "1", "IUSE": "abi"},
+            "app-misc/z-2": {"EAPI": "8", "SLOT": "2", "IUSE": "abi"},
+            "app-misc/v-1": {"EAPI": "8", "SLOT": "1"},
+            "app-misc/v-2": {"EAPI": "8", "SLOT": "2", "RDEPEND": "app-misc/missing"},
+            "app-misc/y-2": {"EAPI": "8", "SLOT": "2"},
+            "app-misc/r-1": {"EAPI": "8", "SLOT": "1"},
+            "app-misc/r-2": {"EAPI": "8", "SLOT": "2"},
+            "app-misc/plain-1": {"EAPI": "8", "RDEPEND": "app-misc/w"},
+            "app-misc/either-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( app-misc/z[abi] app-misc/z )",
+            },
+            "app-misc/stuck-1": {"EAPI": "8", "RDEPEND": "app-misc/v"},
+            "app-misc/older-1": {"EAPI": "8", "RDEPEND": "app-misc/y"},
+            "app-misc/ranged-1": {"EAPI": "8", "RDEPEND": "<app-misc/r-2"},
+        },
+        "installed": {
+            "app-misc/w-1": {"EAPI": "8", "SLOT": "1"},
+            "app-misc/z-1": {"EAPI": "8", "SLOT": "1", "IUSE": "abi"},
+            "app-misc/v-1": {"EAPI": "8", "SLOT": "1"},
+            "app-misc/y-3": {"EAPI": "8", "SLOT": "1"},
+            "app-misc/r-1": {"EAPI": "8", "SLOT": "1"},
+            "app-misc/plain-1": {"EAPI": "8", "RDEPEND": "app-misc/w"},
+            "app-misc/either-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( app-misc/z[abi] app-misc/z )",
+            },
+            "app-misc/stuck-1": {"EAPI": "8", "RDEPEND": "app-misc/v"},
+            "app-misc/older-1": {"EAPI": "8", "RDEPEND": "app-misc/y"},
+            "app-misc/ranged-1": {"EAPI": "8", "RDEPEND": "<app-misc/r-2"},
+        },
+    },
     # Every rule visibility follows: keywords (testing, missing, another arch's, negated, and
     # accepted by atoms of each specificity, by a wildcard, per repository and in the profile),
     # licenses (refused, accepted per package, by a group, conditional, in ||), masks and their

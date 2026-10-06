@@ -906,6 +906,62 @@ class Planner {
         return best;
     }
 
+    // What -uD moves node index of list to when what the plan holds satisfies it, appended to
+    // moves: for each atom naming no slot (within a ||, its first alternative satisfied), the
+    // best visible version when it is new in its slot, unless emerge's graph holds a match at
+    // least as high (an argument's installed package) or an installed match with a visible
+    // ebuild is higher; emerge passes over one without once an ebuild matched.
+    void slot_moves(const Tables& tables, std::span<const Node> list, std::size_t index,
+                    const std::vector<bool>& ok,
+                    std::vector<std::pair<std::uint32_t, std::string>>& moves) {
+        const auto& node = element(list, index);
+        if (node.type == NodeType::any_of || node.type == NodeType::all_of) {
+            for (std::size_t child = index + 1; child < list.size(); ++child) {
+                if (element(list, child).parent != index) {
+                    continue;
+                }
+                if (node.type == NodeType::all_of) {
+                    slot_moves(tables, list, child, ok, moves);
+                } else if (ok.at(child)) {
+                    slot_moves(tables, list, child, ok, moves);
+                    return;
+                }
+            }
+            return;
+        }
+        if (node.type != NodeType::atom) {
+            return;
+        }
+        const auto text = tables.string(node.atom);
+        const auto& wanted = atom(text);
+        if (!wanted || wanted->slot) {
+            return;
+        }
+        const auto best = best_match(*wanted);
+        if (!best) {
+            return;
+        }
+        const auto& candidate = evaluated().candidates.at(*best);
+        const auto cp = evaluated().string(candidate.cp);
+        const SlotKey key{std::string(cp), std::string(evaluated().string(candidate.slot))};
+        const auto to = version_of(evaluated().string(candidate.cpv), cp);
+        if (!to || taken_.contains(key) || installed_in(key)) {
+            return;
+        }
+        for (const auto id : tables.ids_in(node.matches)) {
+            const auto from = version_of(store().string(store().packages.at(id).cpv), cp);
+            if (!from) {
+                return;
+            }
+            const auto order = vercmp(*from, *to);
+            if ((argument(id) && order >= 0) ||
+                (evaluated().packages.at(id).visible && order > 0)) {
+                return;
+            }
+        }
+        moves.emplace_back(*best, std::string(text));
+    }
+
     [[nodiscard]] std::optional<std::uint32_t> installed_in(const SlotKey& key) const {
         for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
             const auto& pkg = store().packages.at(id);
@@ -1303,8 +1359,32 @@ class Planner {
                 const auto rank = emerge_rank(kind);
                 const auto list = nodes(item.member, kind);
                 const auto ok = satisfied_nodes(tables, list);
+                // An installed package's build-time dependencies emerge passes over.
+                const bool moves =
+                    deep() && (item.member.candidate ||
+                               (reached(item.member.index) && dep_kinds.at(kind) != "DEPEND" &&
+                                dep_kinds.at(kind) != "BDEPEND"));
                 for (std::size_t i = 0; i < list.size(); ++i) {
-                    if (element(list, i).parent != no_parent || ok.at(i)) {
+                    if (element(list, i).parent != no_parent) {
+                        continue;
+                    }
+                    if (ok.at(i)) {
+                        if (!moves) {
+                            continue;
+                        }
+                        std::vector<std::pair<std::uint32_t, std::string>> found;
+                        slot_moves(tables, list, i, ok, found);
+                        for (auto& [candidate, text] : found) {
+                            place(candidate);
+                            reached_pulls.emplace_back(rank, false, candidate);
+                            pulled_.push_back(
+                                {.candidate = candidate,
+                                 .by = Reason{.member = item.member, .atom = std::move(text)},
+                                 .named_by = {},
+                                 .root = item.root});
+                            work.push_back({.member = {.candidate = true, .index = candidate},
+                                            .root = item.root});
+                        }
                         continue;
                     }
                     // Plain -u only checks that a kept package's dependencies stay satisfied:
@@ -1401,19 +1481,31 @@ class Planner {
     }
 
     // Moves argument root's pull on from its backtracked candidate to the next best version, new
-    // in its slot; false, the argument refused, when there is none.
+    // in its slot; false when there is none, the argument refused, or when the next is in an
+    // installed slot, which takes it as select() has it: plain emerge reinstalls, -u only moves
+    // up.
     bool fall_back(std::uint32_t root, std::uint32_t& candidate) {
         const auto& atom = args_.at(root).atom;
         const auto next = atom ? best_match(*atom) : std::nullopt;
-        if (next) {
-            const auto& c = evaluated().candidates.at(*next);
-            if (!installed_in({std::string(evaluated().string(c.cp)),
-                               std::string(evaluated().string(c.slot))})) {
-                candidate = *next;
-                return true;
+        if (!next) {
+            refused_.insert(root);
+            return false;
+        }
+        const auto& c = evaluated().candidates.at(*next);
+        const auto cp = evaluated().string(c.cp);
+        const auto id = installed_in({std::string(cp), std::string(evaluated().string(c.slot))});
+        if (!id) {
+            candidate = *next;
+            return true;
+        }
+        if (!choices_.at(*id).wanted) {
+            const auto from = version_of(store().string(store().packages.at(*id).cpv), cp);
+            const auto to = version_of(evaluated().string(c.cpv), cp);
+            if (targets_ref_.get().selection != Selection::update ||
+                (from && to && vercmp(*to, *from) > 0)) {
+                needed_.emplace(*id, *next);
             }
         }
-        refused_.insert(root);
         return false;
     }
 
