@@ -16,8 +16,18 @@ namespace egraph {
 enum class CompletionShell : std::uint8_t { bash, zsh, fish };
 
 // What an option or argument takes, from its type name: nothing (a flag), any text, a directory,
-// a file, a command, an installed package, or one of fixed choices.
-enum class Takes : std::uint8_t { nothing, text, directory, file, command, package, choice };
+// a file, a command, an installed package, an atom or set, a repository, or one of fixed choices.
+enum class Takes : std::uint8_t {
+    nothing,
+    text,
+    directory,
+    file,
+    command,
+    package,
+    atom,
+    repository,
+    choice
+};
 
 // An option ("-t" and "--table"), or with no names a command's positional argument.
 struct Completable {
@@ -44,7 +54,7 @@ struct Completions {
 [[nodiscard]] Completions completions(const CLI::App& app);
 
 // The script shell loads to complete egraph's command line: its commands, options, their fixed
-// choices, and installed packages from the vdb under ${ROOT}.
+// choices, and packages and repositories through egraph complete.
 [[nodiscard]] std::string completion_script(const Completions& completions, CompletionShell shell);
 
 } // namespace egraph

@@ -490,6 +490,18 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   loads the stores without a freshness check: every cp in the repositories (the vdb alone offers
   too little to be useful), names without their category, versions after `=`, slots after `:`,
   and sets.
+  - 16i1 (done): `egraph complete`, hidden, for the scripts: the repositories' cps from the
+    evaluated store, versions and slots of what the stores hold, repositories after `::`; the
+    `ATOM` and `REPOSITORY` arguments apart from installed `PACKAGE`s.
+  - 16i2: the repository index (`repository.egraph`): per cp its description, per version its
+    slot, KEYWORDS, LICENSE and EAPI, with the configuration that decides visibility as portage
+    parsed it (ACCEPT_KEYWORDS and package.accept_keywords, ACCEPT_LICENSE with its groups
+    expanded and package.license, the profiles' and the user's package.mask and package.unmask).
+    Visibility is evaluated in C++, shadowed against portage's on every version of every
+    scenario and the live system. Incremental on sync, re-reading only the changed categories.
+    Completion offers every version from it.
+  - 16i3: `search`, by name, or with `-S` by description, as `emerge --search`.
+  - 16i4: pages for packages not installed in the living app, and search there.
 - 16j: the actions in the living app: updates picked, installs from search, orphans removed,
   a confirmation, the run in the emerge view, a failure's log tail.
 - 16k: egraph's own execution: `egraph exec` (`egraph-exec`, a link to `egraph`), which holds the

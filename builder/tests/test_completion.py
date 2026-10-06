@@ -1,6 +1,7 @@
 """The generated completion scripts, loaded by the shells themselves."""
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -8,11 +9,14 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import write_stores
 
 COMPLETIONS = os.environ.get("EGRAPH_COMPLETIONS")
+EGRAPH = os.environ.get("EGRAPH")
 
 pytestmark = pytest.mark.skipif(
-    not COMPLETIONS, reason="set EGRAPH_COMPLETIONS to the directory with the scripts"
+    not COMPLETIONS or not EGRAPH,
+    reason="set EGRAPH_COMPLETIONS to the directory with the scripts and EGRAPH to egraph",
 )
 
 
@@ -22,40 +26,42 @@ def needs(shell):
 
 
 @pytest.fixture
-def root(tmp_path):
-    """A root whose vdb holds a few packages, versions of every shape among them."""
-    for cpv in [
-        "dev-libs/openssl-3.4.0",
-        "dev-libs/openssl-3.5.0-r1",
-        "app-misc/foo-bar-1.0_rc2_p3",
-        "media-fonts/font-adobe-100dpi-1.0.4",
-    ]:
-        (tmp_path / "var/db/pkg" / cpv).mkdir(parents=True)
-    return tmp_path
+def env(playgrounds, tmp_path):
+    """What a shell completes in: egraph first in PATH, its stores the repository scenario's."""
+    store = tmp_path / "installed.egraph"
+    write_stores(playgrounds("repository"), store)
+    path = os.path.dirname(os.path.abspath(EGRAPH)) + os.pathsep + os.environ["PATH"]
+    return {"PATH": path, "EGRAPH_STORE": str(store), "HOME": str(tmp_path)}
 
 
-def bash(words, root):
+def bash(words, env):
+    """COMPREPLY for the line of words, split at = and : as COMP_WORDBREAKS splits it."""
     script = Path(COMPLETIONS) / "egraph.bash"
-    words = " ".join(shlex.quote(word) for word in words)
+    line = " ".join(words)
+    split = [part for word in words for part in re.split(r"([=:]+)", word) if part]
+    if words[-1] == "":
+        split.append("")
+    quoted = " ".join(shlex.quote(word) for word in split)
     result = subprocess.run(
         [
             "bash",
             "--norc",
             "--noprofile",
             "-c",
-            f"source {shlex.quote(str(script))}; COMP_WORDS=({words}); "
-            f"COMP_CWORD=$((${{#COMP_WORDS[@]}} - 1)); _egraph 2>/dev/null; "
+            f"source {shlex.quote(str(script))}; COMP_WORDS=({quoted}); "
+            f"COMP_CWORD=$((${{#COMP_WORDS[@]}} - 1)); COMP_LINE={shlex.quote(line)}; "
+            "COMP_POINT=${#COMP_LINE}; _egraph 2>/dev/null; "
             'printf "%s\\n" "${COMPREPLY[@]}"',
         ],
         capture_output=True,
         text=True,
         check=True,
-        env={"PATH": os.environ["PATH"], "ROOT": str(root)},
+        env=env,
     )
     return sorted(line for line in result.stdout.splitlines() if line)
 
 
-def fish(line, root):
+def fish(line, env):
     script = Path(COMPLETIONS) / "egraph.fish"
     result = subprocess.run(
         [
@@ -67,47 +73,71 @@ def fish(line, root):
         capture_output=True,
         text=True,
         check=True,
-        env={"PATH": os.environ["PATH"], "ROOT": str(root), "HOME": str(root)},
+        env=env,
     )
     return sorted(line.split("\t")[0] for line in result.stdout.splitlines() if line)
 
 
-def test_bash_completes_commands_options_values_and_packages(root):
+def test_bash_completes_commands_options_values_and_packages(env):
     needs("bash")
-    assert "updates" in bash(["egraph", "up"], root)
-    assert bash(["egraph", "--la"], root) == ["--layout"]
-    assert bash(["egraph", "--layout", "h"], root) == ["human"]
+    assert "updates" in bash(["egraph", "up"], env)
+    assert bash(["egraph", "--la"], env) == ["--layout"]
+    assert bash(["egraph", "--layout", "h"], env) == ["human"]
     # A global option's value is not the command.
-    assert bash(["egraph", "--store", "x", "wh"], root) == ["why"]
-    assert bash(["egraph", "updates", "--t"], root) == ["--table", "--tree"]
-    assert "--root" not in bash(["egraph", "updates", "--"], root)
-    assert bash(["egraph", "why", "--with-bdeps", ""], root) == ["n", "y"]
-    assert bash(["egraph", "why", ""], root) == [
-        "app-misc/foo-bar",
-        "dev-libs/openssl",
-        "media-fonts/font-adobe-100dpi",
+    assert bash(["egraph", "--store", "x", "wh"], env) == ["why"]
+    assert bash(["egraph", "updates", "--t"], env) == ["--table", "--tree"]
+    assert "--root" not in bash(["egraph", "updates", "--"], env)
+    assert bash(["egraph", "why", "--with-bdeps", ""], env) == ["n", "y"]
+    assert bash(["egraph", "why", ""], env) == ["app-misc/", "dev-libs/"]
+    assert bash(["egraph", "rdeps", "dev-libs/"], env) == [
+        "dev-libs/lib",
+        "dev-libs/new",
+        "dev-libs/old",
     ]
-    assert bash(["egraph", "rdeps", "dev-libs/o"], root) == ["dev-libs/openssl"]
-    assert bash(["egraph", "soname", ""], root) == []
+    assert bash(["egraph", "rdeps", "dev-libs/lib-"], env) == [
+        "dev-libs/lib-1",
+        "dev-libs/lib-2",
+    ]
+    assert bash(["egraph", "soname", ""], env) == []
+    # Packages only the repositories have, and names without their category.
+    assert bash(["egraph", "install", "www-apps/"], env) == [
+        "www-apps/helper",
+        "www-apps/unused",
+    ]
+    assert bash(["egraph", "install", "unu"], env) == ["unused"]
+    assert bash(["egraph", "install", "@w"], env) == ["@world"]
+    assert bash(["egraph", "sync", ""], env) == ["overlay", "test_repo"]
+    # bash replaces only what follows the = or :, its own word.
+    assert bash(["egraph", "install", "=dev-libs/lib-2"], env) == [
+        "dev-libs/lib-2",
+        "dev-libs/lib-2.1",
+    ]
+    assert bash(["egraph", "install", "dev-libs/lib:"], env) == [":1", ":2"]
 
 
-def test_fish_completes_commands_options_values_and_packages(root):
+def test_fish_completes_commands_options_values_and_packages(env):
     needs("fish")
-    assert "updates" in fish("egraph up", root)
-    assert fish("egraph --layout h", root) == ["human"]
-    assert fish("egraph --store x wh", root) == ["why"]
-    assert fish("egraph updates --t", root) == ["--table", "--tree"]
-    assert "--root" not in fish("egraph updates --", root)
-    assert fish("egraph why --with-bdeps ", root) == ["n", "y"]
-    assert fish("egraph why ", root) == [
-        "app-misc/foo-bar",
-        "dev-libs/openssl",
-        "media-fonts/font-adobe-100dpi",
+    assert "updates" in fish("egraph up", env)
+    assert fish("egraph --layout h", env) == ["human"]
+    assert fish("egraph --store x wh", env) == ["why"]
+    assert fish("egraph updates --t", env) == ["--table", "--tree"]
+    assert "--root" not in fish("egraph updates --", env)
+    assert fish("egraph why --with-bdeps ", env) == ["n", "y"]
+    assert fish("egraph why ", env) == ["app-misc/", "dev-libs/"]
+    assert fish("egraph soname ", env) == []
+    assert fish("egraph install www-apps/u", env) == ["www-apps/unused"]
+    assert fish("egraph install =dev-libs/lib-2", env) == [
+        "=dev-libs/lib-2",
+        "=dev-libs/lib-2.1",
     ]
-    assert fish("egraph soname ", root) == []
+    assert fish("egraph install dev-libs/lib:", env) == [
+        "dev-libs/lib:1",
+        "dev-libs/lib:2",
+    ]
+    assert fish("egraph sync o", env) == ["overlay"]
 
 
-def test_zsh_completes_commands_options_values_and_packages(root, tmp_path):
+def test_zsh_completes_commands_options_values_and_packages(env, tmp_path):
     needs("zsh")
     if not shutil.which("tmux"):
         pytest.skip("needs tmux")
@@ -136,8 +166,18 @@ def test_zsh_completes_commands_options_values_and_packages(root, tmp_path):
             time.sleep(0.1)
         raise AssertionError(f"{text!r} never appeared:\n{screen}")
 
-    env = f"env -i PATH={shlex.quote(os.environ['PATH'])} TERM=xterm ROOT={shlex.quote(str(root))}"
-    tmux("new-session", "-d", "-s", "t", "-x", "120", "-y", "30", f"{env} zsh -f -i")
+    variables = " ".join(f"{name}={shlex.quote(value)}" for name, value in env.items())
+    tmux(
+        "new-session",
+        "-d",
+        "-s",
+        "t",
+        "-x",
+        "120",
+        "-y",
+        "30",
+        f"env -i TERM=xterm {variables} zsh -f -i",
+    )
     try:
         tmux(
             "send-keys",
@@ -153,7 +193,8 @@ def test_zsh_completes_commands_options_values_and_packages(root, tmp_path):
         screen_after("egraph --layout h", "egraph --layout human")
         screen = screen_after("egraph updates --t", "--tree")
         assert "--table" in screen
-        screen_after("egraph why dev-libs/o", "egraph why dev-libs/openssl")
-        screen_after("egraph why media-fonts/f", "media-fonts/font-adobe-100dpi")
+        screen_after("egraph why dev-libs/o", "egraph why dev-libs/old")
+        screen_after("egraph install www-apps/u", "egraph install www-apps/unused")
+        screen_after("egraph install dev-libs/lib:", "dev-libs/lib:2")
     finally:
         tmux("kill-server")

@@ -274,6 +274,17 @@ TEST_CASE("select and deselect take atoms and --yes") {
     CHECK_THROWS(parse("deselect --dynamic-deps n a/b"));
 }
 
+TEST_CASE("complete takes what it completes and the word, which may be empty") {
+    const auto atoms = std::get<egraph::Complete>(parse("complete -- =a/b-1").command);
+    CHECK(atoms.what == egraph::Completing::atoms);
+    CHECK(atoms.word == "=a/b-1");
+    const auto installed = std::get<egraph::Complete>(parse("complete --installed").command);
+    CHECK(installed.what == egraph::Completing::installed);
+    CHECK(installed.word.empty());
+    CHECK(std::get<egraph::Complete>(parse("complete --repositories g").command).what ==
+          egraph::Completing::repositories);
+}
+
 TEST_CASE("emerge runs, and EMERGE_DEFAULT_OPTS is read, under the same roots") {
     egraph::Invocation invocation;
     invocation.builder = "egraph-build";

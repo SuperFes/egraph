@@ -37,6 +37,12 @@ Takes takes_of(const CLI::Option& option, std::vector<std::string>& choices) {
     if (base == "PACKAGE") {
         return Takes::package;
     }
+    if (base == "ATOM") {
+        return Takes::atom;
+    }
+    if (base == "REPOSITORY") {
+        return Takes::repository;
+    }
     return Takes::text;
 }
 
@@ -94,9 +100,24 @@ std::string alternatives(const Completable& option) {
     return joined(option.names, "|");
 }
 
-// Strips a vdb entry's version, leaving its cp; POSIX ERE, so bash and zsh read it alike.
-constexpr std::string_view version_pattern =
-    "^(.+)-[0-9][0-9.]*[a-z]?(_(alpha|beta|pre|rc|p)[0-9]*)*(-r[0-9]+)?$";
+// egraph complete's option for what takes, which the scripts pass on.
+std::string_view complete_option(Takes takes) {
+    switch (takes) {
+    case Takes::package:
+        return " --installed";
+    case Takes::repository:
+        return " --repositories";
+    case Takes::nothing:
+    case Takes::text:
+    case Takes::directory:
+    case Takes::file:
+    case Takes::command:
+    case Takes::atom:
+    case Takes::choice:
+        break;
+    }
+    return "";
+}
 
 // bash: the line filling COMPREPLY with the words that start with $cur.
 std::string bash_words(const std::vector<std::string>& words) {
@@ -114,7 +135,9 @@ std::string bash_values(Takes takes, const std::vector<std::string>& choices) {
     case Takes::command:
         return R"(mapfile -t COMPREPLY < <(compgen -c -- "$cur"))";
     case Takes::package:
-        return "_egraph_packages";
+    case Takes::atom:
+    case Takes::repository:
+        return std::format("_egraph_complete{}", complete_option(takes));
     case Takes::choice:
         return bash_words(choices);
     case Takes::nothing:
@@ -142,26 +165,30 @@ void bash_scope(std::string& out, const std::vector<Completable>& options,
 
 std::string bash_script(const Completions& completions) {
     std::string out = "# bash completion for egraph, generated from its command line.\n\n";
-    out += std::format(R"(# Installed cps, from the vdb under ${{ROOT}}.
-_egraph_packages() {{
-    local db=${{ROOT:-/}}
-    db=${{db%/}}${{EPREFIX:-}}/var/db/pkg
-    local entry
-    local -A cps=()
-    for entry in "$db"/*/*/; do
-        entry=${{entry%/}}
-        [[ ${{entry#"$db"/}} =~ {} ]] && cps[${{BASH_REMATCH[1]}}]=1
-    done
-    mapfile -t COMPREPLY < <(compgen -W "${{!cps[*]}}" -- "$cur")
-}}
+    out +=
+        R"bash(# Package arguments, which egraph completes from its stores; the arguments say what they are.
+_egraph_complete() {
+    # COMP_WORDBREAKS splits a word at the = and : atoms hold, so egraph is given it whole.
+    local word=$cur
+    if [[ -n ${COMP_LINE-} ]]; then
+        word=${COMP_LINE:0:COMP_POINT}
+        word=${word##*[[:space:]]}
+    fi
+    local cut=${word%"$cur"}
+    mapfile -t COMPREPLY < <(egraph complete "$@" -- "$word" 2>/dev/null)
+    COMPREPLY=("${COMPREPLY[@]#"$cut"}")
+    if [[ ${#COMPREPLY[@]} -eq 1 && ${COMPREPLY[0]} == */ ]]; then
+        compopt -o nospace 2>/dev/null
+    fi
+    return 0
+}
 
-_egraph() {{
-    local cur=${{COMP_WORDS[COMP_CWORD]}} prev=${{COMP_WORDS[COMP_CWORD - 1]}}
+_egraph() {
+    local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD - 1]}
     local command="" i
     for ((i = 1; i < COMP_CWORD; i++)); do
-        case ${{COMP_WORDS[i]}} in
-)",
-                       version_pattern);
+        case ${COMP_WORDS[i]} in
+)bash";
     if (const auto names = valued(completions.options); !names.empty()) {
         out += std::format("            {}) ((i++)) ;;\n", joined(names, "|"));
     }
@@ -225,7 +252,11 @@ std::string zsh_action(Takes takes, const std::vector<std::string>& choices) {
     case Takes::command:
         return "command:_command_names -e";
     case Takes::package:
-        return "package:_egraph_packages";
+        return "package:_egraph_complete installed";
+    case Takes::atom:
+        return "package:_egraph_complete atoms";
+    case Takes::repository:
+        return "repository:_egraph_complete repositories";
     case Takes::choice:
         return std::format("value:({})", joined(choices, " "));
     case Takes::nothing:
@@ -261,25 +292,26 @@ std::string zsh_spec(const Completable& option) {
 std::string zsh_script(const Completions& completions) {
     std::string out = "#compdef egraph\n# zsh completion for egraph, generated from its command "
                       "line.\n\n";
-    out += std::format(R"(# Installed cps, from the vdb under ${{ROOT}}.
-_egraph_packages() {{
-    local db=${{ROOT:-/}}
-    db=${{db%/}}${{EPREFIX:-}}/var/db/pkg
-    local entry MATCH MBEGIN MEND
-    local -a match mbegin mend
-    local -aU cps
-    for entry in $db/*/*(N/); do
-        [[ ${{entry#$db/}} =~ '{}' ]] && cps+=($match[1])
-    done
-    _multi_parts / cps
-}}
+    out +=
+        R"zsh(# Package arguments, which egraph completes from its stores; the arguments say what they are.
+# _arguments puts compadd's options before the last argument, installed, atoms or repositories.
+_egraph_complete() {
+    local -a found categories options
+    local ret=1
+    [[ ${@[-1]} == atoms ]] || options=(--${@[-1]})
+    found=(${(f)"$(egraph complete $options -- "$PREFIX$SUFFIX" 2>/dev/null)"})
+    categories=(${(M)found:#*/})
+    found=(${found:#*/})
+    compadd "${@[1,-2]}" -S '' -a categories && ret=0
+    compadd "${@[1,-2]}" -a found && ret=0
+    return ret
+}
 
-_egraph() {{
+_egraph() {
     local curcontext=$curcontext state line ret=1
     local -A opt_args
     _arguments -C \
-)",
-                       version_pattern);
+)zsh";
     for (const auto& option : completions.options) {
         out += std::format("        {} \\\n", zsh_spec(option));
     }
@@ -335,7 +367,9 @@ std::string fish_values(Takes takes, const std::vector<std::string>& choices) {
     case Takes::command:
         return "-x -a '(__fish_complete_command)'";
     case Takes::package:
-        return "-x -a '(__egraph_packages)'";
+    case Takes::atom:
+    case Takes::repository:
+        return std::format("-x -a '(__egraph_complete{})'", complete_option(takes));
     case Takes::choice:
         return std::format("-x -a {}", fish_quoted(joined(choices, " ")));
     case Takes::nothing:
@@ -363,15 +397,10 @@ void fish_options(std::string& out, const std::vector<Completable>& options,
 
 std::string fish_script(const Completions& completions) {
     std::string out = "# fish completion for egraph, generated from its command line.\n\n";
-    out += std::format(R"fish(# Installed cps, from the vdb under $ROOT.
-function __egraph_packages
-    set -l root /
-    set -q ROOT; and set root $ROOT
-    # Quoted, so that an unset EPREFIX is empty rather than emptying the word.
-    set -l db (string trim -r -c / -- $root)"$EPREFIX"/var/db/pkg
-    for entry in $db/*/*/
-        string replace -- $db/ '' (string trim -r -c / -- $entry)
-    end | string replace -rf -- '{}' '$1' | sort -u
+    out +=
+        R"fish(# Package arguments, which egraph completes from its stores; the arguments say what they are.
+function __egraph_complete
+    egraph complete $argv -- (commandline -ct) 2>/dev/null
 end
 
 # The command given so far, stepping over the global options' values.
@@ -380,8 +409,7 @@ function __egraph_command
     set -e tokens[1]
     while set -q tokens[1]
         switch $tokens[1]
-)fish",
-                       version_pattern);
+)fish";
     if (const auto names = valued(completions.options); !names.empty()) {
         out += std::format("            case {}\n                set -e tokens[1]\n",
                            joined(names, " "));
@@ -423,6 +451,10 @@ complete -c egraph -f
 Completions completions(const CLI::App& app) {
     Completions found{.options = options_of(app), .commands = {}};
     for (const auto* sub : app.get_subcommands({})) {
+        // Hidden: not for people to type.
+        if (sub->get_group().empty()) {
+            continue;
+        }
         CompletionCommand command{.name = sub->get_name(),
                                   .description = sub->get_description(),
                                   .options = options_of(*sub),

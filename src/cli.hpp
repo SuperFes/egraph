@@ -1,5 +1,6 @@
 #pragma once
 
+#include "complete.hpp"
 #include "evaluated.hpp"
 #include "human.hpp"
 #include "job.hpp"
@@ -242,6 +243,14 @@ struct Shell {
     static constexpr std::string_view name = "shell";
 };
 
+// The words a shell completes a package argument to, from the stores as they are: never refreshed,
+// as a key press must not start a build.
+struct Complete {
+    static constexpr std::string_view name = "complete";
+    Completing what = Completing::atoms;
+    std::string word;
+};
+
 // For portage's neighborhood completion: see affected.hpp.
 struct Affected {
     static constexpr std::string_view name = "affected";
@@ -252,7 +261,7 @@ struct Affected {
 using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Blockers,
                              Orphans, Updates, PlanCommand, Update, Install, Exec, Remove, Select,
                              Deselect, Sync, NoticesCommand, Export, Stats, LogCommand, Rebuild,
-                             Refresh, Check, Tui, Shell, Affected>;
+                             Refresh, Check, Tui, Shell, Complete, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

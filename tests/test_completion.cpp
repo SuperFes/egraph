@@ -82,7 +82,11 @@ TEST_CASE("completions follow the command line's options, commands and what each
     CHECK(command(found, "blockers")->arguments == Takes::package);
     CHECK(command(found, "soname")->arguments == Takes::text);
     CHECK(command(found, "stats")->arguments == Takes::nothing);
-    CHECK(command(found, "install")->arguments == Takes::package);
+    CHECK(command(found, "install")->arguments == Takes::atom);
+    CHECK(command(found, "select")->arguments == Takes::atom);
+    CHECK(command(found, "sync")->arguments == Takes::repository);
+    // Hidden, for the scripts alone.
+    CHECK(command(found, "complete") == nullptr);
     CHECK(option(command(found, "update")->options, "--yes")->names ==
           std::vector<std::string>{"-y", "--yes"});
     CHECK(option(command(found, "export")->options, "--format")->choices ==
@@ -106,7 +110,9 @@ TEST_CASE("each shell's script names every command and option") {
                 }
             }
         }
-        CHECK(contains(script, "var/db/pkg"));
+        CHECK(contains(script, "egraph complete"));
+        CHECK(contains(script, shell == CompletionShell::zsh ? "_complete installed"
+                                                             : "_complete --installed"));
     }
     CHECK(egraph::completion_script(found, CompletionShell::bash)
               .ends_with("complete -F _egraph egraph\n"));

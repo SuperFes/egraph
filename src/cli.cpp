@@ -182,7 +182,7 @@ template <class C> void add_plan_options(CLI::App* sub, Invocation& invocation) 
     sub->add_option_function<std::vector<std::string>>(
            "targets", [plan](const std::vector<std::string>& targets) { plan().targets = targets; },
            "Atoms and sets (@world, @selected, @system, @profile, @installed), as emerge's")
-        ->type_name("PACKAGE")
+        ->type_name("ATOM")
         ->required();
     sub->add_flag_callback(
         "-u,--update", [plan] { plan().update = true; },
@@ -2355,6 +2355,38 @@ Exit execute(const Stats&, Session& session, const Invocation&, std::ostream& ou
     return Exit::ok;
 }
 
+Exit execute(const Complete& command, Session&, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    std::vector<std::filesystem::path> paths;
+    if (invocation.store) {
+        paths.push_back(*invocation.store);
+    } else {
+        paths.push_back(system_store_path(invocation));
+        if (auto user = user_store_path(invocation)) {
+            paths.push_back(std::move(*user));
+        }
+    }
+    // The newer of the system's and the user's, whichever the queries last refreshed.
+    std::optional<Stores> newest;
+    std::string error;
+    for (const auto& path : paths) {
+        auto loaded = load_stores(path);
+        if (!loaded) {
+            error = loaded.error().message;
+        } else if (!newest ||
+                   loaded->installed.meta.build_time_ns > newest->installed.meta.build_time_ns) {
+            newest = std::move(*loaded);
+        }
+    }
+    if (!newest) {
+        err << "egraph: complete: " << error << '\n';
+        return Exit::failure;
+    }
+    write_lines(out,
+                complete_word(newest->installed, newest->evaluated, command.what, command.word));
+    return Exit::ok;
+}
+
 Exit execute(const LogCommand& command, Session&, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
     std::vector<log::Event> events;
@@ -2701,7 +2733,7 @@ void configure(CLI::App& app, Invocation& invocation) {
         app, invocation,
         "Have emerge add packages to @selected once confirmed, merging those not installed"));
     add_field(select_cmd, invocation, "packages", &Select::packages, "Atoms and sets, as emerge's")
-        ->type_name("PACKAGE")
+        ->type_name("ATOM")
         ->required();
     add_yes<Select>(select_cmd, invocation);
     CLI::App* deselect_cmd = add_command<Deselect>(
@@ -2757,6 +2789,19 @@ void configure(CLI::App& app, Invocation& invocation) {
     add_command<Refresh>(app, invocation,
                          "Bring the store up to date if its inputs changed, printing nothing");
     add_command<Check>(app, invocation, "Diff the store against a fresh build");
+    CLI::App* complete_cmd = add_command<Complete>(
+        app, invocation, "The words a shell completes a package argument to, from the stores");
+    // Hidden: the completion scripts' own.
+    complete_cmd->group("");
+    complete_cmd->add_flag_callback(
+        "--installed",
+        [&invocation] { std::get<Complete>(invocation.command).what = Completing::installed; },
+        "Installed packages, not the repositories'");
+    complete_cmd->add_flag_callback(
+        "--repositories",
+        [&invocation] { std::get<Complete>(invocation.command).what = Completing::repositories; },
+        "Repository names");
+    add_field(complete_cmd, invocation, "word", &Complete::word, "The word typed so far");
     add_field(
         add_dynamic_deps(add_command<Affected>(
             app, invocation,

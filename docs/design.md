@@ -151,9 +151,15 @@ The records are:
 `egraph-completions` (built, not installed) prints each shell's script from the CLI11 definition
 `configure()` builds, and the build installs them (`egraph.bash`, `_egraph`, `egraph.fish`).
 What an option's value is comes from its type name: `DIR`, `FILE`, `COMMAND` and `PACKAGE`, which
-`--help` shows too, and fixed choices from `one_of`'s `{a,b}` description. Packages complete as
-the cps in the vdb under `${ROOT}`, read by the shell itself (a glob and a regular expression that
-strips the version), so a key press never loads a store or starts a refresh.
+`--help` shows too, and fixed choices from `one_of`'s `{a,b}` description. Package arguments
+(`PACKAGE` installed, `ATOM` any, `REPOSITORY`) complete through the hidden `egraph complete`
+(`src/complete.cpp`), which loads the newer of the system's and the user's stores as they are,
+never refreshing them, so a key press never starts a build: categories with their `/` first, then
+cps (every cp in the repositories for atoms; the vdb alone offers too little), names without
+their category for atoms once a letter is typed, versions after an operator, slots after `:`,
+repositories after `::`, and sets after `@`. A store from another format offers nothing until a
+query or the portage hooks rebuild it. The variables choosing the store (`ROOT`, `EGRAPH_STORE`,
+...) reach it from the environment; options on the command line being completed do not.
 
 ## Terminal interface
 
