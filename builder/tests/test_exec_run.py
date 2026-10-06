@@ -871,7 +871,11 @@ def test_a_resumed_run_merges_what_is_left_as_install_merges_it_all(resumed, tmp
     age(system.playground.eroot)
     failed = system.egraph("exec", "--yes", "-j", "1", *targets)
     assert failed.returncode != 0, failed.stdout + failed.stderr
-    assert run_state(system) == {
+    state = run_state(system)
+    (failure,) = state.pop("failed")
+    assert failure["cpv"] == "app-misc/flaky-1"
+    assert os.path.isfile(failure["log"])
+    assert state == {
         "arguments": ["--jobs", "1", "--", *targets],
         "merged": ["app-misc/first-1"],
         "status": "failed",
@@ -886,6 +890,7 @@ def test_a_resumed_run_merges_what_is_left_as_install_merges_it_all(resumed, tmp
     assert worked == emerged, differences(emerged, worked)
     state = run_state(system)
     assert state["merged"] == ["app-misc/first-1", "app-misc/flaky-1"]
+    assert state["failed"] == []
     assert state["status"] == "done"
     age(system.playground.eroot)
     again = system.egraph("exec", "--yes", "--resume")

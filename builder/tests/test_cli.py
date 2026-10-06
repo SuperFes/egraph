@@ -83,6 +83,8 @@ def test_exit_codes_match_egraph():
     header = Path(__file__).parents[2] / "src" / "cli.hpp"
     enum = re.search(r"enum class Exit[^{]*\{([^}]*)\}", header.read_text()).group(1)
     egraph = {name: int(value) for name, value in re.findall(r"(\w+) = (\d+)", enum)}
+    # Only the interface's previews stop there; egraph never exits with it.
+    del egraph["previewed"]
     builder = {
         name[len("EXIT_") :].lower(): value
         for name, value in vars(cli).items()

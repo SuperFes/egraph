@@ -73,7 +73,7 @@ TEST_CASE("an egraph run beside this one takes its global options") {
         }
         return line;
     };
-    CHECK(egraph::egraph_options(parse("broken")) == std::vector<std::string>{"--root", "/"});
+    CHECK(egraph::egraph_options({}) == std::vector<std::string>{"--root", "/"});
     const auto given = parse("--root /mnt/r --config-root /mnt/c --eprefix /p --store /s "
                              "--replace-slots /l --builder /b --emerge /e --dispatch-conf /d "
                              "--emaint /m --no-refresh --log file --log-file /f --glyphs ascii "
