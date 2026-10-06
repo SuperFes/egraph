@@ -873,6 +873,10 @@ Graphviz or JSON (default
 The evaluated store instead, whole and as JSON: the dependencies emerge reads by default, and the
 versions each installed package could move to.
 .TP
+.B \-\-repository
+The repository index instead, whole and as JSON: every version in the repositories, and the
+configuration that decides which are visible.
+.TP
 .BI \-\-depth " n"
 Dependency edges to follow out from the packages (default 1).
 .TP
@@ -954,7 +958,9 @@ starts a comment), of the packages whose old slots a plan replaces rather than k
 one; none by default, as emerge.
 .TP
 .I ${ROOT}${EPREFIX}/var/cache/egraph/installed.egraph
-The system store, with the evaluated store beside it; written by root.
+The system store, with the evaluated store and the repository index
+.RI ( installed.repository.egraph )
+beside it; written by root.
 .TP
 .I ${XDG_CACHE_HOME}/egraph/installed.egraph
 The store of a user who cannot write the system store, used while the system store is not

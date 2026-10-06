@@ -5,7 +5,9 @@ import subprocess
 
 import pytest
 
-from egraph_build import evaluated, installed, store
+from conftest import portdb
+
+from egraph_build import evaluated, installed, repository, store
 
 EGRAPH = os.environ.get("EGRAPH")
 
@@ -88,6 +90,21 @@ def test_a_missing_evaluated_store_fails_cleanly(playgrounds, tmp_path):
     assert result.stderr.decode().startswith(expected)
 
 
+def test_cpp_repository_export_matches_builder_json(scenario, tmp_path):
+    path = tmp_path / "installed.egraph"
+    store.write(path, store.encode(installed.build(scenario.vardb), META))
+    index = repository.read(portdb(scenario))
+    meta = store.RepositoryMeta("0.0.0", "3.0.0", "/", 0)
+    store.write(store.repository_path(path), store.encode_repository(index, meta))
+    result = subprocess.run(
+        [EGRAPH, "--store", str(path), "--no-refresh", "export", "--format", "json"]
+        + ["--repository"],
+        capture_output=True,
+    )
+    assert result.stderr == b""
+    assert result.stdout == repository.to_json(index).encode()
+
+
 def test_undecodable_bytes_survive_the_round_trip(tmp_path):
     pkg = installed.Package(
         cpv="app-misc/odd-1",
@@ -121,6 +138,27 @@ def test_corrupt_store_fails_cleanly(scenario, tmp_path):
     assert result.returncode == 1
     assert result.stdout == ""
     assert result.stderr.startswith(f"egraph: {path}: ")
+
+
+@pytest.mark.parametrize("cut", [0.25, 0.5, 0.9])
+def test_a_corrupt_repository_index_fails_cleanly(playgrounds, tmp_path, cut):
+    system = playgrounds("visibility")
+    path = tmp_path / "installed.egraph"
+    store.write(path, store.encode(installed.build(system.vardb), META))
+    meta = store.RepositoryMeta("0.0.0", "3.0.0", "/", 0)
+    data = store.encode_repository(repository.read(portdb(system)), meta)
+    index = store.repository_path(path)
+    with open(index, "wb") as f:
+        f.write(data[: int(len(data) * cut)])
+    result = subprocess.run(
+        [EGRAPH, "--store", str(path), "--no-refresh", "export", "--format", "json"]
+        + ["--repository"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr.startswith(f"egraph: {index}: ")
 
 
 def test_corrupt_store_is_rebuilt(tmp_path):

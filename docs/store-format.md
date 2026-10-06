@@ -1,7 +1,7 @@
 # Store format
 
-Status: format version 5 (evaluated store: 10), implemented by `builder/egraph_build/store.py`
-(writer and a Python reader) and `src/store.cpp` and `src/evaluated.cpp` (C++ readers). Any
+Status: format version 5 (evaluated store: 10, repository index: 1), implemented by `builder/egraph_build/store.py`
+(writer and a Python reader) and `src/store.cpp`, `src/evaluated.cpp` and `src/repository.cpp` (C++ readers). Any
 layout change bumps the version.
 
 ## Requirements
@@ -230,3 +230,63 @@ repository-wide masks, license groups, categories, package moves and eclass dire
 category directory (for the cps it lists), the metadata cache directory of every category of the
 store's cps (installed and candidate), and outside the main repository the package directories
 and ebuilds of every such cp it carries.
+
+## The repository index
+
+Every version of every cp in the repositories, with what visibility is decided from: the ebuilds'
+metadata and the configuration as portage parsed it, for egraph to evaluate (`design.md`). It lives
+beside the installed store, named after it (`installed.egraph` → `installed.repository.egraph`),
+and is written by its own builder run (`egraph-build --repository`), as it changes with the
+repositories and the configuration rather than with the installed packages.
+
+It uses the installed store's framing with magic `EGRAPHRI` and its own format version, now 1.
+
+| Id | Section | Contents |
+|---|---|---|
+| 1 | Meta | egraph version, portage version, EROOT (length-prefixed), build start in ns |
+| 2 | Inputs | as in the installed store |
+| 3 | Strings | as in the installed store |
+| 4 | Repositories | count, then `(name, location)` string ids, in portage's order (`getRepositories`) |
+| 5 | Versions | count, then the records below, sorted by cp, then by repository in section 4's order, then by version as `cp_list` gives them |
+| 6 | Visibility | the configuration records below |
+
+All six sections are required.
+
+A version record, for each ebuild whose metadata portage could read:
+
+1. String ids: cp, cpv, slot, sub-slot (the slot without one), EAPI; then the repository's index
+   in section 4.
+2. KEYWORDS, LICENSE, PROPERTIES, RESTRICT: lists of string ids, each string's tokens in order as
+   `use_reduce` splits it, conditionals and all.
+3. USE: list of string ids, sorted: the flags the ebuild would be built with now that a
+   conditional in LICENSE or PROPERTIES tests, where either has one (as portdbapi's `_visible`
+   reduces them); empty elsewhere.
+4. String ids: DESCRIPTION, HOMEPAGE.
+
+The visibility section holds, in order, each as portage's config parsed it:
+
+1. EAPIs: count, then `(eapi, supported, deprecated)` for every EAPI the versions have: the
+   string id, and 1 or 0 as `eapi_is_supported` and `_eapi_is_deprecated` answer.
+2. `ACCEPT_KEYWORDS`: list of string ids; then the environment's own (`backupenv`), which keyword
+   checks stack last.
+3. The profiles' `package.keywords`: count of layers in stacking order, each an entry list; then
+   their `package.accept_keywords`, likewise; then the user's `package.accept_keywords` (and
+   `package.keywords`) as one entry list, an empty token list already the `~` keywords portage
+   defaults it to.
+4. `package.mask` and `package.unmask`: lists of atom string ids, the profiles' and
+   repositories' stacked with the user's, repository masks carrying their `::repo`.
+5. `ACCEPT_LICENSE` with its groups expanded: list of string ids; then `package.license` as an
+   entry list, groups expanded. Each list is kept as its net effect, which portage's own
+   order (a group's members come from a set) would not keep stable: the last `*` or `-*` if
+   any, then the last word on each license after it, sorted.
+6. `ACCEPT_PROPERTIES`: list of string ids; then `package.properties` as an entry list.
+7. `ACCEPT_RESTRICT`: list of string ids; then `package.accept_restrict` as an entry list.
+
+An entry list is a count, then `(atom, tokens)`: the atom's string id (a wildcard atom such as
+`*/*` included) and a list of string ids. Entries of plain cps come first, then the wildcard
+ones, each group in portage's order (`ExtendedAtomDict`), as a lookup for a cp collects them.
+
+Inputs are the evaluated store's configuration inputs, and per repository its root, layout,
+repository-wide masks, license groups, categories and eclass directory, every category
+directory, the metadata cache directory of every category, and outside the main repository
+every package directory and ebuild.

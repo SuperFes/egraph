@@ -451,3 +451,18 @@ process including load and the freshness check of 2,575 inputs.
   playgrounds' builds and merges compete for the cores, so 16 workers gain nothing.
 - Under 16 workers the TUI tests caught Notcurses partway through a redraw; their checks now
   wait for everything they read.
+
+## The repository index (2026-10-06, roadmap step 16i)
+
+- This box: 8 repositories, 21,875 cps, 38,544 ebuilds; five overlays (tlp, steam-overlay, qt,
+  kde, cosmic-overlay) carry no metadata cache.
+- `egraph-build --repository`: 15.7 s with warm caches (125 MB peak), aux_get of eight keys
+  for every ebuild dominating. The file is 5.5 MB: strings 3.56 MB (descriptions, homepages,
+  cpvs), versions 1.38 MB, inputs 0.61 MB (9,139 paths, mostly the cacheless overlays'
+  package directories and ebuilds), the visibility configuration 9 KB.
+- 525 ebuilds have a conditional in LICENSE and 23 in PROPERTIES, the only ones whose
+  visibility needs their USE; the builder computes it for those alone.
+- `egraph export --repository` decodes it and writes its 14.7 MB of JSON in 82 ms.
+- ACCEPT_LICENSE as portage expands it changes order between runs (a group's members come
+  from a set); the index keeps its net effect instead.
+- `egraph complete` on the stores alone: 27 ms a key press with all 21,875 repository cps.

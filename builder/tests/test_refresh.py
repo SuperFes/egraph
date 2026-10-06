@@ -205,6 +205,50 @@ def evaluations(system):
     return [line for line in lines if line.startswith("--evaluate")]
 
 
+def export_index(system):
+    return in_repository(system, "export", "--format", "json", "--repository")
+
+
+def index_json(system):
+    """The index as the builder prints it in the playground's environment."""
+    playground, _, builder, _ = system
+    return subprocess.run(
+        [str(builder), "--repository-json"],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=playground.settings.environ(),
+    ).stdout
+
+
+def index_builds(system):
+    return [line for line in builds(system) if line.split()[0] == "--repository"]
+
+
+def test_the_repository_index_is_built_on_first_use_and_kept_while_current(
+    repository_system,
+):
+    result = export_index(repository_system)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == index_json(repository_system)
+    assert '"www-apps/unused"' in result.stdout
+    assert export_index(repository_system).stdout == result.stdout
+    assert len(index_builds(repository_system)) == 1
+
+
+def test_a_configuration_change_rebuilds_the_repository_index(repository_system):
+    playground = repository_system[0]
+    export_index(repository_system)
+    path = os.path.join(playground.eroot, "etc/portage/package.accept_keywords")
+    with open(path, "a") as f:
+        f.write("app-misc/testing ~x86\n")
+    result = export_index(repository_system)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == index_json(repository_system)
+    assert '"app-misc/testing"' in result.stdout
+    assert len(index_builds(repository_system)) == 2
+
+
 def test_plan_evaluates_a_cp_only_the_repositories_know(repository_system):
     result = in_repository(repository_system, "plan", "www-apps/unused")
     assert result.returncode == 0, result.stderr

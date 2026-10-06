@@ -208,6 +208,8 @@ struct Export {
     Direction direction = Direction::reverse;
     // The evaluated store, whole, instead of the installed one.
     bool evaluated = false;
+    // The repository index, whole.
+    bool repository = false;
 };
 
 struct Stats {

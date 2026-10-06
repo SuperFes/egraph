@@ -31,8 +31,8 @@ std::optional<Loaded> fresh(const std::filesystem::path& path, const Load& load_
 // instead.
 template <class Loaded, class Load>
 std::expected<Loaded, std::string> open_current(const Invocation& invocation, std::ostream& err,
-                                                std::filesystem::path& used,
-                                                const Load& load_path) {
+                                                std::filesystem::path& used, const Load& load_path,
+                                                std::string_view mode = "--incremental") {
     const auto path = store_path(invocation);
     used = path;
     if (!invocation.store) {
@@ -63,7 +63,7 @@ std::expected<Loaded, std::string> open_current(const Invocation& invocation, st
         std::this_thread::sleep_for(settle_wait(
             *loaded, static_cast<std::uint64_t>(std::max<std::int64_t>(now.count(), 0))));
     }
-    if (auto error = run_builder(invocation, "--incremental", path)) {
+    if (auto error = run_builder(invocation, mode, path)) {
         return std::unexpected(std::move(*error));
     }
     return load_path(path).transform_error([&invocation](const StoreError& error) {
@@ -169,7 +169,24 @@ std::expected<std::shared_ptr<const Stores>, std::string> Session::shared_stores
     return stores_;
 }
 
+Loaded<RepositoryIndex> Session::repository() {
+    if (!repository_) {
+        // Beside whichever installed store is current, as the stores are.
+        std::filesystem::path used;
+        auto loaded = open_current<RepositoryIndex>(
+            invocation_, warnings_.get(), used,
+            [](const auto& path) { return load_repository(repository_index_path(path)); },
+            "--repository");
+        if (!loaded) {
+            return std::unexpected(std::move(loaded.error()));
+        }
+        repository_ = std::move(*loaded);
+    }
+    return std::cref(*repository_);
+}
+
 void Session::reload() {
+    repository_.reset();
     stores_.reset();
     installed_.reset();
     dynamic_.reset();

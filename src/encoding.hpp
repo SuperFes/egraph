@@ -26,6 +26,10 @@ inline constexpr Magic evaluated_magic{std::byte{'E'}, std::byte{'G'}, std::byte
                                        std::byte{'A'}, std::byte{'P'}, std::byte{'H'},
                                        std::byte{'E'}, std::byte{'V'}};
 
+inline constexpr Magic repository_magic{std::byte{'E'}, std::byte{'G'}, std::byte{'R'},
+                                        std::byte{'A'}, std::byte{'P'}, std::byte{'H'},
+                                        std::byte{'R'}, std::byte{'I'}};
+
 inline constexpr std::uint32_t section_meta = 1;
 inline constexpr std::uint32_t section_inputs = 2;
 inline constexpr std::uint32_t section_strings = 3;

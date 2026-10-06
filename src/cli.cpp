@@ -2435,6 +2435,19 @@ Exit execute(const LogCommand& command, Session&, const Invocation& invocation, 
 
 Exit execute(const Export& command, Session& session, const Invocation&, std::ostream& out,
              std::ostream& err) {
+    if (command.repository) {
+        if (command.format != ExportFormat::json || !command.packages.empty() ||
+            command.evaluated) {
+            err << "egraph: export --repository writes the whole index, as JSON\n";
+            return Exit::usage;
+        }
+        const auto index = session.repository();
+        if (!index) {
+            return fail(err, index.error());
+        }
+        write_repository_json(out, *index);
+        return Exit::ok;
+    }
     if (command.evaluated) {
         if (command.format != ExportFormat::json || !command.packages.empty()) {
             err << "egraph: export --evaluated writes the whole store, as JSON\n";
@@ -2764,6 +2777,10 @@ void configure(CLI::App& app, Invocation& invocation) {
         "--evaluated", [&invocation] { std::get<Export>(invocation.command).evaluated = true; },
         "Export the evaluated store instead, whole and as JSON: the dependencies emerge reads "
         "by default, and the versions each installed package could move to");
+    export_cmd->add_flag_callback(
+        "--repository", [&invocation] { std::get<Export>(invocation.command).repository = true; },
+        "Export the repository index instead, whole and as JSON: every version in the "
+        "repositories, and what decides their visibility");
     add_field(export_cmd, invocation, "--depth", &Export::depth,
               "Dependency edges to follow out from the packages (default 1)");
     add_field(export_cmd, invocation, "--direction", &Export::direction,

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "evaluated.hpp"
+#include "repository.hpp"
 #include "store.hpp"
 
 #include <chrono>
@@ -26,6 +27,8 @@ inline constexpr std::uint64_t racy_window_ns = 1'000'000'000;
 [[nodiscard]] std::optional<std::string> staleness(const Evaluated& evaluated,
                                                    const Store& installed);
 
+[[nodiscard]] std::optional<std::string> staleness(const RepositoryIndex& index);
+
 // Either store's reason.
 [[nodiscard]] std::optional<std::string> staleness(const Stores& stores);
 
@@ -36,6 +39,8 @@ inline constexpr std::uint64_t racy_window_ns = 1'000'000'000;
 [[nodiscard]] std::chrono::nanoseconds settle_wait(std::span<const Input> inputs,
                                                    std::uint64_t now_ns);
 [[nodiscard]] std::chrono::nanoseconds settle_wait(const Store& store, std::uint64_t now_ns);
+[[nodiscard]] std::chrono::nanoseconds settle_wait(const RepositoryIndex& index,
+                                                   std::uint64_t now_ns);
 [[nodiscard]] std::chrono::nanoseconds settle_wait(const Stores& stores, std::uint64_t now_ns);
 
 } // namespace egraph

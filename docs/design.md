@@ -26,6 +26,7 @@ Each layer has its own inputs and invalidation, and is proven independently.
 |---|---|---|---|
 | Installed | installed packages, exact dependency edges, sonames, blockers, roots | `/var/db/pkg`, world file, profile (for @system) | first |
 | Evaluated | installed packages' dependencies as emerge reads them by default, and what their ebuilds would add with flags toggled; how `emerge -u` and depclean weigh each (visibility, masks, the version it would move to, the flags `--newuse` rebuilds it for); the visible versions of installed cps, and of the cps their dependencies would pull in, with effective USE and their own dependencies, and why installed ones are masked | repo metadata, `/etc/portage`, profile, the installed store | stored (9b-9e, 14a) |
+| Repository | every version in the repositories with the metadata visibility and search read (slot, KEYWORDS, LICENSE, PROPERTIES, RESTRICT, EAPI, description), and the visibility configuration as portage parsed it, for egraph to evaluate | repo metadata, `/etc/portage`, profile | stored (16i2) |
 
 The evaluated layer is its own file beside the installed store (`installed.evaluated.egraph`),
 written by the same builder run and keyed to that installed store: it names packages by the
@@ -33,6 +34,12 @@ installed store's ids and records its build start, so rebuilding either makes it
 Dynamic dependencies follow emerge's FakeVartree rule (`builder/egraph_build/dynamic.py`): the
 ebuild's dependencies with the built `:=` atoms appended when the same version is still in the
 package's repository, else the vdb's with the repositories' package moves applied.
+
+The repository index is a third file beside them (`installed.repository.egraph`), written by
+its own builder run (`egraph-build --repository`) and refreshed on its own inputs, which change
+with syncs and configuration edits rather than with merges. It holds no visibility verdicts:
+egraph evaluates keywords, licenses, masks, properties and restrictions from what portage parsed
+(the safety-over-precompute rule), and the shadow tests hold that to portdb's match-visible.
 
 The installed layer needs no resolver decisions: installed packages have fixed USE, so every
 conditional reduces to plain atoms. Only `||` groups remain, and on an installed system each group

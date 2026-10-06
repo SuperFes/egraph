@@ -58,6 +58,21 @@ def parser():
         help="print the canonical JSON of the evaluated layer instead of writing the store",
     )
     mode.add_argument(
+        "--repository",
+        dest="mode",
+        action="store_const",
+        const="repository",
+        help="write the repository index beside the store: every version in the repositories, "
+        "and what decides their visibility",
+    )
+    mode.add_argument(
+        "--repository-json",
+        dest="mode",
+        action="store_const",
+        const="repository-json",
+        help="print the canonical JSON of the repository index instead of writing it",
+    )
+    mode.add_argument(
         "--pending",
         dest="mode",
         action="store_const",
@@ -420,6 +435,23 @@ def write_store(args, incremental, requested=()):
     return EXIT_OK
 
 
+def write_repository(args):
+    import portage
+
+    from egraph_build import __version__, build, store
+
+    vardb, portdb = open_databases(args.config_root, args.root, args.eprefix)
+    eroot = vardb.settings["EROOT"]
+    path = args.store or store.default_path(eroot)
+    result = build.index(portdb)
+    meta = store.RepositoryMeta(__version__, portage.VERSION, eroot, result.started_ns)
+    store.write(
+        store.repository_path(path),
+        store.encode_repository(result.index, meta, result.inputs),
+    )
+    return EXIT_OK
+
+
 def main(argv=None):
     try:
         args = parser().parse_args(argv)
@@ -469,6 +501,14 @@ def main(argv=None):
 
         vardb = open_vardb(args.config_root, args.root, args.eprefix)
         sys.stdout.write(installed.to_json(build.full(vardb).layer))
+        return EXIT_OK
+    if args.mode == "repository":
+        return write_repository(args)
+    if args.mode == "repository-json":
+        from egraph_build import repository
+
+        _, portdb = open_databases(args.config_root, args.root, args.eprefix)
+        sys.stdout.write(repository.to_json(repository.read(portdb)))
         return EXIT_OK
     if args.mode == "evaluated-json":
         from egraph_build import evaluated

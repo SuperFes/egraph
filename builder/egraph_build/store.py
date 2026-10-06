@@ -9,6 +9,13 @@ from egraph_build.evaluated import Candidate, Dependencies, EvaluatedLayer, Poss
 from egraph_build.installed import InstalledLayer, Node, Package
 from egraph_build.model import DEP_KINDS
 from egraph_build.profile import ImplicitIuse, has_iuse_effective
+from egraph_build.repository import (
+    Eapi,
+    Entry,
+    RepositoryIndex,
+    Version,
+    Visibility,
+)
 from egraph_build.roots import Root
 
 MAGIC = b"EGRAPH\0\0"
@@ -52,6 +59,18 @@ EVALUATED_SECTIONS = (
     SECTION_USE_EXPAND,
 )
 
+REPOSITORY_MAGIC = b"EGRAPHRI"
+REPOSITORY_FORMAT_VERSION = 1
+SECTION_REPOSITORIES, SECTION_VERSIONS, SECTION_VISIBILITY = range(4, 7)
+REPOSITORY_SECTIONS = (
+    SECTION_META,
+    SECTION_INPUTS,
+    SECTION_STRINGS,
+    SECTION_REPOSITORIES,
+    SECTION_VERSIONS,
+    SECTION_VISIBILITY,
+)
+
 _HEADER = struct.Struct("<8sII")
 _ENTRY = struct.Struct("<IQQ")
 
@@ -77,6 +96,13 @@ class EvaluatedMeta(NamedTuple):
     installed_build_time_ns: int
 
 
+class RepositoryMeta(NamedTuple):
+    egraph_version: str
+    portage_version: str
+    eroot: str
+    build_time_ns: int
+
+
 class Input(NamedTuple):
     path: str
     kind: int
@@ -92,6 +118,13 @@ def evaluated_path(path):
     """The evaluated store beside an installed store: its last extension becomes .evaluated.egraph."""
     root, _ = os.path.splitext(os.fspath(path))
     return root + ".evaluated.egraph"
+
+
+def repository_path(path):
+    """The repository index beside an installed store: its last extension becomes
+    .repository.egraph."""
+    root, _ = os.path.splitext(os.fspath(path))
+    return root + ".repository.egraph"
 
 
 def _bytes(text):
@@ -328,6 +361,77 @@ def encode_evaluated(layer, meta, inputs=()):
     )
 
 
+def _write_entries(w, entries, strings):
+    w.varint(len(entries))
+    for entry in entries:
+        w.varint(strings(entry.atom))
+        w.ids([strings(token) for token in entry.tokens])
+
+
+def encode_repository(index, meta, inputs=()):
+    """The repository index bytes for a RepositoryIndex, its RepositoryMeta and its Inputs."""
+    strings = _Strings()
+    repo_index = {name: i for i, (name, _) in enumerate(index.repositories)}
+    sections = {}
+
+    w = _Writer()
+    for value in (meta.egraph_version, meta.portage_version, meta.eroot):
+        w.text(value)
+    w.varint(meta.build_time_ns)
+    sections[SECTION_META] = w.out
+
+    sections[SECTION_INPUTS] = _write_inputs(inputs)
+
+    w = _Writer()
+    w.varint(len(index.repositories))
+    for name, location in index.repositories:
+        w.varint(strings(name))
+        w.varint(strings(location))
+    sections[SECTION_REPOSITORIES] = w.out
+
+    w = _Writer()
+    w.varint(len(index.versions))
+    for v in index.versions:
+        for value in (v.cp, v.cpv, v.slot, v.sub_slot, v.eapi):
+            w.varint(strings(value))
+        w.varint(repo_index[v.repo])
+        for values in (v.keywords, v.license, v.properties, v.restrict, v.use):
+            w.ids([strings(value) for value in values])
+        w.varint(strings(v.description))
+        w.varint(strings(v.homepage))
+    sections[SECTION_VERSIONS] = w.out
+
+    vis = index.visibility
+    w = _Writer()
+    w.varint(len(vis.eapis))
+    for eapi in vis.eapis:
+        w.varint(strings(eapi.eapi))
+        w.varint(int(eapi.supported))
+        w.varint(int(eapi.deprecated))
+    for values in (vis.accept_keywords, vis.environment_keywords):
+        w.ids([strings(value) for value in values])
+    for layers in (vis.profile_keywords, vis.profile_accept_keywords):
+        w.varint(len(layers))
+        for layer in layers:
+            _write_entries(w, layer, strings)
+    _write_entries(w, vis.accept_keywords_entries, strings)
+    for atoms in (vis.masks, vis.unmasks):
+        w.ids([strings(atom) for atom in atoms])
+    for accepted, entries in (
+        (vis.accept_license, vis.licenses),
+        (vis.accept_properties, vis.properties),
+        (vis.accept_restrict, vis.restrict),
+    ):
+        w.ids([strings(value) for value in accepted])
+        _write_entries(w, entries, strings)
+    sections[SECTION_VISIBILITY] = w.out
+
+    sections[SECTION_STRINGS] = _write_strings(strings)
+    return _frame(
+        REPOSITORY_MAGIC, REPOSITORY_FORMAT_VERSION, REPOSITORY_SECTIONS, sections
+    )
+
+
 class _Reader:
     def __init__(self, data, name):
         self.data = data
@@ -386,9 +490,12 @@ def _sections(data, magic=MAGIC, version=FORMAT_VERSION, ids=SECTIONS):
         raise StoreError("truncated header")
     found_magic, found_version, count = _HEADER.unpack_from(data)
     if found_magic != magic:
-        raise StoreError(
-            "not an egraph store" if magic == MAGIC else "not an evaluated egraph store"
-        )
+        kinds = {
+            MAGIC: "an egraph store",
+            EVALUATED_MAGIC: "an evaluated egraph store",
+            REPOSITORY_MAGIC: "an egraph repository index",
+        }
+        raise StoreError(f"not {kinds[magic]}")
     if found_version != version:
         raise StoreError(f"format version {found_version}, expected {version}")
     if count != len(ids) or len(data) < _HEADER.size + _ENTRY.size * count:
@@ -635,6 +742,95 @@ def decode_evaluated(data):
             )
         )
     return meta, inputs, EvaluatedLayer(packages, candidates, *listed)
+
+
+def decode_repository(data):
+    """(RepositoryMeta, Inputs, RepositoryIndex) from repository index bytes; raises
+    StoreError."""
+    sections = _sections(
+        data, REPOSITORY_MAGIC, REPOSITORY_FORMAT_VERSION, REPOSITORY_SECTIONS
+    )
+
+    r = _Reader(sections[SECTION_META], "meta")
+    meta = RepositoryMeta(r.text(), r.text(), r.text(), r.varint())
+    r.done()
+
+    inputs = _read_inputs(sections[SECTION_INPUTS])
+    strings = _read_strings(sections[SECTION_STRINGS])
+    nstrings = len(strings)
+
+    def reader(section, name):
+        r = _Reader(sections[section], name)
+
+        def s():
+            return strings[r.varint(nstrings)]
+
+        def listed():
+            return tuple(strings[i] for i in r.ids(nstrings))
+
+        def entries():
+            return tuple(Entry(s(), listed()) for _ in range(r.count()))
+
+        return r, s, listed, entries
+
+    r, s, _, _ = reader(SECTION_REPOSITORIES, "repositories")
+    repositories = tuple((s(), s()) for _ in range(r.count()))
+    r.done()
+
+    r, s, listed, _ = reader(SECTION_VERSIONS, "versions")
+    versions = []
+    for _ in range(r.count()):
+        cp, cpv, slot, sub_slot, eapi = (s() for _ in range(5))
+        repo = repositories[r.varint(len(repositories))][0]
+        keywords, license_tokens, properties, restrict, use = (
+            listed() for _ in range(5)
+        )
+        versions.append(
+            Version(
+                cp,
+                cpv,
+                repo,
+                slot,
+                sub_slot,
+                eapi,
+                keywords,
+                license_tokens,
+                properties,
+                restrict,
+                use,
+                s(),
+                s(),
+            )
+        )
+    r.done()
+
+    r, s, listed, entries = reader(SECTION_VISIBILITY, "visibility")
+    eapis = tuple(
+        Eapi(s(), bool(r.varint(2)), bool(r.varint(2))) for _ in range(r.count())
+    )
+    accept_keywords, environment_keywords = listed(), listed()
+    profile_keywords, profile_accept_keywords = (
+        tuple(entries() for _ in range(r.count())) for _ in range(2)
+    )
+    accept_keywords_entries = entries()
+    masks, unmasks = listed(), listed()
+    accepted = []
+    for _ in range(3):
+        accepted.append(listed())
+        accepted.append(entries())
+    r.done()
+    visibility = Visibility(
+        eapis,
+        accept_keywords,
+        environment_keywords,
+        profile_keywords,
+        profile_accept_keywords,
+        accept_keywords_entries,
+        masks,
+        unmasks,
+        *accepted,
+    )
+    return meta, inputs, RepositoryIndex(repositories, tuple(versions), visibility)
 
 
 def write(path, data):

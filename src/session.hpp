@@ -8,6 +8,7 @@
 #include "evaluated.hpp"
 #include "graph.hpp"
 #include "os.hpp"
+#include "repository.hpp"
 #include "store.hpp"
 
 #include <array>
@@ -41,6 +42,8 @@ class Session {
     // Answers from stores, loaded from used, from now on: what was computed from the old ones,
     // and every reference this returned, goes.
     void adopt(std::shared_ptr<const Stores> stores, std::filesystem::path used);
+    // The repository index, beside the installed store, refreshed on its own inputs.
+    [[nodiscard]] Loaded<RepositoryIndex> repository() EGRAPH_LIFETIMEBOUND;
     // What the dependency queries read: with dynamic, the installed store with the evaluated
     // store's dependency trees; without, installed().
     [[nodiscard]] Loaded<Store> dependencies(bool dynamic) EGRAPH_LIFETIMEBOUND;
@@ -77,6 +80,7 @@ class Session {
     std::filesystem::path used_;
     std::optional<Store> installed_;
     std::shared_ptr<const Stores> stores_;
+    std::optional<RepositoryIndex> repository_;
     std::optional<Store> dynamic_;
     std::array<std::optional<Graph>, 2> graphs_;
     // By build_deps, then dynamic.

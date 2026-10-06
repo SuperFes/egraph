@@ -3,7 +3,7 @@
 egraph-build \- evaluate the installed packages through portage and write egraph's store
 .SH SYNOPSIS
 .B egraph-build
-.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-pending | \-\-kernel\-sources | \-\-emerge\-options | \-\-notices | \-\-worker ]
+.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-repository | \-\-repository\-json | \-\-pending | \-\-kernel\-sources | \-\-emerge\-options | \-\-notices | \-\-worker ]
 .RI [ options ]
 .RI [ entry ...]
 .SH DESCRIPTION
@@ -44,6 +44,15 @@ Print the installed layer as canonical JSON instead of writing the store.
 .TP
 .B \-\-evaluated\-json
 Print the evaluated layer as canonical JSON instead of writing the store.
+.TP
+.B \-\-repository
+Write the repository index beside the store
+.RI ( installed.repository.egraph ):
+every version of every package in the repositories, and the configuration that decides which
+are visible, as portage parsed it.
+.TP
+.B \-\-repository\-json
+Print the repository index as canonical JSON instead of writing it.
 .TP
 .B \-\-pending
 Write what each

@@ -61,6 +61,10 @@ std::optional<std::string> staleness(const Store& store) {
     return staleness(store.inputs, store.meta.build_time_ns);
 }
 
+std::optional<std::string> staleness(const RepositoryIndex& index) {
+    return staleness(index.inputs, index.meta.build_time_ns);
+}
+
 std::optional<std::string> staleness(const Evaluated& evaluated, const Store& installed) {
     if (evaluated.meta.installed_build_time_ns != installed.meta.build_time_ns) {
         return std::string{"built against another installed store"};
@@ -92,6 +96,10 @@ std::chrono::nanoseconds settle_wait(std::span<const Input> inputs, std::uint64_
 
 std::chrono::nanoseconds settle_wait(const Store& store, std::uint64_t now_ns) {
     return settle_wait(store.inputs, now_ns);
+}
+
+std::chrono::nanoseconds settle_wait(const RepositoryIndex& index, std::uint64_t now_ns) {
+    return settle_wait(index.inputs, now_ns);
 }
 
 std::chrono::nanoseconds settle_wait(const Stores& stores, std::uint64_t now_ns) {

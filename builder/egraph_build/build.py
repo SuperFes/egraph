@@ -9,7 +9,7 @@ import portage
 from portage.dep import Atom
 from portage.versions import cpv_getkey
 
-from egraph_build import __version__, evaluated, installed, roots
+from egraph_build import __version__, evaluated, installed, repository, roots
 from egraph_build.installed import ATOM, STRONG_BLOCKER, WEAK_BLOCKER, InstalledLayer
 from egraph_build.store import (
     INPUT_DIRECTORY,
@@ -170,13 +170,25 @@ def repository_paths(portdb, cps):
     return paths
 
 
-def evaluated_inputs(settings, portdb, cps):
-    """The inputs of an evaluated layer answering for cps (EvaluatedLayer.cps)."""
+def _evaluated_paths(settings, portdb, cps):
     user = os.path.join(settings["PORTAGE_CONFIGROOT"], portage.const.USER_CONFIG_PATH)
     paths = config_paths(settings)
     for name in USER_VISIBILITY_CONFIG:
         paths.extend(_tree(os.path.join(user, name)))
     paths.extend(repository_paths(portdb, cps))
+    return paths
+
+
+def evaluated_inputs(settings, portdb, cps):
+    """The inputs of an evaluated layer answering for cps (EvaluatedLayer.cps)."""
+    paths = _evaluated_paths(settings, portdb, cps)
+    return tuple(sorted({stat_input(path) for path in paths}))
+
+
+def repository_inputs(portdb):
+    """The inputs of the repository index: every cp's, the configuration and the builder."""
+    paths = _evaluated_paths(portdb.settings, portdb, portdb.cp_all())
+    paths.extend(builder_paths())
     return tuple(sorted({stat_input(path) for path in paths}))
 
 
@@ -225,6 +237,19 @@ def evaluate(vardb, portdb, requested=()):
     # is newer than it.
     inputs = evaluated_inputs(vardb.settings, portdb, layer.cps())
     return EvaluatedBuild(layer, inputs, started, read, True)
+
+
+class RepositoryBuild(NamedTuple):
+    index: repository.RepositoryIndex
+    inputs: tuple
+    started_ns: int
+
+
+def index(portdb):
+    """A full build of the repository index."""
+    started = time.time_ns()
+    found = repository.read(portdb)
+    return RepositoryBuild(found, repository_inputs(portdb), started)
 
 
 def _kind_only(portdb):

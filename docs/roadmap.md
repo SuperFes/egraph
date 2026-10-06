@@ -493,13 +493,21 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   - 16i1 (done): `egraph complete`, hidden, for the scripts: the repositories' cps from the
     evaluated store, versions and slots of what the stores hold, repositories after `::`; the
     `ATOM` and `REPOSITORY` arguments apart from installed `PACKAGE`s.
-  - 16i2: the repository index (`repository.egraph`): per cp its description, per version its
-    slot, KEYWORDS, LICENSE and EAPI, with the configuration that decides visibility as portage
-    parsed it (ACCEPT_KEYWORDS and package.accept_keywords, ACCEPT_LICENSE with its groups
-    expanded and package.license, the profiles' and the user's package.mask and package.unmask).
-    Visibility is evaluated in C++, shadowed against portage's on every version of every
-    scenario and the live system. Incremental on sync, re-reading only the changed categories.
-    Completion offers every version from it.
+  - 16i2: the repository index (`installed.repository.egraph`, `egraph-build --repository`):
+    per version its slot, KEYWORDS, LICENSE, PROPERTIES, RESTRICT, EAPI, description and
+    homepage, with the configuration that decides visibility as portage parsed it
+    (ACCEPT_KEYWORDS and the package.accept_keywords layers, ACCEPT_LICENSE with its groups
+    expanded and package.license, package.mask and package.unmask stacked, ACCEPT_PROPERTIES,
+    ACCEPT_RESTRICT). Decided with the user (2026-10-06): visibility is evaluated in C++, not
+    precomputed by the builder, so that what-if questions need no builder run.
+    - 16i2a (done): the index written by the builder, read by egraph (freshness, refresh, `export
+      --repository`), held to portage's own metadata on every scenario and to the builder's JSON.
+    - 16i2b: visibility and its reasons evaluated in C++, shadowed against portdb's
+      match-visible and getmaskingstatus on every version of every scenario and the live system.
+    - 16i2c: incremental refreshes: only the visibility configuration after a configuration
+      change, only the changed categories after a sync.
+    - 16i2d: completion offers every version and slot from it; the portage hooks refresh it
+      after a sync.
   - 16i3: `search`, by name, or with `-S` by description, as `emerge --search`.
   - 16i4: pages for packages not installed in the living app, and search there.
 - 16j: the actions in the living app: updates picked, installs from search, orphans removed,

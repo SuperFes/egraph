@@ -1,6 +1,7 @@
 #pragma once
 
 #include "evaluated.hpp"
+#include "repository.hpp"
 #include "store.hpp"
 
 #include <cstdint>
@@ -26,5 +27,8 @@ void write_json(std::ostream& out, const Store& store, std::span<const std::uint
 
 // The evaluated store as egraph_build.evaluated.to_json writes it.
 void write_evaluated_json(std::ostream& out, const Evaluated& evaluated);
+
+// The repository index as egraph_build.repository.to_json writes it.
+void write_repository_json(std::ostream& out, const RepositoryIndex& index);
 
 } // namespace egraph
