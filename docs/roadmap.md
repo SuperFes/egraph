@@ -826,6 +826,15 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     by LICENSE; a `masked` row in `updates` and `plan` with the reasons, file and comment lines,
     emerge's block in the human layout (also with nothing to update), held to depgraph's list
     on every scenario and update mode, and `--verify` comparing the cpvs with emerge's warning.
+- 16q: a gap in the deep plan, found by `--verify` on the dev box (2026-10-06): `-uD` takes the
+  best visible version of every dependency atom it walks, so an atom naming no slot (outside a
+  slot operator, or the `||` choice installed versions satisfy, as virtual/wine's
+  `app-emulation/wine-vanilla[wow64(-)]`) pulls a newer slot in beside the installed one (NS);
+  egraph only does so for root atoms and slot-operator bindings. Plain `-u` keeps a satisfied
+  dependency, as egraph does. Reproduced with a scenario of a slot-1 package with a slot 2
+  available, under a plain atom and under `|| ( z[abi] z )`: test_verify fails in the `uDN`
+  and `world` modes only. Planned as a dependency's pull, as `root_pulls_`, falling back to the
+  installed version when rejected; the old slot stays (`replace-slots` remains world atoms').
 
 ## 17. `egraphd`, the service
 
