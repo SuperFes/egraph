@@ -160,7 +160,8 @@ needs the heap.
 
 - Naming: `PascalCase` types, `snake_case` functions and variables, both languages.
 - Keep the tree flat: `src/`, `tests/`, `builder/egraph_build/`, `builder/tests/`, `docs/`,
-  `hooks/` (the portage hooks `meson install` puts under `/etc/portage`), `.github/` (CI).
+  `hooks/` (the portage hooks `meson install` puts under `/etc/portage`), `services/` (the
+  egraphd systemd unit and OpenRC script), `.github/` (CI).
 - Every feature lands as stub, then tests, then implementation; one roadmap step per commit series.
 - A new command or option is documented in `docs/egraph.1` (or `docs/egraph-build.1`);
   `test_man` fails otherwise. Completions follow on their own.

@@ -1011,7 +1011,16 @@ settled (3 seconds without another, or a minute after the first), they are refre
 .B refresh
 does. A refresh that fails is logged and tried again on the next change. The
 .B egraphd
-service runs it.
+service runs it as the
+.B egraph
+user, a member of the
+.B portage
+group, with only
+.I /var/cache/egraph
+writable:
+.B systemctl enable \-\-now egraphd
+or
+.BR "rc\-update add egraphd" .
 .SS check
 Compare the store with a fresh build, exiting 4 when they differ.
 .SS affected
@@ -1054,7 +1063,11 @@ one; none by default, as emerge.
 .I ${ROOT}${EPREFIX}/var/cache/egraph/installed.egraph
 The system store, with the evaluated store and the repository index
 .RI ( installed.repository.egraph )
-beside it; written by root.
+beside it; written by root, or by the
+.B egraph
+user the
+.B egraphd
+service runs as.
 .TP
 .I ${XDG_CACHE_HOME}/egraph/installed.egraph
 The store of a user who cannot write the system store, used while the system store is not
@@ -1073,6 +1086,13 @@ The dispatcher that runs every hook in
 portage runs only
 .I /etc/portage/bin/post_emerge
 after an emerge, which is the user's own file; without one, link this there.
+.TP
+.IR /usr/lib/systemd/system/egraphd.service ", " /etc/init.d/egraphd
+The
+.B egraphd
+service, which runs
+.BR "egraph watch" ;
+the hooks are not needed while it runs.
 .SH EXIT STATUS
 .TP
 .B 0

@@ -16,7 +16,9 @@ pytestmark = [
 ]
 
 
-def test_install_ships_the_hooks_completions_and_man_pages_but_no_user_file(tmp_path):
+def test_install_ships_the_hooks_services_completions_and_man_pages_but_no_user_file(
+    tmp_path,
+):
     build = Path(EGRAPH).parent
     subprocess.run(
         [
@@ -46,6 +48,7 @@ def test_install_ships_the_hooks_completions_and_man_pages_but_no_user_file(tmp_
         "etc/portage/post_emerge.d/egraph",
         "etc/portage/postsync.d/egraph",
         "share/egraph/post_emerge",
+        "etc/init.d/egraphd",
     ]:
         assert os.access(one(suffix), os.X_OK), suffix
     for suffix in [
@@ -56,6 +59,7 @@ def test_install_ships_the_hooks_completions_and_man_pages_but_no_user_file(tmp_
         "share/fish/vendor_completions.d/egraph.fish",
         "share/man/man1/egraph.1",
         "share/man/man1/egraph-build.1",
+        "lib/systemd/system/egraphd.service",
     ]:
         one(suffix)
     # egraph-exec is egraph, run under the name of its command.

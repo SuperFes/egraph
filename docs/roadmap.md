@@ -880,10 +880,17 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
   between refreshes: 13 MB idle. The loop is a template over its watcher and clock, tested with
   fakes; the watcher (`os::Watcher`) on a real directory; the whole on a playground. The shell
   and the interface refuse it. The hooks stay, for systems without the service.
-- 17b: the service: its own `egraph` user, in the `portage` group (the preserved-libs registry
-  the notices read is root's and portage's), only `/var/cache/egraph` writable; a systemd unit
-  (`ProtectSystem=strict`) and an OpenRC script, installed by meson; the ebuild's
-  acct-user/acct-group.
+- 17b (done): the service: its own `egraph` user, in the `portage` group (the preserved-libs
+  registry the notices read is root's and portage's), only `/var/cache/egraph` writable; a
+  systemd unit and an OpenRC script (`services/`, installed by meson unless `-Dservices=false`;
+  the unit's directory from systemd.pc, or `-Dsystemd_unit_dir`). The unit: `CacheDirectory=`,
+  `ProtectSystem=strict`, `ProtectHome=read-only` (overlays may live in /home), no network,
+  `@system-service` syscalls, nice 10 and idle I/O; `systemd-analyze security` 2.5. The OpenRC
+  script: supervise-daemon, `checkpath` on the cache, logging through `logger`. Smoke-tested
+  under the unit's sandbox as a user service (`PrivateUsers=yes`): a rebuild, and watch
+  refreshing all three stores and stopping with 0. The acct-user/acct-group ebuilds (dynamic
+  IDs, as an overlay sets them) are in the Bonbon overlay; the egraph ebuild picks them up with
+  the next release.
 - 17c: history: each refresh keeps the previous store generation (whole files, the last N,
   configurable), and the vdb watch logs every merge and uninstall as it lands, whatever ran it
   (emerge's too; times from the vdb's BUILD_TIME, coarser than exec's step 20 records).

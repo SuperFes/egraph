@@ -1,0 +1,46 @@
+[Unit]
+Description=Keep egraph's stores fresh as the system changes
+Documentation=man:egraph(1)
+After=local-fs.target
+
+[Service]
+Type=exec
+ExecStart=@BINDIR@/egraph watch
+User=egraph
+Group=egraph
+# The preserved-libs registry is readable only by root and portage.
+SupplementaryGroups=portage
+CacheDirectory=egraph
+CacheDirectoryMode=0755
+UMask=0022
+Restart=on-failure
+RestartSec=60
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+# Overlays may live under /home.
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RemoveIPC=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

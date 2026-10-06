@@ -236,6 +236,35 @@ if get_option('portage_hooks')
   endforeach
 endif
 
+# egraphd, the service running egraph watch, for systemd and OpenRC.
+services = {'BINDIR': get_option('prefix') / get_option('bindir')}
+egraphd_unit = configure_file(
+  input: 'services/egraphd.service.in',
+  output: 'egraphd.service',
+  configuration: services,
+)
+egraphd_script = configure_file(
+  input: 'services/egraphd.in',
+  output: 'egraphd',
+  configuration: services,
+)
+if get_option('services')
+  unit_dir = get_option('systemd_unit_dir')
+  if unit_dir == ''
+    systemd = dependency('systemd', required: false)
+    unit_dir = systemd.found() ? systemd.get_variable(
+      pkgconfig: 'systemdsystemunitdir',
+      pkgconfig_define: ['prefix', get_option('prefix')],
+    ) : get_option('prefix') / 'lib' / 'systemd' / 'system'
+  endif
+  install_data(egraphd_unit, install_dir: unit_dir)
+  install_data(
+    egraphd_script,
+    install_dir: get_option('sysconfdir') / 'init.d',
+    install_mode: 'rwxr-xr-x',
+  )
+endif
+
 unit_tests = executable(
   'unit-tests',
   'tests/test_action.cpp',

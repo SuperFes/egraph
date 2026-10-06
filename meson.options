@@ -28,6 +28,19 @@ option(
   description: 'Where portage reads its configuration, and the hooks go: ${EPREFIX}/etc/portage',
 )
 option(
+  'services',
+  type: 'boolean',
+  value: true,
+  description: 'Install the egraphd services, which run egraph watch as the egraph user: a '
+  + 'systemd unit and an OpenRC script',
+)
+option(
+  'systemd_unit_dir',
+  type: 'string',
+  value: '',
+  description: 'Where the systemd unit goes; empty asks systemd.pc, else ${prefix}/lib/systemd/system',
+)
+option(
   'tui',
   type: 'feature',
   value: 'auto',

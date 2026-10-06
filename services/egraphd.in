@@ -1,0 +1,23 @@
+#!/sbin/openrc-run
+# Keeps egraph's stores fresh as the system changes.
+
+description="Keep egraph's stores fresh as the system changes"
+supervisor=supervise-daemon
+command="@BINDIR@/egraph"
+command_args="watch"
+# The preserved-libs registry is readable only by root and portage: the egraph user is in its group.
+command_user="egraph:egraph"
+nicelevel=10
+ionice=3
+respawn_delay=60
+output_logger="logger -t egraphd -p daemon.info"
+error_logger="logger -t egraphd -p daemon.err"
+
+depend() {
+	need localmount
+	use logger
+}
+
+start_pre() {
+	checkpath --directory --owner egraph:egraph --mode 0755 /var/cache/egraph
+}
