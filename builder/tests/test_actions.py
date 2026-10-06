@@ -174,6 +174,21 @@ class System:
             return f.read().split()
 
 
+def logged_runs(machine):
+    """The runs egraph log lists, as (command, status, targets)."""
+    listed = machine.egraph("log")
+    assert listed.returncode == 0, listed.stdout + listed.stderr
+    rows = [line.split("\t") for line in listed.stdout.splitlines()]
+    return [(row[2], row[3], row[9]) for row in rows]
+
+
+def logged(machine):
+    """The events in the playground's log file (meson test sets EGRAPH_LOG=file)."""
+    path = os.path.join(machine.playground.eprefix, "var", "log", "egraph.log")
+    with open(path) as f:
+        return [json.loads(line) for line in f]
+
+
 NEWS = """Title: Read me
 Author: A Developer <dev@example.org>
 Posted: 2026-09-01
@@ -261,6 +276,7 @@ def test_update_merges_through_emerge_and_refreshes_the_stores(system):
     again = machine.egraph("--no-refresh", "updates")
     assert again.returncode == 0, again.stderr
     assert "app-misc/a" not in again.stdout
+    assert logged_runs(machine) == [("update", "done", "@installed")]
 
 
 def test_install_selects_its_targets_unless_oneshot(system):
@@ -275,6 +291,14 @@ def test_install_selects_its_targets_unless_oneshot(system):
     assert machine.installed("app-misc/c-1")
     assert "app-misc/c" not in machine.world()
     assert machine.emerged()[-1][-2:] == ["--oneshot", "app-misc/c"]
+    assert logged_runs(machine) == [
+        ("install", "done", "app-misc/b"),
+        ("install", "done", "app-misc/c"),
+    ]
+    start, end = logged(machine)[-2:]
+    assert start["program"] == "emerge"
+    assert start["argv"].endswith(" ".join(machine.emerged()[-1]))
+    assert end["exit_status"] == 0
 
 
 def test_nothing_to_merge_asks_emerge_nothing(system):
@@ -283,6 +307,7 @@ def test_nothing_to_merge_asks_emerge_nothing(system):
     assert result.returncode == 0, result.stderr
     assert result.stdout == ""
     assert not machine.asked()
+    assert logged_runs(machine) == []
     human = machine.egraph("--layout", "human", "install", "-yn", "app-misc/a")
     assert "Nothing to merge." in human.stdout
     assert not machine.asked()
@@ -362,6 +387,7 @@ def test_remove_removes_through_depclean_and_deselects(system):
     again = machine.egraph("--no-refresh", "orphans")
     assert again.returncode == 0, again.stderr
     assert again.stdout == ""
+    assert logged_runs(machine) == [("remove", "done", "app-misc/leaf")]
 
 
 def test_what_something_needs_is_kept_and_nothing_is_asked(system):
@@ -408,6 +434,7 @@ def test_select_records_an_installed_package_and_says_so(system):
     assert machine.emerged()[-1][-2:] == ["--noreplace", "app-misc/lib"]
     assert "app-misc/lib joined @selected" in result.stdout
     assert not machine.installed("app-misc/b-1")
+    assert logged_runs(machine) == [("select", "done", "app-misc/lib")]
 
 
 def test_select_merges_what_is_not_installed(system):
@@ -440,6 +467,7 @@ def test_deselect_lists_what_depclean_would_then_remove(system):
     ]
     assert "app-misc/user" not in machine.world()
     assert machine.installed("app-misc/user-1")
+    assert logged_runs(machine) == [("deselect", "done", "app-misc/user")]
 
 
 def test_deselecting_what_is_not_selected_does_nothing(system):
@@ -518,6 +546,7 @@ def test_sync_shows_what_the_repositories_now_offer(system, tmp_path):
     assert human.stdout.endswith(
         f"Unread news (eselect news read):\n  {item}  Read me\n"
     )
+    assert logged_runs(machine) == [("sync", "done", "")] * 2
 
 
 def test_a_failed_sync_still_shows_the_updates(system):
@@ -534,6 +563,10 @@ def test_a_failed_sync_still_shows_the_updates(system):
     called = ran.read_text().splitlines()
     assert called[0] == "sync --auto"
     assert f"PORTAGE_CONFIGROOT={machine.playground.eroot}" in called
+    assert logged_runs(machine) == [("sync", "failed", "")]
+    end = logged(machine)[-1]
+    assert end["exit_status"] == 3
+    assert end["message"].endswith(": emaint exited with status 3")
 
 
 def resume(machine, *args):

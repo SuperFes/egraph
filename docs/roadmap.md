@@ -689,7 +689,10 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
         playgrounds' files.
       - 16k6d2 (done): `exec` logs its runs (`RunEvents`), held to its `--trace` in the
         keep-going runs, and read back from the journal as from the file with `--log both`.
-      - Later: the other commands that change the system.
+      - 16k6d3 (done): the commands that hand the system to emerge or emaint (`install`,
+        `update`, `select`, `remove`, `deselect`, `sync`) log a run of two events (`HandOver`):
+        its start with the command line, its end with the exit status and time; `egraph log`
+        lists them beside `exec`'s runs.
   - 16k7 (done): portage updating itself mid-run, and a narrower merge-wait barrier offered as
     an option.
     - 16k7a (done): FEATURES=-merge-wait: a built package merges while builds run, merges

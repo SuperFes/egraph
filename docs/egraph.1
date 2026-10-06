@@ -851,9 +851,12 @@ targets, and how it ended
 or
 .B unfinished
 when it was cut short or runs still) with what it merged, uninstalled, failed and skipped and
-how long it took. As lines, the fields are separated by tabs: the id, the start in seconds since
-the epoch, the command, the status, the four counts, the seconds (empty when unfinished) and
-the targets.
+how long it took. The commands that hand the system to emerge or emaint
+.RB ( install ", " update ", " select ", " remove ", " deselect ", " sync )
+log a run of two events, its start with the command line run and its end with how the program
+exited; their line shows how long it took and why it failed, and their counts are zero. As
+lines, the fields are separated by tabs: the id, the start in seconds since the epoch, the
+command, the status, the four counts, the seconds (empty when unfinished) and the targets.
 .TP
 .I run
 The events of the run whose id this is, or starts with: each with its time and message, or as

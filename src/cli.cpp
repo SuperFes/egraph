@@ -1289,6 +1289,32 @@ std::optional<Notices> show_notices_after(std::string_view name, const Invocatio
 Exit execute(const Install& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err);
 
+// Seconds since the epoch, as logged events take them.
+double epoch_seconds() {
+    const std::chrono::duration<double> since = std::chrono::system_clock::now().time_since_epoch();
+    return since.count();
+}
+
+// egraph's log, where the invocation sends it.
+log::Log logger_of(const Invocation& invocation, std::ostream& notes) {
+    return {log::targets(invocation.log, log::journal_running()),
+            invocation.log_file.value_or(log::default_file(invocation.eprefix.value_or(""))),
+            notes};
+}
+
+// The command line run for a command handing the system to a program, logged as a run.
+std::expected<int, std::string> run_handed_over(const HandOver& hand_over,
+                                                const Invocation& invocation, std::ostream& notes) {
+    auto logger = logger_of(invocation, notes);
+    const auto run = log::new_run();
+    const auto started = epoch_seconds();
+    logger.write(handed_over(run, hand_over, started));
+    const auto ran =
+        os::run(hand_over.argv).transform_error([](const os::SpawnError& e) { return e.message; });
+    logger.write(handed_back(run, hand_over, ran, started, epoch_seconds()));
+    return ran;
+}
+
 // After emerge has run: the notices, dispatch-conf offered for configuration updates, and the
 // rebuild of what uses preserved libraries planned and offered, once.
 void follow_up(std::string_view name, bool yes, Session& session, const Invocation& invocation,
@@ -1338,7 +1364,9 @@ Exit execute(const NoticesCommand&, Session&, const Invocation& invocation, std:
 Exit execute(const Sync& command, Session& session, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
     out << std::flush;
-    const auto ran = os::run(sync_command(invocation));
+    const auto ran = run_handed_over(
+        {.command = std::string{Sync::name}, .program = "emaint", .argv = sync_command(invocation)},
+        invocation, out);
     // The repositories that synced before a failure count too.
     session.reload();
     if (output(invocation).human) {
@@ -1348,7 +1376,7 @@ Exit execute(const Sync& command, Session& session, const Invocation& invocation
         execute(static_cast<const Updates&>(command), session, invocation, out, err);
     std::ignore = show_notices_after(Sync::name, invocation, out, err);
     if (!ran) {
-        err << "egraph: " << Sync::name << ": " << ran.error().message << '\n';
+        err << "egraph: " << Sync::name << ": " << ran.error() << '\n';
         return Exit::failure;
     }
     if (*ran != 0) {
@@ -1476,19 +1504,24 @@ Exit confirm_and_carry_out(std::string_view name, bool yes, std::string_view que
     return Exit::ok;
 }
 
-// An action once verified: asks unless yes, runs emerge with arguments(passed), passed being
-// EMERGE_DEFAULT_OPTS' execution options, and refreshes the stores after.
+// An action on targets once verified: asks unless yes, runs emerge with arguments(passed),
+// passed being EMERGE_DEFAULT_OPTS' execution options, and refreshes the stores after.
 template <class Arguments>
 Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
-                     const Arguments& arguments, const Store& store, Session& session,
-                     const Invocation& invocation, std::ostream& out, std::ostream& err) {
+                     const std::vector<std::string>& targets, const Arguments& arguments,
+                     const Store& store, Session& session, const Invocation& invocation,
+                     std::ostream& out, std::ostream& err) {
     return confirm_and_carry_out(
         name, yes, question, "emerge", true,
-        [&](const RunSettings& settings) -> std::expected<int, std::string> {
-            const auto argv = with_elog_system(
-                emerge_command(invocation, arguments(execution_options(settings.defaults))),
-                settings);
-            return os::run(argv).transform_error([](const os::SpawnError& e) { return e.message; });
+        [&](const RunSettings& settings) {
+            return run_handed_over(
+                {.command = std::string{name},
+                 .targets = targets,
+                 .program = "emerge",
+                 .argv = with_elog_system(
+                     emerge_command(invocation, arguments(execution_options(settings.defaults))),
+                     settings)},
+                invocation, out);
         },
         store, session, invocation, out, err);
 }
@@ -1545,7 +1578,7 @@ Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
         name, yes, session, invocation, out, err, show, act,
         [&](const Shown& shown) {
             return confirm_and_run(
-                name, yes, question,
+                name, yes, question, shown.request.targets,
                 [&](const std::vector<std::string>& passed) {
                     return run_arguments(shown.request, oneshot, passed);
                 },
@@ -1698,14 +1731,8 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
         logged.push_back({.cpv = name, .uninstall = std::holds_alternative<UninstallStep>(step)});
     }
     RunEvents events{log::new_run(), std::move(logged)};
-    log::Log logger{
-        log::targets(invocation.log, log::journal_running()),
-        invocation.log_file.value_or(log::default_file(invocation.eprefix.value_or(""))), out};
-    const auto now = [] {
-        const std::chrono::duration<double> since =
-            std::chrono::system_clock::now().time_since_epoch();
-        return since.count();
-    };
+    auto logger = logger_of(invocation, out);
+    const auto now = epoch_seconds;
     logger.write(events.started({.command = std::string{Exec::name},
                                  .targets = shown.request.targets,
                                  .options = request_options(shown.request, command.oneshot),
@@ -1966,7 +1993,7 @@ Exit execute(const Remove& command, Session& session, const Invocation& invocati
         return Exit::differs;
     }
     return confirm_and_run(
-        Remove::name, command.yes, "Have emerge remove these packages?",
+        Remove::name, command.yes, "Have emerge remove these packages?", command.packages,
         [&](const std::vector<std::string>& passed) {
             std::vector<std::string> arguments{"--depclean", "--ignore-default-opts", "--ask=n"};
             arguments.insert(arguments.end(), passed.begin(), passed.end());
@@ -2028,7 +2055,7 @@ Exit execute(const Deselect& command, Session& session, const Invocation& invoca
         return *status;
     }
     return confirm_and_run(
-        Deselect::name, command.yes, "Have emerge remove these from @selected?",
+        Deselect::name, command.yes, "Have emerge remove these from @selected?", command.packages,
         [&](const std::vector<std::string>& passed) {
             std::vector<std::string> arguments{"--deselect", "--ignore-default-opts", "--ask=n"};
             arguments.insert(arguments.end(), passed.begin(), passed.end());
