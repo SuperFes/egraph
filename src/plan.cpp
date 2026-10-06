@@ -896,9 +896,15 @@ class Planner {
             const auto cp = evaluated().string(candidate.cp);
             const auto from = version_of(store().string(store().packages.at(*id).cpv), cp);
             const auto to = version_of(evaluated().string(candidate.cpv), cp);
-            // A newer version, or the same one built with changed USE.
+            // A newer version, the same one built with changed USE, or whatever matches when
+            // the installed package fails only the atom's USE dependencies, built without them.
+            const auto& pkg = store().packages.at(*id);
+            auto plain = wanted;
+            plain.use.clear();
+            const bool unmet = !matches(store(), pkg, wanted) && matches(store(), pkg, plain);
             if (!choices_.at(*id).wanted && from && to &&
-                (vercmp(*to, *from) > 0 || (vercmp(*to, *from) == 0 && changed_.contains(*best)))) {
+                (unmet || vercmp(*to, *from) > 0 ||
+                 (vercmp(*to, *from) == 0 && changed_.contains(*best)))) {
                 wanted_.emplace_back(*id, *best);
             }
             return std::nullopt;
@@ -986,6 +992,11 @@ class Planner {
         if (const auto changed = changed_.find(candidate); changed != changed_.end()) {
             for (const auto& [flag, on] : changed->second) {
                 flags += std::format("{}{}{}*", flags.empty() ? "" : " ", on ? "" : "-", flag);
+            }
+        } else if (const auto& pkg = evaluated().packages.at(id); pkg.target == candidate) {
+            // Rebuilt for its configured USE, which it was built without.
+            for (const auto flag : evaluated().ids_in(pkg.rebuild)) {
+                flags += std::format("{}{}", flags.empty() ? "" : " ", evaluated().string(flag));
             }
         }
         choice.wanted = PendingUpdate{

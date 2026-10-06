@@ -1642,3 +1642,22 @@ TEST_CASE("an argument's USE dependencies take a USE change over an installed ve
           std::vector<std::string>{"dev-libs/lib-1 -> dev-libs/lib-2",
                                    "use dev-libs/lib-2 gtk <- dev-libs/lib[gtk]"});
 }
+
+TEST_CASE("a USE dependency the installed version was built without rebuilds it as configured") {
+    // As dev-db/redis[jemalloc] needs dev-libs/jemalloc[stats] once package.use enables stats.
+    const auto system =
+        make_system({{.cpv = "dev-libs/jemalloc-5", .iuse = "stats"}},
+                    {{.cpv = "dev-libs/jemalloc-5", .iuse = "stats", .use = "stats"},
+                     {.cpv = "dev-db/redis-8", .deps = {{"RDEPEND", "dev-libs/jemalloc[stats]"}}}});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"dev-db/redis"})) ==
+          std::vector<std::string>{"dev-libs/jemalloc-5 -> dev-libs/jemalloc-5",
+                                   "new dev-db/redis-8 <- "});
+    // Even an older version, when the installed one's ebuild is gone.
+    const auto older =
+        make_system({{.cpv = "dev-libs/jemalloc-6", .iuse = "stats"}},
+                    {{.cpv = "dev-libs/jemalloc-5", .iuse = "stats", .use = "stats"},
+                     {.cpv = "dev-db/redis-8", .deps = {{"RDEPEND", "dev-libs/jemalloc[stats]"}}}});
+    CHECK(plan(older, egraph::UseRebuilds::none, reinstall({"dev-db/redis"})) ==
+          std::vector<std::string>{"dev-libs/jemalloc-6 -> dev-libs/jemalloc-5",
+                                   "new dev-db/redis-8 <- "});
+}

@@ -844,6 +844,22 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   scenario). With it, an argument whose new slot is backtracked falls back to the version an
   installed slot holds, which plain emerge reinstalls and `-u` keeps, where egraph refused.
 
+- 16r (done): a USE dependency the installed version was built without (dev-db/redis[jemalloc]
+  needing dev-libs/jemalloc[stats] once package.use enables it) was unsatisfied: a dependency
+  only took the version an installed slot holds when newer or rebuilt for an autounmask change.
+  emerge takes the best version that matches, a rebuild as configured (or an older version, its
+  ebuild gone) when the installed one fails only the USE dependencies; a version range it fails
+  still holds the merge back. The `use-rebuild` scenario holds it to emerge.
+- 16s: the masked installed packages for a plan of atoms (found by `--verify` on the dev box,
+  2026-10-06): emerge warns only of those in its graph, which it completes from the root sets
+  only under `--complete-graph` (or a `--rebuild-if-*` option) or once a merge changes an
+  installed package's version, slot or sub-slot, IUSE or enabled USE, or adds a new slot
+  (`_complete_graph`'s complete_if_new_use, _ver and _slot, on by default); otherwise its graph
+  is the arguments, the merges and what they pull in. egraph always completes it, so
+  `plan dev-db/redis` (a rebuild, nothing changing) warns of biber and biblatex where emerge
+  does not. `updates` agrees, `@installed` making every package an argument; nothing compares
+  the masked list for `plan` requests yet.
+
 ## 17. `egraphd`, the service
 
 The stores kept current by a service rather than by hooks, and what follows from always being

@@ -1321,6 +1321,26 @@ SCENARIOS = {
             "app-misc/ranged-1": {"EAPI": "8", "RDEPEND": "<app-misc/r-2"},
         },
     },
+    # A USE dependency the installed version was built without, which package.use now enables,
+    # as dev-db/redis[jemalloc] needs dev-libs/jemalloc[stats]: emerge rebuilds the installed
+    # version as configured (lib), or takes an older one when the installed one's ebuild is gone
+    # (old).
+    "use-rebuild": {
+        "ebuilds": {
+            "dev-libs/lib-1": {"EAPI": "8", "IUSE": "stats"},
+            "dev-libs/old-1": {"EAPI": "8", "IUSE": "stats"},
+            "app-misc/app-1": {
+                "EAPI": "8",
+                "RDEPEND": "dev-libs/lib[stats] dev-libs/old[stats]",
+            },
+        },
+        "installed": {
+            "dev-libs/lib-1": {"EAPI": "8", "IUSE": "stats"},
+            "dev-libs/old-2": {"EAPI": "8", "IUSE": "stats"},
+        },
+        "world": ["dev-libs/lib", "dev-libs/old"],
+        "user_config": {"package.use": ("dev-libs/lib stats", "dev-libs/old stats")},
+    },
     # Every rule visibility follows: keywords (testing, missing, another arch's, negated, and
     # accepted by atoms of each specificity, by a wildcard, per repository and in the profile),
     # licenses (refused, accepted per package, by a group, conditional, in ||), masks and their
