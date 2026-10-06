@@ -236,6 +236,10 @@ TEST_CASE("the refresh command passes the roots through") {
                                    "x/z"});
     CHECK(egraph::store_path(invocation) ==
           fs::path{"/mnt/prefix/var/cache/egraph/installed.egraph"});
+    CHECK(egraph::kernel_sources_command(invocation, "/o.json", {"sys-kernel/sources-1"}) ==
+          std::vector<std::string>{"/usr/bin/egraph-build", "--kernel-sources", "--output",
+                                   "/o.json", "--root", "/mnt", "--config-root", "/cfg",
+                                   "--eprefix", "/prefix", "sys-kernel/sources-1"});
     CHECK(egraph::pending_command(invocation, "/o.json", {"ebuild:x/y-1", "binary:x/z-2"}) ==
           std::vector<std::string>{"/usr/bin/egraph-build", "--pending", "--output", "/o.json",
                                    "--root", "/mnt", "--config-root", "/cfg", "--eprefix",

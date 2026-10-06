@@ -764,9 +764,13 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
     and the human layout show the merge replacing it; `--verify` leaves replacements out, as
     emerge only drops them at its depclean; `exec` leaves the world file alone. The living app
     shows no uninstalls yet; it reads the list with 16j.
-  - 16o2: the running kernel: the store records the kernel directories each package owns
-    (`/usr/src/linux-*`, `/lib/modules/*`), and on the running root the pass keeps a package
-    owning `/lib/modules/$(uname -r)` or the directory its `build` link resolves to.
+  - 16o2 (done): the running kernel: on the running root, once a plan replaces slots,
+    `egraph-build --kernel-sources` names the `/usr/src/linux-*` directories each of those
+    packages owns (CONTENTS as `getcontents` reads it, parents included), and the plan is made
+    again keeping (`Targets::kept_slots`) any owning the one the running kernel's
+    `/lib/modules/<release>/build` (else `source`) link points to; every one when egraph-build
+    fails. Asked on demand rather than stored: every package's CONTENTS is 124 MB on the dev box,
+    0.47 s of each full build even from the page cache.
   - 16o3: `exec` uninstalls a replaced slot as a step, the world file left alone;
     `update`/`install` hand `emerge --depclean` the replaced versions once emerge succeeds.
 - 16p: emerge's "The following installed packages are masked" warning (requested 2026-10-05,

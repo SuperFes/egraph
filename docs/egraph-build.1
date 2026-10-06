@@ -3,7 +3,7 @@
 egraph-build \- evaluate the installed packages through portage and write egraph's store
 .SH SYNOPSIS
 .B egraph-build
-.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-pending | \-\-emerge\-options | \-\-notices | \-\-worker ]
+.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-pending | \-\-kernel\-sources | \-\-emerge\-options | \-\-notices | \-\-worker ]
 .RI [ options ]
 .RI [ entry ...]
 .SH DESCRIPTION
@@ -52,6 +52,20 @@ of a merge list
 .RB ( ebuild:\fIcpv\fR " or " binary:\fIcpv\fR )
 waits for, as JSON, to
 .BR \-\-output .
+.TP
+.B \-\-kernel\-sources
+Write the directories straight under
+.I /usr/src
+named
+.BI linux\- *
+that each
+.IR entry ,
+an installed cpv, lists in its
+.BR CONTENTS ,
+as JSON, to
+.BR \-\-output ;
+.BR egraph (1)
+asks before a plan replaces a slot, to keep the running kernel's sources.
 .TP
 .B \-\-emerge\-options
 Write
@@ -157,7 +171,7 @@ sends it there when it runs more than one job.
 .TP
 .BI \-\-output " file"
 The file
-.BR \-\-pending ", " \-\-emerge\-options " and " \-\-notices
+.BR \-\-pending ", " \-\-kernel\-sources ", " \-\-emerge\-options " and " \-\-notices
 write, apart from anything portage prints; the directory
 .B \-\-copy\-portage
 makes.

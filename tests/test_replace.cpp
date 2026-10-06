@@ -225,3 +225,70 @@ TEST_CASE("a replaced slot's uninstall leaves the world file alone") {
     REQUIRE(requests.size() == 2);
     CHECK(requests.at(1) == Json::parse(R"({"uninstall": "app-emulation/wine-vanilla-8.0"})"));
 }
+
+TEST_CASE("the running kernel's release is proc's osrelease") {
+    const egraph::test::TempDir proc;
+    CHECK(egraph::kernel_release(proc.path()) == std::nullopt);
+    std::filesystem::create_directories(proc.path() / "sys/kernel");
+    egraph::test::write_text(proc.path() / "sys/kernel/osrelease", "7.2.8-gentoo-x86_64\n");
+    CHECK(egraph::kernel_release(proc.path()) == "7.2.8-gentoo-x86_64");
+}
+
+TEST_CASE("a kernel's sources are where its modules' build link points") {
+    const egraph::test::TempDir root;
+    const auto modules = root.path() / "lib/modules";
+    CHECK(egraph::kernel_sources(root.path(), "1-gentoo") == std::nullopt);
+    std::filesystem::create_directories(modules / "1-gentoo");
+    std::filesystem::create_symlink("/usr/src/linux-1-gentoo", modules / "1-gentoo/build");
+    CHECK(egraph::kernel_sources(root.path(), "1-gentoo") == "/usr/src/linux-1-gentoo");
+    // A relative one, as a distribution kernel's, from where the link is on that system.
+    std::filesystem::create_directories(modules / "2-dist");
+    std::filesystem::create_symlink("../../../usr/src/linux-2-dist", modules / "2-dist/build");
+    CHECK(egraph::kernel_sources(root.path(), "2-dist") == "/usr/src/linux-2-dist");
+    // Without build, source.
+    std::filesystem::create_directories(modules / "3-gentoo");
+    std::filesystem::create_symlink("/usr/src/linux-3-gentoo/", modules / "3-gentoo/source");
+    CHECK(egraph::kernel_sources(root.path(), "3-gentoo") == "/usr/src/linux-3-gentoo");
+    // Modules without either.
+    std::filesystem::create_directories(modules / "4-gentoo");
+    CHECK(egraph::kernel_sources(root.path(), "4-gentoo") == std::nullopt);
+}
+
+TEST_CASE("egraph-build's kernel sources are read back by cpv") {
+    const auto found = egraph::parse_kernel_sources(
+        R"({"sys-kernel/sources-1": ["/usr/src/linux-1-gentoo"], "app-misc/other-1": []})");
+    REQUIRE(found);
+    CHECK(*found == egraph::KernelSources{{"app-misc/other-1", {}},
+                                          {"sys-kernel/sources-1", {"/usr/src/linux-1-gentoo"}}});
+    CHECK_FALSE(egraph::parse_kernel_sources("not json"));
+    CHECK_FALSE(egraph::parse_kernel_sources(R"({"x/y-1": "/usr/src/linux-1"})"));
+    CHECK_FALSE(egraph::parse_kernel_sources(R"(["x/y-1"])"));
+}
+
+TEST_CASE("the running kernel's sources keep their slot") {
+    const auto system = make_system({{.cpv = "sys-kernel/sources-1", .slot = "1"},
+                                     {.cpv = "sys-kernel/sources-2", .slot = "2"}},
+                                    {{.cpv = "sys-kernel/sources-1", .slot = "1"},
+                                     {.cpv = "sys-kernel/sources-2", .slot = "2"},
+                                     {.cpv = "sys-kernel/sources-3", .slot = "3"}},
+                                    {"sys-kernel/sources"});
+    auto targets = world({"sys-kernel/sources"});
+    const auto plan =
+        egraph::plan_updates(system.store, system.evaluated, egraph::UseRebuilds::none, targets);
+    CHECK(egraph::replaced_slots(plan) == std::vector<std::uint32_t>{0, 1});
+    const egraph::KernelSources sources{{"sys-kernel/sources-1", {"/usr/src/linux-1-gentoo"}},
+                                        {"sys-kernel/sources-2", {"/usr/src/linux-2-gentoo"}}};
+    const auto owners = egraph::running_kernel_owners(system.store, egraph::replaced_slots(plan),
+                                                      sources, "/usr/src/linux-2-gentoo");
+    CHECK(owners == std::vector<std::uint32_t>{1});
+    CHECK(egraph::running_kernel_owners(system.store, egraph::replaced_slots(plan), sources,
+                                        "/usr/src/linux-9-gentoo")
+              .empty());
+    // A package egraph-build said nothing of is kept: it cannot be shown not to own them.
+    CHECK(egraph::running_kernel_owners(system.store, egraph::replaced_slots(plan), {},
+                                        "/usr/src/linux-2-gentoo") ==
+          std::vector<std::uint32_t>{0, 1});
+    targets.kept_slots = owners;
+    CHECK(replaced(system, targets) ==
+          std::vector<std::string>{"sys-kernel/sources-1 after sys-kernel/sources-3"});
+}

@@ -672,6 +672,54 @@ std::expected<std::vector<Atom>, Exit> replace_list(const Invocation& invocation
     return std::move(*found);
 }
 
+// The slots of plan's replacements that hold the running kernel's sources, as egraph-build
+// reads their CONTENTS: every one when it cannot tell.
+std::vector<std::uint32_t> running_kernel_slots(const Invocation& invocation, const Store& store,
+                                                const Plan& plan, std::string_view command,
+                                                std::ostream& err) {
+    const auto replaced = replaced_slots(plan);
+    const auto release = kernel_release();
+    const auto running = release ? kernel_sources(invocation.root, *release) : std::nullopt;
+    if (replaced.empty() || !running) {
+        return {};
+    }
+    std::vector<std::string> cpvs;
+    cpvs.reserve(replaced.size());
+    for (const auto id : replaced) {
+        cpvs.emplace_back(store.string(store.packages.at(id).cpv));
+    }
+    const auto output = std::filesystem::path{scratch_store()}.replace_extension(".json");
+    const auto ran = output_of(kernel_sources_command(invocation, output, cpvs));
+    std::ifstream in{output};
+    std::ostringstream text;
+    text << in.rdbuf();
+    in.close();
+    std::error_code ignored;
+    std::filesystem::remove(output, ignored);
+    auto sources = ran ? parse_kernel_sources(text.str()) : std::unexpected(ran.error());
+    if (!sources) {
+        const auto last = sources.error().rfind('\n');
+        err << "egraph: " << command << ": keeping every old slot, as which hold the running "
+            << "kernel's sources is unknown: "
+            << (last == std::string::npos ? sources.error() : sources.error().substr(last + 1))
+            << '\n';
+        return replaced;
+    }
+    return running_kernel_owners(store, replaced, *sources, *running);
+}
+
+// plan_updates for targets, without replacing the slots that hold the running kernel's sources.
+Plan plan_keeping_kernel(const Invocation& invocation, const Store& store,
+                         const Evaluated& evaluated, UseRebuilds rebuilds, Targets& targets,
+                         std::string_view command, std::ostream& err) {
+    auto plan = plan_updates(store, evaluated, rebuilds, targets);
+    if (!targets.running_root) {
+        return plan;
+    }
+    targets.kept_slots = running_kernel_slots(invocation, store, plan, command, err);
+    return targets.kept_slots.empty() ? plan : plan_updates(store, evaluated, rebuilds, targets);
+}
+
 // A plan's exit status once shown: refused when emerge would refuse it and nothing else went
 // wrong.
 Exit finish(Exit status, const Plan& plan) {
@@ -977,7 +1025,8 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
         return std::unexpected(replace.error());
     }
     targets.replace_slots = std::move(*replace);
-    Shown shown{.plan = plan_updates(*store, evaluated, command.rebuilds, targets),
+    Shown shown{.plan = plan_keeping_kernel(invocation, *store, evaluated, command.rebuilds,
+                                            targets, "updates", err),
                 .request = {.targets = {command.world ? "@world" : "@installed"},
                             .update = true,
                             .deep = command.deep,
@@ -1216,7 +1265,8 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
         return std::unexpected(replace.error());
     }
     targets.replace_slots = std::move(*replace);
-    Shown shown{.plan = plan_updates(*store, evaluated, command.rebuilds, targets),
+    Shown shown{.plan = plan_keeping_kernel(invocation, *store, evaluated, command.rebuilds,
+                                            targets, name, err),
                 .request = {.targets = command.targets,
                             .update = command.update,
                             .deep = command.deep,
@@ -2917,6 +2967,16 @@ std::vector<std::string> pending_command(const Invocation& invocation,
                                   output.string()};
     add_roots(argv, invocation);
     argv.insert(argv.end(), entries.begin(), entries.end());
+    return argv;
+}
+
+std::vector<std::string> kernel_sources_command(const Invocation& invocation,
+                                                const std::filesystem::path& output,
+                                                const std::vector<std::string>& cpvs) {
+    std::vector<std::string> argv{builder_program(invocation), "--kernel-sources", "--output",
+                                  output.string()};
+    add_roots(argv, invocation);
+    argv.insert(argv.end(), cpvs.begin(), cpvs.end());
     return argv;
 }
 

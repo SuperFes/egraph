@@ -252,7 +252,12 @@ and the old slots it replaces: those
 .I replace\-slots
 lists, which a world atom naming no slot leaves for a new one, uninstalled once the new slot
 merges unless something left installed still needs them (emerge keeps them for
-.BR "emerge \-\-depclean" ),
+.BR "emerge \-\-depclean" ).
+On the running system's root, a slot holding the running kernel's sources (where its modules'
+.I build
+link points, as
+.B egraph\-build \-\-kernel\-sources
+reads the packages' contents) is never replaced, and every slot is kept when that cannot be told;
 and the blockers it could not resolve, for which it refuses the whole plan (exit status 6). On
 the running system's root, emerge only resolves a strong blocker
 .RB ( !! atom)

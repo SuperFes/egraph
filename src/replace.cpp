@@ -2,6 +2,8 @@
 
 #include "graph.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -167,8 +169,85 @@ read_replace_slots(const std::filesystem::path& path) {
     return found;
 }
 
+std::optional<std::string> kernel_release(const std::filesystem::path& proc) {
+    std::ifstream in{proc / "sys/kernel/osrelease"};
+    std::string release;
+    if (!std::getline(in, release) || release.empty()) {
+        return std::nullopt;
+    }
+    return release;
+}
+
+std::optional<std::filesystem::path> kernel_sources(const std::filesystem::path& root,
+                                                    std::string_view release) {
+    const auto modules = std::filesystem::path{"/lib/modules"} / release;
+    for (const auto* name : {"build", "source"}) {
+        std::error_code error;
+        const auto target =
+            std::filesystem::read_symlink(root / modules.relative_path() / name, error);
+        if (error) {
+            continue;
+        }
+        auto found = (modules / target).lexically_normal();
+        // A trailing separator names the same directory.
+        if (!found.has_filename()) {
+            found = found.parent_path();
+        }
+        return found;
+    }
+    return std::nullopt;
+}
+
+std::vector<std::uint32_t> replaced_slots(const Plan& plan) {
+    std::vector<std::uint32_t> found;
+    for (const auto& each : plan.uninstalls) {
+        if (!each.why) {
+            found.push_back(each.package);
+        }
+    }
+    std::ranges::sort(found);
+    return found;
+}
+
+std::expected<KernelSources, std::string> parse_kernel_sources(std::string_view text) {
+    const auto json = nlohmann::json::parse(text, nullptr, false);
+    if (!json.is_object()) {
+        return std::unexpected("egraph-build's kernel sources are not a JSON object");
+    }
+    KernelSources found;
+    for (const auto& [cpv, dirs] : json.items()) {
+        if (!dirs.is_array() ||
+            !std::ranges::all_of(dirs, [](const auto& dir) { return dir.is_string(); })) {
+            return std::unexpected(
+                std::format("egraph-build's kernel sources of {} are not a list of paths", cpv));
+        }
+        auto& into = found[cpv];
+        for (const auto& dir : dirs) {
+            into.push_back(dir.template get<std::string>());
+        }
+    }
+    return found;
+}
+
+std::vector<std::uint32_t> running_kernel_owners(const Store& store,
+                                                 std::span<const std::uint32_t> packages,
+                                                 const KernelSources& sources,
+                                                 const std::filesystem::path& running) {
+    std::vector<std::uint32_t> found;
+    for (const auto id : packages) {
+        const auto dirs = sources.find(store.string(store.packages.at(id).cpv));
+        if (dirs == sources.end() || std::ranges::any_of(dirs->second, [&](const std::string& dir) {
+                return std::filesystem::path{dir}.lexically_normal() == running;
+            })) {
+            found.push_back(id);
+        }
+    }
+    std::ranges::sort(found);
+    return found;
+}
+
 void replace_slots(const Store& store, const Evaluated& evaluated, std::span<const Atom> atoms,
-                   Plan& plan) {
+                   std::span<const std::uint32_t> kept, Plan& plan) {
     if (atoms.empty()) {
         return;
     }
@@ -188,7 +267,7 @@ void replace_slots(const Store& store, const Evaluated& evaluated, std::span<con
             }
             for (const auto id : store.ids_in(root.matches)) {
                 const auto& pkg = store.packages.at(id);
-                if (!staying.gone(id) &&
+                if (!staying.gone(id) && !std::ranges::contains(kept, id) &&
                     store.string(pkg.slot) != evaluated.string(candidate.slot) &&
                     std::ranges::any_of(
                         atoms, [&](const Atom& listed) { return matches(store, pkg, listed); })) {

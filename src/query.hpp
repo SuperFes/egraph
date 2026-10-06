@@ -109,6 +109,8 @@ struct Targets {
     // The replace-slots list (replace_slots): installed slots it matches that a root atom moves
     // off are uninstalled once their replacement merges.
     std::vector<Atom> replace_slots = {};
+    // Installed packages, by id, sorted, that are never replaced so: the running kernel's sources.
+    std::vector<std::uint32_t> kept_slots = {};
 };
 
 // "@set atom", or the atom alone.

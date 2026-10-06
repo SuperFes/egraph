@@ -373,6 +373,12 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
                                                        const std::filesystem::path& output,
                                                        const std::vector<std::string>& entries);
 
+// The egraph-build command line that writes the kernel source directories each installed cpv
+// owns to output.
+[[nodiscard]] std::vector<std::string> kernel_sources_command(const Invocation& invocation,
+                                                              const std::filesystem::path& output,
+                                                              const std::vector<std::string>& cpvs);
+
 // The egraph-build command line that writes EMERGE_DEFAULT_OPTS, a word a line, to output.
 [[nodiscard]] std::vector<std::string> emerge_options_command(const Invocation& invocation,
                                                               const std::filesystem::path& output);

@@ -4,6 +4,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 
 import portage
 import portage.const
@@ -334,8 +335,18 @@ def test_replaced_slots_are_left_out_of_what_emerge_is_held_to(playgrounds, tmp_
     listed = tmp_path / "replace-slots"
     listed.write_text("# old slots\napp-misc/wine\ndev-libs/libv\nsys-kernel/sources\n")
     emerge = real_emerge(system, tmp_path)
+    # Nothing holds the running kernel's sources.
+    builder = kernel_builder(tmp_path, "")
     shown = egraph(
-        path, "--replace-slots", str(listed), "updates", "-D", "--world", emerge=emerge
+        path,
+        "--builder",
+        builder,
+        "--replace-slots",
+        str(listed),
+        "updates",
+        "-D",
+        "--world",
+        emerge=emerge,
     )
     assert shown.returncode == 0, shown.stderr
     uninstalls = [line for line in shown.stdout.splitlines() if "\tuninstall\t" in line]
@@ -347,6 +358,8 @@ def test_replaced_slots_are_left_out_of_what_emerge_is_held_to(playgrounds, tmp_
     ]
     verified = egraph(
         path,
+        "--builder",
+        builder,
         "--replace-slots",
         str(listed),
         "updates",
@@ -364,3 +377,78 @@ def test_replaced_slots_are_left_out_of_what_emerge_is_held_to(playgrounds, tmp_
     refused = egraph(path, "--replace-slots", str(bad), "updates", emerge=emerge)
     assert refused.returncode == 1
     assert refused.stderr.startswith(f"egraph: updates: {bad}: line 2: ")
+
+
+def running_kernel_sources():
+    """Where the running kernel's modules' build link points, if anywhere."""
+    with open("/proc/sys/kernel/osrelease") as f:
+        modules = os.path.join("/lib/modules", f.read().strip())
+    for name in ("build", "source"):
+        try:
+            target = os.readlink(os.path.join(modules, name))
+        except OSError:
+            continue
+        return os.path.normpath(os.path.join(modules, target))
+    return None
+
+
+def kernel_builder(tmp_path, owner, status=0):
+    """An egraph-build whose --kernel-sources says owner holds the running kernel's sources."""
+    path = tmp_path / "egraph-build"
+    path.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys\n"
+        "args = sys.argv[1:]\n"
+        "assert args[0] == '--kernel-sources', args\n"
+        "output = args[args.index('--output') + 1]\n"
+        "cpvs = [arg for arg in args if '/' in arg and not arg.startswith('/')]\n"
+        f"if {status}:\n"
+        "    print('portage fell over', file=sys.stderr)\n"
+        f"    sys.exit({status})\n"
+        f"sources = {running_kernel_sources()!r}\n"
+        "with open(output, 'w') as f:\n"
+        f"    json.dump({{c: [sources] if c == {owner!r} else [] for c in cpvs}}, f)\n"
+    )
+    path.chmod(0o755)
+    return str(path)
+
+
+@pytest.mark.skipif(
+    running_kernel_sources() is None,
+    reason="the running kernel's modules have no build or source link",
+)
+def test_the_running_kernels_sources_keep_their_slot(playgrounds, tmp_path):
+    system = playgrounds("world-slots")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path)
+    listed = tmp_path / "replace-slots"
+    listed.write_text("app-misc/wine\nsys-kernel/sources\n")
+    emerge = real_emerge(system, tmp_path)
+
+    def uninstalls(builder):
+        result = egraph(
+            path,
+            "--builder",
+            builder,
+            "--replace-slots",
+            str(listed),
+            "updates",
+            "-D",
+            "--world",
+            emerge=emerge,
+        )
+        assert result.returncode == 0, result.stderr
+        rows = [line for line in result.stdout.splitlines() if "\tuninstall\t" in line]
+        return [row.split("\t")[0] for row in rows], result.stderr
+
+    owned = kernel_builder(tmp_path, "sys-kernel/sources-2")
+    assert uninstalls(owned) == (["app-misc/wine-1", "sys-kernel/sources-1"], "")
+    # When egraph-build cannot tell, every old slot stays.
+    (tmp_path / "failing").mkdir()
+    failing = kernel_builder(tmp_path / "failing", "", status=1)
+    kept, warned = uninstalls(failing)
+    assert kept == []
+    assert warned == (
+        "egraph: updates: keeping every old slot, as which hold the running kernel's "
+        "sources is unknown: portage fell over\n"
+    )

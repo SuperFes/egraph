@@ -81,6 +81,14 @@ def parser():
         "libraries, as JSON, to --output",
     )
     mode.add_argument(
+        "--kernel-sources",
+        dest="mode",
+        action="store_const",
+        const="kernel-sources",
+        help="write the directories under /usr/src named linux-* that each ENTRY, an installed "
+        "cpv, owns, as JSON, to --output",
+    )
+    mode.add_argument(
         "--copy-portage",
         dest="mode",
         action="store_const",
@@ -110,7 +118,8 @@ def parser():
     p.add_argument(
         "--output",
         type=Path,
-        help="file --pending, --emerge-options and --notices write, apart from anything portage "
+        help="file --pending, --kernel-sources, --emerge-options and --notices write, apart from "
+        "anything portage "
         "prints; the directory --copy-portage makes",
     )
     p.add_argument(
@@ -233,6 +242,22 @@ def write_pending(args):
     settings, portdb, bindb = open_trees(args.config_root, args.root, args.eprefix)
     result = pending.waits(settings, portdb, bindb, entries)
     args.output.write_text(pending.to_json(result))
+    return EXIT_OK
+
+
+def write_kernel_sources(args):
+    from egraph_build import kernel
+
+    if args.output is None:
+        print("egraph-build: --kernel-sources needs --output", file=sys.stderr)
+        return EXIT_USAGE
+    vartree = _tree(args.config_root, args.root, args.eprefix)["vartree"]
+    try:
+        found = kernel.sources(vartree, args.entries)
+    except KeyError as e:
+        print(f"egraph-build: {e.args[0]} is not installed", file=sys.stderr)
+        return EXIT_USAGE
+    args.output.write_text(kernel.to_json(found))
     return EXIT_OK
 
 
@@ -402,6 +427,8 @@ def main(argv=None):
         return EXIT_OK if e.code == 0 else EXIT_USAGE
     if args.mode == "pending":
         return write_pending(args)
+    if args.mode == "kernel-sources":
+        return write_kernel_sources(args)
     if args.mode == "emerge-options":
         return write_emerge_options(args)
     if args.mode == "notices":
@@ -412,7 +439,10 @@ def main(argv=None):
             return EXIT_USAGE
         return write_store(args, incremental=True, requested=args.entries)
     if args.entries:
-        print("egraph-build: entries are for --pending and --evaluate", file=sys.stderr)
+        print(
+            "egraph-build: entries are for --pending, --kernel-sources and --evaluate",
+            file=sys.stderr,
+        )
         return EXIT_USAGE
     if args.mode == "copy-portage":
         from egraph_build import selfupdate
