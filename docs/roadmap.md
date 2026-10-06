@@ -21,7 +21,7 @@ Update the status column as steps land.
 | 13 | A living app | done |
 | 14 | Plans | done |
 | 15 | A system package | done |
-| 16 | Daily use in place of emerge | planned |
+| 16 | Daily use in place of emerge | done |
 | 17 | `egraphd`, the service | planned |
 | 18 | Explaining and checking the configuration | planned |
 | 19 | What-if | planned |
@@ -744,8 +744,11 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
       sysportage build), where the PYTHONPATH saved with the package shows the copy ran.
       Left for when egraph has a package in the tree: the same copy of `egraph-build` itself
       when the plan merges egraph.
-  - 16k8: side-by-side runs against emerge on the dev box, timing against `emerge --jobs`
-    among them.
+  - 16k8 (done): side-by-side runs against emerge on the dev box: the same world, `--verify`
+    agreeing on `-uDN @world` (once 16q landed), `exec -u app-portage/egraph` merging egraph
+    itself, and planning timed against `emerge -uDNp` (findings.md). Builds are not timed
+    live: ccache gives whichever runs second warm compiles, so the scheduling comparison stays
+    16k4c's playground one.
   - 16k9 (done): resuming and reading back runs. Estimates come from the build history (20).
     - 16k9a (done): `exec --resume`: the last run's arguments and what it merged, kept in
       `${EROOT}/var/lib/egraph/exec.json`, planned and verified again without the merges of

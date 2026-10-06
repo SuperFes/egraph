@@ -479,3 +479,19 @@ process including load and the freshness check of 2,575 inputs.
   and only a profile, make.conf or builder change reads everything again.
 - `egraph search openssl`: 78 ms, `search -S toolkit`: 99 ms, against 0.83 s and 1.52 s for
   emerge --search. Both agree on all 1,399 and 2,821 lines of a dozen keys.
+
+## Planning beside emerge on the dev box (2026-10-06, roadmap step 16k8)
+
+- The same request on the live system (106 upgrades, 7 held), `/usr/bin/time`, warm caches;
+  `--verify` agrees on the merge list.
+
+  | command                          | wall    | user CPU | max RSS |
+  |----------------------------------|---------|----------|---------|
+  | `emerge --jobs=8 -uDNpv @world`  | 88.8 s  | 88.2 s   | 424 MB  |
+  | `egraph updates -D -N --world`   | 0.35 s  | 0.34 s   | 35 MB   |
+
+- egraph answers from fresh stores. Bringing them up to date is the builder's: 12.4 s
+  (11.9 s user, 202 MB) for `egraph rebuild` from scratch, 0.05 s for a `refresh` with nothing
+  to do; the portage hooks run it after every emerge and sync, off the query's path.
+- Builds were not timed live: with ccache, whichever tool builds second compiles warm. 16k4c's
+  playground comparison (above) is the scheduling one.
