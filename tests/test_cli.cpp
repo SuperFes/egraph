@@ -338,14 +338,25 @@ TEST_CASE("sync takes updates' options and runs emaint under the same roots") {
     CHECK_FALSE(parse("sync --dynamic-deps n").dynamic_deps);
     CHECK_THROWS(parse("sync -y"));
     CHECK(parse("--emaint /bin/true sync").emaint == "/bin/true");
+    CHECK(sync.repositories.empty());
     egraph::Invocation invocation;
-    CHECK(egraph::sync_command(invocation) == std::vector<std::string>{"emaint", "sync", "--auto"});
+    CHECK(egraph::sync_command(invocation, {}) ==
+          std::vector<std::string>{"emaint", "sync", "--auto"});
     invocation.emaint = "my-emaint";
     invocation.config_root = "/mnt/config";
     // emaint takes its roots from the environment only.
-    CHECK(egraph::sync_command(invocation) ==
+    CHECK(egraph::sync_command(invocation, {}) ==
           std::vector<std::string>{"env", "PORTAGE_CONFIGROOT=/mnt/config", "my-emaint", "sync",
                                    "--auto"});
+}
+
+TEST_CASE("sync syncs only the repositories named, as emerge --sync does") {
+    const auto sync = std::get<egraph::Sync>(parse("sync -D Local gentoo").command);
+    CHECK(sync.deep);
+    CHECK(sync.repositories == std::vector<std::string>{"Local", "gentoo"});
+    // emaint's --repo takes one value and splits it, as emerge --sync hands it the names.
+    CHECK(egraph::sync_command({}, sync.repositories) ==
+          std::vector<std::string>{"emaint", "sync", "--repo", "Local gentoo"});
 }
 
 TEST_CASE("dependency queries take emerge's --dynamic-deps, on by default") {

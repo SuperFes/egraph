@@ -764,11 +764,16 @@ removes them; nothing is merged or removed.
 .TP
 .BR \-y ", " \-\-yes
 Run emerge without asking.
-.SS sync
+.SS sync \fR[\fIrepository\fR...]
 .B emaint sync \-\-auto
 syncs the repositories set to auto-sync, as
 .B emerge \-\-sync
-does, and the stores are refreshed; then the updates, as
+does, or
+.B emaint sync \-\-repo
+the repositories named, by name or alias, as
+.B emerge \-\-sync
+.I repository
+does; then the stores are refreshed; then the updates, as
 .B updates
 shows them with the same options, and the notices, the news the sync brought among them.
 Whether the repositories can be written is for

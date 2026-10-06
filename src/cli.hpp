@@ -185,10 +185,11 @@ struct Deselect {
     bool yes = false;
 };
 
-// emaint sync --auto, then the updates the repositories now offer, shown as updates shows them,
-// and the notices.
+// emaint sync --auto (or the repositories named, as emerge --sync takes them), then the updates the
+// repositories now offer, shown as updates shows them, and the notices.
 struct Sync : Updates {
     static constexpr std::string_view name = "sync";
+    std::vector<std::string> repositories;
 };
 
 // What needs the user once emerge has run: configuration updates waiting, unread news.
@@ -396,9 +397,10 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
 // The dispatch-conf command line, under the invocation's roots.
 [[nodiscard]] std::vector<std::string> dispatch_conf_command(const Invocation& invocation);
 
-// The emaint command line that syncs the repositories set to auto-sync, under the invocation's
-// roots.
-[[nodiscard]] std::vector<std::string> sync_command(const Invocation& invocation);
+// The emaint command line that syncs repositories (none: those set to auto-sync), under the
+// invocation's roots.
+[[nodiscard]] std::vector<std::string> sync_command(const Invocation& invocation,
+                                                    const std::vector<std::string>& repositories);
 
 // The emerge command line that pretends to carry out request under the invocation's roots.
 [[nodiscard]] std::vector<std::string> emerge_command(const Invocation& invocation,

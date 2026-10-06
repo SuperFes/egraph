@@ -540,13 +540,22 @@ def test_sync_shows_what_the_repositories_now_offer(system, tmp_path):
     assert result.stdout.endswith(
         updates.stdout + f"{item}\tnews\ttest_repo\tRead me\n"
     )
-    human = machine.egraph("--layout", "human", "sync")
+    human = machine.egraph("--layout", "human", "sync", "test_repo")
     assert human.returncode == 0, human.stdout + human.stderr
     assert "app-misc/a  1 → 3" in human.stdout
     assert human.stdout.endswith(
         f"Unread news (eselect news read):\n  {item}  Read me\n"
     )
-    assert logged_runs(machine) == [("sync", "done", "")] * 2
+    assert logged_runs(machine) == [("sync", "done", ""), ("sync", "done", "test_repo")]
+
+
+def test_a_sync_of_a_repository_emaint_does_not_know_fails(system):
+    machine = system()
+    result = machine.egraph("sync", "nosuch")
+    assert result.returncode == 1
+    assert "egraph: sync: emaint exited with status 1" in result.stderr
+    assert "app-misc/a-2" in result.stdout
+    assert logged_runs(machine) == [("sync", "failed", "nosuch")]
 
 
 def test_a_failed_sync_still_shows_the_updates(system):

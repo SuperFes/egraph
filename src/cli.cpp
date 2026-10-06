@@ -53,6 +53,7 @@
 #include <optional>
 #include <ostream>
 #include <random>
+#include <ranges>
 #include <sstream>
 #include <string_view>
 #include <utility>
@@ -1364,9 +1365,11 @@ Exit execute(const NoticesCommand&, Session&, const Invocation& invocation, std:
 Exit execute(const Sync& command, Session& session, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
     out << std::flush;
-    const auto ran = run_handed_over(
-        {.command = std::string{Sync::name}, .program = "emaint", .argv = sync_command(invocation)},
-        invocation, out);
+    const auto ran = run_handed_over({.command = std::string{Sync::name},
+                                      .targets = command.repositories,
+                                      .program = "emaint",
+                                      .argv = sync_command(invocation, command.repositories)},
+                                     invocation, out);
     // The repositories that synced before a failure count too.
     session.reload();
     if (output(invocation).human) {
@@ -2598,11 +2601,13 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->type_name("PACKAGE")
         ->required();
     add_yes<Deselect>(deselect_cmd, invocation);
-    add_updates_options<Sync>(
-        add_dynamic_deps(add_command<Sync>(
-            app, invocation,
-            "Have emaint sync the repositories, then show the updates and the notices")),
-        invocation);
+    CLI::App* sync_cmd = add_dynamic_deps(add_command<Sync>(
+        app, invocation,
+        "Have emaint sync the repositories, then show the updates and the notices"));
+    add_updates_options<Sync>(sync_cmd, invocation);
+    add_field(sync_cmd, invocation, "repositories", &Sync::repositories,
+              "Repositories to sync, by name or alias (default: those set to auto-sync)")
+        ->type_name("REPOSITORY");
 
     CLI::App* export_cmd = add_command<Export>(app, invocation, "Export part of the graph");
     add_field(export_cmd, invocation, "--format", &Export::format, "Output format")
@@ -2860,9 +2865,18 @@ std::vector<std::string> dispatch_conf_command(const Invocation& invocation) {
     return with_environment_roots(invocation, {invocation.dispatch_conf.value_or("dispatch-conf")});
 }
 
-std::vector<std::string> sync_command(const Invocation& invocation) {
-    return with_environment_roots(invocation,
-                                  {invocation.emaint.value_or("emaint"), "sync", "--auto"});
+std::vector<std::string> sync_command(const Invocation& invocation,
+                                      const std::vector<std::string>& repositories) {
+    std::vector<std::string> command{invocation.emaint.value_or("emaint"), "sync"};
+    if (repositories.empty()) {
+        command.emplace_back("--auto");
+    } else {
+        // emaint's --repo takes one value and splits it, as emerge --sync hands it the names.
+        command.emplace_back("--repo");
+        command.push_back(repositories | std::views::join_with(' ') |
+                          std::ranges::to<std::string>());
+    }
+    return with_environment_roots(invocation, std::move(command));
 }
 
 std::vector<std::string> pending_command(const Invocation& invocation,
