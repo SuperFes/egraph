@@ -176,4 +176,51 @@ log::Event RunEvents::ended(const std::optional<std::string>& error, double now)
     return found;
 }
 
+log::Event handed_over(const std::string& run, const HandOver& hand_over, double now) {
+    auto message = std::format("egraph {}: {}", hand_over.command, hand_over.program);
+    if (!hand_over.targets.empty()) {
+        message += std::format(", for {}", joined(hand_over.targets));
+    }
+    return {.time = now,
+            .run = run,
+            .kind = "run",
+            .message = std::move(message),
+            .priority = 6,
+            .fields = {{.name = "command", .value = hand_over.command},
+                       {.name = "targets", .value = joined(hand_over.targets)},
+                       {.name = "program", .value = hand_over.program},
+                       {.name = "argv", .value = joined(hand_over.argv)}}};
+}
+
+log::Event handed_back(const std::string& run, const HandOver& hand_over,
+                       const std::expected<int, std::string>& ran, double started, double now) {
+    const auto seconds = now - started;
+    std::optional<std::string> error;
+    if (!ran) {
+        error = ran.error();
+    } else if (*ran != 0) {
+        error = std::format("{} exited with status {}", hand_over.program, *ran);
+    }
+    auto message = std::format("egraph {} {} in {}", hand_over.command, error ? "failed" : "done",
+                               log::duration(seconds));
+    if (error) {
+        message += ": " + *error;
+    }
+    log::Event found{.time = now,
+                     .run = run,
+                     .kind = "end",
+                     .message = std::move(message),
+                     .priority = error ? 3 : 6,
+                     .fields = {{.name = "status", .value = std::string{error ? "failed" : "ok"}},
+                                {.name = "program", .value = hand_over.program},
+                                {.name = "seconds", .value = seconds}}};
+    if (ran) {
+        found.fields.push_back({.name = "exit_status", .value = std::int64_t{*ran}});
+    }
+    if (error) {
+        found.fields.push_back({.name = "error", .value = *error});
+    }
+    return found;
+}
+
 } // namespace egraph

@@ -135,3 +135,42 @@ TEST_CASE("a skip says why, as a warning, and the end counts everything") {
     CHECK(run.ended(std::nullopt, 4000).message ==
           "egraph exec done: 0 merged, 1 uninstalled, 1 failed, 1 skipped in 1 h 6 min");
 }
+
+TEST_CASE("a command handing over to emerge logs the command line and how it exited") {
+    const egraph::HandOver install{.command = "install",
+                                   .targets = {"app-misc/a", "app-misc/b"},
+                                   .program = "emerge",
+                                   .argv = {"emerge", "--ask=n", "app-misc/a", "app-misc/b"}};
+    const auto start = egraph::handed_over("run1", install, 100);
+    CHECK(start.kind == "run");
+    CHECK(start.run == "run1");
+    CHECK(start.message == "egraph install: emerge, for app-misc/a app-misc/b");
+    CHECK(field<std::string>(start, "command") == "install");
+    CHECK(field<std::string>(start, "targets") == "app-misc/a app-misc/b");
+    CHECK(field<std::string>(start, "program") == "emerge");
+    CHECK(field<std::string>(start, "argv") == "emerge --ask=n app-misc/a app-misc/b");
+    CHECK(egraph::handed_over("run2", {.command = "sync", .program = "emaint"}, 0).message ==
+          "egraph sync: emaint");
+
+    const auto done = egraph::handed_back("run1", install, 0, 100, 112.5);
+    CHECK(done.kind == "end");
+    CHECK(done.priority == 6);
+    CHECK(done.message == "egraph install done in 12.5 s");
+    CHECK(field<std::string>(done, "status") == "ok");
+    CHECK(field<std::int64_t>(done, "exit_status") == 0);
+    CHECK(field<double>(done, "seconds") == 12.5);
+    CHECK_FALSE(field<std::string>(done, "error"));
+
+    const auto exited = egraph::handed_back("run1", install, 1, 100, 103);
+    CHECK(exited.priority == 3);
+    CHECK(exited.message == "egraph install failed in 3.0 s: emerge exited with status 1");
+    CHECK(field<std::string>(exited, "status") == "failed");
+    CHECK(field<std::int64_t>(exited, "exit_status") == 1);
+    CHECK(field<std::string>(exited, "error") == "emerge exited with status 1");
+
+    const auto unrun = egraph::handed_back(
+        "run1", install, std::unexpected(std::string{"emerge: not found"}), 100, 100);
+    CHECK(unrun.message == "egraph install failed in 0.0 s: emerge: not found");
+    CHECK_FALSE(field<std::int64_t>(unrun, "exit_status"));
+    CHECK(field<std::string>(unrun, "error") == "emerge: not found");
+}

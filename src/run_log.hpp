@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <string>
 #include <vector>
@@ -72,5 +73,22 @@ class RunEvents {
     std::int64_t failed_ = 0;
     std::int64_t skipped_ = 0;
 };
+
+// A command handing the system to a program that carries the work out and logs its own steps
+// (emerge, emaint): a run of two events, its start with the program's command line, and its end.
+struct HandOver {
+    std::string command{};
+    std::vector<std::string> targets{};
+    // "emerge", and the whole command line run.
+    std::string program{};
+    std::vector<std::string> argv{};
+};
+
+[[nodiscard]] log::Event handed_over(const std::string& run, const HandOver& hand_over, double now);
+
+// How the program exited, or why it could not run.
+[[nodiscard]] log::Event handed_back(const std::string& run, const HandOver& hand_over,
+                                     const std::expected<int, std::string>& ran, double started,
+                                     double now);
 
 } // namespace egraph

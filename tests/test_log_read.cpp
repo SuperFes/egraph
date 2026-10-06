@@ -128,6 +128,41 @@ TEST_CASE("runs are summed up from their first and last events, typed or from th
           "run2\t1700000100\texec\tunfinished\t0\t0\t0\t0\t\t@world");
 }
 
+TEST_CASE("a run handed to a program sums up as how it ended and how long it took") {
+    const std::vector<Event> events{
+        event("run1", "run", 1700000000,
+              {{.name = "command", .value = std::string{"install"}},
+               {.name = "targets", .value = std::string{"app-misc/a"}},
+               {.name = "program", .value = std::string{"emerge"}}}),
+        event("run1", "end", 1700000003,
+              {{.name = "status", .value = std::string{"failed"}},
+               {.name = "program", .value = std::string{"emerge"}},
+               {.name = "seconds", .value = std::string{"3"}},
+               {.name = "exit_status", .value = std::string{"1"}},
+               {.name = "error", .value = std::string{"emerge exited with status 1"}}}),
+        event("run2", "run", 1700000100,
+              {{.name = "command", .value = std::string{"sync"}},
+               {.name = "program", .value = std::string{"emaint"}}}),
+        event("run2", "end", 1700000190,
+              {{.name = "status", .value = std::string{"ok"}}, {.name = "seconds", .value = 90.0}}),
+        event("run3", "run", 1700000200,
+              {{.name = "command", .value = std::string{"remove"}},
+               {.name = "program", .value = std::string{"emerge"}}})};
+    const auto runs = egraph::log::summarize(events);
+    REQUIRE(runs.size() == 3);
+    CHECK(runs.at(0).program == "emerge");
+    CHECK(runs.at(0).error == "emerge exited with status 1");
+    CHECK(egraph::log::summary_line(runs.at(0), utc()) ==
+          "2023-11-14 22:13:20  run1  install app-misc/a  failed in 3.0 s: emerge exited with "
+          "status 1");
+    CHECK(egraph::log::summary_line(runs.at(1), utc()) ==
+          "2023-11-14 22:15:00  run2  sync  done in 1 min 30 s");
+    CHECK(egraph::log::summary_line(runs.at(2), utc()) ==
+          "2023-11-14 22:16:40  run3  remove  unfinished");
+    CHECK(egraph::log::summary_fields(runs.at(0)) ==
+          "run1\t1700000000\tinstall\tfailed\t0\t0\t0\t0\t3.0\tapp-misc/a");
+}
+
 TEST_CASE("a run is found by its id or the start of it") {
     const std::vector<RunSummary> runs{{.run = "3f2a01"}, {.run = "3f2b02"}, {.run = "9c0003"}};
     CHECK(egraph::log::find_run(runs, "9c0003") == "9c0003");

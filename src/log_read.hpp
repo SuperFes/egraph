@@ -39,6 +39,9 @@ struct RunSummary {
     std::int64_t failed = 0;
     std::int64_t skipped = 0;
     std::optional<double> seconds{};
+    // A command that handed the system to a program: the program, and why it failed if it did.
+    std::string program{};
+    std::string error{};
 };
 
 // Each run the events hold, in the order of its first event.
@@ -49,7 +52,8 @@ struct RunSummary {
                                                                std::string_view prefix);
 
 // For people, in zone: "2026-10-05 12:03:11  <run>  exec app-misc/a  done: 2 merged, 0
-// uninstalled, 0 failed, 0 skipped in 2 min 5 s".
+// uninstalled, 0 failed, 0 skipped in 2 min 5 s"; a run handed to a program, "... install
+// app-misc/a  failed in 3.0 s: emerge exited with status 1".
 [[nodiscard]] std::string summary_line(const RunSummary& run, const std::chrono::time_zone& zone);
 
 // For scripts, tab-separated: run, start, command, status, merged, uninstalled, failed, skipped,

@@ -158,6 +158,7 @@ std::vector<RunSummary> summarize(std::span<const Event> events) {
             run.started = event.time;
             run.command = text(event, "command");
             run.targets = text(event, "targets");
+            run.program = text(event, "program");
         } else if (event.kind == "end") {
             run.status = text(event, "status") == "ok" ? "done" : "failed";
             run.merged = number<std::int64_t>(event, "merged").value_or(0);
@@ -165,6 +166,7 @@ std::vector<RunSummary> summarize(std::span<const Event> events) {
             run.failed = number<std::int64_t>(event, "failed").value_or(0);
             run.skipped = number<std::int64_t>(event, "skipped").value_or(0);
             run.seconds = number<double>(event, "seconds");
+            run.error = text(event, "error");
         }
     }
     return runs;
@@ -196,7 +198,12 @@ std::string summary_line(const RunSummary& run, const std::chrono::time_zone& zo
         line += " " + run.targets;
     }
     line += "  " + run.status;
-    if (run.seconds) {
+    if (run.seconds && !run.program.empty()) {
+        line += " in " + duration(*run.seconds);
+        if (!run.error.empty()) {
+            line += ": " + run.error;
+        }
+    } else if (run.seconds) {
         line += std::format(": {} merged, {} uninstalled, {} failed, {} skipped in {}", run.merged,
                             run.uninstalled, run.failed, run.skipped, duration(*run.seconds));
     }
