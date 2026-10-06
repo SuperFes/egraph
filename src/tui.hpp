@@ -1004,7 +1004,14 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
             break;
         case RowType::version:
             if (row.version) {
-                put_spans(screen, at, 3, version_spans(*row.version, glyph), size.cols);
+                const bool selected = index == page.cursor.at;
+                const auto bg = selected ? std::optional<Color>{palette::surface} : std::nullopt;
+                if (selected) {
+                    screen.fill_row(at, {.fg = std::nullopt, .bg = palette::surface});
+                }
+                std::vector<Span> spans{marker(selected, glyph)};
+                std::ranges::move(version_spans(*row.version, glyph), std::back_inserter(spans));
+                put_spans(screen, at, 0, spans, size.cols, bg);
             }
             break;
         case RowType::unmatched: {

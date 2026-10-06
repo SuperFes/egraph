@@ -2136,6 +2136,9 @@ TEST_CASE("an installed result opens its page, with the versions in the reposito
     CHECK(rows.at(app.pages().back().cursor.at).type == RowType::link);
     app.handle(character(U'G'));
     CHECK(app.pages().back().cursor.at == rows.size() - 1);
+    egraph::tui::draw(screen, app, ascii);
+    // The cursor on the last version, 3.
+    CHECK(contains(screen.text(), ">   3 "));
     app.handle(key(KeyKind::up));
     app.handle(key(KeyKind::up));
     CHECK(rows.at(app.pages().back().cursor.at).version->version == "1");
