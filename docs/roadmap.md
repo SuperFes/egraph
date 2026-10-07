@@ -967,7 +967,8 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     USE database egraph manages (system, package and wildcard levels) as the one place USE
     lives, importing the existing `package.use` files and again whenever they change, and
     rendered to one generated file portage reads; retiring the imported files is the user's
-    choice, never automatic.
+    choice, never automatic, but egraph warns when a file no longer matches what the database
+    holds (a flag changed or dropped there), naming the file and line to update or remove.
 - 17e: notifications, moved here from step 20: GLSAs matched against the store, a stale sync,
   broken soname dependencies after a merge, unread news, masked installed packages; in the
   status file and the log, and on the desktop through a user-side `egraph notify` (the service
