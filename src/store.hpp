@@ -124,6 +124,7 @@ struct Input {
     InputKind kind = InputKind::file;
     std::uint64_t mtime_ns = 0;
     std::uint64_t size = 0;
+    auto operator<=>(const Input&) const = default;
 };
 
 // The shared vectors a store file's records slice with Ranges.

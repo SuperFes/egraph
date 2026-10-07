@@ -6,6 +6,7 @@
 #include "history.hpp"
 #include "notices.hpp"
 #include "plan.hpp"
+#include "store.hpp"
 
 #include <compare>
 #include <cstddef>
@@ -63,6 +64,17 @@ struct RepositorySync {
     auto operator<=>(const RepositorySync&) const = default;
 };
 
+// What a configuration edit did to the plan.
+struct PlanChange {
+    // The configuration files added, removed or changed.
+    std::vector<std::string> files;
+    PlanCounts before;
+    // The plan's lines it gained and lost, leaving out the holder and nodeps ones.
+    std::vector<std::string> gained;
+    std::vector<std::string> lost;
+    auto operator<=>(const PlanChange&) const = default;
+};
+
 struct Status {
     Seconds written{};
     StatusStores stores;
@@ -70,8 +82,30 @@ struct Status {
     std::vector<RepositorySync> repositories;
     // status_command's output as lines.
     std::vector<std::string> lines;
+    // The configuration's inputs the plan was made with, and a digest of the stores' others,
+    // to tell a configuration edit from the rest; empty in a status from before they were kept.
+    std::vector<Input> config{};
+    std::string others{};
+    // What a configuration edit alone did to the plan before this one.
+    std::optional<PlanChange> change{};
     auto operator<=>(const Status&) const = default;
 };
+
+// The inputs of the layers under config_dir (the config root's etc/portage), sorted, each once.
+[[nodiscard]] std::vector<Input> config_inputs(std::span<const std::span<const Input>> layers,
+                                               const std::filesystem::path& config_dir);
+
+// A digest of the layers' inputs outside config_dir: whether anything else changed.
+[[nodiscard]] std::string other_inputs_digest(std::span<const std::span<const Input>> layers,
+                                              const std::filesystem::path& config_dir);
+
+// What changed the plan from before to after when the configuration alone changed; none when
+// something else did too, nothing in the plan changed, or before kept no inputs.
+[[nodiscard]] std::optional<PlanChange> plan_change(const Status& before, const Status& after);
+
+// The notice of the change status records, if it records one: "Configuration edit: +4 rebuilds,
+// -1 upgrade", with the files edited and the plan's lines gained (+) and lost (-).
+[[nodiscard]] std::optional<Notice> plan_notice(const Status& status);
 
 [[nodiscard]] PlanCounts plan_counts(const Plan& plan);
 

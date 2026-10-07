@@ -688,6 +688,15 @@ carried, not to what has come since; a click on the summary opens. A well-known 
 it to one a session. The terminals Open starts are reaped as they end and left running when it
 stops, and its summary is closed then, since its buttons would do nothing after (17e6c).
 
+A configuration edit's effect is the plan before and after it, both already in the status file.
+The status keeps the stores' inputs under the config root's `etc/portage` and a digest (FNV-1a,
+stable across versions) of all their others, so the next plan can tell a configuration edit from
+a merge or a sync: only when the configuration's inputs differ and the digest does not is the
+change kept, as the files edited, the counts before and the plan's lines gained and lost (the
+holder and nodeps lines, which only explain others, left out). The `plan` notice is made from
+the status as it is read rather than written to `notices.json`, so the next plan, whatever made
+it, replaces or clears it (17f1).
+
 Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
 touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
 the set is emerge's own. `parse_request` takes sets the store does not hold from its caller

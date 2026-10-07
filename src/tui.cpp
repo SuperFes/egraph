@@ -2421,6 +2421,7 @@ std::optional<Action> notice_action(const Notice& notice) {
     case NoticeKind::masked:
     case NoticeKind::news:
     case NoticeKind::config:
+    case NoticeKind::plan:
         break;
     }
     return std::nullopt;

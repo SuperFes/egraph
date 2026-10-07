@@ -86,9 +86,9 @@ masked_installed(const Store& store, const Evaluated& evaluated, bool dynamic_de
 // Each soname an installed package requires that no installed package provides, by cpv.
 [[nodiscard]] std::vector<Notices::Missing> missing_sonames(const Store& store);
 
-enum class NoticeKind : std::uint8_t { glsa, news, config, preserved, stale, masked, missing };
+enum class NoticeKind : std::uint8_t { glsa, news, config, preserved, stale, masked, missing, plan };
 
-// "glsa", "news", "config", "preserved", "stale", "masked", "missing".
+// "glsa", "news", "config", "preserved", "stale", "masked", "missing", "plan".
 [[nodiscard]] std::string_view notice_kind_name(NoticeKind kind);
 [[nodiscard]] std::optional<NoticeKind> notice_kind(std::string_view name);
 
@@ -96,7 +96,7 @@ enum class NoticeKind : std::uint8_t { glsa, news, config, preserved, stale, mas
 struct Notice {
     NoticeKind kind = NoticeKind::news;
     // Stable while it lasts: "glsa:202609-03", "news:gentoo/2026-09-01-x", "config",
-    // "preserved", "stale:gentoo", "masked:cat/pkg-1", "missing:cat/pkg-1".
+    // "preserved", "stale:gentoo", "masked:cat/pkg-1", "missing:cat/pkg-1", "plan".
     std::string key{};
     std::string title{};
     std::vector<std::string> detail{};

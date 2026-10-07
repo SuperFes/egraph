@@ -1014,7 +1014,12 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
       terminal; installed as an XDG autostart entry.
 - 17f: what a configuration edit did: on a change under `/etc/portage`, the plan before and
   after compared ("+4 rebuilds for USE=foo on media-libs/bar, 1 new, the plan now refuses: ..."),
-  in the status file and as a notification. Linting proper stays step 18.
+  in the status file and as a notice. Linting proper stays step 18.
+  - 17f1 (done): pure: the status keeps the configuration's inputs and a digest of the stores'
+    others; two plans compared when the configuration alone changed (the files edited, the counts
+    before, the lines gained and lost); the `plan` notice it makes, until the next plan.
+  - 17f2: watch records the change as it plans; the notice read beside the others (`notices`,
+    `status`, the interface, where enter opens the updates, and `notify`).
 
 ## 18. Explaining and checking the configuration
 

@@ -200,6 +200,7 @@ constexpr std::array notice_kinds{
     std::pair{NoticeKind::stale, std::string_view{"stale"}},
     std::pair{NoticeKind::masked, std::string_view{"masked"}},
     std::pair{NoticeKind::missing, std::string_view{"missing"}},
+    std::pair{NoticeKind::plan, std::string_view{"plan"}},
 };
 
 std::string joined(std::span<const std::string> words, std::string_view separator) {

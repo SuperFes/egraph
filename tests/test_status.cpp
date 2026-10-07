@@ -7,10 +7,15 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <optional>
+#include <span>
 #include <string>
+#include <utility>
+#include <vector>
 
 using egraph::PlanWhen;
 using egraph::Seconds;
@@ -328,6 +333,142 @@ TEST_CASE("notices summed up in a line") {
     CHECK(egraph::notices_summary(notices) ==
           "9 notices: 1 GLSA, 2 packages missing libraries, preserved libraries, 1 masked "
           "package, 1 stale repository, configuration updates, 2 news items");
+    CHECK(egraph::notices_summary(std::vector{notice(NoticeKind::plan)}) ==
+          "1 notice: the plan changed by an edit");
     CHECK(egraph::notices_summary(std::vector{notice(NoticeKind::news)}) ==
           "1 notice: 1 news item");
+}
+
+namespace {
+
+egraph::Input input(std::string path, std::uint64_t mtime = 1) {
+    return {.path = std::move(path), .kind = egraph::InputKind::file, .mtime_ns = mtime, .size = 1};
+}
+
+using Inputs = std::vector<egraph::Input>;
+using Layers = std::vector<std::span<const egraph::Input>>;
+
+} // namespace
+
+TEST_CASE("the configuration's inputs are those under its directory, each once") {
+    const Inputs installed{input("/etc/portage"), input("/etc/portage/make.conf"),
+                           input("/var/db/pkg")};
+    const Inputs evaluated{input("/etc/portage/package.use/foo"), input("/etc/portage/make.conf"),
+                           input("/etc/portage-old/make.conf"), input("/var/db/repos/gentoo")};
+    CHECK(egraph::config_inputs(Layers{installed, evaluated}, "/etc/portage/") ==
+          Inputs{input("/etc/portage"), input("/etc/portage/make.conf"),
+                 input("/etc/portage/package.use/foo")});
+}
+
+TEST_CASE("the digest of the other inputs changes with them alone") {
+    const Inputs layer{input("/etc/portage/make.conf"), input("/var/db/pkg"),
+                       input("/var/db/repos/gentoo")};
+    const auto digest = egraph::other_inputs_digest(Layers{layer}, "/etc/portage");
+    CHECK(digest.size() == 16);
+    const Inputs reordered{input("/var/db/repos/gentoo"), input("/var/db/pkg"),
+                           input("/var/db/pkg")};
+    CHECK(egraph::other_inputs_digest(Layers{reordered, layer}, "/etc/portage") == digest);
+    const Inputs edited{input("/etc/portage/make.conf", 2), input("/var/db/pkg"),
+                        input("/var/db/repos/gentoo")};
+    CHECK(egraph::other_inputs_digest(Layers{edited}, "/etc/portage") == digest);
+    const Inputs merged{input("/etc/portage/make.conf"), input("/var/db/pkg", 2),
+                        input("/var/db/repos/gentoo")};
+    CHECK(egraph::other_inputs_digest(Layers{merged}, "/etc/portage") != digest);
+}
+
+namespace {
+
+egraph::Status planned(Inputs config, std::vector<std::string> lines,
+                       egraph::PlanCounts counts = {}) {
+    return {.written = at(2026y / oct / 7, 12h),
+            .stores = {},
+            .counts = counts,
+            .repositories = {},
+            .lines = std::move(lines),
+            .config = std::move(config),
+            .others = "0123456789abcdef"};
+}
+
+} // namespace
+
+TEST_CASE("a configuration edit alone changing the plan is a plan change") {
+    const auto before = planned(
+        {input("/etc/portage/package.use/foo"), input("/etc/portage/package.use/old")},
+        {"dev-libs/a-1\tupgrade\tdev-libs/a-2\tgentoo", "dev-libs/b-1\theld\tdev-libs/b-2\tgentoo",
+         "dev-libs/b-1\tholder\tdev-libs/z-1", "dev-libs/c-1\trebuild\tdev-libs/c-1\tgentoo\tx"},
+        {.upgrades = 1, .rebuilds = 1, .held = 1});
+    auto after =
+        planned({input("/etc/portage/package.mask"), input("/etc/portage/package.use/foo", 2)},
+                {"dev-libs/a-1\tupgrade\tdev-libs/a-2\tgentoo",
+                 "dev-libs/c-1\trebuild\tdev-libs/c-1\tgentoo\tx",
+                 "dev-libs/d-1\trebuild\tdev-libs/d-1\tgentoo\ty", "dev-libs/d-1\tnodeps"},
+                {.upgrades = 1, .rebuilds = 2});
+    after.written += 1h;
+    const auto change = egraph::plan_change(before, after);
+    REQUIRE(change);
+    CHECK(change->files == std::vector<std::string>{"/etc/portage/package.mask",
+                                                    "/etc/portage/package.use/foo",
+                                                    "/etc/portage/package.use/old"});
+    CHECK(change->before == before.counts);
+    CHECK(change->gained ==
+          std::vector<std::string>{"dev-libs/d-1\trebuild\tdev-libs/d-1\tgentoo\ty"});
+    CHECK(change->lost == std::vector<std::string>{"dev-libs/b-1\theld\tdev-libs/b-2\tgentoo"});
+
+    SECTION("not when something else changed too") {
+        after.others = "fedcba9876543210";
+        CHECK_FALSE(egraph::plan_change(before, after));
+    }
+    SECTION("not when the configuration did not change") {
+        after.config = before.config;
+        CHECK_FALSE(egraph::plan_change(before, after));
+    }
+    SECTION("not when the plan did not change") {
+        after.lines = before.lines;
+        after.counts = before.counts;
+        CHECK_FALSE(egraph::plan_change(before, after));
+    }
+    SECTION("not after a status that kept no inputs") {
+        auto older = before;
+        older.config.clear();
+        older.others.clear();
+        CHECK_FALSE(egraph::plan_change(older, after));
+    }
+}
+
+TEST_CASE("a plan change is a notice of what the edit did") {
+    auto status = planned({}, {}, {.upgrades = 1, .rebuilds = 3, .refused = true});
+    CHECK_FALSE(egraph::plan_notice(status));
+    status.change = egraph::PlanChange{.files = {"/etc/portage/package.use/foo"},
+                                       .before = {.upgrades = 2, .rebuilds = 1, .held = 1},
+                                       .gained = {"dev-libs/d-1\trebuild\tdev-libs/d-1\tgentoo\ty"},
+                                       .lost = {"dev-libs/b-1\theld\tdev-libs/b-2\tgentoo"}};
+    const auto notice = egraph::plan_notice(status);
+    REQUIRE(notice);
+    CHECK(notice->kind == egraph::NoticeKind::plan);
+    CHECK(notice->key == "plan");
+    CHECK(notice->title == "Configuration edit: -1 upgrade, +2 rebuilds, -1 held, now refused");
+    CHECK(notice->detail == std::vector<std::string>{"edited /etc/portage/package.use/foo",
+                                                     "+ dev-libs/d-1 rebuild dev-libs/d-1 gentoo y",
+                                                     "- dev-libs/b-1 held dev-libs/b-2 gentoo"});
+    CHECK(notice->fingerprint == std::format("{}", status.written.time_since_epoch().count()));
+    CHECK(notice->since == status.written);
+
+    status.counts = status.change->before;
+    CHECK(egraph::plan_notice(status)->title == "Configuration edit: the plan changed");
+}
+
+TEST_CASE("a status keeps its configuration's inputs and its plan change through JSON") {
+    auto status = planned({input("/etc/portage/make.conf"),
+                           {.path = "/etc/portage/package.use",
+                            .kind = egraph::InputKind::directory,
+                            .mtime_ns = 5,
+                            .size = 0}},
+                          {"dev-libs/a-1\tupgrade\tdev-libs/a-2\tgentoo"});
+    status.change = egraph::PlanChange{.files = {"/etc/portage/make.conf"},
+                                       .before = {.rebuilds = 2, .refused = true},
+                                       .gained = {"x"},
+                                       .lost = {"y", "z"}};
+    CHECK(egraph::parse_status(egraph::status_json(status)) == status);
+    status.change.reset();
+    CHECK(egraph::parse_status(egraph::status_json(status)) == status);
 }

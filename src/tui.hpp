@@ -1180,6 +1180,7 @@ inline Tone notice_tone(NoticeKind kind) {
     case NoticeKind::preserved:
         return Tone::use;
     case NoticeKind::config:
+    case NoticeKind::plan:
         return Tone::choice;
     case NoticeKind::news:
         return Tone::heading;
