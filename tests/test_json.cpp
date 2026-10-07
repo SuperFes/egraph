@@ -41,22 +41,24 @@ TEST_CASE("the sample store exports as the builder would") {
     REQUIRE(store.has_value());
     std::ostringstream out;
     egraph::write_json(out, *store);
-    CHECK(out.str() ==
-          R"({"format":3,"packages":[)"
-          R"({"cp":"app-misc/a","cpv":"app-misc/a-1","deps":{"BDEPEND":[],"DEPEND":[],)"
-          R"("IDEPEND":[],"PDEPEND":[],"RDEPEND":[)"
-          R"({"atom":"","matches":[],"parent":-1,"type":"any-of"},)"
-          R"({"atom":"dev-libs/b","matches":["dev-libs/b-1"],"parent":0,"type":"atom"},)"
-          R"({"atom":"dev-libs/missing","matches":[],"parent":0,"type":"atom"},)"
-          R"({"atom":"!app-misc/old","matches":[],"parent":-1,"type":"weak-blocker"}]},)"
-          R"("eapi":"8","errors":[["RDEPEND","bad dep"]],"iuse":["flag"],"provides":[],)"
-          R"("repo":"test_repo","requires":[["x86_64","libb.so.1"]],"slot":"0","sub_slot":"0",)"
-          R"("use":["flag"]},)"
-          R"({"cp":"dev-libs/b","cpv":"dev-libs/b-1","deps":{"BDEPEND":[],"DEPEND":[],)"
-          R"("IDEPEND":[],"PDEPEND":[],"RDEPEND":[]},"eapi":"8","errors":[],"iuse":[],)"
-          R"("provides":[["x86_64","libb.so.1"]],"repo":"test_repo","requires":[],"slot":"0",)"
-          R"("sub_slot":"0","use":[]}],"roots":[)"
-          R"({"atom":"app-misc/a","matches":["app-misc/a-1"],"set":"selected","via":""},)"
-          R"({"atom":"dev-libs/missing","matches":[],"set":"system","via":""}]})"
-          "\n");
+    CHECK(
+        out.str() ==
+        R"({"format":4,"packages":[)"
+        R"({"counter":7,"cp":"app-misc/a","cpv":"app-misc/a-1","deps":{"BDEPEND":[],"DEPEND":[],)"
+        R"("IDEPEND":[],"PDEPEND":[],"RDEPEND":[)"
+        R"({"atom":"","matches":[],"parent":-1,"type":"any-of"},)"
+        R"({"atom":"dev-libs/b","matches":["dev-libs/b-1"],"parent":0,"type":"atom"},)"
+        R"({"atom":"dev-libs/missing","matches":[],"parent":0,"type":"atom"},)"
+        R"({"atom":"!app-misc/old","matches":[],"parent":-1,"type":"weak-blocker"}]},)"
+        R"("eapi":"8","errors":[["RDEPEND","bad dep"]],"iuse":["flag"],"merged":1759784400,)"
+        R"("provides":[],)"
+        R"("repo":"test_repo","requires":[["x86_64","libb.so.1"]],"slot":"0","sub_slot":"0",)"
+        R"("use":["flag"]},)"
+        R"({"counter":0,"cp":"dev-libs/b","cpv":"dev-libs/b-1","deps":{"BDEPEND":[],)"
+        R"("DEPEND":[],"IDEPEND":[],"PDEPEND":[],"RDEPEND":[]},"eapi":"8","errors":[],"iuse":[],)"
+        R"("merged":0,"provides":[["x86_64","libb.so.1"]],"repo":"test_repo","requires":[],"slot":"0",)"
+        R"("sub_slot":"0","use":[]}],"roots":[)"
+        R"({"atom":"app-misc/a","matches":["app-misc/a-1"],"set":"selected","via":""},)"
+        R"({"atom":"dev-libs/missing","matches":[],"set":"system","via":""}]})"
+        "\n");
 }

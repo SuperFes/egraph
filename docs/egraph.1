@@ -1073,13 +1073,25 @@ How long generations of the system store are kept (default 90); 0 keeps none.
 .RE
 .TP
 .I ${ROOT}${EPREFIX}/var/lib/egraph
-The system store's history: when a refresh changes the installed packages or the root sets, the
-store it replaced is kept as
+The system store's history: when a refresh changes the installed packages or the root sets, what
+changed is added to
+.IR history.log ,
+a JSON object a line with the
+.BR cpv ,
+the
+.B event
+.RB ( merged ", " upgraded ", " downgraded ", " rebuilt ", " uninstalled ),
+the version upgraded or downgraded
+.BR from ,
+and the
+.B time
+it merged (when its vdb entry was written) or its uninstall was found; and the store it replaced
+is kept as
 .IR installed\-<built>.egraph ,
-named by when it was built (UTC). All from the last day are kept, then the newest of each day,
-for
+named by when it was built (UTC). All generations from the last day are kept, then the newest of
+each day, for
 .B history_days
-days.
+days; the log is kept whole.
 .TP
 .I ${ROOT}${EPREFIX}/var/cache/egraph/installed.egraph
 The system store, with the evaluated store and the repository index

@@ -77,6 +77,9 @@ TEST_CASE("the sample store decodes") {
     REQUIRE(store->packages.size() == 2);
     const auto& a = store->packages.front();
     CHECK(a.iuse_effective);
+    CHECK(a.counter == 7);
+    CHECK(a.merged == 1759784400);
+    CHECK(store->packages.back().counter == 0);
     CHECK(store->string(a.cpv) == "app-misc/a-1");
     CHECK(store->string(a.cp) == "app-misc/a");
     CHECK(store->ids_in(a.use).size() == 1);
@@ -135,7 +138,7 @@ TEST_CASE("the header is checked") {
     CHECK(rejection(bytes) == "not an egraph store");
 
     CHECK(rejection(egraph::test::assemble(egraph::test::sample_sections(), 3)) ==
-          "format version 3, expected 5");
+          "format version 3, expected 6");
 
     auto sections = egraph::test::sample_sections();
     sections.pop_back();
@@ -238,7 +241,8 @@ TEST_CASE("export --format json reads the store") {
     std::ostringstream err;
     REQUIRE(egraph::run(invocation, out, err) == egraph::Exit::ok);
     CHECK(err.str().empty());
-    CHECK_THAT(out.str(), Catch::Matchers::StartsWith(R"({"format":3,"packages":[{"cp":)"));
+    CHECK_THAT(out.str(),
+               Catch::Matchers::StartsWith(R"({"format":4,"packages":[{"counter":7,"cp":)"));
 
     invocation.store = "/nonexistent/egraph.store";
     invocation.no_refresh = true;
@@ -256,7 +260,8 @@ TEST_CASE("a store in another format says which, and where it was loaded from") 
     CHECK(decoded.error().mismatch->found == 3);
     CHECK(decoded.error().mismatch->expected == egraph::store_format_version);
     CHECK(decoded.error().mismatch->path.empty());
-    CHECK_FALSE(egraph::decode(egraph::test::assemble({}, 5)).error().mismatch);
+    CHECK_FALSE(
+        egraph::decode(egraph::test::assemble({}, egraph::store_format_version)).error().mismatch);
 
     const egraph::test::TempDir dir;
     egraph::test::write_bytes(dir.path() / "old.egraph", older);

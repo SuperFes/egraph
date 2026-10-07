@@ -1,5 +1,6 @@
 """The system store's history: the generations refreshes replace, kept in var/lib/egraph."""
 
+import json
 import os
 import shutil
 import subprocess
@@ -82,6 +83,14 @@ def generation_name(seconds):
     return time.strftime("installed-%Y%m%dT%H%M%SZ.egraph", time.gmtime(seconds))
 
 
+def log(system):
+    path = os.path.join(history(system), "history.log")
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        return [json.loads(line) for line in f]
+
+
 def settings(system, text):
     path = os.path.join(system[0].eroot, "etc/egraph/egraph.conf")
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -120,22 +129,23 @@ def test_a_refresh_that_leaves_the_installed_packages_keeps_nothing(system):
     assert generations(system) == []
 
 
-def test_no_history_with_history_days_zero(system):
+def test_no_generations_with_history_days_zero_but_the_log_goes_on(system):
     settings(system, "history_days = 0\n")
     refresh(system)
     add_package(system[0], "dev-libs/alt-b-1")
     refresh(system)
     assert generations(system) == []
+    assert [event["cpv"] for event in log(system)] == ["dev-libs/alt-b-1"]
 
 
-def test_broken_settings_warn_and_keep_no_history(system):
+def test_broken_settings_warn_and_keep_no_generations(system):
     settings(system, "history = 3\n")
     assert egraph(system, "refresh").returncode == 0
     add_package(system[0], "dev-libs/alt-b-1")
     result = egraph(system, "refresh")
     assert result.returncode == 0
     assert result.stderr.endswith(
-        "egraph.conf: line 1: unknown setting history, so no history is kept\n"
+        "egraph.conf: line 1: unknown setting history, so no generations are kept\n"
     )
     assert result.stderr.count("\n") == 1
     assert generations(system) == []
@@ -177,3 +187,27 @@ def test_a_store_named_with_store_keeps_no_history(system, tmp_path):
     add_package(system[0], "dev-libs/alt-b-1")
     assert egraph(system, "--store", named, "refresh").returncode == 0
     assert generations(system) == []
+
+
+def test_the_log_records_merges_at_their_merge_time_and_uninstalls_when_found(system):
+    playground = system[0]
+    refresh(system)
+    assert log(system) == []
+    add_package(playground, "dev-libs/alt-b-1", COUNTER="7")
+    merged = int(time.time()) - 600
+    os.utime(vdb(playground, "dev-libs/alt-b-1", "COUNTER"), (merged, merged))
+    refresh(system)
+    assert log(system) == [
+        {"cpv": "dev-libs/alt-b-1", "event": "merged", "time": merged}
+    ]
+    refresh(system)
+    assert len(log(system)) == 1
+    before = time.time()
+    shutil.rmtree(vdb(playground, "dev-libs/alt-b-1"))
+    refresh(system)
+    [_, gone] = log(system)
+    assert (gone["cpv"], gone["event"]) == ("dev-libs/alt-b-1", "uninstalled")
+    assert before - 1 <= gone["time"] <= time.time()
+    assert (
+        os.stat(os.path.join(history(system), "history.log")).st_mode & 0o777 == 0o644
+    )

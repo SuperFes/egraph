@@ -187,6 +187,22 @@ TEST_CASE("appending under the file's lock adds to what is there, and makes it i
     CHECK_FALSE(egraph::os::append_locked(dir.path() / "a/b/log/under", "x"));
 }
 
+TEST_CASE("appending by replacing adds to a file this process cannot write, in its directory") {
+    namespace fs = std::filesystem;
+    const egraph::test::TempDir dir;
+    const auto path = dir.path() / "a/history.log";
+    REQUIRE(egraph::os::append_replacing(path, "one\n"));
+    CHECK((fs::status(path).permissions() & fs::perms::all) ==
+          (fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read |
+           fs::perms::others_read));
+    // As a file another user made would be.
+    fs::permissions(path, fs::perms::owner_read | fs::perms::group_read | fs::perms::others_read);
+    REQUIRE(egraph::os::append_replacing(path, "two\n"));
+    CHECK(egraph::test::read_text(path) == "one\ntwo\n");
+    CHECK(std::distance(fs::directory_iterator{path.parent_path()}, fs::directory_iterator{}) == 1);
+    CHECK_FALSE(egraph::os::append_replacing(path / "under", "x"));
+}
+
 TEST_CASE("a file replaced with text holds the text alone, with no copy left beside it") {
     const egraph::test::TempDir dir;
     const auto path = dir.path() / "a/b/state.json";

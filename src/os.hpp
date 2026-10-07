@@ -222,6 +222,13 @@ std::expected<void, std::error_code> replace_with_text(const std::filesystem::pa
 std::expected<void, std::error_code> append_locked(const std::filesystem::path& path,
                                                    std::string_view text);
 
+// Appends text to the file at path by writing it anew with text at its end and renaming that
+// over it, under an exclusive lock on its directory: anyone who can write the directory can
+// append, whoever owns the file, and appends beside each other never lose a line. Creates the
+// file (mode 0644) and its directories.
+std::expected<void, std::error_code> append_replacing(const std::filesystem::path& path,
+                                                      std::string_view text);
+
 // Whether egraph was built with the systemd journal (libsystemd).
 bool journal_built();
 

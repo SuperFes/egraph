@@ -1,6 +1,8 @@
 #include "history.hpp"
 
 #include "check.hpp"
+#include "json.hpp"
+#include "version.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -8,8 +10,10 @@
 #include <fstream>
 #include <map>
 #include <ranges>
+#include <set>
 #include <sstream>
 #include <tuple>
+#include <utility>
 
 namespace egraph {
 
@@ -165,6 +169,77 @@ std::vector<Seconds> thinned(std::span<const Seconds> generations, Seconds now, 
         }
     }
     return gone;
+}
+
+std::vector<HistoryEvent> history_events(const Store& before, const Store& after, Seconds now) {
+    using Slot = std::pair<std::string_view, std::string_view>;
+    std::map<std::string_view, std::uint32_t> before_ids;
+    std::map<Slot, std::vector<std::uint32_t>> before_slots;
+    for (std::uint32_t id = 0; id < before.packages.size(); ++id) {
+        const auto& pkg = before.packages.at(id);
+        before_ids.emplace(before.string(pkg.cpv), id);
+        before_slots[{before.string(pkg.cp), before.string(pkg.slot)}].push_back(id);
+    }
+    std::set<std::string_view> after_cpvs;
+    for (const auto& pkg : after.packages) {
+        after_cpvs.insert(after.string(pkg.cpv));
+    }
+    const auto version = [](const Store& store, const Package& pkg) {
+        return parse_version(store.string(pkg.cpv).substr(store.string(pkg.cp).size() + 1));
+    };
+
+    std::vector<HistoryEvent> events;
+    std::set<std::uint32_t> replaced;
+    for (const auto& pkg : after.packages) {
+        const auto cpv = after.string(pkg.cpv);
+        const Seconds time = pkg.merged != 0 ? Seconds{std::chrono::seconds{pkg.merged}} : now;
+        if (const auto found = before_ids.find(cpv); found != before_ids.end()) {
+            if (before.packages.at(found->second).counter != pkg.counter) {
+                events.push_back({.time = time, .event = "rebuilt", .cpv = std::string{cpv}});
+            }
+            continue;
+        }
+        HistoryEvent event{.time = time, .event = "merged", .cpv = std::string{cpv}};
+        const auto slot = before_slots.find({after.string(pkg.cp), after.string(pkg.slot)});
+        const auto in_slot =
+            slot != before_slots.end() ? std::span{slot->second} : std::span<const std::uint32_t>{};
+        for (const auto id : in_slot) {
+            const auto& old = before.packages.at(id);
+            if (after_cpvs.contains(before.string(old.cpv)) || replaced.contains(id)) {
+                continue;
+            }
+            const auto from = version(before, old);
+            const auto to = version(after, pkg);
+            event.event = from && to && vercmp(*to, *from) < 0 ? "downgraded" : "upgraded";
+            event.from = before.string(old.cpv);
+            replaced.insert(id);
+            break;
+        }
+        events.push_back(std::move(event));
+    }
+    for (const auto& [cpv, id] : before_ids) {
+        if (!after_cpvs.contains(cpv) && !replaced.contains(id)) {
+            events.push_back({.time = now, .event = "uninstalled", .cpv = std::string{cpv}});
+        }
+    }
+    std::ranges::sort(events, [](const HistoryEvent& a, const HistoryEvent& b) {
+        return std::tuple{a.time, a.event == "uninstalled", a.cpv} <
+               std::tuple{b.time, b.event == "uninstalled", b.cpv};
+    });
+    return events;
+}
+
+std::string event_line(const HistoryEvent& event) {
+    std::ostringstream out;
+    out << R"({"cpv":)";
+    write_json_string(out, event.cpv);
+    out << R"(,"event":")" << event.event << '"';
+    if (!event.from.empty()) {
+        out << R"(,"from":)";
+        write_json_string(out, event.from);
+    }
+    out << R"(,"time":)" << event.time.time_since_epoch().count() << '}';
+    return std::move(out).str();
 }
 
 bool history_changed(const Store& before, const Store& after) {

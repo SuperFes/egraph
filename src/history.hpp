@@ -45,6 +45,25 @@ using Seconds = std::chrono::sys_seconds;
 [[nodiscard]] std::vector<Seconds> thinned(std::span<const Seconds> generations, Seconds now,
                                            int days);
 
+// One change between two stores, a line of the history log.
+struct HistoryEvent {
+    // When it merged (from the package's merge time), or for an uninstall, when it was found.
+    Seconds time;
+    // merged, upgraded, downgraded (replacing another version in its slot), rebuilt (the same
+    // version merged again), uninstalled.
+    std::string event;
+    std::string cpv;
+    // The version upgraded or downgraded from; empty for the others.
+    std::string from{};
+};
+
+// What changed from before to after, found at now: oldest first, merges before uninstalls,
+// then by cpv.
+[[nodiscard]] std::vector<HistoryEvent> history_events(const Store& before, const Store& after,
+                                                       Seconds now);
+// The event as a line of JSON, without the newline.
+[[nodiscard]] std::string event_line(const HistoryEvent& event);
+
 // Whether after differs from before in its installed packages or its root sets.
 [[nodiscard]] bool history_changed(const Store& before, const Store& after);
 

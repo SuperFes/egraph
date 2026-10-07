@@ -22,7 +22,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t store_format_version = 5;
+inline constexpr std::uint32_t store_format_version = 6;
 inline constexpr std::array<std::string_view, 5> dep_kinds{"BDEPEND", "DEPEND", "IDEPEND",
                                                            "PDEPEND", "RDEPEND"};
 
@@ -73,6 +73,9 @@ struct Package {
     std::uint32_t eapi = 0;
     // The EAPI has IUSE_EFFECTIVE (5 and later), which decides how implicit IUSE applies.
     bool iuse_effective = false;
+    // The vdb entry's COUNTER, and when it was merged in seconds since the epoch; 0 when unknown.
+    std::uint64_t counter = 0;
+    std::uint64_t merged = 0;
     // String ids in Store::ids.
     Range use;
     Range iuse;

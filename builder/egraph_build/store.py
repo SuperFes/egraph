@@ -20,7 +20,7 @@ from egraph_build.repository import (
 from egraph_build.roots import Root
 
 MAGIC = b"EGRAPH\0\0"
-FORMAT_VERSION = 5
+FORMAT_VERSION = 6
 (
     SECTION_META,
     SECTION_INPUTS,
@@ -237,6 +237,8 @@ def encode(layer, meta, inputs=()):
         for value in (pkg.cpv, pkg.cp, pkg.slot, pkg.sub_slot, pkg.repo, pkg.eapi):
             w.varint(strings(value))
         w.varint(1 if has_iuse_effective(pkg.eapi) else 0)
+        w.varint(pkg.counter)
+        w.varint(pkg.merged)
         w.ids([strings(flag) for flag in pkg.use])
         w.ids([strings(flag) for flag in pkg.iuse])
         w.varint(len(pkg.errors))
@@ -594,6 +596,7 @@ def decode(data):
         fields = [s() for _ in range(6)]
         # Derived from the EAPI; only the C++ matcher needs it spelled out.
         r.varint(2)
+        merge = (r.varint(), r.varint())
         use = tuple(strings[i] for i in r.ids(nstrings))
         iuse = tuple(strings[i] for i in r.ids(nstrings))
         errors = tuple((s(), s()) for _ in range(r.count()))
@@ -603,7 +606,7 @@ def decode(data):
         for _ in range(r.count()):
             requires.append((s(), s()))
             r.ids(count)
-        raw.append((fields, use, iuse, errors, deps, provides, tuple(requires)))
+        raw.append((fields, merge, use, iuse, errors, deps, provides, tuple(requires)))
     r.done()
 
     r = _Reader(sections[SECTION_ROOTS], "roots")
@@ -614,7 +617,7 @@ def decode(data):
 
     cpvs = [fields[0] for fields, *_ in raw]
     packages = []
-    for fields, use, iuse, errors, deps, provides, requires in raw:
+    for fields, (counter, merged), use, iuse, errors, deps, provides, requires in raw:
         packages.append(
             Package(
                 *fields,
@@ -624,6 +627,8 @@ def decode(data):
                 deps=_named(deps, cpvs),
                 provides=provides,
                 requires=requires,
+                counter=counter,
+                merged=merged,
             )
         )
     roots = tuple(

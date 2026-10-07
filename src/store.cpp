@@ -49,6 +49,8 @@ std::optional<StoreError> read_packages(std::span<const std::byte> section, Stor
             *field = r.index(strings, "string");
         }
         pkg.iuse_effective = r.index(2, "IUSE_EFFECTIVE flag") == 1;
+        pkg.counter = r.varint();
+        pkg.merged = r.varint();
         pkg.use = read_ids(r, store.ids, strings, "string");
         pkg.iuse = read_ids(r, store.ids, strings, "string");
         pkg.errors = read_pairs(r, store.pairs, strings);

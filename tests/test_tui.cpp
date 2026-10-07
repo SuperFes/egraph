@@ -96,11 +96,11 @@ egraph::Store sample() {
 egraph::Store cyclic() {
     egraph::test::Bytes packages;
     packages.varint(2);
-    packages.varints({1, 2, 3, 3, 4, 5, 1}).list({6}).list({6}).varint(0);
+    packages.varints({1, 2, 3, 3, 4, 5, 1, 0, 0}).list({6}).list({6}).varint(0);
     packages.varint(0).varint(0).varint(0).varint(0).varint(1);
     packages.varint(0).varint(0).varint(7).list({1});
     packages.varint(0).varint(0);
-    packages.varints({8, 7, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
+    packages.varints({8, 7, 3, 3, 4, 5, 1, 0, 0}).list({}).list({}).varint(0);
     packages.varint(0).varint(0).varint(0).varint(0).varint(1);
     packages.varint(0).varint(0).varint(2).list({0});
     packages.varint(0).varint(0);
@@ -114,12 +114,12 @@ egraph::Store cyclic() {
 egraph::Store build_only() {
     egraph::test::Bytes packages;
     packages.varint(2);
-    packages.varints({1, 2, 3, 3, 4, 5, 1}).list({6}).list({6}).varint(0);
+    packages.varints({1, 2, 3, 3, 4, 5, 1, 0, 0}).list({6}).list({6}).varint(0);
     packages.varint(0).varint(1);
     packages.varint(0).varint(0).varint(7).list({1});
     packages.varint(0).varint(0).varint(0);
     packages.varint(0).varint(0);
-    packages.varints({8, 7, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
+    packages.varints({8, 7, 3, 3, 4, 5, 1, 0, 0}).list({}).list({}).varint(0);
     packages.varint(0).varint(0).varint(0).varint(0).varint(0);
     packages.varint(0).varint(0);
     auto decoded = egraph::decode(egraph::test::with_section(4, packages));
@@ -491,7 +491,7 @@ TEST_CASE("! shows only broken packages, and a page lists what is not installed"
 TEST_CASE("without build-time dependencies, only run-time ones count as broken") {
     // a-1 alone, DEPEND: dev-libs/missing.
     egraph::test::Bytes packages;
-    packages.varint(1).varints({1, 2, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
+    packages.varint(1).varints({1, 2, 3, 3, 4, 5, 1, 0, 0}).list({}).list({}).varint(0);
     packages.varint(0).varint(1).varints({0, 0, 14}).list({});
     packages.varint(0).varint(0).varint(0).varint(0).varint(0);
     auto decoded = egraph::decode(egraph::test::with_section(4, packages));

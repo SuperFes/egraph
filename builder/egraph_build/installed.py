@@ -11,6 +11,7 @@ to portage.
 import collections
 import functools
 import json
+import os
 from typing import NamedTuple
 
 from portage.dep import Atom, use_reduce
@@ -24,7 +25,18 @@ from egraph_build.roots import read_roots
 ATOM, ANY_OF, ALL_OF, WEAK_BLOCKER, STRONG_BLOCKER = range(5)
 NODE_TYPES = ("atom", "any-of", "all-of", "weak-blocker", "strong-blocker")
 SONAME_KEYS = ("PROVIDES", "REQUIRES")
-_AUX_KEYS = DEP_KINDS + SONAME_KEYS + ("EAPI", "IUSE", "SLOT", "USE", "repository")
+_AUX_KEYS = (
+    DEP_KINDS
+    + SONAME_KEYS
+    + (
+        "COUNTER",
+        "EAPI",
+        "IUSE",
+        "SLOT",
+        "USE",
+        "repository",
+    )
+)
 
 
 class Node(NamedTuple):
@@ -53,6 +65,9 @@ class Package(NamedTuple):
     # (multilib category, soname)
     provides: tuple
     requires: tuple
+    # The vdb entry's COUNTER, and when it was merged (seconds since the epoch); 0 when unknown.
+    counter: int = 0
+    merged: int = 0
 
 
 class Matcher:
@@ -146,7 +161,23 @@ def read_package(vardb, cpv, match):
         deps=deps,
         provides=sonames["PROVIDES"],
         requires=sonames["REQUIRES"],
+        counter=_number(metadata["COUNTER"]),
+        merged=merge_time(vardb, cpv),
     )
+
+
+def _number(text):
+    text = text.strip()
+    return int(text) if text.isdigit() else 0
+
+
+def merge_time(vardb, cpv):
+    """When cpv was merged: its COUNTER file's mtime, which the merge writes (BUILD_TIME is a
+    binary package's build)."""
+    try:
+        return int(os.stat(vardb.getpath(cpv, filename="COUNTER")).st_mtime)
+    except OSError:
+        return 0
 
 
 def choices(nodes):
@@ -315,6 +346,8 @@ def to_json(layer):
                 "deps": deps_json(pkg.deps),
                 "provides": [list(soname) for soname in pkg.provides],
                 "requires": [list(soname) for soname in pkg.requires],
+                "counter": pkg.counter,
+                "merged": pkg.merged,
             }
         )
     roots = [
@@ -326,5 +359,5 @@ def to_json(layer):
         }
         for root in layer.roots()
     ]
-    document = {"format": 3, "packages": packages, "roots": roots}
+    document = {"format": 4, "packages": packages, "roots": roots}
     return json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"

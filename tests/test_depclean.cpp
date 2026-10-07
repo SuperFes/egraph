@@ -77,14 +77,14 @@ std::vector<std::byte> three(std::string_view cp, std::string_view third,
                              const std::function<void(Bytes&)>& rdepend) {
     Bytes packages;
     packages.varint(3);
-    packages.varints({1, 2, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
+    packages.varints({1, 2, 3, 3, 4, 5, 1, 0, 0}).list({}).list({}).varint(0);
     packages.varint(0).varint(0).varint(0).varint(0);
     rdepend(packages);
     packages.varint(0).varint(0);
     const std::uint64_t third_cp = cp == "dev-libs/b" ? 7 : 17;
     for (const auto& [cpv, cp_id] : {std::pair<std::uint64_t, std::uint64_t>{8, 7},
                                      std::pair<std::uint64_t, std::uint64_t>{18, third_cp}}) {
-        packages.varints({cpv, cp_id, 3, 3, 4, 5, 1});
+        packages.varints({cpv, cp_id, 3, 3, 4, 5, 1, 0, 0});
         packages.list({}).list({}).varint(0);
         packages.varint(0).varint(0).varint(0).varint(0).varint(0);
         packages.varint(0).varint(0);

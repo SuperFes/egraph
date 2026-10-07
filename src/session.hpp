@@ -101,8 +101,9 @@ run_builder(const Invocation& invocation, std::string_view mode, const std::file
             std::span<const std::string> cps = {});
 
 // run_builder on the store at path; when that is the system store and the build changed its
-// installed packages or root sets, the store it replaced is kept as a generation in the history
-// directory, which is then thinned. Keeping history never fails the refresh: a warning instead.
+// installed packages or root sets, what changed is logged in the history directory and the store
+// it replaced kept there as a generation, the generations thinned. Keeping history never fails
+// the refresh: a warning instead.
 [[nodiscard]] std::optional<std::string> refresh_store(const Invocation& invocation,
                                                        std::string_view mode,
                                                        const std::filesystem::path& path,

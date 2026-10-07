@@ -903,9 +903,13 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     each day, none past `history_days` (`${PORTAGE_CONFIGROOT}/etc/egraph/egraph.conf`, the
     settings file 17d–17f share; 90 by default, 0 keeps none). Keeping history never fails a
     refresh: a warning, and none kept.
-  - 17c2: the event log, kept whole (a line per merge): each change appends what merged (times
-    from the vdb's BUILD_TIME), rebuilt and uninstalled (at the refresh's time; coarser than
-    exec's step 20 records).
+  - 17c2 (done): the event log, `history.log`, kept whole: a JSON line per merged, upgraded,
+    downgraded (another version replaced in its slot), rebuilt (a new COUNTER) and uninstalled
+    package, oldest first. Merges are timed by their vdb entry's COUNTER file, which the merge
+    writes (BUILD_TIME is when a binary package was built), uninstalls by the refresh that found
+    them. The store records each package's COUNTER and merge time for it (format 6, the JSON
+    export's format 4). Appended by writing it anew and renaming it over the old one under a
+    lock on the directory, so root and the service user both can, whoever made the file.
   - 17c3: `egraph diff [generation|date]`: added, removed, upgraded, downgraded and rebuilt
     packages, with USE changes, against the newest generation by default.
   - 17c4: `egraph history [atom]`: the event log; for a package, when it arrived and what pulled

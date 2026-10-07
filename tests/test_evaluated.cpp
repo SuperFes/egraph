@@ -39,7 +39,7 @@ enum class Beside : std::uint8_t { nothing, unsatisfied, satisfied };
 egraph::Store depending_through(std::string_view atom, Beside beside) {
     Bytes packages;
     packages.varint(2);
-    packages.varints({1, 2, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
+    packages.varints({1, 2, 3, 3, 4, 5, 1, 0, 0}).list({}).list({}).varint(0);
     packages.varint(0).varint(0).varint(0).varint(0);
     if (beside == Beside::nothing) {
         packages.varint(1).varints({0, 0, 17}).list({1});
@@ -54,7 +54,7 @@ egraph::Store depending_through(std::string_view atom, Beside beside) {
         }
     }
     packages.varint(0).varint(0);
-    packages.varints({8, 7, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
+    packages.varints({8, 7, 3, 3, 4, 5, 1, 0, 0}).list({}).list({}).varint(0);
     packages.varint(0).varint(0).varint(0).varint(0).varint(0);
     packages.varint(0).varint(0);
     auto store = egraph::decode(egraph::test::with_strings({atom}, 4, packages));

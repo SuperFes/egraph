@@ -116,8 +116,9 @@ inline std::vector<Section> sample_sections() {
 
     Bytes packages;
     packages.varint(2);
-    // a-1: cpv, cp, slot, sub-slot, repo, EAPI, IUSE_EFFECTIVE, USE, IUSE, errors.
-    packages.varints({1, 2, 3, 3, 4, 5, 1});
+    // a-1: cpv, cp, slot, sub-slot, repo, EAPI, IUSE_EFFECTIVE, COUNTER, merged, USE, IUSE,
+    // errors.
+    packages.varints({1, 2, 3, 3, 4, 5, 1, 7, 1759784400});
     packages.list({6}).list({6}).varint(1).varint(9).varint(10);
     // BDEPEND, DEPEND, IDEPEND, PDEPEND are empty; RDEPEND has four nodes.
     packages.varint(0).varint(0).varint(0).varint(0).varint(4);
@@ -128,7 +129,7 @@ inline std::vector<Section> sample_sections() {
     // Provides nothing; requires x86_64 libb.so.1, provided by package 1.
     packages.varint(0).varint(1).varint(11).varint(12).list({1});
     // b-1.
-    packages.varints({8, 7, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
+    packages.varints({8, 7, 3, 3, 4, 5, 1, 0, 0}).list({}).list({}).varint(0);
     packages.varint(0).varint(0).varint(0).varint(0).varint(0);
     packages.varint(1).varint(11).varint(12).varint(0);
 
@@ -163,7 +164,7 @@ inline std::vector<std::byte> with_section(std::uint64_t id, const Bytes& bytes)
 inline std::vector<std::byte> with_rdepend(std::uint64_t count,
                                            const std::function<void(Bytes&)>& nodes) {
     Bytes packages;
-    packages.varint(1).varints({1, 2, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
+    packages.varint(1).varints({1, 2, 3, 3, 4, 5, 1, 0, 0}).list({}).list({}).varint(0);
     packages.varint(0).varint(0).varint(0).varint(0).varint(count);
     nodes(packages);
     packages.varint(0).varint(0);
@@ -197,7 +198,7 @@ inline std::vector<std::byte> with_strings(std::initializer_list<std::string_vie
 inline std::vector<std::byte> newer_wanted(bool build_time) {
     Bytes packages;
     packages.varint(2);
-    packages.varints({1, 2, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
+    packages.varints({1, 2, 3, 3, 4, 5, 1, 0, 0}).list({}).list({}).varint(0);
     const auto group = [](Bytes& out) {
         out.varint(3);
         out.varints({1, 0, 0}).list({});
@@ -212,7 +213,7 @@ inline std::vector<std::byte> newer_wanted(bool build_time) {
         group(packages);
     }
     packages.varint(0).varint(0);
-    packages.varints({8, 7, 3, 3, 4, 5, 1}).list({}).list({}).varint(0);
+    packages.varints({8, 7, 3, 3, 4, 5, 1, 0, 0}).list({}).list({}).varint(0);
     packages.varint(0).varint(0).varint(0).varint(0).varint(0);
     packages.varint(0).varint(0);
     return with_strings({">=dev-libs/b-2"}, 4, packages);

@@ -83,16 +83,31 @@ std::optional<std::string> run_builder(const Invocation& invocation, std::string
 
 namespace {
 
-// Keeps before, the store a refresh replaced at path, in directory if what it holds changed,
-// and thins the generations there.
-void keep_generation(const std::vector<std::byte>& before, const std::filesystem::path& path,
-                     const std::filesystem::path& directory, int days, std::ostream& warnings) {
+// Records what changed from before, the store a refresh replaced at path, in directory: the
+// events in its log, and with days, before itself as a generation, the generations thinned.
+void record_history(const std::vector<std::byte>& before, const std::filesystem::path& path,
+                    const std::filesystem::path& directory, int days, std::ostream& warnings) {
     namespace fs = std::filesystem;
     using namespace std::chrono;
     // A store from another format version is not history this egraph can read.
     const auto old = decode(before);
-    const auto now = load(path);
-    if (!old || !now || !history_changed(*old, *now)) {
+    const auto current = load(path);
+    if (!old || !current || !history_changed(*old, *current)) {
+        return;
+    }
+    const auto now = floor<seconds>(system_clock::now());
+    std::string lines;
+    for (const auto& event : history_events(*old, *current, now)) {
+        lines += event_line(event) + '\n';
+    }
+    const auto log = directory / "history.log";
+    if (const auto logged = lines.empty() ? std::expected<void, std::error_code>{}
+                                          : os::append_replacing(log, lines);
+        !logged) {
+        warnings << std::format("egraph: warning: cannot log to {}: {}\n", log.string(),
+                                logged.error().message());
+    }
+    if (days == 0) {
         return;
     }
     const auto built = floor<seconds>(sys_time<nanoseconds>{nanoseconds{old->meta.build_time_ns}});
@@ -111,7 +126,7 @@ void keep_generation(const std::vector<std::byte>& before, const std::filesystem
             generations.push_back(*time);
         }
     }
-    for (const auto gone : thinned(generations, floor<seconds>(system_clock::now()), days)) {
+    for (const auto gone : thinned(generations, now, days)) {
         fs::remove(directory / generation_name(gone), error);
     }
 }
@@ -125,23 +140,22 @@ std::optional<std::string> refresh_store(const Invocation& invocation, std::stri
     const auto directory = history_directory(invocation.root, invocation.eprefix.value_or(""));
     int days = 0;
     // The repository index's builds leave the installed store as it is.
-    if (mode != "--repository" && !invocation.store && path == system_store_path(invocation)) {
+    if (mode != "--repository" && !invocation.store && path == system_store_path(invocation) &&
+        os::can_create(directory / "history.log")) {
         if (const auto settings = read_settings(settings_path(config_root(invocation)))) {
             days = settings->history_days;
         } else {
-            warnings << "egraph: warning: " << settings.error() << ", so no history is kept\n";
+            warnings << "egraph: warning: " << settings.error() << ", so no generations are kept\n";
         }
-        if (days > 0 && os::can_create(directory / generation_name({}))) {
-            if (auto bytes = read_file(path)) {
-                before = std::move(*bytes);
-            }
+        if (auto bytes = read_file(path)) {
+            before = std::move(*bytes);
         }
     }
     if (auto error = run_builder(invocation, mode, path)) {
         return error;
     }
     if (before) {
-        keep_generation(*before, path, directory, days, warnings);
+        record_history(*before, path, directory, days, warnings);
     }
     return std::nullopt;
 }

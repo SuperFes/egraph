@@ -132,3 +132,79 @@ TEST_CASE("history ignores the same system in other string ids, inputs and meta"
     after.store.inputs.push_back({.path = "/var/db/pkg"});
     CHECK_FALSE(egraph::history_changed(before.store, after.store));
 }
+
+namespace {
+
+// The store of installed packages, each with its COUNTER and merge time (0 for neither).
+struct Merged {
+    std::string cpv;
+    std::uint64_t counter = 1;
+    std::uint64_t merged = 0;
+    std::string slot = "0";
+};
+
+egraph::Store installed(const std::vector<Merged>& packages) {
+    std::vector<Installed> plain;
+    for (const auto& pkg : packages) {
+        plain.push_back({.cpv = pkg.cpv, .slot = pkg.slot});
+    }
+    auto store = make_system(plain, {}).store;
+    for (auto& pkg : store.packages) {
+        const auto found = std::ranges::find(packages, store.string(pkg.cpv), &Merged::cpv);
+        pkg.counter = found->counter;
+        pkg.merged = found->merged;
+    }
+    return store;
+}
+
+std::vector<std::string> lines(const std::vector<egraph::HistoryEvent>& events) {
+    std::vector<std::string> out;
+    for (const auto& event : events) {
+        out.push_back(egraph::event_line(event));
+    }
+    return out;
+}
+
+constexpr Seconds refreshed{2'000'000'000s};
+
+} // namespace
+
+TEST_CASE("events name what merged, was replaced in its slot, rebuilt and went") {
+    const auto before = installed({{.cpv = "app-misc/up-1"},
+                                   {.cpv = "app-misc/down-2"},
+                                   {.cpv = "app-misc/same-1", .counter = 4},
+                                   {.cpv = "app-misc/again-1", .counter = 5},
+                                   {.cpv = "app-misc/gone-1"}});
+    const auto after = installed({{.cpv = "app-misc/up-2", .counter = 6, .merged = 100},
+                                  {.cpv = "app-misc/down-1", .counter = 7, .merged = 300},
+                                  {.cpv = "app-misc/same-1", .counter = 4},
+                                  {.cpv = "app-misc/again-1", .counter = 8, .merged = 200},
+                                  {.cpv = "app-misc/new-1", .counter = 9, .merged = 200}});
+    CHECK(
+        lines(egraph::history_events(before, after, refreshed)) ==
+        std::vector<std::string>{
+            R"({"cpv":"app-misc/up-2","event":"upgraded","from":"app-misc/up-1","time":100})",
+            R"({"cpv":"app-misc/again-1","event":"rebuilt","time":200})",
+            R"({"cpv":"app-misc/new-1","event":"merged","time":200})",
+            R"({"cpv":"app-misc/down-1","event":"downgraded","from":"app-misc/down-2","time":300})",
+            R"({"cpv":"app-misc/gone-1","event":"uninstalled","time":2000000000})",
+        });
+}
+
+TEST_CASE("a version in a new slot merges beside, or after, the old slot") {
+    const auto before = installed({{.cpv = "dev-libs/a-1", .slot = "1"}});
+    const auto beside = installed(
+        {{.cpv = "dev-libs/a-1", .slot = "1"}, {.cpv = "dev-libs/a-2", .counter = 2, .slot = "2"}});
+    CHECK(lines(egraph::history_events(before, beside, refreshed)) ==
+          std::vector<std::string>{R"({"cpv":"dev-libs/a-2","event":"merged","time":2000000000})"});
+    const auto moved = installed({{.cpv = "dev-libs/a-2", .counter = 2, .slot = "2"}});
+    CHECK(lines(egraph::history_events(before, moved, refreshed)) ==
+          std::vector<std::string>{
+              R"({"cpv":"dev-libs/a-2","event":"merged","time":2000000000})",
+              R"({"cpv":"dev-libs/a-1","event":"uninstalled","time":2000000000})"});
+}
+
+TEST_CASE("no events for the same packages from the same merges") {
+    const auto store = installed({{.cpv = "dev-libs/a-1", .counter = 3, .merged = 10}});
+    CHECK(egraph::history_events(store, store, refreshed).empty());
+}

@@ -19,7 +19,10 @@
 #include <ranges>
 #include <span>
 #include <spawn.h>
+#include <sstream>
+#include <string>
 #include <string_view>
+#include <sys/file.h>
 #include <sys/inotify.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -765,6 +768,40 @@ std::expected<void, std::error_code> replace_with_text(const std::filesystem::pa
         }
     }
     return rename_over(temp, absolute);
+}
+
+std::expected<void, std::error_code> append_replacing(const std::filesystem::path& path,
+                                                      std::string_view text) {
+    namespace fs = std::filesystem;
+    const auto absolute = fs::absolute(path);
+    std::error_code error;
+    fs::create_directories(absolute.parent_path(), error);
+    if (error) {
+        return std::unexpected(error);
+    }
+    Descriptor directory{
+        ::open(absolute.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC)};
+    if (directory.get() < 0) {
+        return std::unexpected(std::error_code(errno, std::generic_category()));
+    }
+    while (::flock(directory.get(), LOCK_EX) != 0) {
+        if (errno != EINTR) {
+            return std::unexpected(std::error_code(errno, std::generic_category()));
+        }
+    }
+    std::string whole;
+    if (fs::exists(absolute, error)) {
+        std::ifstream in{absolute, std::ios::binary};
+        std::ostringstream read;
+        read << in.rdbuf();
+        if (!in) {
+            return std::unexpected(std::make_error_code(std::errc::io_error));
+        }
+        whole = std::move(read).str();
+    }
+    whole += text;
+    // Closing the directory lets the lock go.
+    return replace_with_text(absolute, whole);
 }
 
 bool utf8_locale() {

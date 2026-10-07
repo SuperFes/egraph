@@ -176,7 +176,7 @@ void write_deps(std::ostream& out, const Layer& store,
 }
 
 void write_package(std::ostream& out, const Store& store, const Package& pkg) {
-    out << "{\"cp\":";
+    out << "{\"counter\":" << pkg.counter << ",\"cp\":";
     write_string(out, store, pkg.cp);
     out << ",\"cpv\":";
     write_string(out, store, pkg.cpv);
@@ -188,7 +188,7 @@ void write_package(std::ostream& out, const Store& store, const Package& pkg) {
     write_pairs(out, store, pkg.errors);
     out << ",\"iuse\":";
     write_string_list(out, store, pkg.iuse);
-    out << ",\"provides\":";
+    out << ",\"merged\":" << pkg.merged << ",\"provides\":";
     write_pairs(out, store, pkg.provided);
     out << ",\"repo\":";
     write_string(out, store, pkg.repo);
@@ -476,7 +476,7 @@ void write_root(std::ostream& out, const Store& store, const Root& root) {
 // Roots go out whole, and with only_matching, only those matching one of the packages.
 void write_document(std::ostream& out, const Store& store, std::span<const std::uint32_t> packages,
                     bool only_matching) {
-    out << R"({"format":3,"packages":[)";
+    out << R"({"format":4,"packages":[)";
     std::vector<bool> chosen(store.packages.size(), false);
     bool first = true;
     for (const auto id : packages) {
