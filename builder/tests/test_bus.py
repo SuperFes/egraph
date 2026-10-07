@@ -179,6 +179,18 @@ def test_a_notification_closed_by_the_server_is_reported(server, probe):
     }
 
 
+def test_a_name_is_claimed_by_one_connection_at_a_time(bus, probe):
+    name = "io.github.SuperFes.egraph.Notify"
+    assert probe.ask({"claim": name}) == {"claimed": True}
+    other = Talker([PROBE], bus)
+    try:
+        assert other.ask({"claim": name}) == {"claimed": False}
+    finally:
+        other.close()
+    # Its own already.
+    assert probe.ask({"claim": name}) == {"claimed": True}
+
+
 def test_without_a_notification_server_posting_says_so(probe):
     answer = probe.ask({"notify": {"summary": "a notice"}})
     assert "org.freedesktop.Notifications" in answer["error"]

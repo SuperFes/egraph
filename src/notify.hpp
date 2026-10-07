@@ -3,15 +3,20 @@
 // What egraph notify tells the desktop: which notices call for a summary notification, what it
 // says, and the terminal its Open starts the interface in.
 
+#include "bus.hpp"
 #include "notices.hpp"
 
 #include <array>
+#include <chrono>
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <optional>
+#include <ostream>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace egraph {
@@ -70,5 +75,110 @@ terminal_command(std::string_view setting, const std::optional<std::string>& ter
 // The executable name is found as in PATH (a colon-separated list); none where it is not.
 [[nodiscard]] std::optional<std::filesystem::path> find_program(std::string_view name,
                                                                 std::string_view path);
+
+// The bus name a running egraph notify holds, so that a second one in the session stands down.
+inline constexpr std::string_view notify_bus_name = "io.github.SuperFes.egraph.Notify";
+
+// What a summary's buttons do to the notices it carries.
+enum class SummaryAction : std::uint8_t { open, later, dismiss };
+
+// The action a key from the server means; a click on the summary itself opens.
+[[nodiscard]] std::optional<SummaryAction> summary_action(std::string_view key);
+
+// How long Later puts the notices off.
+inline constexpr std::chrono::seconds summary_later{std::chrono::days{1}};
+
+// The notification a summary posts, in place of the one replaces names (0 for none).
+[[nodiscard]] bus::Notification summary_notification(const Summary& summary,
+                                                     std::uint32_t replaces);
+
+// What the notify loop sees when it wakes.
+struct NotifyView {
+    // The notices not set aside, as of now.
+    std::vector<Notice> shown;
+    std::vector<SetAside> set_aside;
+    // What the last summary carried.
+    std::vector<Notified> notified;
+};
+
+// What a wait of the notify loop's ended with: a stop asked, or what happened on the bus.
+struct NotifyWake {
+    bool stop = false;
+    std::vector<bus::Event> events{};
+};
+
+// Keeps one summary notification of the notices up until a stop is asked: posted for notices new
+// since the last summary or put off until now, in place of the one still up; closed when none is
+// left; its actions done on the notices it carries. The world gives:
+//   now() -> Seconds
+//   view() -> NotifyView, as it is now
+//   post(const bus::Notification&) -> std::expected<std::uint32_t, std::string>, the id
+//   close(std::uint32_t) -> std::expected<void, std::string>
+//   remember(std::span<const Notified>) -> std::expected<void, std::string>
+//   act(SummaryAction, std::span<const Notice>) -> std::expected<void, std::string>
+//   wait(std::optional<std::chrono::milliseconds>) -> std::expected<NotifyWake, std::string>,
+//     until something may have changed, the time passes, or a stop is asked.
+// What fails is logged and the loop goes on; the error when waiting does.
+template <class World>
+std::expected<void, std::string> keep_notified(World& world, std::ostream& log) {
+    const auto logged = [&log](const auto& done) {
+        if (!done) {
+            log << "egraph: notify: " << done.error() << '\n';
+        }
+    };
+    // The summary up, and the notices it carries.
+    std::optional<std::uint32_t> posted;
+    std::vector<Notice> carried;
+    const auto take_down = [&] {
+        if (posted) {
+            logged(world.close(*posted));
+            posted.reset();
+        }
+    };
+    while (true) {
+        const auto now = world.now();
+        const auto view = world.view();
+        const auto fresh = to_notify(view.shown, view.notified, view.set_aside, now);
+        if (view.shown.empty()) {
+            take_down();
+            carried.clear();
+        } else if (!fresh.empty()) {
+            const auto id =
+                world.post(summary_notification(summary(view.shown, fresh), posted.value_or(0)));
+            logged(id);
+            if (id) {
+                posted = *id;
+                carried = view.shown;
+                logged(world.remember(notified_now(view.shown, now)));
+            }
+        }
+        const auto due = next_due(view.set_aside, now);
+        const auto woken = world.wait(due.transform([now](Seconds at) {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(at - now);
+        }));
+        if (!woken) {
+            return std::unexpected(woken.error());
+        }
+        if (woken->stop) {
+            take_down();
+            return {};
+        }
+        for (const auto& event : woken->events) {
+            if (!posted || event.id != *posted) {
+                continue;
+            }
+            if (event.kind == bus::Event::Kind::closed) {
+                posted.reset();
+                continue;
+            }
+            if (const auto action = summary_action(event.action)) {
+                logged(world.act(*action, carried));
+                // Most servers close it themselves on an action, so this may find it gone.
+                (void)world.close(*posted);
+                posted.reset();
+            }
+        }
+    }
+}
 
 } // namespace egraph

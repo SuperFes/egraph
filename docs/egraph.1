@@ -1249,6 +1249,29 @@ writable:
 .B systemctl enable \-\-now egraphd
 or
 .BR "rc\-update add egraphd" .
+.SS notify
+Keep a desktop notification summing up the notices up, until stopped (SIGTERM, SIGINT or
+SIGHUP), through the session bus's notification server: posted when a notice comes that the last
+summary did not carry as it is, or one put off comes back, in place of the summary still up, and
+closed once nothing is left. Its
+.B Open
+(or a click on it) starts
+.B "tui \-\-notices"
+in a terminal: the
+.B terminal
+setting's, else
+.BR xdg\-terminal\-exec ,
+else
+.BR $TERMINAL ,
+else the first found of
+.BR foot ", " alacritty ", " kitty ", " konsole ", " gnome\-terminal " and " xterm .
+.B Later
+puts what it carries off for a day and
+.B Dismiss
+sets it aside, as the interface does. What the last summary carried is kept in
+.IR ${XDG_STATE_HOME:\-~/.local/state}/egraph/notified.json ,
+so a new session does not repeat it. One runs a session: a second exits at once. Installed with
+the notify feature, an XDG autostart entry starts it with each desktop session.
 .SS check
 Compare the store with a fresh build, exiting 4 when they differ.
 .SS affected

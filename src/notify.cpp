@@ -190,4 +190,35 @@ std::optional<std::filesystem::path> find_program(std::string_view name, std::st
     return std::nullopt;
 }
 
+std::optional<SummaryAction> summary_action(std::string_view key) {
+    if (key == "default" || key == "open") {
+        return SummaryAction::open;
+    }
+    if (key == "later") {
+        return SummaryAction::later;
+    }
+    if (key == "dismiss") {
+        return SummaryAction::dismiss;
+    }
+    return std::nullopt;
+}
+
+bus::Notification summary_notification(const Summary& summary, std::uint32_t replaces) {
+    std::string body;
+    for (const auto& line : summary.body) {
+        if (!body.empty()) {
+            body += '\n';
+        }
+        body += line;
+    }
+    return {.replaces = replaces,
+            .summary = summary.title,
+            .body = std::move(body),
+            .actions = {{"default", "Open"},
+                        {"open", "Open"},
+                        {"later", "Later"},
+                        {"dismiss", "Dismiss"}},
+            .expire = -1};
+}
+
 } // namespace egraph

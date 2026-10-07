@@ -3,11 +3,19 @@
 #include "notify.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <chrono>
+#include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <format>
+#include <functional>
+#include <optional>
+#include <span>
+#include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -166,4 +174,267 @@ TEST_CASE("a program is found in PATH where it is executable") {
     CHECK_FALSE(egraph::find_program("foot", "").has_value());
     // Relative entries are skipped.
     CHECK_FALSE(egraph::find_program("foot", "b").has_value());
+}
+
+TEST_CASE("a summary's buttons: Open, also a click on it, Later and Dismiss") {
+    using egraph::SummaryAction;
+    CHECK(egraph::summary_action("default") == SummaryAction::open);
+    CHECK(egraph::summary_action("open") == SummaryAction::open);
+    CHECK(egraph::summary_action("later") == SummaryAction::later);
+    CHECK(egraph::summary_action("dismiss") == SummaryAction::dismiss);
+    CHECK_FALSE(egraph::summary_action("other"));
+    const auto posted =
+        egraph::summary_notification({.title = "2 notices", .body = {"one", "two"}}, 4);
+    CHECK(posted.replaces == 4);
+    CHECK(posted.summary == "2 notices");
+    CHECK(posted.body == "one\ntwo");
+    using Actions = std::vector<std::pair<std::string, std::string>>;
+    CHECK(
+        posted.actions ==
+        Actions{{"default", "Open"}, {"open", "Open"}, {"later", "Later"}, {"dismiss", "Dismiss"}});
+    CHECK(posted.expire == -1);
+}
+
+namespace {
+
+using egraph::NotifyWake;
+using egraph::SummaryAction;
+
+// The notices, what is set aside and what was notified, and the bus, as the loop sees them; each
+// wait runs the next step on it, a stop once there are none.
+const egraph::Seconds start = now;
+
+struct FakeWorld {
+    egraph::Seconds time = start;
+    std::vector<Notice> all{};
+    std::vector<SetAside> set_aside{};
+    std::vector<Notified> notified{};
+    std::uint32_t next_id = 1;
+    bool post_fails = false;
+    bool close_fails = false;
+    std::vector<egraph::bus::Notification> posts{};
+    std::vector<std::uint32_t> closes{};
+    std::vector<std::pair<SummaryAction, Strings>> acts{};
+    std::vector<std::optional<std::chrono::milliseconds>> timeouts{};
+    std::vector<std::function<std::expected<NotifyWake, std::string>(FakeWorld&)>> steps{};
+    std::size_t step = 0;
+
+    [[nodiscard]] egraph::Seconds now() const { return time; }
+    [[nodiscard]] egraph::NotifyView view() const {
+        return {.shown = egraph::shown_notices(all, set_aside, time),
+                .set_aside = set_aside,
+                .notified = notified};
+    }
+    std::expected<std::uint32_t, std::string> post(const egraph::bus::Notification& posted) {
+        if (post_fails) {
+            return std::unexpected(std::string{"no server"});
+        }
+        posts.push_back(posted);
+        return posted.replaces != 0 ? posted.replaces : next_id++;
+    }
+    std::expected<void, std::string> close(std::uint32_t id) {
+        closes.push_back(id);
+        if (close_fails) {
+            return std::unexpected(std::format("no notification {}", id));
+        }
+        return {};
+    }
+    std::expected<void, std::string> remember(std::span<const Notified> carried) {
+        notified.assign(carried.begin(), carried.end());
+        return {};
+    }
+    std::expected<void, std::string> act(SummaryAction action, std::span<const Notice> notices) {
+        acts.emplace_back(action, keys({notices.begin(), notices.end()}));
+        if (action != SummaryAction::open) {
+            for (const auto& notice : notices) {
+                egraph::set_notice_aside(set_aside, notice,
+                                         action == SummaryAction::later
+                                             ? std::optional{time + egraph::summary_later}
+                                             : std::nullopt,
+                                         all);
+            }
+        }
+        return {};
+    }
+    std::expected<NotifyWake, std::string> wait(std::optional<std::chrono::milliseconds> timeout) {
+        timeouts.push_back(timeout);
+        if (step == steps.size()) {
+            return NotifyWake{.stop = true};
+        }
+        return steps.at(step++)(*this);
+    }
+};
+
+NotifyWake nothing() {
+    return {};
+}
+
+NotifyWake clicked(std::uint32_t id, std::string key) {
+    return {
+        .stop = false,
+        .events = {{.kind = egraph::bus::Event::Kind::action, .id = id, .action = std::move(key)}}};
+}
+
+} // namespace
+
+TEST_CASE("notify posts a summary of new notices once, and closes it when stopped") {
+    FakeWorld world{.all = {notice("glsa:1", "a", "one"), notice("glsa:2", "b", "two")}};
+    world.steps = {[](FakeWorld&) { return nothing(); }};
+    std::ostringstream log;
+    REQUIRE(egraph::keep_notified(world, log));
+    REQUIRE(world.posts.size() == 1);
+    CHECK(world.posts.front().replaces == 0);
+    CHECK(world.posts.front().summary == "2 notices");
+    CHECK(world.notified == egraph::notified_now(world.all, now));
+    CHECK(world.closes == std::vector<std::uint32_t>{1});
+    CHECK(world.timeouts ==
+          std::vector<std::optional<std::chrono::milliseconds>>{std::nullopt, std::nullopt});
+    CHECK(log.str().empty());
+}
+
+TEST_CASE("notify leaves alone the notices the last summary carried") {
+    FakeWorld world{.all = {notice("glsa:1", "a")}};
+    world.notified = egraph::notified_now(world.all, now - 1h);
+    std::ostringstream log;
+    REQUIRE(egraph::keep_notified(world, log));
+    CHECK(world.posts.empty());
+    CHECK(world.closes.empty());
+}
+
+TEST_CASE("notify replaces the summary in place for a new notice") {
+    FakeWorld world{.all = {notice("glsa:1", "a", "one")}};
+    world.steps = {[](FakeWorld& w) {
+        w.all.push_back(notice("glsa:2", "b", "two"));
+        return nothing();
+    }};
+    std::ostringstream log;
+    REQUIRE(egraph::keep_notified(world, log));
+    REQUIRE(world.posts.size() == 2);
+    CHECK(world.posts.at(1).replaces == 1);
+    CHECK(world.posts.at(1).summary == "2 notices, 1 new");
+    CHECK(world.posts.at(1).body == "two\none");
+}
+
+TEST_CASE("notify closes the summary once nothing is left, and posts anew after") {
+    FakeWorld world{.all = {notice("glsa:1", "a")}};
+    world.steps = {[](FakeWorld& w) {
+                       w.all.clear();
+                       return nothing();
+                   },
+                   [](FakeWorld& w) {
+                       w.all.push_back(notice("glsa:2", "b"));
+                       return nothing();
+                   }};
+    std::ostringstream log;
+    REQUIRE(egraph::keep_notified(world, log));
+    CHECK(world.closes == std::vector<std::uint32_t>{1, 2});
+    REQUIRE(world.posts.size() == 2);
+    CHECK(world.posts.at(1).replaces == 0);
+}
+
+TEST_CASE("Dismiss sets aside what the summary carried, not what came since") {
+    FakeWorld world{.all = {notice("glsa:1", "a"), notice("glsa:2", "b")}};
+    world.steps = {[](FakeWorld& w) {
+        w.all.push_back(notice("glsa:3", "c", "three"));
+        return clicked(1, "dismiss");
+    }};
+    std::ostringstream log;
+    REQUIRE(egraph::keep_notified(world, log));
+    CHECK(world.acts == std::vector<std::pair<SummaryAction, Strings>>{
+                            {SummaryAction::dismiss, {"glsa:1", "glsa:2"}}});
+    REQUIRE(world.posts.size() == 2);
+    // The dismissed summary is gone; the new notice has one of its own.
+    CHECK(world.posts.at(1).replaces == 0);
+    CHECK(world.posts.at(1).summary == "three");
+    CHECK(world.closes == std::vector<std::uint32_t>{1, 2});
+}
+
+TEST_CASE("Later puts the summary's notices off a day, and the summary comes back then") {
+    FakeWorld world{.all = {notice("glsa:1", "a", "one")}};
+    world.steps = {[](FakeWorld&) { return clicked(1, "later"); },
+                   [](FakeWorld& w) {
+                       w.time += egraph::summary_later;
+                       return nothing();
+                   }};
+    std::ostringstream log;
+    REQUIRE(egraph::keep_notified(world, log));
+    CHECK(world.acts ==
+          std::vector<std::pair<SummaryAction, Strings>>{{SummaryAction::later, {"glsa:1"}}});
+    CHECK(world.timeouts.at(1) == std::chrono::milliseconds{egraph::summary_later});
+    REQUIRE(world.posts.size() == 2);
+    CHECK(world.posts.at(1).summary == "one");
+    CHECK(world.posts.at(1).replaces == 0);
+}
+
+TEST_CASE("Open, or a click on the summary, opens the notices and sets nothing aside") {
+    const auto key = GENERATE(std::string{"open"}, std::string{"default"});
+    FakeWorld world{.all = {notice("glsa:1", "a")}};
+    world.steps = {[key](FakeWorld&) { return clicked(1, key); }};
+    std::ostringstream log;
+    REQUIRE(egraph::keep_notified(world, log));
+    CHECK(world.acts ==
+          std::vector<std::pair<SummaryAction, Strings>>{{SummaryAction::open, {"glsa:1"}}});
+    CHECK(world.set_aside.empty());
+    CHECK(world.posts.size() == 1);
+    CHECK(world.closes == std::vector<std::uint32_t>{1});
+}
+
+TEST_CASE("an action on a summary the server closed itself logs nothing") {
+    FakeWorld world{.all = {notice("glsa:1", "a")}};
+    world.steps = {[](FakeWorld& w) {
+        w.close_fails = true;
+        return clicked(1, "later");
+    }};
+    std::ostringstream log;
+    REQUIRE(egraph::keep_notified(world, log));
+    CHECK(world.closes == std::vector<std::uint32_t>{1});
+    CHECK(log.str().empty());
+}
+
+TEST_CASE("notify ignores other notifications and unknown actions") {
+    FakeWorld world{.all = {notice("glsa:1", "a")}};
+    world.steps = {[](FakeWorld&) { return clicked(9, "dismiss"); },
+                   [](FakeWorld&) { return clicked(1, "other"); }};
+    std::ostringstream log;
+    REQUIRE(egraph::keep_notified(world, log));
+    CHECK(world.acts.empty());
+    CHECK(world.closes == std::vector<std::uint32_t>{1});
+}
+
+TEST_CASE("a summary the server closed is posted anew for the next notice") {
+    FakeWorld world{.all = {notice("glsa:1", "a")}};
+    world.steps = {[](FakeWorld& w) {
+        w.all.push_back(notice("glsa:2", "b"));
+        return NotifyWake{.stop = false,
+                          .events = {{.kind = egraph::bus::Event::Kind::closed, .id = 1}}};
+    }};
+    std::ostringstream log;
+    REQUIRE(egraph::keep_notified(world, log));
+    REQUIRE(world.posts.size() == 2);
+    CHECK(world.posts.at(1).replaces == 0);
+    // Only the summary still up is closed on the way out.
+    CHECK(world.closes == std::vector<std::uint32_t>{2});
+}
+
+TEST_CASE("a summary that cannot be posted is logged and tried again on the next wake") {
+    FakeWorld world{.all = {notice("glsa:1", "a")}, .post_fails = true};
+    world.steps = {[](FakeWorld& w) {
+        w.post_fails = false;
+        return nothing();
+    }};
+    std::ostringstream log;
+    REQUIRE(egraph::keep_notified(world, log));
+    CHECK(log.str() == "egraph: notify: no server\n");
+    CHECK(world.posts.size() == 1);
+}
+
+TEST_CASE("notify ends with the error its wait ended with") {
+    FakeWorld world;
+    world.steps = {[](FakeWorld&) -> std::expected<NotifyWake, std::string> {
+        return std::unexpected(std::string{"the session bus failed: gone"});
+    }};
+    std::ostringstream log;
+    const auto kept = egraph::keep_notified(world, log);
+    REQUIRE_FALSE(kept);
+    CHECK(kept.error() == "the session bus failed: gone");
 }

@@ -2,6 +2,7 @@
 //   {"notify": {"replaces": 0, "summary": "...", "body": "...", "actions": [[key, label], ...],
 //               "expire": -1}}                     -> {"id": N}
 //   {"close": N}                                    -> {}
+//   {"claim": name}                                 -> {"claimed": true or false}
 //   {"wait": milliseconds}                          -> {"events": [{"kind", "id", "action"}]}
 // waiting until there are events or the time passes. Any failure answers {"error": "..."}; a
 // malformed request ends it.
@@ -47,6 +48,10 @@ Json answer(egraph::bus::Session& session, egraph::os::Watcher& watcher, const J
         }
         const auto id = session.notify(notification);
         return id ? Json{{"id", *id}} : Json{{"error", id.error()}};
+    }
+    if (const auto claim = request.find("claim"); claim != request.end()) {
+        const auto claimed = session.claim(claim->get<std::string>());
+        return claimed ? Json{{"claimed", *claimed}} : Json{{"error", claimed.error()}};
     }
     if (const auto close = request.find("close"); close != request.end()) {
         const auto closed = session.close(close->get<std::uint32_t>());

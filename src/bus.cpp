@@ -3,6 +3,8 @@
 #include <systemd/sd-bus.h>
 
 #include <algorithm>
+#include <cerrno>
+#include <format>
 #include <system_error>
 
 namespace egraph::bus {
@@ -111,6 +113,20 @@ std::expected<Session, std::string> Session::open() {
         }
     }
     return Session{std::move(bus), std::move(inbox)};
+}
+
+std::expected<bool, std::string> Session::claim(const std::string& name) {
+    const int r = sd_bus_request_name(bus_.get(), name.c_str(), 0);
+    if (r == -EEXIST) {
+        return false;
+    }
+    if (r == -EALREADY) {
+        return true;
+    }
+    if (r < 0) {
+        return std::unexpected(std::format("cannot take the name {}: {}", name, errno_text(r)));
+    }
+    return true;
 }
 
 std::expected<std::uint32_t, std::string> Session::notify(const Notification& notification) {

@@ -1009,7 +1009,7 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     - 17e6b (done): the session bus through sd-bus, in `bus.cpp` alone (a `notify` feature, as
       Notcurses is `tui`): post or replace the summary, close it, and its actions and closing as
       events; tested against a fake notification server on a private bus.
-    - 17e6c: the user daemon: notices.json watched (inotify) and put-offs timed, one summary
+    - 17e6c (done): the user daemon: notices.json watched (inotify) and put-offs timed, one summary
       at a time replaced in place; Dismiss and Later set aside what it shows, Open starts the
       terminal; installed as an XDG autostart entry.
 - 17f: what a configuration edit did: on a change under `/etc/portage`, the plan before and

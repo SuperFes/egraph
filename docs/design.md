@@ -676,6 +676,18 @@ beside its inotify watch, as one more descriptor to `Watcher::wait`. `test_bus.p
 layer through a small probe against a fake server (dbus-python) on a private bus with no
 service directories, so no desktop's notification daemon is ever started (17e6b).
 
+`egraph notify` is a user daemon, started by an XDG autostart entry (installed with the notify
+feature) rather than a systemd user unit, so it runs on any desktop session, OpenRC's included.
+Its loop, `keep_notified`, is a template over its world, as `keep_fresh` is, and tested with a
+fake one: on each wake it reads the notices, what is set aside and what was notified, posts or
+replaces the summary, and closes it once nothing is shown; it sleeps until a change, an action,
+or the next put-off coming due. It watches the directories holding the notices files, the user's
+state and portage's news (each, or its nearest existing parent), rebuilding the watch before
+each read so nothing changed while reading goes unseen. An action applies to what the summary
+carried, not to what has come since; a click on the summary opens. A well-known bus name keeps
+it to one a session. The terminals Open starts are reaped as they end and left running when it
+stops, and its summary is closed then, since its buttons would do nothing after (17e6c).
+
 Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
 touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
 the set is emerge's own. `parse_request` takes sets the store does not hold from its caller

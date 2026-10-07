@@ -289,6 +289,11 @@ struct Check {
     static constexpr std::string_view name = "check";
 };
 
+// Keeps a desktop notification summing up the notices up, until stopped.
+struct Notify {
+    static constexpr std::string_view name = "notify";
+};
+
 struct Tui {
     static constexpr std::string_view name = "tui";
     // Open on the notices page.
@@ -315,11 +320,11 @@ struct Affected {
     std::string request = "-";
 };
 
-using Command =
-    std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Search, Versions,
-                 Blockers, Orphans, Updates, PlanCommand, Update, Install, Exec, Remove, Select,
-                 Deselect, Sync, NoticesCommand, Export, Stats, LogCommand, Diff, HistoryCommand,
-                 StatusCommand, Rebuild, Refresh, Watch, Check, Tui, Shell, Complete, Affected>;
+using Command = std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Search,
+                             Versions, Blockers, Orphans, Updates, PlanCommand, Update, Install,
+                             Exec, Remove, Select, Deselect, Sync, NoticesCommand, Export, Stats,
+                             LogCommand, Diff, HistoryCommand, StatusCommand, Rebuild, Refresh,
+                             Watch, Check, Notify, Tui, Shell, Complete, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

@@ -44,6 +44,9 @@ class Session {
     // and listens for what happens to the notifications posted.
     static std::expected<Session, std::string> open();
 
+    // Takes the well-known name for this connection; false where another holds it.
+    std::expected<bool, std::string> claim(const std::string& name);
+
     // The id the server gave the notification.
     std::expected<std::uint32_t, std::string> notify(const Notification& notification);
     std::expected<void, std::string> close(std::uint32_t id);

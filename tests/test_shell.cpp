@@ -81,6 +81,12 @@ TEST_CASE("watch, which runs until stopped, runs on its own rather than from the
     CHECK(ran.exit == egraph::Exit::usage);
 }
 
+TEST_CASE("notify, which runs until stopped, runs on its own rather than from the shell") {
+    const auto ran = shell("notify\n");
+    CHECK(ran.err.find("egraph: shell: notify runs on its own") != std::string::npos);
+    CHECK(ran.exit == egraph::Exit::usage);
+}
+
 TEST_CASE("quit ends the shell, and help prints the usage") {
     const auto ran = shell("help\nquit\nmatch dev-libs/b\n");
     CHECK(ran.out.find("SUBCOMMANDS:") != std::string::npos);

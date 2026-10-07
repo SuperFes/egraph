@@ -280,6 +280,18 @@ if get_option('services')
   )
 endif
 
+# egraph notify, started with each desktop session.
+if sd_bus.found()
+  install_data(
+    configure_file(
+      input: 'services/egraph-notify.desktop.in',
+      output: 'egraph-notify.desktop',
+      configuration: services,
+    ),
+    install_dir: get_option('sysconfdir') / 'xdg' / 'autostart',
+  )
+endif
+
 unit_tests = executable(
   'unit-tests',
   'tests/test_action.cpp',

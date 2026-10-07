@@ -21,6 +21,7 @@
 #include "log_read.hpp"
 #include "merge_wait.hpp"
 #include "notices.hpp"
+#include "notify.hpp"
 #include "observe.hpp"
 #include "os.hpp"
 #include "package_use.hpp"
@@ -1770,11 +1771,11 @@ std::optional<std::filesystem::path> user_set_aside_path() {
     return set_aside_path(os::environment("XDG_STATE_HOME"), os::environment("HOME"));
 }
 
-// The notices this user set aside; none when nothing is, or what was cannot be read.
-std::expected<std::vector<SetAside>, std::string> read_set_aside() {
-    const auto path = user_set_aside_path();
+// A file of this user's state as text; none where there is none yet.
+std::expected<std::optional<std::string>, std::string>
+read_state(const std::optional<std::filesystem::path>& path) {
     if (!path || !std::filesystem::exists(*path)) {
-        return std::vector<SetAside>{};
+        return std::nullopt;
     }
     const auto bytes = read_file(*path);
     if (!bytes) {
@@ -1782,24 +1783,41 @@ std::expected<std::vector<SetAside>, std::string> read_set_aside() {
     }
     std::string text(bytes->size(), '\0');
     std::ranges::transform(*bytes, text.begin(), [](std::byte b) { return static_cast<char>(b); });
-    return parse_set_aside(text).transform_error(
-        [&path](const std::string& error) { return std::format("{}: {}", path->string(), error); });
+    return text;
 }
 
-// Keeps what this user set aside, for every egraph of theirs.
-std::expected<void, std::string> write_set_aside(std::span<const SetAside> set_aside) {
-    const auto path = user_set_aside_path();
+// Keeps a file of this user's state, for every egraph of theirs.
+std::expected<void, std::string> write_state(const std::optional<std::filesystem::path>& path,
+                                             const std::string& text) {
     if (!path) {
         return std::unexpected(
             std::string{"neither XDG_STATE_HOME nor HOME says where to keep them"});
     }
     std::error_code error;
     std::filesystem::create_directories(path->parent_path(), error);
-    if (const auto written = os::replace_with_text(*path, set_aside_json(set_aside)); !written) {
+    if (const auto written = os::replace_with_text(*path, text); !written) {
         return std::unexpected(
             std::format("cannot write {}: {}", path->string(), written.error().message()));
     }
     return {};
+}
+
+// The notices this user set aside; none when nothing is, or what was cannot be read.
+std::expected<std::vector<SetAside>, std::string> read_set_aside() {
+    const auto path = user_set_aside_path();
+    const auto text = read_state(path);
+    if (!text) {
+        return std::unexpected(text.error());
+    }
+    if (!*text) {
+        return std::vector<SetAside>{};
+    }
+    return parse_set_aside(**text).transform_error(
+        [&path](const std::string& error) { return std::format("{}: {}", path->string(), error); });
+}
+
+std::expected<void, std::string> write_set_aside(std::span<const SetAside> set_aside) {
+    return write_state(user_set_aside_path(), set_aside_json(set_aside));
 }
 
 // notices less what this user set aside, for showing; how many that was.
@@ -3372,6 +3390,212 @@ std::expected<void, std::string> set_aside_from_page(const Invocation& invocatio
     return write_set_aside(*set_aside);
 }
 
+#if EGRAPH_HAVE_NOTIFY
+// Where this user's last summary notification is remembered; none without a home.
+std::optional<std::filesystem::path> user_notified_path() {
+    return notified_path(os::environment("XDG_STATE_HOME"), os::environment("HOME"));
+}
+
+// keep_notified's world: the notices egraph watch wrote and what this user set aside, the session
+// bus, and the terminals Open started.
+class NotifyWorld {
+  public:
+    NotifyWorld(const Invocation& invocation, bus::Session& bus)
+        : invocation_(invocation), bus_(bus) {}
+    NotifyWorld(const NotifyWorld&) = delete;
+    NotifyWorld& operator=(const NotifyWorld&) = delete;
+    NotifyWorld(NotifyWorld&&) = delete;
+    NotifyWorld& operator=(NotifyWorld&&) = delete;
+    // The terminals stay open.
+    ~NotifyWorld() {
+        for (auto& child : children_) {
+            child.detach();
+        }
+    }
+
+    [[nodiscard]] static Seconds now() {
+        return std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    }
+
+    NotifyView view() {
+        // Watched before reading, so a change while it reads wakes the next wait.
+        std::size_t unreadable = 0;
+        watcher_ = watch_all(directories(), unreadable);
+        const auto at = now();
+        NotifyView seen{.shown = {},
+                        .set_aside = read_set_aside().value_or(std::vector<SetAside>{}),
+                        .notified = {}};
+        if (const auto found = find_status(invocation_)) {
+            if (const auto all = notices_beside(*found, invocation_, at)) {
+                seen.shown = shown_notices(*all, seen.set_aside, at);
+            }
+        }
+        if (const auto text = read_state(user_notified_path()); text && *text) {
+            seen.notified = parse_notified(**text).value_or(std::vector<Notified>{});
+        }
+        return seen;
+    }
+
+    std::expected<std::uint32_t, std::string> post(const bus::Notification& notification) {
+        return bus_.notify(notification);
+    }
+
+    std::expected<void, std::string> close(std::uint32_t id) { return bus_.close(id); }
+
+    static std::expected<void, std::string> remember(std::span<const Notified> notified) {
+        return write_state(user_notified_path(), notified_json(notified));
+    }
+
+    std::expected<void, std::string> act(SummaryAction action, std::span<const Notice> notices) {
+        if (action == SummaryAction::open) {
+            return open_notices();
+        }
+        auto set_aside = read_set_aside();
+        if (!set_aside) {
+            return std::unexpected(std::move(set_aside.error()));
+        }
+        const auto found = find_status(invocation_);
+        if (!found) {
+            return std::unexpected(found.error());
+        }
+        const auto at = now();
+        // Without the notices, what else was set aside cannot be told from what is gone.
+        const auto all = notices_beside(*found, invocation_, at);
+        if (!all) {
+            return std::unexpected(
+                std::format("cannot read {}", notices_path(found->path).string()));
+        }
+        const auto until = action == SummaryAction::later ? std::optional{at + summary_later}
+                                                          : std::optional<Seconds>{};
+        for (const auto& notice : notices) {
+            set_notice_aside(*set_aside, notice, until, *all);
+        }
+        return write_set_aside(*set_aside);
+    }
+
+    std::expected<NotifyWake, std::string> wait(std::optional<std::chrono::milliseconds> timeout) {
+        if (auto events = bus_.events(); !events || !events->empty()) {
+            return events.transform([](std::vector<bus::Event> found) {
+                return NotifyWake{.events = std::move(found)};
+            });
+        }
+        if (!watcher_) {
+            return std::unexpected(watcher_.error());
+        }
+        std::erase_if(children_, [](os::Child& child) { return child.poll().has_value(); });
+        // Terminals that ended are reaped at the latest this long after.
+        constexpr std::chrono::milliseconds reaping{60'000};
+        if (!children_.empty()) {
+            timeout = std::min(timeout.value_or(reaping), reaping);
+        }
+        const auto woken = watcher_->wait(timeout, bus_.pollable());
+        if (!woken) {
+            return std::unexpected(woken.error().message());
+        }
+        if (woken->stop) {
+            return NotifyWake{.stop = true};
+        }
+        return bus_.events().transform(
+            [](std::vector<bus::Event> found) { return NotifyWake{.events = std::move(found)}; });
+    }
+
+  private:
+    // Where the notices, what this user set aside, and the news read are kept.
+    [[nodiscard]] std::vector<std::filesystem::path> directories() const {
+        std::vector<std::filesystem::path> stores;
+        if (invocation_.store) {
+            stores.push_back(*invocation_.store);
+        } else {
+            stores.push_back(system_store_path(invocation_));
+            if (auto user = user_store_path(invocation_)) {
+                stores.push_back(std::move(*user));
+            }
+        }
+        std::vector<std::filesystem::path> found;
+        found.reserve(stores.size() + 2);
+        for (const auto& store : stores) {
+            found.push_back(notices_path(store).parent_path());
+        }
+        if (const auto state = user_set_aside_path()) {
+            found.push_back(state->parent_path());
+        }
+        found.push_back(invocation_.root / invocation_.eprefix.value_or("").relative_path() /
+                        "var" / "lib" / "gentoo" / "news");
+        std::ranges::sort(found);
+        const auto [first, last] = std::ranges::unique(found);
+        found.erase(first, last);
+        return found;
+    }
+
+    std::expected<void, std::string> open_notices() {
+        const auto settings_file = settings_path(config_root(invocation_));
+        const auto settings = read_settings(settings_file).value_or(Settings{});
+        const auto path = os::environment("PATH").value_or("");
+        std::vector<std::string_view> installed;
+        for (const auto name : terminals) {
+            if (find_program(name, path)) {
+                installed.push_back(name);
+            }
+        }
+        auto argv = terminal_command(settings.terminal, os::environment("TERMINAL"), installed);
+        if (!argv) {
+            return std::unexpected(
+                std::format("no terminal to open the notices in; name one as terminal in {}",
+                            settings_file.string()));
+        }
+        const auto self = os::executable();
+        argv->push_back(self.empty() ? std::string{"egraph"} : self.string());
+        std::ranges::move(egraph_options(invocation_), std::back_inserter(*argv));
+        argv->insert(argv->end(), {"tui", "--notices"});
+        auto child = os::start(*argv);
+        if (!child) {
+            return std::unexpected(std::move(child.error().message));
+        }
+        children_.push_back(std::move(*child));
+        return {};
+    }
+
+    const Invocation& invocation_;
+    bus::Session& bus_;
+    std::expected<os::Watcher, std::string> watcher_ = std::unexpected(std::string{});
+    std::vector<os::Child> children_;
+};
+#endif
+
+Exit execute(const Notify&, Session&, const Invocation& invocation, std::ostream&,
+             std::ostream& err) {
+#if EGRAPH_HAVE_NOTIFY
+    if (const auto caught = os::catch_stop_signals(); !caught) {
+        err << "egraph: notify: " << caught.error().message() << '\n';
+        return Exit::failure;
+    }
+    auto bus = bus::Session::open();
+    if (!bus) {
+        err << "egraph: notify: " << bus.error() << '\n';
+        return Exit::failure;
+    }
+    const auto claimed = bus->claim(std::string{notify_bus_name});
+    if (!claimed) {
+        err << "egraph: notify: " << claimed.error() << '\n';
+        return Exit::failure;
+    }
+    if (!*claimed) {
+        err << "egraph: notify: another egraph notify is running in this session\n";
+        return Exit::failure;
+    }
+    NotifyWorld world{invocation, *bus};
+    if (const auto kept = keep_notified(world, err); !kept) {
+        err << "egraph: notify: " << kept.error() << '\n';
+        return Exit::failure;
+    }
+    return Exit::ok;
+#else
+    (void)invocation;
+    err << "egraph: notify: this egraph was built without notifications (meson -Dnotify=enabled)\n";
+    return Exit::not_implemented;
+#endif
+}
+
 std::optional<tui::StatusShown> shown_status(const Invocation& invocation) {
     auto found = find_status(invocation);
     if (!found) {
@@ -3983,6 +4207,8 @@ void configure(CLI::App& app, Invocation& invocation) {
                        "Keep the stores and the repository index fresh as their inputs change, "
                        "until stopped");
     add_command<Check>(app, invocation, "Diff the store against a fresh build");
+    add_command<Notify>(app, invocation,
+                        "Keep a desktop notification summing up the notices up, until stopped");
     CLI::App* complete_cmd = add_command<Complete>(
         app, invocation, "The words a shell completes a package argument to, from the stores");
     // Hidden: the completion scripts' own.
@@ -4390,6 +4616,9 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
     }
     if (std::holds_alternative<Watch>(command.command)) {
         return usage("watch runs on its own until stopped, as the egraphd service runs it");
+    }
+    if (std::holds_alternative<Notify>(command.command)) {
+        return usage("notify runs on its own until stopped, as the desktop session starts it");
     }
     // emerge would write over the interface's screen.
     if (context == Context::interface && (std::holds_alternative<Update>(command.command) ||
