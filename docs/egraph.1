@@ -1208,6 +1208,11 @@ configuration updates the interface steps aside while
 (or
 .BR \-\-dispatch\-conf )
 runs in the terminal, coming back once it exits.
+.TP
+.B \-\-notices
+Open on the notices page, as
+.B notify
+does.
 .SS shell
 Commands read one per line from standard input, the stores loaded once; the global options that
 choose the stores are taken from the command line only.
@@ -1306,6 +1311,15 @@ rebuilt), or none.
 After how many days since its sync (its
 .IR metadata/timestamp.chk )
 a repository is among the notices (default 7); 0 never.
+.TP
+.BI terminal " command"
+The terminal
+.B notify
+starts the interface in, its words before the interface's command line (as
+.BR "wezterm start \-\-" );
+unset, one found as
+.B notify
+describes.
 .RE
 .TP
 .I ${ROOT}${EPREFIX}/var/lib/egraph

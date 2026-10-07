@@ -28,6 +28,9 @@ struct Settings {
     PlanWhen plan = PlanWhen::refresh;
     // After how many days since its sync a repository is a notice; 0 never.
     int stale_days = 7;
+    // The terminal egraph notify's Open starts the interface in, before its command, as words;
+    // empty, one found.
+    std::string terminal{};
 };
 
 // "key = value" lines, blank lines and "#" comments skipped. An error names the line of an

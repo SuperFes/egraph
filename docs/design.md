@@ -655,6 +655,17 @@ still have a `._cfg????_` update beside them, matched as portage's `find_updated
 matches them, so the files merged leave the notice, and the notice goes with the last of them
 (17e5c3).
 
+`egraph notify` posts one summary of the notices shown (those not set aside), and only when it
+says something new: a notice the last summary did not carry with its fingerprint, or one put off
+whose time came after the last summary carried it. What the last summary carried, each key with
+its fingerprint and time, is the user's `notified.json` beside `set-aside.json`; a revised GLSA
+or another update for the configuration notice changes the fingerprint, so it notifies again,
+while a notice dismissed or put off stays quiet until it changes or comes due. A single notice
+is shown as its title and detail; several as a count, the new ones first. Open starts `egraph
+tui --notices` in a terminal: the settings file's `terminal`, else xdg-terminal-exec, else
+`$TERMINAL`, else the first of a short list found in PATH, each given the command as it expects
+(17e6a).
+
 Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
 touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
 the set is emerge's own. `parse_request` takes sets the store does not hold from its caller

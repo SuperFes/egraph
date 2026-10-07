@@ -1054,6 +1054,11 @@ void App::finish_scope_plan(ScopePlan plan) {
     }
 }
 
+void App::open_notices() {
+    notices_first_ = !notices_;
+    on_notices_ = notices_.has_value();
+}
+
 void App::finish_notices(std::optional<NoticesShown> notices) {
     std::optional<std::string> selected;
     if (notices_ && notice_cursor_.at < notices_->notices.size()) {
@@ -1066,6 +1071,7 @@ void App::finish_notices(std::optional<NoticesShown> notices) {
         notice_cursor_ = {};
         return;
     }
+    on_notices_ = on_notices_ || std::exchange(notices_first_, false);
     const auto& list = notices_->notices;
     if (const auto at = std::ranges::find(list, selected, &Notice::key); at != list.end()) {
         notice_cursor_.at = static_cast<std::size_t>(at - list.begin());
@@ -3139,7 +3145,7 @@ DriftSign drift_sign(char sign) {
 
 Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps, GlyphSet glyphs,
                   const Services& services, std::span<const std::string> warnings,
-                  std::ostream& err) {
+                  bool notices_first, std::ostream& err) {
 #if EGRAPH_HAVE_TUI
     auto screen = Screen::open();
     if (!screen) {
@@ -3149,6 +3155,9 @@ Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps, Glyph
     App app{std::move(stores), dynamic_deps, services.rebuild ? Update::save : Update::preview};
     if (!warnings.empty()) {
         app.show({.error = false, .title = "Warning", .lines = {warnings.begin(), warnings.end()}});
+    }
+    if (notices_first) {
+        app.open_notices();
     }
     if (const auto stopped = run(*screen, app, egraph::glyphs(glyphs), services)) {
         err << "egraph: tui: " << *stopped << '\n';
@@ -3161,6 +3170,7 @@ Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps, Glyph
     (void)glyphs;
     (void)services;
     (void)warnings;
+    (void)notices_first;
     err << "egraph: tui: this egraph was built without Notcurses (meson -Dtui=enabled)\n";
     return Exit::not_implemented;
 #endif

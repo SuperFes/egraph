@@ -291,6 +291,8 @@ struct Check {
 
 struct Tui {
     static constexpr std::string_view name = "tui";
+    // Open on the notices page.
+    bool notices = false;
 };
 
 // Commands read one per line, answered from one session.

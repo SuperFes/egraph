@@ -583,6 +583,8 @@ class App {
     void finish_notices(std::optional<NoticesShown> notices);
     // The notices page, after the sets, in place of the list.
     [[nodiscard]] bool on_notices() const { return on_notices_; }
+    // Turns to the notices page, at once or once there are notices.
+    void open_notices();
     [[nodiscard]] const Cursor& notice_cursor() const { return notice_cursor_; }
     // Choosing how long to put the selected notice off for.
     [[nodiscard]] bool putting_off() const { return putting_off_; }
@@ -803,6 +805,7 @@ class App {
     std::optional<StatusShown> status_;
     std::optional<NoticesShown> notices_;
     bool on_notices_ = false;
+    bool notices_first_ = false;
     Cursor notice_cursor_;
     bool putting_off_ = false;
     std::optional<NoticeChange> notice_change_;
@@ -2326,9 +2329,10 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
 }
 
 // Opens the terminal and runs the interface over the stores, first showing any warnings from
-// opening them; errors go to err.
+// opening them, on the notices page where asked; errors go to err.
 [[nodiscard]] Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps,
                                 GlyphSet glyphs, const Services& services,
-                                std::span<const std::string> warnings, std::ostream& err);
+                                std::span<const std::string> warnings, bool notices_first,
+                                std::ostream& err);
 
 } // namespace egraph::tui

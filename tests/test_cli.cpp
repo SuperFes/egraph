@@ -631,6 +631,11 @@ TEST_CASE("glyphs default to a Nerd Font's in a UTF-8 locale and ASCII otherwise
     CHECK(egraph::style(invocation).glyphs == GlyphSet::unicode);
 }
 
+TEST_CASE("tui --notices opens on the notices page") {
+    CHECK_FALSE(std::get<egraph::Tui>(parse("tui").command).notices);
+    CHECK(std::get<egraph::Tui>(parse("tui --notices").command).notices);
+}
+
 TEST_CASE("the interface needs a terminal, and a build with Notcurses") {
     const auto invocation = parse("tui");
     REQUIRE(std::holds_alternative<egraph::Tui>(invocation.command));

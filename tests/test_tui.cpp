@@ -3265,6 +3265,28 @@ TEST_CASE("without a way to run dispatch-conf, run says so and keeps the termina
     CHECK(app.dialog()->title == "Cannot run dispatch-conf");
 }
 
+TEST_CASE("the interface can open on the notices page, once there are notices") {
+    egraph::tui::App app{both(), true};
+    app.open_notices();
+    CHECK_FALSE(app.on_notices());
+    app.finish_notices(two_notices());
+    CHECK(app.on_notices());
+    // Only the first time.
+    app.handle(key(KeyKind::left));
+    app.finish_notices(two_notices());
+    CHECK_FALSE(app.on_notices());
+
+    egraph::tui::App loaded{both(), true};
+    loaded.finish_notices(two_notices());
+    loaded.open_notices();
+    CHECK(loaded.on_notices());
+    // None: the list.
+    egraph::tui::App none{both(), true};
+    none.open_notices();
+    none.finish_notices(std::nullopt);
+    CHECK_FALSE(none.on_notices());
+}
+
 TEST_CASE("the notices page needs no evaluated store") {
     egraph::tui::App app{egraph::Stores{.installed = sample(), .evaluated = {}}, true};
     REQUIRE_FALSE(app.has_evaluated());

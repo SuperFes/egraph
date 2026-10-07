@@ -1002,6 +1002,16 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
   - 17e6: `egraph notify`: one summary notification (org.freedesktop.Notifications over the
     session bus) with Dismiss, Later (a day) and Open, which starts a terminal on the notice;
     started by an XDG autostart entry.
+    - 17e6a (done): what to notify about, pure: the notices new since the last summary (by key and
+      fingerprint, kept in the user's state) and those put off whose time has come; the
+      summary's title and body; the terminal Open starts (xdg-terminal-exec, `$TERMINAL`, a
+      short list, or the settings file's `terminal`) with `egraph tui` on the notices page.
+    - 17e6b: the session bus through sd-bus, in `bus.cpp` alone (a `notify` feature, as
+      Notcurses is `tui`): post or replace the summary, close it, and its actions and closing as
+      events; tested against a fake notification server on a private bus.
+    - 17e6c: the user daemon: notices.json watched (inotify) and put-offs timed, one summary
+      at a time replaced in place; Dismiss and Later set aside what it shows, Open starts the
+      terminal; installed as an XDG autostart entry.
 - 17f: what a configuration edit did: on a change under `/etc/portage`, the plan before and
   after compared ("+4 rebuilds for USE=foo on media-libs/bar, 1 new, the plan now refuses: ..."),
   in the status file and as a notification. Linting proper stays step 18.

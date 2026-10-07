@@ -2883,7 +2883,7 @@ Exit execute(const Why& command, Session& session, const Invocation& invocation,
     return exit;
 }
 
-Exit execute(const Tui&, Session& session, const Invocation& invocation, std::ostream&,
+Exit execute(const Tui& tui_command, Session& session, const Invocation& invocation, std::ostream&,
              std::ostream& err) {
     if (!tui::available()) {
         err << "egraph: tui: this egraph was built without Notcurses (meson -Dtui=enabled)\n";
@@ -3002,7 +3002,7 @@ Exit execute(const Tui&, Session& session, const Invocation& invocation, std::os
                  return os::run(dispatch_conf_command(invocation))
                      .transform_error([](const os::SpawnError& e) { return e.message; });
              }},
-        warnings, err);
+        warnings, tui_command.notices, err);
 }
 
 Exit execute(const Shell&, Session& session, const Invocation& invocation, std::ostream& out,
@@ -3967,7 +3967,11 @@ void configure(CLI::App& app, Invocation& invocation) {
     status_cmd->add_flag_callback(
         "--update", [&invocation] { std::get<StatusCommand>(invocation.command).update = true; },
         "Plan the updates and write the status file first");
-    add_command<Tui>(app, invocation, "Browse the graph in a terminal interface");
+    CLI::App* tui_cmd =
+        add_command<Tui>(app, invocation, "Browse the graph in a terminal interface");
+    tui_cmd->add_flag_callback(
+        "--notices", [&invocation] { std::get<Tui>(invocation.command).notices = true; },
+        "Open on the notices page");
     add_command<Shell>(app, invocation,
                        "Answer commands read one per line from standard input, loading the stores "
                        "once");

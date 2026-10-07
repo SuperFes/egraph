@@ -38,6 +38,12 @@ TEST_CASE("settings are key = value lines with comments") {
     CHECK(egraph::parse_settings("  history_days=0  # off\n")->history_days == 0);
 }
 
+TEST_CASE("the terminal setting is a command line as written") {
+    CHECK(egraph::parse_settings("")->terminal.empty());
+    CHECK(egraph::parse_settings("terminal = wezterm start --  # for notify\n")->terminal ==
+          "wezterm start --");
+}
+
 TEST_CASE("a setting egraph does not know, or a bad value, names its line") {
     CHECK(egraph::parse_settings("\nhistory = 3\n").error() == "line 2: unknown setting history");
     CHECK(egraph::parse_settings("history_days = soon").error() ==
