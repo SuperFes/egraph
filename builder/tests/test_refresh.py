@@ -288,6 +288,51 @@ def test_watch_writes_the_plan_to_the_status_file_after_each_refresh(updates_sys
         stop(process)
 
 
+def notice_count(system):
+    """The notices egraph status counts."""
+    rows = [line.split("\t") for line in egraph(system, "status").stdout.splitlines()]
+    return int(next(row[1] for row in rows if row[0] == "notices"))
+
+
+def test_watch_keeps_what_a_configuration_edit_alone_did_to_the_plan(updates_system):
+    system = updates_system
+    playground = system[0]
+    process, lines = start_watch(system)
+    try:
+        assert "egraph: watch: watching " in lines.get(timeout=120)
+        first = status(system)
+        assert first["others"] and "change" not in first
+        upgrade = next(
+            line for line in first["lines"] if line.startswith("app-misc/up-1\t")
+        )
+        before = notice_count(system)
+        path = os.path.join(playground.eroot, "etc", "portage", "package.mask")
+        with open(path, "a") as f:
+            f.write("=app-misc/up-2\n")
+        assert "egraph: watch: refreshed in " in lines.get(timeout=120)
+        second = status(system)
+        assert second["change"] == {
+            "files": [path],
+            "before": first["counts"],
+            "gained": [],
+            "lost": [upgrade],
+        }
+        assert second["counts"]["upgrades"] == first["counts"]["upgrades"] - 1
+        # A notice beside the others.
+        assert notice_count(system) == before + 1
+        shown = egraph(system, "notices").stdout.splitlines()
+        assert "title\tplan\tConfiguration edit: -1 upgrade" in shown
+        assert f"detail\tplan\tedited {path}" in shown
+        # The next plan, made for a merge, has nothing of the edit's.
+        add_package(playground, "app-misc/extra-1")
+        assert "egraph: watch: refreshed in " in lines.get(timeout=120)
+        assert "change" not in status(system)
+        process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=30) == 0
+    finally:
+        stop(process)
+
+
 def notices(system):
     path = system[1].parent / "notices.json"
     return json.loads(path.read_text()) if path.exists() else None

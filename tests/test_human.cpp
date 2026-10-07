@@ -201,6 +201,19 @@ TEST_CASE("notices list configuration updates by file, then unread news") {
     CHECK(news.str() == "Unread news (eselect news read):\n  2026-09-01-x\n");
 }
 
+TEST_CASE("notices list what a configuration edit did to the plan after its updates") {
+    std::ostringstream out;
+    egraph::human_notices(out,
+                          std::vector<std::string>{"/etc/a\tconfig\t/etc/._cfg0000_a",
+                                                   "title\tplan\tConfiguration edit: +1 rebuild",
+                                                   "detail\tplan\tedited /etc/portage/package.use",
+                                                   "detail\tplan\t+ dev-libs/d-1 rebuild"},
+                          plain, egraph::Seconds{});
+    CHECK(out.str() == "Configuration updates (dispatch-conf):\n  /etc/a\n"
+                       "\nConfiguration edit: +1 rebuild (egraph updates):\n"
+                       "  edited /etc/portage/package.use\n  + dev-libs/d-1 rebuild\n");
+}
+
 TEST_CASE("notices list preserved libraries with what they come from and what uses them") {
     std::ostringstream out;
     egraph::human_notices(

@@ -1018,7 +1018,7 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
   - 17f1 (done): pure: the status keeps the configuration's inputs and a digest of the stores'
     others; two plans compared when the configuration alone changed (the files edited, the counts
     before, the lines gained and lost); the `plan` notice it makes, until the next plan.
-  - 17f2: watch records the change as it plans; the notice read beside the others (`notices`,
+  - 17f2 (done): watch records the change as it plans; the notice read beside the others (`notices`,
     `status`, the interface, where enter opens the updates, and `notify`).
 
 ## 18. Explaining and checking the configuration

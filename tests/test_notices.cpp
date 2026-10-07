@@ -254,6 +254,32 @@ TEST_CASE("notices list as one, the most pressing first") {
     CHECK(list.at(7).title == "2026-09-02-y");
 }
 
+TEST_CASE("the plan's change is a notice of its own, after the configuration updates") {
+    using namespace std::chrono;
+    const egraph::Seconds now = sys_days{2026y / October / 9};
+    auto notices = every_kind();
+    const egraph::Notice plan{.kind = egraph::NoticeKind::plan,
+                              .key = "plan",
+                              .title = "Configuration edit: +1 rebuild",
+                              .detail = {"edited /etc/portage/package.use",
+                                         "+ dev-libs/d-1 rebuild dev-libs/d-1 gentoo y"},
+                              .fingerprint = "5",
+                              .since = egraph::Seconds{seconds{5}}};
+    notices.plan = plan;
+    const auto list = egraph::notice_list(notices, now);
+    REQUIRE(list.size() == 9);
+    CHECK(list.at(5).key == "config");
+    // As the status file has it, since included.
+    CHECK(list.at(6) == plan);
+    const auto lines = egraph::notice_lines(notices);
+    CHECK(std::vector(lines.end() - 3, lines.end()) ==
+          std::vector<std::string>{"title\tplan\tConfiguration edit: +1 rebuild",
+                                   "detail\tplan\tedited /etc/portage/package.use",
+                                   "detail\tplan\t+ dev-libs/d-1 rebuild dev-libs/d-1 gentoo y"});
+    egraph::drop_notices(notices, std::vector<std::string>{"plan"});
+    CHECK_FALSE(notices.plan);
+}
+
 TEST_CASE("a fingerprint changes with what the notice says") {
     using namespace std::chrono;
     const egraph::Seconds now = sys_days{2026y / October / 9};
@@ -314,7 +340,7 @@ TEST_CASE("notice kinds have names") {
     for (const auto kind :
          {egraph::NoticeKind::glsa, egraph::NoticeKind::news, egraph::NoticeKind::config,
           egraph::NoticeKind::preserved, egraph::NoticeKind::stale, egraph::NoticeKind::masked,
-          egraph::NoticeKind::missing}) {
+          egraph::NoticeKind::missing, egraph::NoticeKind::plan}) {
         CHECK(egraph::notice_kind(egraph::notice_kind_name(kind)) == kind);
     }
     CHECK(egraph::notice_kind_name(egraph::NoticeKind::glsa) == "glsa");

@@ -2418,10 +2418,11 @@ std::optional<Action> notice_action(const Notice& notice) {
         return Action{.kind = Action::Kind::rebuild, .targets = {"@preserved-rebuild"}};
     case NoticeKind::stale:
         return Action{.kind = Action::Kind::sync, .targets = {named}};
+    case NoticeKind::plan:
+        return Action{.kind = Action::Kind::update, .targets = {}, .scope = Scope::world};
     case NoticeKind::masked:
     case NoticeKind::news:
     case NoticeKind::config:
-    case NoticeKind::plan:
         break;
     }
     return std::nullopt;

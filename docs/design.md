@@ -697,6 +697,11 @@ holder and nodeps lines, which only explain others, left out). The `plan` notice
 the status as it is read rather than written to `notices.json`, so the next plan, whatever made
 it, replaces or clears it (17f1).
 
+`write_status` takes the status it replaces, so watch and `status --update` both keep the
+change. The interface, `status` and `notify` read the notice with the rest beside the status
+file; `notices`, which finds the rest live, takes it from the status file all the same, as one
+more section of its lines (17f2).
+
 Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
 touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
 the set is emerge's own. `parse_request` takes sets the store does not hold from its caller

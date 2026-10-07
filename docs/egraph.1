@@ -937,9 +937,20 @@ repository is its name,
 .B stale
 and when it synced in seconds since the epoch; a masked package is its cpv,
 .B masked
-and its reasons, comma-separated; and a missing soname is the cpv needing it,
+and its reasons, comma-separated; a missing soname is the cpv needing it,
 .BR missing ,
-its multilib category and the soname.
+its multilib category and the soname; and when the last plan
+.B watch
+made followed a configuration edit alone (the files under the config root's
+.I etc/portage
+changed, and nothing else the stores read), what it did to the plan:
+.BR title ,
+.B plan
+and how the counts moved ("Configuration edit: +4 rebuilds, \-1 upgrade, now refused"), then
+.BR detail ,
+.B plan
+and each file edited, each line of the plan it gained (+) and each it lost (\-), until the next
+plan.
 After an action run from a terminal without
 .BR \-\-yes ,
 preserved libraries have
@@ -952,9 +963,10 @@ Each notice has a key: a GLSA's
 .BR config ,
 .BR preserved ,
 .BI stale: repository\fR,
-.BI masked: cpv
+.BI masked: cpv\fR,
+.BI missing: cpv
 and
-.BI missing: cpv\fR.
+.BR plan .
 A user can set one aside, by its key or what follows the colon; what is set aside is left out
 here, after an action (neither its rebuild nor
 .B dispatch\-conf
@@ -1197,6 +1209,9 @@ updates them, a package missing libraries is rebuilt as
 .BR "exec \-\-oneshot" ,
 preserved libraries as
 .BR "exec \-\-oneshot @preserved\-rebuild" ,
+and a plan a configuration edit changed is the world's updates, as
+.B U
+on @world with nothing picked,
 each shown first as an action is; a stale repository is synced as
 .BR sync ,
 once asked; a masked package's page opens; a news item is shown, and marked read as it closes,
@@ -1237,7 +1252,13 @@ beside the store; and whatever that setting, when a store changed, the notices a
 .B notices
 finds them and written to
 .I notices.json
-beside it, each notice new since the last file logged. The
+beside it, each notice new since the last file logged. When the plan follows a configuration
+edit alone, what the edit did to it (the files edited, the counts before, the lines gained and
+lost) is kept in
+.I status.json
+too, until the next plan, and is the
+.B plan
+notice. The
 .B egraphd
 service runs it as the
 .B egraph

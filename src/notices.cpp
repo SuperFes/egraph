@@ -130,6 +130,12 @@ std::vector<std::string> notice_lines(const Notices& notices) {
     for (const auto& [cpv, category, soname] : notices.missing) {
         lines.push_back(std::format("{}\tmissing\t{}\t{}", cpv, category, soname));
     }
+    if (const auto& plan = notices.plan) {
+        lines.push_back(std::format("title\tplan\t{}", plan->title));
+        for (const auto& line : plan->detail) {
+            lines.push_back(std::format("detail\tplan\t{}", line));
+        }
+    }
     return lines;
 }
 
@@ -333,6 +339,9 @@ std::vector<Notice> notice_list(const Notices& notices, Seconds now) {
         add(NoticeKind::config, "config", std::move(title), std::move(files),
             std::move(fingerprint));
     }
+    if (notices.plan) {
+        list.push_back(*notices.plan);
+    }
     for (const auto& [repo, item, title, path] : notices.news) {
         add(NoticeKind::news, std::format("news:{}/{}", repo, item), title.empty() ? item : title,
             {}, item);
@@ -491,6 +500,9 @@ void drop_notices(Notices& notices, std::span<const std::string> keys) {
                   [&](const Notices::Stale& stale) { return dropped("stale:" + stale.name); });
     if (dropped("config")) {
         notices.config.clear();
+    }
+    if (dropped("plan")) {
+        notices.plan.reset();
     }
     std::erase_if(notices.news, [&](const Notices::News& news) {
         return dropped(std::format("news:{}/{}", news.repo, news.item));

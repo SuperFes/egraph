@@ -22,6 +22,42 @@
 
 namespace egraph {
 
+enum class NoticeKind : std::uint8_t {
+    glsa,
+    news,
+    config,
+    preserved,
+    stale,
+    masked,
+    missing,
+    plan
+};
+
+// "glsa", "news", "config", "preserved", "stale", "masked", "missing", "plan".
+[[nodiscard]] std::string_view notice_kind_name(NoticeKind kind);
+[[nodiscard]] std::optional<NoticeKind> notice_kind(std::string_view name);
+
+// One thing to act on.
+struct Notice {
+    NoticeKind kind = NoticeKind::news;
+    // Stable while it lasts: "glsa:202609-03", "news:gentoo/2026-09-01-x", "config",
+    // "preserved", "stale:gentoo", "masked:cat/pkg-1", "missing:cat/pkg-1", "plan".
+    std::string key{};
+    std::string title{};
+    std::vector<std::string> detail{};
+    // The installed packages it is about, as cpvs: a GLSA's affected ones, the masked package,
+    // the one missing libraries.
+    std::vector<std::string> packages{};
+    // The file it is about: a news item's text.
+    std::string file{};
+    // Changes when what it says does (a GLSA revised, another version affected, a new sync),
+    // which brings a dismissed notice back.
+    std::string fingerprint{};
+    // When it was first noticed.
+    Seconds since{};
+    auto operator<=>(const Notice&) const = default;
+};
+
 struct Notices {
     // A ._cfg file waiting to replace a protected configuration file.
     struct ConfigUpdate {
@@ -72,6 +108,8 @@ struct Notices {
         std::string soname;
     };
     std::vector<Missing> missing;
+    // What the last configuration edit did to the plan, as the status file records it.
+    std::optional<Notice> plan{};
 };
 
 // The repositories whose timestamp.chk is older than days before now; none when days is 0, nor
@@ -85,33 +123,6 @@ masked_installed(const Store& store, const Evaluated& evaluated, bool dynamic_de
 
 // Each soname an installed package requires that no installed package provides, by cpv.
 [[nodiscard]] std::vector<Notices::Missing> missing_sonames(const Store& store);
-
-enum class NoticeKind : std::uint8_t { glsa, news, config, preserved, stale, masked, missing, plan };
-
-// "glsa", "news", "config", "preserved", "stale", "masked", "missing", "plan".
-[[nodiscard]] std::string_view notice_kind_name(NoticeKind kind);
-[[nodiscard]] std::optional<NoticeKind> notice_kind(std::string_view name);
-
-// One thing to act on.
-struct Notice {
-    NoticeKind kind = NoticeKind::news;
-    // Stable while it lasts: "glsa:202609-03", "news:gentoo/2026-09-01-x", "config",
-    // "preserved", "stale:gentoo", "masked:cat/pkg-1", "missing:cat/pkg-1", "plan".
-    std::string key{};
-    std::string title{};
-    std::vector<std::string> detail{};
-    // The installed packages it is about, as cpvs: a GLSA's affected ones, the masked package,
-    // the one missing libraries.
-    std::vector<std::string> packages{};
-    // The file it is about: a news item's text.
-    std::string file{};
-    // Changes when what it says does (a GLSA revised, another version affected, a new sync),
-    // which brings a dismissed notice back.
-    std::string fingerprint{};
-    // When it was first noticed.
-    Seconds since{};
-    auto operator<=>(const Notice&) const = default;
-};
 
 // The notices as one list: a GLSA, a news item, a stale repository, a masked package, and the
 // missing sonames of a package each one; the configuration updates and the preserved libraries

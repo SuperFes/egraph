@@ -778,6 +778,20 @@ void human_notices(std::ostream& out, std::span<const std::string> records, cons
             out << '\n';
         }
     }
+    for (const auto& row : rows) {
+        if (row.at(1) != "plan") {
+            continue;
+        }
+        if (row.front() == "title") {
+            heading(row.at(2), " (egraph updates)");
+            continue;
+        }
+        const std::string_view line = row.at(2);
+        const auto tone = line.starts_with("+ ")   ? Tone::good
+                          : line.starts_with("- ") ? Tone::bad
+                                                   : Tone::note;
+        out << "  " << paint(line, tone) << '\n';
+    }
     bool first = true;
     for (const auto& row : rows) {
         if (row.at(1) != "news") {

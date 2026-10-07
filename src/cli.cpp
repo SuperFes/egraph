@@ -1460,9 +1460,11 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
 
 // The updates planned on the session's stores, now, and written to the status file at path; why
 // not, when that failed.
+// The status file at path written anew; what a configuration edit alone did to the plan since
+// before kept in it.
 std::optional<std::string> write_status(Session& session, const Invocation& invocation,
-                                        const StatusStores& now,
-                                        const std::filesystem::path& path) {
+                                        const StatusStores& now, const std::filesystem::path& path,
+                                        const std::expected<Status, std::string>& before) {
     auto lines_invocation = invocation;
     lines_invocation.layout = Layout::lines;
     Updates command;
@@ -1491,6 +1493,14 @@ std::optional<std::string> write_status(Session& session, const Invocation& invo
         return index.error();
     }
     const auto& repository_index = index->get();
+    if (const auto stores = session.stores(); stores) {
+        const std::array<std::span<const Input>, 3> layers{stores->get().installed.inputs,
+                                                           stores->get().evaluated.inputs,
+                                                           repository_index.inputs};
+        const auto config_dir = config_root(invocation) / "etc" / "portage";
+        status.config = config_inputs(layers, config_dir);
+        status.others = other_inputs_digest(layers, config_dir);
+    }
     for (const auto& repository : repository_index.repositories) {
         const auto location = repository_index.string(repository.location);
         status.repositories.push_back(
@@ -1501,6 +1511,9 @@ std::optional<std::string> write_status(Session& session, const Invocation& invo
         if (!line.empty()) {
             status.lines.emplace_back(line.begin(), line.end());
         }
+    }
+    if (before) {
+        status.change = plan_change(*before, status);
     }
     if (const auto written = os::replace_with_text(path, status_json(status)); !written) {
         return std::format("cannot write {}: {}", path.string(), written.error().message());
@@ -1557,7 +1570,7 @@ std::optional<std::string> refresh_status(Session& session, const Invocation& in
     if (!status_due(settings->plan, old ? std::optional{old->stores} : std::nullopt, *now)) {
         return std::nullopt;
     }
-    return write_status(session, invocation, *now, path);
+    return write_status(session, invocation, *now, path, old);
 }
 
 // The request the targets name, the cps only the repositories know evaluated first.
@@ -2092,12 +2105,15 @@ Exit set_notices_aside(const NoticesCommand& command, std::span<const Notice> no
     return Exit::ok;
 }
 
+std::optional<Notice> status_plan_notice(const Invocation& invocation);
+
 Exit execute(const NoticesCommand& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     auto notices = read_notices(NoticesCommand::name, session, invocation, err);
     if (!notices) {
         return fail(err, std::format("notices: {}", notices.error()));
     }
+    notices->plan = status_plan_notice(invocation);
     const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     if (!command.dismiss.empty() || !command.later.empty()) {
         return set_notices_aside(command, notice_list(*notices, now), now, invocation, out, err);
@@ -3324,20 +3340,31 @@ std::optional<std::vector<std::string>> unread_news_items(const Invocation& invo
 }
 
 // The notices watch wrote beside the status file, as of now; none where it wrote none.
+// What the last configuration edit did to the plan, as the status file found records it.
+std::optional<Notice> status_plan_notice(const Invocation& invocation) {
+    const auto found = find_status(invocation);
+    return found ? plan_notice(found->status) : std::nullopt;
+}
+
 std::optional<std::vector<Notice>> notices_beside(const FoundStatus& found,
                                                   const Invocation& invocation, Seconds now) {
     const auto file = read_notice_file(notices_path(found.path));
+    auto plan = plan_notice(found.status);
     if (!file) {
-        return std::nullopt;
+        return plan.transform([](Notice notice) { return std::vector{std::move(notice)}; });
     }
     const auto settings = read_settings(settings_path(config_root(invocation)));
     // News read since, as with eselect, and updates merged, as with dispatch-conf, are gone
     // without waiting for watch.
-    return still_waiting(
+    auto notices = still_waiting(
         still_unread(
             current_notices(*file, now, settings.value_or(Settings{}).stale_days),
             [&invocation](std::string_view repo) { return unread_news_items(invocation, repo); }),
         [](const std::string& path) { return config_update_waiting(path); });
+    if (plan) {
+        notices.push_back(std::move(*plan));
+    }
+    return notices;
 }
 
 std::expected<std::vector<std::string>, std::string> news_text(const Notice& notice) {
@@ -3613,7 +3640,7 @@ Exit execute(const StatusCommand& command, Session& session, const Invocation& i
             return fail(err, now.error());
         }
         const auto path = status_path(session.used());
-        if (const auto error = write_status(session, invocation, *now, path)) {
+        if (const auto error = write_status(session, invocation, *now, path, read_status(path))) {
             err << "egraph: status: " << *error << '\n';
             return Exit::failure;
         }

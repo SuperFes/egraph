@@ -2475,6 +2475,11 @@ TEST_CASE("enter on a notice updates, rebuilds or syncs what it is about") {
     const Notice config{.kind = NoticeKind::config, .key = "config"};
     CHECK_FALSE(notice_action(config).has_value());
     CHECK(notice_work(config) == "dispatch-conf");
+    // The plan a configuration edit changed, as watch plans it.
+    const Notice plan{.kind = NoticeKind::plan, .key = "plan"};
+    CHECK(notice_action(plan) ==
+          Action{.kind = Action::Kind::update, .targets = {}, .scope = egraph::tui::Scope::world});
+    CHECK(notice_work(plan) == "update");
 }
 
 TEST_CASE("a log's tail is what a terminal would leave of its last lines") {
