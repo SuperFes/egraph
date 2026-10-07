@@ -960,6 +960,10 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     at the end of an emerge that leaves preserved libraries) and `@smart-live-rebuild`;
   - the other package sets, as a thing of their own: repositories ship any number of them;
   - a package's page showing every piece of metadata the stores hold, not only the ebuild's.
+  - USE flags on a package's page, toggled in place: REQUIRED_USE (`^^`, `??`, `||`, conditionals)
+    greys out or flips what a toggle excludes, and the plan is redone with the change, its new
+    rebuilds and pulls lit up; the evaluated store already holds REQUIRED_USE and the dependency
+    trees, so it needs no portage call. Kept as a trial edit until written to package.use.
 - 17e: notifications, moved here from step 20: GLSAs matched against the store, a stale sync,
   broken soname dependencies after a merge, unread news, masked installed packages; in the
   status file and the log, and on the desktop through a user-side `egraph notify` (the service
