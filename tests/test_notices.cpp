@@ -309,3 +309,96 @@ TEST_CASE("notice kinds have names") {
     CHECK(egraph::notice_kind_name(egraph::NoticeKind::glsa) == "glsa");
     CHECK_FALSE(egraph::notice_kind("other"));
 }
+
+namespace {
+
+egraph::Notice named(std::string key, std::string fingerprint = "1") {
+    return {.kind = egraph::NoticeKind::news,
+            .key = std::move(key),
+            .title = "",
+            .detail = {},
+            .fingerprint = std::move(fingerprint),
+            .since = {}};
+}
+
+} // namespace
+
+TEST_CASE("what a user set aside round-trips through JSON") {
+    using namespace std::chrono;
+    const std::vector<egraph::SetAside> set_aside{
+        {.key = "glsa:202601-01", .fingerprint = "2 a/b-1", .until = std::nullopt},
+        {.key = "stale:gentoo",
+         .fingerprint = "1790000000",
+         .until = egraph::Seconds{seconds{1790086400}}}};
+    CHECK(egraph::parse_set_aside(egraph::set_aside_json(set_aside)) == set_aside);
+    CHECK(egraph::parse_set_aside("{}").error() == "not a set-aside file");
+    CHECK(egraph::parse_set_aside(R"({"format": 1, "set_aside": [{"key": 1}]})").error() ==
+          "not a set-aside file");
+    CHECK(egraph::parse_set_aside(R"({"format": 2, "set_aside": []})").error() ==
+          "format 2, from another egraph version");
+}
+
+TEST_CASE("set-aside notices live under the user's state directory") {
+    CHECK(egraph::set_aside_path("/state", "/home/u") == "/state/egraph/set-aside.json");
+    CHECK(egraph::set_aside_path(std::nullopt, "/home/u") ==
+          "/home/u/.local/state/egraph/set-aside.json");
+    // An empty or relative XDG_STATE_HOME counts as unset, as the specification says.
+    CHECK(egraph::set_aside_path("", "/home/u") == "/home/u/.local/state/egraph/set-aside.json");
+    CHECK(egraph::set_aside_path("state", "/home/u") ==
+          "/home/u/.local/state/egraph/set-aside.json");
+    CHECK_FALSE(egraph::set_aside_path(std::nullopt, std::nullopt));
+}
+
+TEST_CASE("a dismissed notice stays hidden until it changes; a put-off one until its time") {
+    using namespace std::chrono;
+    const egraph::Seconds now = sys_days{2026y / October / 9};
+    std::vector<egraph::SetAside> set_aside;
+    const std::vector<egraph::Notice> notices{named("a"), named("b"), named("c")};
+    egraph::set_notice_aside(set_aside, notices.at(0), std::nullopt, notices);
+    egraph::set_notice_aside(set_aside, notices.at(1), now + days{1}, notices);
+    CHECK(egraph::is_set_aside(notices.at(0), set_aside, now + days{400}));
+    CHECK_FALSE(egraph::is_set_aside(named("a", "2"), set_aside, now));
+    CHECK(egraph::is_set_aside(notices.at(1), set_aside, now + hours{23}));
+    CHECK_FALSE(egraph::is_set_aside(notices.at(1), set_aside, now + days{1}));
+    CHECK_FALSE(egraph::is_set_aside(named("b", "2"), set_aside, now));
+    CHECK_FALSE(egraph::is_set_aside(notices.at(2), set_aside, now));
+    const auto shown = egraph::shown_notices(notices, set_aside, now);
+    REQUIRE(shown.size() == 1);
+    CHECK(shown.front().key == "c");
+    // Dismissing a put-off notice replaces its entry; one whose notice is gone is dropped.
+    egraph::set_notice_aside(set_aside, notices.at(1), std::nullopt,
+                             std::vector{notices.at(1), notices.at(2)});
+    CHECK(set_aside ==
+          std::vector<egraph::SetAside>{{.key = "b", .fingerprint = "1", .until = std::nullopt}});
+}
+
+TEST_CASE("a notice is named by its key or what follows the colon") {
+    const std::vector<egraph::Notice> notices{
+        named("glsa:202601-01"), named("missing:app-misc/a-1"), named("masked:app-misc/a-1"),
+        named("news:gentoo/2026-09-01-x"), named("config")};
+    CHECK(egraph::named_notice(notices, "202601-01") == 0);
+    CHECK(egraph::named_notice(notices, "masked:app-misc/a-1") == 2);
+    CHECK(egraph::named_notice(notices, "gentoo/2026-09-01-x") == 3);
+    CHECK(egraph::named_notice(notices, "config") == 4);
+    CHECK(egraph::named_notice(notices, "app-misc/a-1").error() ==
+          "app-misc/a-1 names 2 notices: missing:app-misc/a-1, masked:app-misc/a-1");
+    CHECK(egraph::named_notice(notices, "nothing").error() == "no notice is named nothing");
+}
+
+TEST_CASE("notices less what keys name, for showing") {
+    using namespace std::chrono;
+    auto notices = every_kind();
+    egraph::drop_notices(notices, std::vector<std::string>{"glsa:202601-01", "missing:app-misc/a-1",
+                                                           "preserved", "masked:app-misc/b-1",
+                                                           "stale:gentoo", "config",
+                                                           "news:gentoo/2026-09-01-x"});
+    CHECK(notices.advisories.empty());
+    CHECK(notices.missing.empty());
+    CHECK(notices.preserved->empty());
+    CHECK(notices.rebuild->empty());
+    CHECK(notices.masked.empty());
+    CHECK(notices.stale.empty());
+    CHECK(notices.config.empty());
+    REQUIRE(notices.news.size() == 1);
+    CHECK(notices.news.front().item == "2026-09-02-y");
+}

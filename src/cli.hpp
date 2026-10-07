@@ -209,9 +209,18 @@ struct Sync : Updates {
     std::vector<std::string> repositories;
 };
 
-// What needs the user once emerge has run: configuration updates waiting, unread news.
+// How long a notice is put off for.
+enum class PutOff : std::uint8_t { hour, day, week };
+
+// What needs the user: GLSAs, configuration updates waiting, unread news and the rest.
 struct NoticesCommand {
     static constexpr std::string_view name = "notices";
+    // Notices to dismiss, or to put off for put_off, by name (named_notice).
+    std::vector<std::string> dismiss;
+    std::vector<std::string> later;
+    PutOff put_off = PutOff::day;
+    // Those set aside too.
+    bool all = false;
 };
 
 enum class ExportFormat : std::uint8_t { dot, json };

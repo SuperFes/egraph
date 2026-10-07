@@ -945,6 +945,45 @@ After an action run from a terminal without
 preserved libraries have
 .B egraph install \-\-oneshot @preserved\-rebuild
 planned and offered at once, not again after that rebuild.
+.PP
+Each notice has a key: a GLSA's
+.BI glsa: id\fR,
+.BI news: repository / item\fR,
+.BR config ,
+.BR preserved ,
+.BI stale: repository\fR,
+.BI masked: cpv
+and
+.BI missing: cpv\fR.
+A user can set one aside, by its key or what follows the colon; what is set aside is left out
+here, after an action (neither its rebuild nor
+.B dispatch\-conf
+offered), and from
+.BR status ,
+and kept in
+.IR ${XDG_STATE_HOME:\-~/.local/state}/egraph/set\-aside.json .
+.TP
+.BI \-\-dismiss " name"
+Leave the notice out until what it says changes: a GLSA revised or affecting another version,
+a repository synced again, other reasons or libraries.
+.TP
+.BI \-\-later " name"
+Leave the notice out for a while, or until it changes.
+.TP
+.BR \-\-for " hour|day|week"
+How long
+.B \-\-later
+puts a notice off (default
+.BR day ).
+.TP
+.B \-\-all
+Also the notices set aside.
+.PP
+Setting notices aside writes, as lines, each key and
+.BR dismissed ,
+or
+.B later
+and until when in seconds since the epoch.
 .SS export \fR[\fIpackage\fR...]
 Part of the graph, or all of it without packages, for other tools.
 .TP

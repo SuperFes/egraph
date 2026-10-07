@@ -613,6 +613,13 @@ run (`egraph log` passes over them). Staleness grows with no refresh to see it, 
 keeps each repository's sync time and readers find the stale ones again; the other kinds change
 only with a store, but for `._cfg` files and the unread lists, which `notices` reads anew.
 
+Setting a notice aside is a user's own business (17e4), so it lives under `XDG_STATE_HOME`, not
+beside the system's files: the key and the fingerprint it was set aside at, and for one put off,
+until when. A changed fingerprint brings either back at once, so dismissing a GLSA does not
+hide its next revision, nor dismissing a stale repository its next week without a sync. Readers
+filter (`notices`, the follow-up after an action, `status`); the file only drops entries whose
+notices are gone as it is written.
+
 Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
 touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
 the set is emerge's own. `parse_request` takes sets the store does not hold from its caller

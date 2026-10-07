@@ -650,3 +650,20 @@ TEST_CASE("malformed command lines are rejected") {
     CHECK_THROWS_AS(parse("export --format svg"), CLI::ValidationError);
     CHECK_THROWS_AS(parse("frobnicate"), CLI::ParseError);
 }
+
+TEST_CASE("notices takes names to dismiss or put off, for how long, and --all") {
+    const auto plain = std::get<egraph::NoticesCommand>(parse("notices").command);
+    CHECK(plain.dismiss.empty());
+    CHECK(plain.later.empty());
+    CHECK(plain.put_off == egraph::PutOff::day);
+    CHECK_FALSE(plain.all);
+    const auto set =
+        std::get<egraph::NoticesCommand>(parse("notices --dismiss 202601-01 --dismiss config "
+                                               "--later gentoo --for week --all")
+                                             .command);
+    CHECK(set.dismiss == std::vector<std::string>{"202601-01", "config"});
+    CHECK(set.later == std::vector<std::string>{"gentoo"});
+    CHECK(set.put_off == egraph::PutOff::week);
+    CHECK(set.all);
+    CHECK_THROWS(parse("notices --later x --for month"));
+}

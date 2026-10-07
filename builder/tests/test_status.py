@@ -97,3 +97,30 @@ def test_status_counts_the_notices_watch_wrote(mutable_playground, tmp_path):
     assert fields["notices"] == "2"
     human = egraph(system, "--layout", "human", "status").stdout.splitlines()
     assert human[1] == "2 notices: 1 masked package, 1 stale repository"
+
+
+def test_notices_set_aside_are_left_out_until_they_change(mutable_playground, tmp_path):
+    system = scenario_system(mutable_playground, tmp_path, "updates")
+    listed = egraph(system, "notices").stdout.splitlines()
+    masked = sorted(
+        row.split("\t")[0] for row in listed if row.split("\t")[1] == "masked"
+    )
+    assert len(masked) == 2
+    first, second = masked
+    dismissed = egraph(system, "notices", "--dismiss", first)
+    assert dismissed.returncode == 0, dismissed.stderr
+    assert dismissed.stdout == f"masked:{first}\tdismissed\n"
+    later = egraph(system, "notices", "--later", f"masked:{second}", "--for", "hour")
+    assert later.returncode == 0, later.stderr
+    key, word, until = later.stdout.split()
+    assert (key, word) == (f"masked:{second}", "later")
+    state = tmp_path / "state" / "egraph" / "set-aside.json"
+    assert json.loads(state.read_text())["set_aside"][1]["until"] == int(until)
+    rows = egraph(system, "notices").stdout.splitlines()
+    assert not any(row.split("\t")[1] == "masked" for row in rows)
+    human = egraph(system, "--layout", "human", "notices").stdout
+    assert human.endswith("\n2 set aside (egraph notices --all)\n")
+    assert egraph(system, "notices", "--all").stdout.splitlines() == listed
+    unknown = egraph(system, "notices", "--dismiss", "nothing")
+    assert unknown.returncode == 2
+    assert unknown.stderr == "egraph: notices: no notice is named nothing\n"

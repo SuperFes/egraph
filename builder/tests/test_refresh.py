@@ -66,8 +66,13 @@ def egraph(system, *args):
         ],
         capture_output=True,
         text=True,
-        # The playground's environment, which names its repositories.
-        env=dict(playground.settings.environ(), EGRAPH_STRICT="1"),
+        # The playground's environment, which names its repositories; what a user sets aside
+        # kept beside the store, never in the tester's home.
+        env=dict(
+            playground.settings.environ(),
+            EGRAPH_STRICT="1",
+            XDG_STATE_HOME=str(store.parent / "state"),
+        ),
     )
 
 

@@ -12,6 +12,7 @@
 #include <compare>
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <string>
@@ -115,6 +116,45 @@ void carry_since(std::vector<Notice>& notices, std::span<const Notice> previous)
 // The notices whose keys previous lacks.
 [[nodiscard]] std::vector<Notice> new_notices(std::span<const Notice> notices,
                                               std::span<const Notice> previous);
+
+// A notice a user set aside: dismissed while its fingerprint stays, or put off until a time
+// (sooner when its fingerprint changes).
+struct SetAside {
+    std::string key;
+    std::string fingerprint;
+    // None for a dismissal.
+    std::optional<Seconds> until{};
+    auto operator<=>(const SetAside&) const = default;
+};
+
+[[nodiscard]] std::string set_aside_json(std::span<const SetAside> set_aside);
+[[nodiscard]] std::expected<std::vector<SetAside>, std::string>
+parse_set_aside(std::string_view text);
+
+// ${XDG_STATE_HOME:-$HOME/.local/state}/egraph/set-aside.json; none without either.
+[[nodiscard]] std::optional<std::filesystem::path>
+set_aside_path(const std::optional<std::string>& state_home, const std::optional<std::string>& home);
+
+// Whether the user set the notice aside as of now.
+[[nodiscard]] bool is_set_aside(const Notice& notice, std::span<const SetAside> set_aside,
+                                Seconds now);
+
+// The notices not set aside.
+[[nodiscard]] std::vector<Notice> shown_notices(std::span<const Notice> notices,
+                                                std::span<const SetAside> set_aside, Seconds now);
+
+// Records the notice dismissed, or put off until then, in place of what its key had; drops what
+// no notice has any more.
+void set_notice_aside(std::vector<SetAside>& set_aside, const Notice& notice,
+                      std::optional<Seconds> until, std::span<const Notice> notices);
+
+// The notice a name means: its key, or the key's part after the colon (a GLSA's id, a cpv, a
+// repository, a news item's repository/item).
+[[nodiscard]] std::expected<std::size_t, std::string> named_notice(std::span<const Notice> notices,
+                                                                   std::string_view name);
+
+// notices less what the keys name, for showing: the preserved libraries' rebuild with them.
+void drop_notices(Notices& notices, std::span<const std::string> keys);
 
 // notices.missing less the sonames a preserved library still provides, by its file name: those
 // are the preserved libraries' notices.

@@ -1751,6 +1751,43 @@ std::string appended(const std::string& path, std::uintmax_t offset) {
     return offset <= all.size() ? all.substr(offset) : all;
 }
 
+// Where this user's set-aside notices are kept; none without a home.
+std::optional<std::filesystem::path> user_set_aside_path() {
+    return set_aside_path(os::environment("XDG_STATE_HOME"), os::environment("HOME"));
+}
+
+// The notices this user set aside; none when nothing is, or what was cannot be read.
+std::expected<std::vector<SetAside>, std::string> read_set_aside() {
+    const auto path = user_set_aside_path();
+    if (!path || !std::filesystem::exists(*path)) {
+        return std::vector<SetAside>{};
+    }
+    const auto bytes = read_file(*path);
+    if (!bytes) {
+        return std::unexpected(bytes.error().message);
+    }
+    std::string text(bytes->size(), '\0');
+    std::ranges::transform(*bytes, text.begin(), [](std::byte b) { return static_cast<char>(b); });
+    return parse_set_aside(text).transform_error(
+        [&path](const std::string& error) { return std::format("{}: {}", path->string(), error); });
+}
+
+// notices less what this user set aside, for showing; how many that was.
+std::size_t drop_set_aside(Notices& notices, Seconds now) {
+    const auto set_aside = read_set_aside();
+    if (!set_aside) {
+        return 0;
+    }
+    std::vector<std::string> keys;
+    for (const auto& notice : notice_list(notices, now)) {
+        if (is_set_aside(notice, *set_aside, now)) {
+            keys.push_back(notice.key);
+        }
+    }
+    drop_notices(notices, keys);
+    return keys.size();
+}
+
 void show_notices(const Notices& notices, const Invocation& invocation, std::ostream& out) {
     const auto lines = notice_lines(notices);
     if (const auto style = output(invocation); style.human) {
@@ -1821,11 +1858,15 @@ std::optional<Notices> show_notices_after(std::string_view name, Session& sessio
         err << "egraph: " << name << ": the notices could not be read: " << notices.error() << '\n';
         return std::nullopt;
     }
-    if (output(invocation).human && !notice_lines(*notices).empty()) {
+    // What the user set aside is neither shown nor offered (a rebuild, dispatch-conf).
+    auto shown = std::move(*notices);
+    drop_set_aside(shown,
+                   std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()));
+    if (output(invocation).human && !notice_lines(shown).empty()) {
         out << '\n';
     }
-    show_notices(*notices, invocation, out);
-    return std::move(*notices);
+    show_notices(shown, invocation, out);
+    return shown;
 }
 
 Exit execute(const Install& command, Session& session, const Invocation& invocation,
@@ -1954,19 +1995,80 @@ void refresh_notices(Session& session, const Invocation& invocation, std::ostrea
     }
 }
 
-Exit execute(const NoticesCommand&, Session& session, const Invocation& invocation,
+// Dismisses or puts off the notices command names, saying so.
+Exit set_notices_aside(const NoticesCommand& command, std::span<const Notice> notices, Seconds now,
+                       const Invocation& invocation, std::ostream& out, std::ostream& err) {
+    const auto path = user_set_aside_path();
+    if (!path) {
+        return fail(err, "notices: neither XDG_STATE_HOME nor HOME says where to keep them");
+    }
+    auto set_aside = read_set_aside();
+    if (!set_aside) {
+        return fail(err, std::format("notices: {}", set_aside.error()));
+    }
+    const auto put_off = command.put_off == PutOff::hour
+                             ? std::chrono::seconds{std::chrono::hours{1}}
+                         : command.put_off == PutOff::day ? std::chrono::days{1}
+                                                          : std::chrono::days{7};
+    const auto human = output(invocation).human;
+    for (const auto& [names, until] :
+         {std::pair{&command.dismiss, std::optional<Seconds>{}},
+          std::pair{&command.later, std::optional<Seconds>{now + put_off}}}) {
+        for (const auto& name : *names) {
+            const auto found = named_notice(notices, name);
+            if (!found) {
+                err << "egraph: notices: " << found.error() << '\n';
+                return Exit::usage;
+            }
+            const auto& notice = notices[*found];
+            set_notice_aside(*set_aside, notice, until, notices);
+            if (!human) {
+                out << notice.key << '\t'
+                    << (until ? std::format("later\t{}", until->time_since_epoch().count())
+                              : std::string{"dismissed"})
+                    << '\n';
+            } else if (until) {
+                out << "Put off for "
+                    << (command.put_off == PutOff::hour  ? "an hour"
+                        : command.put_off == PutOff::day ? "a day"
+                                                         : "a week")
+                    << ": " << notice.title << '\n';
+            } else {
+                out << "Dismissed until it changes: " << notice.title << '\n';
+            }
+        }
+    }
+    std::error_code error;
+    std::filesystem::create_directories(path->parent_path(), error);
+    if (const auto written = os::replace_with_text(*path, set_aside_json(*set_aside)); !written) {
+        return fail(err, std::format("notices: cannot write {}: {}", path->string(),
+                                     written.error().message()));
+    }
+    return Exit::ok;
+}
+
+Exit execute(const NoticesCommand& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
-    const auto notices = read_notices(NoticesCommand::name, session, invocation, err);
+    auto notices = read_notices(NoticesCommand::name, session, invocation, err);
     if (!notices) {
         return fail(err, std::format("notices: {}", notices.error()));
     }
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    if (!command.dismiss.empty() || !command.later.empty()) {
+        return set_notices_aside(command, notice_list(*notices, now), now, invocation, out, err);
+    }
+    const auto hidden = command.all ? 0 : drop_set_aside(*notices, now);
+    const auto human = output(invocation).human;
     if (notice_lines(*notices).empty()) {
-        if (output(invocation).human) {
+        if (human) {
             out << "Nothing needs attention.\n";
         }
-        return Exit::ok;
+    } else {
+        show_notices(*notices, invocation, out);
     }
-    show_notices(*notices, invocation, out);
+    if (human && hidden != 0) {
+        out << std::format("\n{} set aside (egraph notices --all)\n", hidden);
+    }
     return Exit::ok;
 }
 
@@ -3174,7 +3276,9 @@ Exit execute(const StatusCommand& command, Session& session, const Invocation& i
     std::vector<Notice> notices;
     if (const auto file = read_notice_file(notices_path(found->path)); file) {
         const auto settings = read_settings(settings_path(config_root(invocation)));
-        notices = current_notices(*file, now, settings.value_or(Settings{}).stale_days);
+        notices =
+            shown_notices(current_notices(*file, now, settings.value_or(Settings{}).stale_days),
+                          read_set_aside().value_or(std::vector<SetAside>{}), now);
     }
     if (style(invocation).human) {
         auto lines = status_summary(found->status, found->current, now);
@@ -3681,9 +3785,23 @@ void configure(CLI::App& app, Invocation& invocation) {
                                        {"forward", Direction::forward},
                                        {"both", Direction::both}}));
 
-    add_command<NoticesCommand>(
+    CLI::App* notices_cmd = add_command<NoticesCommand>(
         app, invocation,
-        "What needs attention once emerge has run: configuration updates waiting, unread news");
+        "What needs attention: GLSAs, missing libraries, configuration updates, unread news and "
+        "more, less what was set aside");
+    add_field(notices_cmd, invocation, "--dismiss", &NoticesCommand::dismiss,
+              "Dismiss the notice NAME names (its key, or what follows the colon) until it changes")
+        ->type_name("NAME");
+    add_field(notices_cmd, invocation, "--later", &NoticesCommand::later,
+              "Put off the notice NAME names, for a day unless --for says")
+        ->type_name("NAME");
+    add_field(notices_cmd, invocation, "--for", &NoticesCommand::put_off,
+              "How long --later puts a notice off")
+        ->transform(
+            one_of<PutOff>({{"hour", PutOff::hour}, {"day", PutOff::day}, {"week", PutOff::week}}));
+    notices_cmd->add_flag_callback(
+        "--all", [&invocation] { std::get<NoticesCommand>(invocation.command).all = true; },
+        "Also the notices set aside");
     add_command<Stats>(app, invocation, "Store and graph statistics");
     add_field(add_command<LogCommand>(app, invocation,
                                       "The runs logged where --log writes, a line each, or the "

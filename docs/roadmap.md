@@ -986,7 +986,8 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
   - 17e3 (done): every kind as one notice with a stable key and a fingerprint, in
     `notices.json` beside the status file, written as watch refreshes, new ones logged;
     `status` counts them.
-  - 17e4: dismissed and put-off notices, per user under `XDG_STATE_HOME`.
+  - 17e4 (done): dismissed and put-off notices, per user under `XDG_STATE_HOME`
+    (`notices --dismiss`, `--later`, `--for`, `--all`).
   - 17e5: the interface: a contextual hint bar (the keys for what is selected, `?` for all),
     and a notices page beside the sets, its tab counting them; enter works on one, `x`
     dismisses, `z` puts off with a small chooser.

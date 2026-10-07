@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <format>
 #include <initializer_list>
+#include <iterator>
 #include <tuple>
 #include <utility>
 
@@ -323,6 +324,143 @@ std::vector<Notice> new_notices(std::span<const Notice> notices, std::span<const
         }
     }
     return added;
+}
+
+std::string set_aside_json(std::span<const SetAside> set_aside) {
+    auto entries = Json::array();
+    for (const auto& entry : set_aside) {
+        Json object{{"key", entry.key}, {"fingerprint", entry.fingerprint}};
+        if (entry.until) {
+            object.emplace("until", entry.until->time_since_epoch().count());
+        }
+        entries.push_back(std::move(object));
+    }
+    const Json document{{"format", 1}, {"set_aside", std::move(entries)}};
+    return document.dump(-1, ' ', false, Json::error_handler_t::replace) + '\n';
+}
+
+std::expected<std::vector<SetAside>, std::string> parse_set_aside(std::string_view text) {
+    const auto document = Json::parse(text, nullptr, false);
+    const auto invalid = std::unexpected(std::string{"not a set-aside file"});
+    if (!document.is_object()) {
+        return invalid;
+    }
+    const auto format = document.find("format");
+    const auto entries = document.find("set_aside");
+    if (format == document.end() || !format->is_number_unsigned() || entries == document.end() ||
+        !entries->is_array()) {
+        return invalid;
+    }
+    if (const auto version = format->get<std::uint64_t>(); version != 1) {
+        return std::unexpected(std::format("format {}, from another egraph version", version));
+    }
+    if (!all_have(*entries, {"key", "fingerprint"})) {
+        return invalid;
+    }
+    std::vector<SetAside> read;
+    for (const auto& entry : *entries) {
+        SetAside aside{.key = entry.at("key").get<std::string>(),
+                       .fingerprint = entry.at("fingerprint").get<std::string>()};
+        if (const auto until = entry.find("until"); until != entry.end()) {
+            if (!until->is_number_integer()) {
+                return invalid;
+            }
+            aside.until = Seconds{std::chrono::seconds{until->get<std::int64_t>()}};
+        }
+        read.push_back(std::move(aside));
+    }
+    return read;
+}
+
+std::optional<std::filesystem::path> set_aside_path(const std::optional<std::string>& state_home,
+                                                    const std::optional<std::string>& home) {
+    std::filesystem::path base;
+    if (state_home && std::filesystem::path{*state_home}.is_absolute()) {
+        base = *state_home;
+    } else if (home && !home->empty()) {
+        base = std::filesystem::path{*home} / ".local/state";
+    } else {
+        return std::nullopt;
+    }
+    return base / "egraph/set-aside.json";
+}
+
+bool is_set_aside(const Notice& notice, std::span<const SetAside> set_aside, Seconds now) {
+    const auto found = std::ranges::find(set_aside, notice.key, &SetAside::key);
+    return found != set_aside.end() && found->fingerprint == notice.fingerprint &&
+           (!found->until || now < *found->until);
+}
+
+std::vector<Notice> shown_notices(std::span<const Notice> notices,
+                                  std::span<const SetAside> set_aside, Seconds now) {
+    std::vector<Notice> shown;
+    std::ranges::copy_if(notices, std::back_inserter(shown), [&](const Notice& notice) {
+        return !is_set_aside(notice, set_aside, now);
+    });
+    return shown;
+}
+
+void set_notice_aside(std::vector<SetAside>& set_aside, const Notice& notice,
+                      std::optional<Seconds> until, std::span<const Notice> notices) {
+    std::erase_if(set_aside, [&](const SetAside& entry) {
+        return entry.key == notice.key || !std::ranges::contains(notices, entry.key, &Notice::key);
+    });
+    set_aside.push_back({.key = notice.key, .fingerprint = notice.fingerprint, .until = until});
+}
+
+std::expected<std::size_t, std::string> named_notice(std::span<const Notice> notices,
+                                                     std::string_view name) {
+    std::vector<std::size_t> found;
+    for (std::size_t i = 0; i < notices.size(); ++i) {
+        const std::string_view key = notices[i].key;
+        if (key == name) {
+            return i;
+        }
+        if (const auto colon = key.find(':');
+            colon != std::string_view::npos && key.substr(colon + 1) == name) {
+            found.push_back(i);
+        }
+    }
+    if (found.empty()) {
+        return std::unexpected(std::format("no notice is named {}", name));
+    }
+    if (found.size() > 1) {
+        std::string keys;
+        for (const auto i : found) {
+            keys += std::format("{}{}", keys.empty() ? "" : ", ", notices[i].key);
+        }
+        return std::unexpected(std::format("{} names {} notices: {}", name, found.size(), keys));
+    }
+    return found.front();
+}
+
+void drop_notices(Notices& notices, std::span<const std::string> keys) {
+    const auto dropped = [&keys](const std::string& key) {
+        return std::ranges::contains(keys, key);
+    };
+    std::erase_if(notices.advisories,
+                  [&](const AffectedAdvisory& advisory) { return dropped("glsa:" + advisory.id); });
+    std::erase_if(notices.missing, [&](const Notices::Missing& missing) {
+        return dropped("missing:" + missing.cpv);
+    });
+    if (dropped("preserved")) {
+        if (notices.preserved) {
+            notices.preserved->clear();
+        }
+        if (notices.rebuild) {
+            notices.rebuild->clear();
+        }
+    }
+    std::erase_if(notices.masked,
+                  [&](const Notices::Masked& masked) { return dropped("masked:" + masked.cpv); });
+    std::erase_if(notices.stale,
+                  [&](const Notices::Stale& stale) { return dropped("stale:" + stale.name); });
+    if (dropped("config")) {
+        notices.config.clear();
+    }
+    std::erase_if(notices.news, [&](const Notices::News& news) {
+        return dropped(std::format("news:{}/{}", news.repo, news.item));
+    });
 }
 
 void drop_preserved(Notices& notices) {
