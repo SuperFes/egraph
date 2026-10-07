@@ -356,6 +356,7 @@ std::string notice_file_json(const NoticeFile& file) {
                            {"title", notice.title},
                            {"detail", notice.detail},
                            {"packages", notice.packages},
+                           {"file", notice.file},
                            {"fingerprint", notice.fingerprint},
                            {"since", notice.since.time_since_epoch().count()}});
     }
@@ -411,8 +412,10 @@ std::expected<NoticeFile, std::string> parse_notice_file(std::string_view text) 
         auto detail = lines_of(entry.value("detail", Json{}));
         // Absent from the files egraph wrote before notices named their packages.
         auto packages = lines_of(entry.value("packages", Json::array()));
+        auto file_name = entry.value("file", Json(std::string{}));
         const auto since = time_at(entry, "since");
-        if (!kind || !key || !title || !fingerprint || !detail || !packages || !since) {
+        if (!kind || !key || !title || !fingerprint || !detail || !packages ||
+            !file_name.is_string() || !since) {
             return std::unexpected("not a notices file");
         }
         file.notices.push_back({.kind = *kind,
@@ -420,6 +423,7 @@ std::expected<NoticeFile, std::string> parse_notice_file(std::string_view text) 
                                 .title = std::move(*title),
                                 .detail = std::move(*detail),
                                 .packages = std::move(*packages),
+                                .file = file_name.get<std::string>(),
                                 .fingerprint = std::move(*fingerprint),
                                 .since = *since});
     }

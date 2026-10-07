@@ -437,6 +437,70 @@ def test_tui_works_on_notices(updates_system, tmp_path):
         tmux(socket, "kill-server")
 
 
+def test_tui_reads_news_and_marks_it_read(updates_system, tmp_path):
+    skip_without_tui()
+    playground, path, builder, _ = updates_system
+    assert run_egraph(updates_system, "status", "--update").returncode == 0
+    status = json.loads((path.parent / "status.json").read_text())
+    repo = playground.settings.repositories["test_repo"].location
+    item = "2026-09-01-profile"
+    text = Path(repo, "metadata", "news", item, f"{item}.en.txt")
+    text.parent.mkdir(parents=True)
+    text.write_text(
+        "Title: Profile 23.0 is here\nPosted: 2026-09-01\n\nSwitch profiles soon.\n"
+    )
+    news = Path(playground.eroot, "var", "lib", "gentoo", "news")
+    news.mkdir(parents=True, exist_ok=True)
+    (news / "news-test_repo.unread").write_text(f"{item}\n")
+    (path.parent / "notices.json").write_text(
+        json.dumps(
+            {
+                "format": 1,
+                "written": 1790000000,
+                "stores": status["stores"],
+                "repositories": [{"name": "test_repo", "synced": int(time.time())}],
+                "notices": [
+                    {
+                        "kind": "news",
+                        "key": f"news:test_repo/{item}",
+                        "title": "Profile 23.0 is here",
+                        "detail": [],
+                        "file": str(text),
+                        "fingerprint": item,
+                        "since": 1790000000,
+                    }
+                ],
+            }
+        )
+    )
+    repositories = playground.settings.environ()["PORTAGE_REPOSITORIES"]
+    socket = f"egraph-test-{os.getpid()}"
+    command = (
+        f"env XDG_STATE_HOME={path.parent / 'state'}"
+        f" PORTAGE_REPOSITORIES={shlex.quote(repositories)} {EGRAPH} --store {path}"
+        f" --config-root {playground.eroot} --eprefix {playground.eprefix}"
+        f" --builder {builder} --no-refresh tui; echo EXIT=$?; sleep 30"
+    )
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "120", "-y", "20", command)
+    try:
+        wait_for(socket, " notices 1 ")
+        tmux(socket, "send-keys", "-t", "t", "l", "l", "l")
+        wait_for(socket, "1 notice", " read  x dismiss ")
+        tmux(socket, "send-keys", "-t", "t", "Enter")
+        wait_for(socket, "Switch profiles soon.", " any key marks it read ")
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        wait_for(socket, "0 notices", "Nothing needs you")
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")
+    assert (news / "news-test_repo.unread").read_text() == ""
+    assert (news / "news-test_repo.read").read_text() == f"{item}\n"
+    # Read, not set aside; and gone from what status counts before watch writes again.
+    assert not (path.parent / "state" / "egraph" / "set-aside.json").exists()
+    assert "notices\t0" in run_egraph(updates_system, "status").stdout.splitlines()
+
+
 def test_tui_watches_running_emerges(playgrounds, tmp_path):
     skip_without_tui()
     path = tmp_path / "installed.egraph"

@@ -77,11 +77,84 @@ def test_config_updates_are_the_files_emerge_names(system):
     ]
 
 
+def item_text(system, item):
+    repo = system.settings.repositories["test_repo"].location
+    return os.path.join(repo, "metadata", "news", item, f"{item}.en.txt")
+
+
 def test_unread_news_is_the_unread_list_with_titles(system):
     portdb = system.trees[system.eroot]["porttree"].dbapi
     assert notices.unread_news(system.settings, portdb) == [
-        ("test_repo", "2026-09-01-something", "Something happened")
+        (
+            "test_repo",
+            "2026-09-01-something",
+            "Something happened",
+            item_text(system, "2026-09-01-something"),
+        )
     ]
+
+
+@pytest.fixture
+def news_lists(system):
+    """The playground's news lists, put back after the test."""
+    directory = os.path.join(system.eroot, "var", "lib", "gentoo", "news")
+    unread = os.path.join(directory, "news-test_repo.unread")
+    read = os.path.join(directory, "news-test_repo.read")
+    with open(unread) as f:
+        kept = f.read()
+    yield unread, read
+    write(unread, kept)
+    if os.path.exists(read):
+        os.remove(read)
+
+
+def test_reading_news_moves_it_to_the_read_list_as_eselect_does(system, news_lists):
+    unread, read = news_lists
+    write(unread, "2026-09-01-something\n2026-09-02-other\n")
+    write(read, "2026-08-01-older\n")
+    notices.mark_read(system.settings, "test_repo", "2026-09-02-other")
+    with open(unread) as f:
+        assert f.read() == "2026-09-01-something\n"
+    with open(read) as f:
+        assert f.read() == "2026-08-01-older\n2026-09-02-other\n"
+    # Group-writable and world-readable, as GLEP 42 asks.
+    assert os.stat(read).st_mode & 0o064 == 0o064
+    # Read already: nothing changes.
+    notices.mark_read(system.settings, "test_repo", "2026-09-02-other")
+    with open(read) as f:
+        assert f.read() == "2026-08-01-older\n2026-09-02-other\n"
+    portdb = system.trees[system.eroot]["porttree"].dbapi
+    assert [item for _, item, _, _ in notices.unread_news(system.settings, portdb)] == [
+        "2026-09-01-something"
+    ]
+
+
+def test_the_cli_reads_news_items(system, news_lists):
+    unread, read = news_lists
+    roots = ["--config-root", system.eroot, "--eprefix", system.eprefix]
+    argv = ["--news-read", "test_repo/2026-09-01-something", *roots]
+    assert cli.main(argv) == cli.EXIT_OK
+    with open(unread) as f:
+        assert f.read() == ""
+    with open(read) as f:
+        assert f.read() == "2026-09-01-something\n"
+    assert cli.main(["--news-read", *roots]) == cli.EXIT_USAGE
+    assert cli.main(["--news-read", "no-slash", *roots]) == cli.EXIT_USAGE
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes anything")
+def test_news_that_cannot_be_marked_read_says_why(system, news_lists, capsys):
+    directory = os.path.dirname(news_lists[0])
+    os.chmod(directory, 0o555)
+    try:
+        argv = ["--news-read", "test_repo/2026-09-01-something"]
+        argv += ["--config-root", system.eroot, "--eprefix", system.eprefix]
+        assert cli.main(argv) == cli.EXIT_FAILURE
+    finally:
+        os.chmod(directory, 0o755)
+    assert "egraph-build: cannot mark test_repo/2026-09-01-something read: " in (
+        capsys.readouterr().err
+    )
 
 
 def test_no_news_without_the_news_feature(system):
@@ -111,6 +184,7 @@ def test_the_cli_writes_both_as_json(system, tmp_path):
             "repo": "test_repo",
             "item": "2026-09-01-something",
             "title": "Something happened",
+            "path": item_text(system, "2026-09-01-something"),
         }
     ]
 

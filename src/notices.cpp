@@ -46,7 +46,7 @@ std::expected<Notices, std::string> parse_notices(std::string_view text) {
         return std::unexpected("config: not a list of files and their updates");
     }
     const auto news = json.find("news");
-    if (news == json.end() || !all_have(*news, {"repo", "item", "title"})) {
+    if (news == json.end() || !all_have(*news, {"repo", "item", "title", "path"})) {
         return std::unexpected("news: not a list of news items");
     }
     const auto preserved = json.find("preserved");
@@ -80,7 +80,8 @@ std::expected<Notices, std::string> parse_notices(std::string_view text) {
     for (const auto& entry : *news) {
         notices.news.push_back({.repo = entry.at("repo").get<std::string>(),
                                 .item = entry.at("item").get<std::string>(),
-                                .title = entry.at("title").get<std::string>()});
+                                .title = entry.at("title").get<std::string>(),
+                                .path = entry.at("path").get<std::string>()});
     }
     return notices;
 }
@@ -91,7 +92,7 @@ std::vector<std::string> notice_lines(const Notices& notices) {
     for (const auto& [file, update] : notices.config) {
         lines.push_back(std::format("{}\tconfig\t{}", file, update));
     }
-    for (const auto& [repo, item, title] : notices.news) {
+    for (const auto& [repo, item, title, path] : notices.news) {
         lines.push_back(std::format("{}\tnews\t{}\t{}", item, repo, title));
     }
     for (const auto& [path, package, consumers] :
@@ -304,9 +305,10 @@ std::vector<Notice> notice_list(const Notices& notices, Seconds now) {
         add(NoticeKind::config, "config", std::move(title), std::move(files),
             std::move(fingerprint));
     }
-    for (const auto& [repo, item, title] : notices.news) {
+    for (const auto& [repo, item, title, path] : notices.news) {
         add(NoticeKind::news, std::format("news:{}/{}", repo, item), title.empty() ? item : title,
             {}, item);
+        list.back().file = path;
     }
     return list;
 }

@@ -1199,7 +1199,10 @@ preserved libraries as
 .BR "exec \-\-oneshot @preserved\-rebuild" ,
 each shown first as an action is; a stale repository is synced as
 .BR sync ,
-once asked; a masked package's page opens.
+once asked; a masked package's page opens; a news item is shown, and marked read as it closes,
+as
+.B eselect news read
+does (set aside for the user instead where portage's news lists cannot be written).
 .SS shell
 Commands read one per line from standard input, the stores loaded once; the global options that
 choose the stores are taken from the command line only.
@@ -1373,7 +1376,9 @@ it keeps while it lasts, a
 .B detail
 lines, the installed
 .B packages
-it is about, a
+it is about, the
+.B file
+of a news item's text, a
 .B fingerprint
 that changes with what it says, and since when it was noticed, as
 .BR since ),
@@ -1391,7 +1396,9 @@ and its
 .BR format .
 Configuration updates and unread news can change without a refresh;
 .B notices
-reads them anew.
+reads them anew, and a news item no longer unread is left out of
+.B status
+and the interface.
 .TP
 .I ${XDG_CACHE_HOME}/egraph/installed.egraph
 The store of a user who cannot write the system store, used while the system store is not

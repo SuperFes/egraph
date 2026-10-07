@@ -59,7 +59,8 @@ def _title(path):
 
 
 def unread_news(settings, portdb):
-    """(repo, item, title) for each news item the repositories' unread lists hold, sorted.
+    """(repo, item, title, path) for each news item the repositories' unread lists hold, path
+    being its text, sorted.
 
     As emerge: none without FEATURES=news or without a profile to judge relevance by.
     """
@@ -71,8 +72,42 @@ def unread_news(settings, portdb):
         location = portdb.getRepositoryPath(repo)
         for item in grabfile(os.path.join(unread_path, f"news-{repo}.unread")):
             text = os.path.join(location, NEWS_PATH, item, f"{item}.{LANGUAGE}.txt")
-            found.append((repo, item, _title(text)))
+            found.append((repo, item, _title(text), text))
     return sorted(found)
+
+
+def mark_read(settings, repo, item):
+    """Moves item from repo's unread news list to its read list, as eselect news read does,
+    under the lock and with the permissions emerge's NewsManager gives the unread list.
+    """
+    from portage.data import portage_gid
+    from portage.locks import lockfile, unlockfile
+    from portage.util import apply_secpass_permissions, write_atomic
+
+    directory = os.path.join(settings["EROOT"], NEWS_LIB_PATH, "news")
+    unread_filename = os.path.join(directory, f"news-{repo}.unread")
+    read_filename = os.path.join(directory, f"news-{repo}.read")
+    lock = lockfile(unread_filename, wantnewlockfile=1)
+    try:
+        unread = grabfile(unread_filename)
+        if item not in unread:
+            return
+        read = set(grabfile(read_filename))
+        read.add(item)
+        # The read list first, as eselect writes them: an interruption leaves the item in both,
+        # never in neither.
+        write_atomic(read_filename, "".join(f"{x}\n" for x in sorted(read)))
+        write_atomic(unread_filename, "".join(f"{x}\n" for x in unread if x != item))
+        for filename in (read_filename, unread_filename):
+            apply_secpass_permissions(
+                filename,
+                uid=int(settings["PORTAGE_INST_UID"]),
+                gid=portage_gid,
+                mode=0o064,
+                mask=0,
+            )
+    finally:
+        unlockfile(lock)
 
 
 def preserved_libraries(vardb):
@@ -159,8 +194,8 @@ def to_json(config, news, preserved=(), rebuild=()):
         {
             "config": [{"file": file, "update": update} for file, update in config],
             "news": [
-                {"repo": repo, "item": item, "title": title}
-                for repo, item, title in news
+                {"repo": repo, "item": item, "title": title, "path": path}
+                for repo, item, title, path in news
             ],
             "preserved": (
                 None

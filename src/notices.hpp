@@ -9,6 +9,7 @@
 #include "repository.hpp"
 #include "store.hpp"
 
+#include <algorithm>
 #include <compare>
 #include <cstdint>
 #include <expected>
@@ -32,6 +33,8 @@ struct Notices {
         std::string repo;
         std::string item;
         std::string title;
+        // Its text, in the language emerge reads news in.
+        std::string path{};
     };
     // A library emerge kept after its package stopped providing it, for what still uses it.
     struct Preserved {
@@ -100,6 +103,8 @@ struct Notice {
     // The installed packages it is about, as cpvs: a GLSA's affected ones, the masked package,
     // the one missing libraries.
     std::vector<std::string> packages{};
+    // The file it is about: a news item's text.
+    std::string file{};
     // Changes when what it says does (a GLSA revised, another version affected, a new sync),
     // which brings a dismissed notice back.
     std::string fingerprint{};
@@ -115,6 +120,26 @@ struct Notice {
 
 // since carried over from the notice of the same key in previous, where there is one.
 void carry_since(std::vector<Notice>& notices, std::span<const Notice> previous);
+
+// The notices less the news items their repository's unread list no longer holds, as once
+// eselect news read has run; unread(repo) gives that list, or nothing where it cannot be read.
+template <class Unread>
+[[nodiscard]] std::vector<Notice> still_unread(std::vector<Notice> notices, const Unread& unread) {
+    std::erase_if(notices, [&unread](const Notice& notice) {
+        if (notice.kind != NoticeKind::news) {
+            return false;
+        }
+        const std::string_view named =
+            std::string_view{notice.key}.substr(notice.key.find(':') + 1);
+        const auto slash = named.find('/');
+        if (slash == std::string_view::npos) {
+            return false;
+        }
+        const std::optional<std::vector<std::string>> listed = unread(named.substr(0, slash));
+        return listed && !std::ranges::contains(*listed, named.substr(slash + 1));
+    });
+    return notices;
+}
 
 // The notices whose keys previous lacks.
 [[nodiscard]] std::vector<Notice> new_notices(std::span<const Notice> notices,

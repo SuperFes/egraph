@@ -453,6 +453,10 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
 [[nodiscard]] std::vector<std::string> emerge_options_command(const Invocation& invocation,
                                                               const std::filesystem::path& output);
 
+// The egraph-build command line that marks a news item, repo/item, read.
+[[nodiscard]] std::vector<std::string> news_read_command(const Invocation& invocation,
+                                                         std::string_view item);
+
 // The egraph-build command line that writes the notices, as JSON, to output.
 [[nodiscard]] std::vector<std::string> notices_command(const Invocation& invocation,
                                                        const std::filesystem::path& output);

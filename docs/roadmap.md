@@ -995,7 +995,7 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     - 17e5c: working on a notice from its page with enter.
       - 17e5c1 (done): a GLSA's update, a rebuild for missing libraries, `@preserved-rebuild`
         and a sync, as actions; a masked package's page.
-      - 17e5c2: the news item shown, and marked read in portage's news files once closed, as
+      - 17e5c2 (done): the news item shown, and marked read in portage's news files once closed, as
         `eselect news read` does (only set aside where they cannot be written).
       - 17e5c3: dispatch-conf for configuration updates, the interface stepping aside for it.
   - 17e6: `egraph notify`: one summary notification (org.freedesktop.Notifications over the

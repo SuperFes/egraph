@@ -254,6 +254,10 @@ std::optional<tui::NoticesShown> shown_notice_page(const Invocation& invocation)
 std::expected<void, std::string> set_aside_from_page(const Invocation& invocation,
                                                      const Notice& notice,
                                                      std::optional<std::chrono::seconds> later);
+// A news notice's text, as lines.
+std::expected<std::vector<std::string>, std::string> news_text(const Notice& notice);
+// Marks a news notice's item read in portage's news files, through egraph-build.
+std::expected<void, std::string> mark_news_read(const Invocation& invocation, const Notice& notice);
 
 Exit execute(const Tui& command, Session& session, const Invocation& invocation, std::ostream& out,
              std::ostream& err);
@@ -2989,7 +2993,10 @@ Exit execute(const Tui&, Session& session, const Invocation& invocation, std::os
          .set_aside =
              [&invocation](const Notice& notice, std::optional<std::chrono::seconds> later) {
                  return set_aside_from_page(invocation, notice, later);
-             }},
+             },
+         .news_text = news_text,
+         .mark_read =
+             [&invocation](const Notice& notice) { return mark_news_read(invocation, notice); }},
         warnings, err);
 }
 
@@ -3265,6 +3272,34 @@ std::expected<FoundStatus, std::string> find_status(const Invocation& invocation
                                        status_path(stores.front()).string()));
 }
 
+// A text file's lines, or none where it cannot be read.
+std::optional<std::vector<std::string>> file_lines(const std::filesystem::path& path) {
+    std::ifstream in{path};
+    if (!in) {
+        return std::nullopt;
+    }
+    std::vector<std::string> found;
+    for (std::string line; std::getline(in, line);) {
+        found.push_back(std::move(line));
+    }
+    return found;
+}
+
+// The items of a repository's unread news list, as portage's grabfile reads it; none where it
+// cannot be read.
+std::optional<std::vector<std::string>> unread_news_items(const Invocation& invocation,
+                                                          std::string_view repo) {
+    const auto directory = invocation.root / invocation.eprefix.value_or("").relative_path() /
+                           "var" / "lib" / "gentoo" / "news";
+    auto items = file_lines(directory / std::format("news-{}.unread", repo));
+    if (items) {
+        std::erase_if(*items, [](const std::string& item) {
+            return item.find_first_not_of(" \t") == std::string::npos || item.starts_with('#');
+        });
+    }
+    return items;
+}
+
 // The notices watch wrote beside the status file, as of now; none where it wrote none.
 std::optional<std::vector<Notice>> notices_beside(const FoundStatus& found,
                                                   const Invocation& invocation, Seconds now) {
@@ -3273,7 +3308,23 @@ std::optional<std::vector<Notice>> notices_beside(const FoundStatus& found,
         return std::nullopt;
     }
     const auto settings = read_settings(settings_path(config_root(invocation)));
-    return current_notices(*file, now, settings.value_or(Settings{}).stale_days);
+    // News read since, as with eselect, is gone without waiting for watch.
+    return still_unread(
+        current_notices(*file, now, settings.value_or(Settings{}).stale_days),
+        [&invocation](std::string_view repo) { return unread_news_items(invocation, repo); });
+}
+
+std::expected<std::vector<std::string>, std::string> news_text(const Notice& notice) {
+    if (auto text = file_lines(notice.file)) {
+        return std::move(*text);
+    }
+    return std::unexpected(std::format("cannot read {}", notice.file));
+}
+
+std::expected<void, std::string> mark_news_read(const Invocation& invocation,
+                                                const Notice& notice) {
+    return output_of(news_read_command(invocation, notice.key.substr(notice.key.find(':') + 1)))
+        .transform([](const std::string&) {});
 }
 
 std::optional<tui::NoticesShown> shown_notice_page(const Invocation& invocation) {
@@ -4116,6 +4167,12 @@ std::vector<std::string> emerge_options_command(const Invocation& invocation,
                                                 const std::filesystem::path& output) {
     std::vector<std::string> argv{builder_program(invocation), "--emerge-options", "--output",
                                   output.string()};
+    add_roots(argv, invocation);
+    return argv;
+}
+
+std::vector<std::string> news_read_command(const Invocation& invocation, std::string_view item) {
+    std::vector<std::string> argv{builder_program(invocation), "--news-read", std::string{item}};
     add_roots(argv, invocation);
     return argv;
 }

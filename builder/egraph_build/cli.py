@@ -96,6 +96,13 @@ def parser():
         "libraries, as JSON, to --output",
     )
     mode.add_argument(
+        "--news-read",
+        dest="mode",
+        action="store_const",
+        const="news-read",
+        help="mark each ENTRY, a news item as REPO/ITEM, read, as eselect news read does",
+    )
+    mode.add_argument(
         "--kernel-sources",
         dest="mode",
         action="store_const",
@@ -142,7 +149,7 @@ def parser():
         nargs="*",
         metavar="ENTRY",
         help="with --pending: a merge list entry, ebuild:CPV or binary:CPV; with "
-        "--evaluate: a cp in a repository",
+        "--evaluate: a cp in a repository; with --news-read: a news item, REPO/ITEM",
     )
     p.add_argument(
         "--store",
@@ -337,6 +344,28 @@ def write_notices(args):
     return EXIT_OK
 
 
+def read_news(args):
+    from egraph_build import notices
+    from portage.exception import PortageException
+
+    items = [entry.partition("/") for entry in args.entries]
+    if not items or any(not repo or not item for repo, _, item in items):
+        print(
+            "egraph-build: --news-read takes news items, as REPO/ITEM", file=sys.stderr
+        )
+        return EXIT_USAGE
+    settings = _tree(args.config_root, args.root, args.eprefix)[
+        "vartree"
+    ].dbapi.settings
+    for repo, _, item in items:
+        try:
+            notices.mark_read(settings, repo, item)
+        except (OSError, PortageException) as e:
+            print(f"egraph-build: cannot mark {repo}/{item} read: {e}", file=sys.stderr)
+            return EXIT_FAILURE
+    return EXIT_OK
+
+
 def _previous(path, decode):
     from egraph_build import store
 
@@ -472,6 +501,8 @@ def main(argv=None):
         return write_emerge_options(args)
     if args.mode == "notices":
         return write_notices(args)
+    if args.mode == "news-read":
+        return read_news(args)
     if args.mode == "evaluate":
         if not args.entries:
             print("egraph-build: --evaluate takes the cps to evaluate", file=sys.stderr)
@@ -479,7 +510,8 @@ def main(argv=None):
         return write_store(args, incremental=True, requested=args.entries)
     if args.entries:
         print(
-            "egraph-build: entries are for --pending, --kernel-sources and --evaluate",
+            "egraph-build: entries are for --pending, --kernel-sources, --evaluate and "
+            "--news-read",
             file=sys.stderr,
         )
         return EXIT_USAGE

@@ -397,6 +397,9 @@ TEST_CASE("notices are read, and dispatch-conf runs, under the same roots") {
     CHECK(egraph::notices_command(invocation, "/tmp/out") ==
           std::vector<std::string>{"egraph-build", "--notices", "--output", "/tmp/out", "--root",
                                    "/"});
+    CHECK(egraph::news_read_command(invocation, "gentoo/2026-09-01-x") ==
+          std::vector<std::string>{"egraph-build", "--news-read", "gentoo/2026-09-01-x", "--root",
+                                   "/"});
     CHECK(egraph::dispatch_conf_command(invocation) == std::vector<std::string>{"dispatch-conf"});
     invocation.dispatch_conf = "my-dispatch";
     invocation.root = "/mnt/root";

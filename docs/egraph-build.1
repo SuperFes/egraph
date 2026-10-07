@@ -3,7 +3,7 @@
 egraph-build \- evaluate the installed packages through portage and write egraph's store
 .SH SYNOPSIS
 .B egraph-build
-.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-repository | \-\-repository\-json | \-\-pending | \-\-kernel\-sources | \-\-emerge\-options | \-\-notices | \-\-worker ]
+.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-repository | \-\-repository\-json | \-\-pending | \-\-kernel\-sources | \-\-emerge\-options | \-\-notices | \-\-news\-read | \-\-worker ]
 .RI [ options ]
 .RI [ entry ...]
 .SH DESCRIPTION
@@ -102,11 +102,19 @@ as JSON, to
 .TP
 .B \-\-notices
 Write the configuration files with updates waiting, as emerge finds them, the unread news
-items with their titles, and the preserved libraries with the packages using them and the
-atoms of
+items with their titles and text files, and the preserved libraries with the packages using
+them and the atoms of
 .BR @preserved\-rebuild ,
 as JSON, to
 .BR \-\-output .
+.TP
+.B \-\-news\-read
+Mark each news item named,
+.IR repository / item ,
+read, as
+.B eselect news read
+does: moved from the repository's unread list to its read list, under the lock emerge takes
+on the unread list and with the permissions it gives it. An item not unread is left alone.
 .TP
 .B \-\-copy\-portage
 Copy the running portage (its bin directory, and its

@@ -228,6 +228,10 @@ using NoticesReader = std::function<std::optional<NoticesShown>()>;
 // Dismisses a notice, or with a time puts it off that long.
 using NoticeSetter = std::function<std::expected<void, std::string>(
     const Notice&, std::optional<std::chrono::seconds>)>;
+// A news item's text, as lines.
+using NewsText = std::function<std::expected<std::vector<std::string>, std::string>(const Notice&)>;
+// Marks a news item read in portage's news files.
+using NewsMarker = std::function<std::expected<void, std::string>(const Notice&)>;
 
 // The pages of the package list, each the set its plan updates: -uDN @installed, @world or
 // @system.
@@ -261,8 +265,8 @@ struct Action {
 // rebuilt, @preserved-rebuild, a stale repository synced; none for the rest.
 [[nodiscard]] std::optional<Action> notice_action(const Notice& notice);
 
-// What enter does on a notice, for the key bar: "update", "rebuild", "sync", "open"; empty where
-// it does nothing.
+// What enter does on a notice, for the key bar: "update", "rebuild", "sync", "open", "read";
+// empty where it does nothing.
 [[nodiscard]] std::string_view notice_work(const Notice& notice);
 
 // What the action would do, as its command shows it before asking, in the human layout.
@@ -322,6 +326,8 @@ struct Services {
     StatusReader status{};
     NoticesReader notices{};
     NoticeSetter set_aside{};
+    NewsText news_text{};
+    NewsMarker mark_read{};
 };
 
 struct Watched;
@@ -422,6 +428,8 @@ struct Dialog {
 struct NoticeChange {
     Notice notice;
     std::optional<std::chrono::seconds> later{};
+    // Marked read in portage's news files, rather than set aside.
+    bool read = false;
 };
 
 // The choices for putting a notice off, by the digit choosing each.
@@ -578,8 +586,13 @@ class App {
     [[nodiscard]] const std::optional<NoticeChange>& notice_change_requested() const {
         return notice_change_;
     }
-    // Drops the notice from the page once set aside; shows why it could not be.
+    // Drops the notice from the page once set aside or read; shows why it could not be, and sets
+    // aside a news item that could not be marked read.
     void finish_notice_change(const std::expected<void, std::string>& result);
+    // The news item whose text enter asked for.
+    [[nodiscard]] const std::optional<Notice>& news_requested() const { return news_wanted_; }
+    // Shows the text, marking the item read once closed.
+    void finish_news(const std::expected<std::vector<std::string>, std::string>& text);
     [[nodiscard]] const List& list() const { return list_; }
     // Pages opened from the list or the check view, the one showing last.
     [[nodiscard]] const std::vector<Page>& pages() const { return pages_; }
@@ -786,6 +799,9 @@ class App {
     Cursor notice_cursor_;
     bool putting_off_ = false;
     std::optional<NoticeChange> notice_change_;
+    std::optional<Notice> news_wanted_;
+    // The news item the dialog shows.
+    std::optional<Notice> reading_;
     bool build_deps_ = true;
     Kept kept_;
     std::vector<std::optional<std::uint32_t>> root_of_;
@@ -2235,11 +2251,20 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
             app.finish_steve_change(services.set_steve
                                         ? services.set_steve(change->setting, change->value)
                                         : std::unexpected(std::string{"no way to change steve"}));
-        } else if (const auto& notice = app.notice_change_requested()) {
+        } else if (const auto& notice = app.notice_change_requested(); notice && notice->read) {
+            app.finish_notice_change(
+                services.mark_read
+                    ? services.mark_read(notice->notice)
+                    : std::unexpected(std::string{"this egraph has no way to mark news read"}));
+        } else if (notice) {
             app.finish_notice_change(
                 services.set_aside
                     ? services.set_aside(notice->notice, notice->later)
                     : std::unexpected(std::string{"this egraph has no way to set notices aside"}));
+        } else if (const auto& news = app.news_requested()) {
+            app.finish_news(services.news_text
+                                ? services.news_text(*news)
+                                : std::unexpected(std::string{"this egraph cannot read news"}));
         } else if (app.watch_requested()) {
             app.finish_watch(services.watch ? services.watch() : std::vector<emerge::Snapshot>{},
                              services.sample ? services.sample() : pressure::Sample{},

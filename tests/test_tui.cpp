@@ -3002,7 +3002,7 @@ TEST_CASE("enter on a notice previews its action, or asks before a sync") {
     CHECK_FALSE(app.watched().has_value());
     CHECK(app.on_notices());
 
-    // The news item: nothing to do on it yet.
+    // A news item from a notices file that does not name its text: nothing to do.
     app.handle(character(U'j'));
     egraph::tui::draw(screen, app, ascii);
     CHECK_FALSE(contains(screen.line(15), "enter"));
@@ -3026,6 +3026,85 @@ TEST_CASE("enter on a notice previews its action, or asks before a sync") {
     app.finish_run(egraph::tui::RunResult{});
     REQUIRE(app.dialog().has_value());
     CHECK(app.dialog()->title == "egraph sync finished");
+}
+
+TEST_CASE("enter on a news item shows it, and closing it marks it read") {
+    egraph::tui::App app{both(), true};
+    auto shown = two_notices();
+    shown.notices.at(1).file = "/repo/metadata/news/2026-09-01-x/2026-09-01-x.en.txt";
+    app.finish_notices(shown);
+    for (int turn = 0; turn < 3; ++turn) {
+        app.handle(key(KeyKind::right));
+    }
+    app.handle(character(U'j'));
+    FakeScreen screen{16, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(15), " enter read  x dismiss  z later  "));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.news_requested().has_value());
+    CHECK(app.news_requested()->key == "news:gentoo/2026-09-01-x");
+    // Nothing else while it is read.
+    app.handle(character(U'x'));
+    CHECK_FALSE(app.notice_change_requested().has_value());
+
+    std::vector<std::string> text{"Title: Profile 23.0 is here", "", "Switch profiles."};
+    for (int line = 0; line < 30; ++line) {
+        text.push_back(std::format("line {}", line));
+    }
+    app.finish_news(text);
+    CHECK_FALSE(app.news_requested().has_value());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "Profile 23.0 is here");
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "Switch profiles."));
+    CHECK(contains(screen.text(), " any key marks it read "));
+    // Scrolling is not closing.
+    app.handle(character(U'j'));
+    REQUIRE(app.dialog().has_value());
+    CHECK_FALSE(app.notice_change_requested().has_value());
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.dialog().has_value());
+    REQUIRE(app.notice_change_requested().has_value());
+    CHECK(app.notice_change_requested()->read);
+    CHECK(app.notice_change_requested()->notice.key == "news:gentoo/2026-09-01-x");
+    app.finish_notice_change({});
+    REQUIRE(app.notices()->notices.size() == 1);
+    // Read, not set aside.
+    CHECK(app.notices()->set_aside == 1);
+}
+
+TEST_CASE("a news item that cannot be marked read is set aside instead") {
+    egraph::tui::App app{both(), true};
+    auto shown = two_notices();
+    shown.notices.at(1).file = "/repo/metadata/news/2026-09-01-x/2026-09-01-x.en.txt";
+    app.finish_notices(shown);
+    for (int turn = 0; turn < 3; ++turn) {
+        app.handle(key(KeyKind::right));
+    }
+    app.handle(character(U'j'));
+    app.handle(key(KeyKind::enter));
+    app.finish_news(std::unexpected(std::string{"No such file or directory"}));
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->error);
+    CHECK(app.dialog()->title == "Cannot read the news item");
+    // Closing the error marks nothing.
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.notice_change_requested().has_value());
+
+    app.handle(key(KeyKind::enter));
+    app.finish_news(std::vector<std::string>{"text"});
+    app.handle(key(KeyKind::escape));
+    REQUIRE(app.notice_change_requested().has_value());
+    app.finish_notice_change(std::unexpected(std::string{"Permission denied"}));
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "Set aside for you alone");
+    CHECK(contains(app.dialog()->lines.at(1), "Permission denied"));
+    REQUIRE(app.notice_change_requested().has_value());
+    CHECK_FALSE(app.notice_change_requested()->read);
+    CHECK_FALSE(app.notice_change_requested()->later.has_value());
+    app.finish_notice_change({});
+    REQUIRE(app.notices()->notices.size() == 1);
+    CHECK(app.notices()->set_aside == 2);
 }
 
 TEST_CASE("enter on a masked package opens its page, or says it is gone") {
@@ -3188,4 +3267,34 @@ TEST_CASE("a notice cannot be set aside by an egraph with no way to") {
                      {.check = no_check, .notices = [] { return std::optional{two_notices()}; }});
     REQUIRE(app.dialog().has_value());
     CHECK(app.notices()->notices.size() == 2);
+}
+
+TEST_CASE("run reads a news item and marks it read through its services") {
+    egraph::tui::App app{both(), true};
+    FakeScreen screen{16,
+                      120,
+                      {key(KeyKind::right), key(KeyKind::right), key(KeyKind::right),
+                       character(U'j'), key(KeyKind::enter), key(KeyKind::escape)}};
+    std::vector<std::string> asked;
+    std::vector<std::string> read;
+    egraph::tui::run(
+        screen, app, ascii,
+        {.check = no_check,
+         .notices =
+             [] {
+                 auto shown = two_notices();
+                 shown.notices.at(1).file = "/repo/news.en.txt";
+                 return std::optional{shown};
+             },
+         .news_text = [&asked](const egraph::Notice& notice)
+             -> std::expected<std::vector<std::string>, std::string> {
+             asked.push_back(notice.file);
+             return std::vector<std::string>{"Switch profiles."};
+         },
+         .mark_read = [&read](const egraph::Notice& notice) -> std::expected<void, std::string> {
+             read.push_back(notice.key);
+             return {};
+         }});
+    CHECK(asked == std::vector<std::string>{"/repo/news.en.txt"});
+    CHECK(read == std::vector<std::string>{"news:gentoo/2026-09-01-x"});
 }

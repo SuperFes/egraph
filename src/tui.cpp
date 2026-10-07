@@ -1078,26 +1078,53 @@ void App::finish_notice_change(const std::expected<void, std::string>& result) {
     if (!notice_change_) {
         return;
     }
-    const auto key = notice_change_->notice.key;
-    const bool later = notice_change_->later.has_value();
+    auto change = std::move(*notice_change_);
     notice_change_.reset();
+    if (!result && change.read) {
+        show({.error = false,
+              .title = "Set aside for you alone",
+              .lines = {"Portage's news files cannot be marked:", result.error(),
+                        "eselect news still counts it unread."}});
+        notice_change_ = NoticeChange{.notice = std::move(change.notice)};
+        return;
+    }
     if (!result) {
         show({.error = true,
-              .title = later ? "Cannot put the notice off" : "Cannot dismiss the notice",
+              .title = change.later ? "Cannot put the notice off" : "Cannot dismiss the notice",
               .lines = {result.error()}});
         return;
     }
+    const auto& key = change.notice.key;
     if (notices_ && std::erase_if(notices_->notices,
                                   [&key](const Notice& notice) { return notice.key == key; })) {
-        ++notices_->set_aside;
+        notices_->set_aside += change.read ? 0 : 1;
         auto again = std::move(notices_);
         finish_notices(std::move(again));
     }
 }
 
+void App::finish_news(const std::expected<std::vector<std::string>, std::string>& text) {
+    if (!news_wanted_) {
+        return;
+    }
+    auto news = std::move(*news_wanted_);
+    news_wanted_.reset();
+    if (!text) {
+        show({.error = true, .title = "Cannot read the news item", .lines = {text.error()}});
+        return;
+    }
+    show({.error = false,
+          .title = news.title,
+          .lines = *text,
+          .question = false,
+          .top = 0,
+          .closing = " any key marks it read "});
+    reading_ = std::move(news);
+}
+
 void App::handle_notices(const Key& key) {
     const auto count = notices_ ? notices_->notices.size() : 0;
-    const bool on_notice = notice_cursor_.at < count && !notice_change_;
+    const bool on_notice = notice_cursor_.at < count && !notice_change_ && !news_wanted_;
     if (putting_off_) {
         if (key.kind == KeyKind::escape) {
             putting_off_ = false;
@@ -1139,6 +1166,8 @@ void App::work_on(const Notice& notice) {
                   .title = std::format("{} is no longer installed", cpv),
                   .lines = {}});
         }
+    } else if (notice.kind == NoticeKind::news && !notice.file.empty()) {
+        news_wanted_ = notice;
     } else if (auto action = notice_action(notice)) {
         act(std::move(*action));
     }
@@ -1315,6 +1344,10 @@ void App::handle_dialog(const Key& key) {
     }
     if (!dialog.question) {
         dialog_.reset();
+        if (reading_) {
+            notice_change_ = NoticeChange{.notice = std::move(*reading_), .read = true};
+            reading_.reset();
+        }
         return;
     }
     if (is(key, U'y') || is(key, U'Y')) {
@@ -2373,6 +2406,9 @@ std::optional<Action> notice_action(const Notice& notice) {
 std::string_view notice_work(const Notice& notice) {
     if (notice.kind == NoticeKind::masked) {
         return notice.packages.empty() ? "" : "open";
+    }
+    if (notice.kind == NoticeKind::news) {
+        return notice.file.empty() ? "" : "read";
     }
     const auto action = notice_action(notice);
     if (!action) {

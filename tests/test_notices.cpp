@@ -15,7 +15,8 @@
 TEST_CASE("notices are read from egraph-build's JSON") {
     const auto notices = egraph::parse_notices(R"({
  "config": [{"file": "/etc/a.conf", "update": "/etc/._cfg0000_a.conf"}],
- "news": [{"item": "2026-09-01-x", "repo": "gentoo", "title": "X happened"}],
+ "news": [{"item": "2026-09-01-x", "repo": "gentoo", "title": "X happened",
+           "path": "/var/db/repos/gentoo/metadata/news/2026-09-01-x/2026-09-01-x.en.txt"}],
  "preserved": [{"path": "/usr/lib/libfoo.so.1", "package": "dev-libs/foo-2",
                 "consumers": ["app-misc/bar-1"]}],
  "rebuild": ["app-misc/bar:0"]
@@ -28,6 +29,8 @@ TEST_CASE("notices are read from egraph-build's JSON") {
     CHECK(notices->news.front().repo == "gentoo");
     CHECK(notices->news.front().item == "2026-09-01-x");
     CHECK(notices->news.front().title == "X happened");
+    CHECK(notices->news.front().path ==
+          "/var/db/repos/gentoo/metadata/news/2026-09-01-x/2026-09-01-x.en.txt");
     REQUIRE(notices->preserved);
     REQUIRE(notices->preserved->size() == 1);
     CHECK(notices->preserved->front().path == "/usr/lib/libfoo.so.1");
@@ -181,7 +184,10 @@ egraph::Notices every_kind() {
     notices.config = {{.file = "/etc/a.conf", .update = "/etc/._cfg0000_a.conf"},
                       {.file = "/etc/a.conf", .update = "/etc/._cfg0001_a.conf"},
                       {.file = "/etc/b.conf", .update = "/etc/._cfg0000_b.conf"}};
-    notices.news = {{.repo = "gentoo", .item = "2026-09-01-x", .title = "X happened"},
+    notices.news = {{.repo = "gentoo",
+                     .item = "2026-09-01-x",
+                     .title = "X happened",
+                     .path = "/repo/metadata/news/2026-09-01-x/2026-09-01-x.en.txt"},
                     {.repo = "gentoo", .item = "2026-09-02-y", .title = ""}};
     notices.preserved = std::vector<egraph::Notices::Preserved>{
         {.path = "/usr/lib/libfoo.so.1",
@@ -243,6 +249,7 @@ TEST_CASE("notices list as one, the most pressing first") {
     CHECK(config.title == "2 configuration files have updates waiting");
     CHECK(config.detail == std::vector<std::string>{"/etc/a.conf", "/etc/b.conf"});
     CHECK(list.at(6).title == "X happened");
+    CHECK(list.at(6).file == "/repo/metadata/news/2026-09-01-x/2026-09-01-x.en.txt");
     // An item without a title goes by its name.
     CHECK(list.at(7).title == "2026-09-02-y");
 }
@@ -405,4 +412,26 @@ TEST_CASE("notices less what keys name, for showing") {
     CHECK(notices.config.empty());
     REQUIRE(notices.news.size() == 1);
     CHECK(notices.news.front().item == "2026-09-02-y");
+}
+
+TEST_CASE("news items read since the notices were written are left out") {
+    using egraph::NoticeKind;
+    const std::vector<egraph::Notice> notices{
+        {.kind = NoticeKind::news, .key = "news:gentoo/2026-09-01-x"},
+        {.kind = NoticeKind::news, .key = "news:gentoo/2026-09-02-y"},
+        {.kind = NoticeKind::news, .key = "news:local/2026-09-03-z"},
+        {.kind = NoticeKind::glsa, .key = "glsa:202609-03"}};
+    const auto unread = [](std::string_view repo) -> std::optional<std::vector<std::string>> {
+        if (repo == "gentoo") {
+            return std::vector<std::string>{"2026-09-02-y"};
+        }
+        // Unreadable: kept.
+        return std::nullopt;
+    };
+    std::vector<std::string> keys;
+    for (const auto& notice : egraph::still_unread(notices, unread)) {
+        keys.push_back(notice.key);
+    }
+    CHECK(keys == std::vector<std::string>{"news:gentoo/2026-09-02-y", "news:local/2026-09-03-z",
+                                           "glsa:202609-03"});
 }

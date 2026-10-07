@@ -254,20 +254,27 @@ egraph::NoticeFile notice_file() {
 } // namespace
 
 TEST_CASE("a notices file round-trips through JSON") {
-    const auto file = notice_file();
+    auto file = notice_file();
+    file.notices.push_back({.kind = egraph::NoticeKind::news,
+                            .key = "news:gentoo/2026-09-01-x",
+                            .title = "X happened",
+                            .file = "/repo/metadata/news/2026-09-01-x/2026-09-01-x.en.txt",
+                            .fingerprint = "2026-09-01-x"});
     const auto read = egraph::parse_notice_file(egraph::notice_file_json(file));
     REQUIRE(read);
     CHECK(*read == file);
 }
 
-TEST_CASE("a notices file from before notices named their packages is read without them") {
+TEST_CASE("a notices file from before notices named their packages and files is read without") {
     auto text = egraph::notice_file_json(notice_file());
-    const std::string field = R"("packages":["dev-libs/foo-2"],)";
-    REQUIRE(text.contains(field));
-    text.replace(text.find(field), field.size(), "");
+    for (const std::string field : {R"("file":"",)", R"("packages":["dev-libs/foo-2"],)"}) {
+        REQUIRE(text.contains(field));
+        text.replace(text.find(field), field.size(), "");
+    }
     const auto read = egraph::parse_notice_file(text);
     REQUIRE(read);
     CHECK(read->notices.front().packages.empty());
+    CHECK(read->notices.front().file.empty());
 }
 
 TEST_CASE("a notices file of another format or none at all is refused") {

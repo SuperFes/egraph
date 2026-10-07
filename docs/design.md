@@ -639,6 +639,15 @@ opens its page, whose versions show whether an update or a removal is the answer
 their packages as cpvs in `notices.json` (`packages`), so the interface never parses the
 detail lines meant for reading (17e5c1).
 
+A news item opens in a dialog and is marked read as it closes, the way `eselect news read`
+does: moved from `news-<repo>.unread` to `news-<repo>.read`. egraph-build writes the lists
+(`--news-read`), under the lock and with the permissions emerge's `NewsManager` uses, so an
+emerge updating the lists at the same time is never lost; where they cannot be written, the
+item is set aside for the user instead, and the dialog says eselect still counts it. Notices
+name a news item's text file (`file`). Reading the notices file drops the news items no longer
+in their repository's unread list, so an item read here or through eselect leaves the page and
+`status` at once rather than at watch's next refresh (17e5c2).
+
 Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
 touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
 the set is emerge's own. `parse_request` takes sets the store does not hold from its caller
