@@ -1697,20 +1697,19 @@ void human_search(std::ostream& out, std::span<const std::string> records,
     }
 }
 
-void human_diff(std::ostream& out, std::span<const std::string> records, std::string_view since,
-                const Theme& theme) {
+namespace {
+
+bool is_atom_change(const Fields& row) {
+    return row.at(1) == "added" || row.at(1) == "removed";
+}
+
+// difference_lines' package rows, each after its prefix (none without prefixes), their columns
+// aligned; how many of each kind: upgrade, downgrade, rebuild, new, uninstall.
+std::array<std::size_t, 5> put_changes(std::ostream& out, const std::vector<Fields>& rows,
+                                       const std::vector<std::string_view>& prefixes,
+                                       const Theme& theme) {
     const auto& paint = theme.paint;
     const auto& glyph = theme.glyph();
-    const auto rows = split_all(records);
-    if (rows.empty()) {
-        out << paint(glyph.good, Tone::good) << ' '
-            << paint(std::format("Nothing changed since {}.", since), Tone::good) << '\n';
-        return;
-    }
-    out << paint(std::format("Since {}", since), Tone::heading) << '\n';
-    const auto is_atom = [](const Fields& row) {
-        return row.at(1) == "added" || row.at(1) == "removed";
-    };
     // A package row's cp and its versions before and after.
     const auto parts = [](const Fields& row) {
         const auto cpv = row.at(0).empty() ? row.at(2) : row.at(0);
@@ -1724,10 +1723,8 @@ void human_diff(std::ostream& out, std::span<const std::string> records, std::st
     std::size_t cp_width = 0;
     std::size_t version_width = 0;
     std::size_t move_width = 0;
-    std::size_t set_width = 0;
     for (const auto& row : rows) {
-        if (is_atom(row)) {
-            set_width = std::max(set_width, row.at(0).size());
+        if (is_atom_change(row)) {
             continue;
         }
         const auto [cp, from, to] = parts(row);
@@ -1737,10 +1734,10 @@ void human_diff(std::ostream& out, std::span<const std::string> records, std::st
             move_width = std::max(move_width, 3 + to.size());
         }
     }
-    // upgrade, downgrade, rebuild, new, uninstall
     std::array<std::size_t, 5> counts{};
-    for (const auto& row : rows) {
-        if (is_atom(row)) {
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const auto& row = rows.at(i);
+        if (is_atom_change(row)) {
             continue;
         }
         const auto kind = row.at(1);
@@ -1755,6 +1752,9 @@ void human_diff(std::ostream& out, std::span<const std::string> records, std::st
         const std::array<std::string_view, 5> marks{glyph.upgrade, glyph.downgrade, glyph.rebuild,
                                                     glyph.added, glyph.orphan};
         const auto [cp, from, to] = parts(row);
+        if (!prefixes.empty()) {
+            out << paint(prefixes.at(i), Tone::note) << "  ";
+        }
         out << paint(marks.at(index), tones.at(index)) << ' ' << paint_cpv(cp, paint);
         const auto flags = row.size() > 3 ? row.at(3) : std::string_view{};
         // The padding owed so far, written only when something follows it.
@@ -1780,6 +1780,46 @@ void human_diff(std::ostream& out, std::span<const std::string> records, std::st
         }
         out << '\n';
     }
+    return counts;
+}
+
+} // namespace
+
+void human_history(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    if (records.empty()) {
+        out << theme.paint(theme.glyph().good, Tone::good) << ' '
+            << theme.paint("Nothing in the history.", Tone::good) << '\n';
+        return;
+    }
+    std::vector<std::string_view> times;
+    std::vector<Fields> rows;
+    for (auto row : split_all(records)) {
+        times.push_back(row.front());
+        row.erase(row.begin());
+        rows.push_back(std::move(row));
+    }
+    std::ignore = put_changes(out, rows, times, theme);
+}
+
+void human_diff(std::ostream& out, std::span<const std::string> records, std::string_view since,
+                const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto& glyph = theme.glyph();
+    const auto rows = split_all(records);
+    if (rows.empty()) {
+        out << paint(glyph.good, Tone::good) << ' '
+            << paint(std::format("Nothing changed since {}.", since), Tone::good) << '\n';
+        return;
+    }
+    out << paint(std::format("Since {}", since), Tone::heading) << '\n';
+    const auto is_atom = is_atom_change;
+    std::size_t set_width = 0;
+    for (const auto& row : rows) {
+        if (is_atom(row)) {
+            set_width = std::max(set_width, row.at(0).size());
+        }
+    }
+    const auto counts = put_changes(out, rows, {}, theme);
     // A line per set: the atoms it gained, then those it lost.
     for (std::size_t i = 0; i < rows.size();) {
         if (!is_atom(rows.at(i))) {

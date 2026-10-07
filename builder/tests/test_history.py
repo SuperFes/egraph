@@ -292,3 +292,36 @@ def test_diff_takes_only_ages_dates_and_generations(system):
     result = egraph(system, "diff", "yesterday")
     assert result.returncode == 2
     assert "not yesterday" in result.stderr
+
+
+def test_history_prints_the_log_as_lines(system):
+    refresh(system)
+    add_package(system[0], "dev-libs/alt-b-1")
+    result = egraph(system, "history")
+    assert result.returncode == 0, result.stderr
+    assert [json.loads(line) for line in result.stdout.splitlines()] == log(system)
+    assert [event["cpv"] for event in log(system)] == ["dev-libs/alt-b-1"]
+    later = time.strftime("%Y-%m-%d", time.localtime(time.time() + DAY))
+    assert egraph(system, "history", later).stdout == ""
+    assert egraph(system, "history", "app-misc/old").stdout == ""
+
+
+def test_history_shows_what_pulled_a_package_in(system):
+    playground = system[0]
+    refresh(system)
+    add_package(playground, "dev-libs/alt-b-1")
+    add_to_world(playground, "dev-libs/alt-b")
+    now = egraph(system, "--layout", "human", "history", "dev-libs/alt-b")
+    assert now.returncode == 0, now.stderr
+    assert "dev-libs/alt-b-1 merged " in now.stdout
+    assert "; no generation holds it, so now:\n" in now.stdout and "@selected" in now.stdout
+    # Once a later change keeps the system it arrived in as a generation.
+    shutil.rmtree(vdb(playground, "dev-libs/cond-1"))
+    then = egraph(system, "--layout", "human", "history", "dev-libs/alt-b")
+    assert "; then:\n" in then.stdout and "@selected" in then.stdout
+
+
+def test_history_refuses_what_it_cannot_match(system):
+    result = egraph(system, "history", "dev-libs/alt-b:1")
+    assert result.returncode == 2
+    assert "the log holds no slots" in result.stderr

@@ -65,6 +65,33 @@ struct HistoryEvent {
                                                        Seconds now);
 // The event as a line of JSON, without the newline.
 [[nodiscard]] std::string event_line(const HistoryEvent& event);
+// The log's events, skipping lines that are not one.
+[[nodiscard]] std::vector<HistoryEvent> parse_history(std::string_view text);
+
+// Which events history shows: those since a time, of the packages named.
+struct HistoryQuery {
+    std::optional<Seconds> since{};
+    // Exact cpvs or portage atoms, matched by cp and version: the log has no slots, repositories
+    // or USE.
+    std::vector<std::string> packages{};
+};
+
+// history's arguments: an age or a date (as diff takes them), at most one, and packages.
+[[nodiscard]] std::expected<HistoryQuery, std::string>
+parse_history_query(std::span<const std::string> arguments, Seconds now,
+                    const std::chrono::time_zone& zone);
+
+// The events the query selects, in the log's order; an error for a package argument that is not
+// an atom history can match.
+[[nodiscard]] std::expected<std::vector<HistoryEvent>, std::string>
+selected_events(std::span<const HistoryEvent> events, const HistoryQuery& query);
+
+// Each cp's first event that brought a version in (any but an uninstall), in the events' order.
+[[nodiscard]] std::vector<HistoryEvent> arrivals(std::span<const HistoryEvent> events);
+
+// For the human layout: the time in zone, then the event as a difference_lines record.
+[[nodiscard]] std::vector<std::string> event_records(std::span<const HistoryEvent> events,
+                                                     const std::chrono::time_zone& zone);
 
 // Whether after differs from before in its installed packages or its root sets.
 [[nodiscard]] bool history_changed(const Store& before, const Store& after);

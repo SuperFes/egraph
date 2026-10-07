@@ -247,6 +247,13 @@ struct Diff {
     bool json = false;
 };
 
+// The system store's history log, or a package's events and what pulled it in.
+struct HistoryCommand {
+    static constexpr std::string_view name = "history";
+    // An age or a date, and packages.
+    std::vector<std::string> arguments;
+};
+
 struct Rebuild {
     static constexpr std::string_view name = "rebuild";
 };
@@ -292,8 +299,8 @@ struct Affected {
 using Command =
     std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Search, Versions,
                  Blockers, Orphans, Updates, PlanCommand, Update, Install, Exec, Remove, Select,
-                 Deselect, Sync, NoticesCommand, Export, Stats, LogCommand, Diff, Rebuild, Refresh,
-                 Watch, Check, Tui, Shell, Complete, Affected>;
+                 Deselect, Sync, NoticesCommand, Export, Stats, LogCommand, Diff, HistoryCommand,
+                 Rebuild, Refresh, Watch, Check, Tui, Shell, Complete, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

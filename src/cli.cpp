@@ -2850,6 +2850,105 @@ Exit execute(const Diff& command, Session& session, const Invocation& invocation
     return Exit::ok;
 }
 
+Exit execute(const HistoryCommand& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    using namespace std::chrono;
+    const auto& zone = local_zone();
+    const auto query =
+        parse_history_query(command.arguments, floor<seconds>(system_clock::now()), zone);
+    if (!query) {
+        err << "egraph: history: " << query.error() << '\n';
+        return Exit::usage;
+    }
+    // The refresh logs what changed since the last one.
+    const auto loaded = session.installed();
+    if (!loaded) {
+        return fail(err, loaded.error());
+    }
+    const Store& current = *loaded;
+    const auto directory = history_directory(invocation.root, invocation.eprefix.value_or(""));
+    std::ostringstream text;
+    if (std::ifstream in{directory / "history.log"}; in) {
+        text << in.rdbuf();
+    }
+    const auto events = selected_events(parse_history(text.str()), *query);
+    if (!events) {
+        err << "egraph: history: " << events.error() << '\n';
+        return Exit::usage;
+    }
+    const auto style = output(invocation);
+    if (!style.human) {
+        for (const auto& event : *events) {
+            out << event_line(event) << '\n';
+        }
+        return Exit::ok;
+    }
+    human_history(out, event_records(*events, zone), style.theme);
+    if (query->packages.empty()) {
+        return Exit::ok;
+    }
+    std::vector<Seconds> generations;
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator{directory, error}) {
+        if (const auto ended = generation_time(entry.path().filename().string())) {
+            generations.push_back(*ended);
+        }
+    }
+    std::ranges::sort(generations);
+    const auto find = [](const Store& store, std::string_view cpv) -> std::optional<std::uint32_t> {
+        for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
+            if (store.string(store.packages.at(id).cpv) == cpv) {
+                return id;
+            }
+        }
+        return std::nullopt;
+    };
+    const auto& paint = style.theme.paint;
+    bool paths = false;
+    for (const auto& arrival : arrivals(*events)) {
+        // Why it arrived: the first generation holding it, as the system was just after.
+        std::optional<Store> then;
+        for (const auto ended : generations) {
+            if (ended <= arrival.time) {
+                continue;
+            }
+            if (auto generation = load(directory / generation_name(ended));
+                generation && find(*generation, arrival.cpv)) {
+                then = std::move(*generation);
+                break;
+            }
+        }
+        const Store& store = then ? *then : current;
+        const auto merged = std::format("{:%Y-%m-%d %H:%M:%S}", zoned_time{&zone, arrival.time});
+        const auto id = find(store, arrival.cpv);
+        out << '\n';
+        if (!id) {
+            out << paint(std::format("{} merged {}; no generation holds it, nor the system now",
+                                     arrival.cpv, merged),
+                         Tone::note)
+                << '\n';
+            continue;
+        }
+        out << paint(then
+                         ? std::format("{} merged {}; then:", arrival.cpv, merged)
+                         : std::format("{} merged {}; no generation holds it, so now:", arrival.cpv,
+                                       merged),
+                     Tone::heading)
+            << '\n';
+        const auto path = why(keep(store, {}), *id);
+        if (!path) {
+            out << paint("nothing: depclean would have removed it", Tone::note) << '\n';
+            continue;
+        }
+        human_path(out, path_lines(store, *path), style.theme);
+        paths = true;
+    }
+    if (paths) {
+        human_legend(out, style.theme);
+    }
+    return Exit::ok;
+}
+
 Exit execute(const Export& command, Session& session, const Invocation&, std::ostream& out,
              std::ostream& err) {
     if (command.repository) {
@@ -3261,6 +3360,14 @@ void configure(CLI::App& app, Invocation& invocation) {
     diff_cmd->add_flag_callback(
         "--json", [&invocation] { std::get<Diff>(invocation.command).json = true; },
         "Write the changes as JSON");
+    add_field(add_command<HistoryCommand>(
+                  app, invocation,
+                  "The system store's history log: merges, upgrades, downgrades, rebuilds and "
+                  "uninstalls; for packages, also what pulled each in"),
+              invocation, "arguments", &HistoryCommand::arguments,
+              "An age (12h, 3d, 2w) or a date (2026-09-30) to start from, and installed cpvs "
+              "or atoms")
+        ->type_name("WHEN|PACKAGE");
     add_command<Tui>(app, invocation, "Browse the graph in a terminal interface");
     add_command<Shell>(app, invocation,
                        "Answer commands read one per line from standard input, loading the stores "

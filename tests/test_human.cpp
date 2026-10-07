@@ -853,3 +853,22 @@ TEST_CASE("diff says when nothing changed") {
     egraph::human_diff(roots, std::vector<std::string>{"@selected\tadded\ta/b"}, "then", plain);
     CHECK(roots.str() == "Since then\n@ @selected  +a/b\n");
 }
+
+TEST_CASE("history lines up its events after their times") {
+    std::ostringstream out;
+    egraph::human_history(out,
+                          std::vector<std::string>{
+                              "2026-10-01 14:02:11\t\tnew\tapp-misc/foo-1.2\t",
+                              "2026-10-02 09:00:00\tapp-misc/foo-1.2\tupgrade\tapp-misc/foo-1.3\t",
+                              "2026-10-03 10:00:00\tapp-misc/foo-1.3\trebuild\tapp-misc/foo-1.3\t",
+                              "2026-10-04 11:00:00\tdev-libs/gone-2\tuninstall\t\t",
+                          },
+                          plain);
+    CHECK(out.str() == "2026-10-01 14:02:11  N app-misc/foo       > 1.2\n"
+                       "2026-10-02 09:00:00  U app-misc/foo   1.2 > 1.3\n"
+                       "2026-10-03 10:00:00  R app-misc/foo   1.3\n"
+                       "2026-10-04 11:00:00  - dev-libs/gone  2\n");
+    std::ostringstream none;
+    egraph::human_history(none, {}, plain);
+    CHECK(none.str() == "+ Nothing in the history.\n");
+}

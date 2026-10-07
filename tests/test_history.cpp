@@ -338,3 +338,95 @@ TEST_CASE("differences as JSON") {
     CHECK(none.str() == R"({"changes":[],"since":100})"
                         "\n");
 }
+
+namespace {
+
+const std::string logged =
+    R"({"cpv":"app-misc/foo-1.2","event":"merged","time":100})"
+    "\n"
+    "not json\n"
+    R"({"cpv":"app-misc/bar-2","event":"merged","time":150})"
+    "\n"
+    R"({"cpv":"app-misc/foo-1.3","event":"upgraded","from":"app-misc/foo-1.2","time":200})"
+    "\n"
+    R"({"event":"merged","time":250})"
+    "\n"
+    R"({"cpv":"app-misc/bar-2","event":"uninstalled","time":300})"
+    "\n";
+
+std::vector<std::string> cpvs_of(const std::vector<egraph::HistoryEvent>& events) {
+    std::vector<std::string> out;
+    for (const auto& event : events) {
+        out.push_back(event.cpv);
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("the log reads back as it was written, skipping what is not an event") {
+    const auto events = egraph::parse_history(logged);
+    REQUIRE(events.size() == 4);
+    CHECK(
+        lines(events) ==
+        std::vector<std::string>{
+            R"({"cpv":"app-misc/foo-1.2","event":"merged","time":100})",
+            R"({"cpv":"app-misc/bar-2","event":"merged","time":150})",
+            R"({"cpv":"app-misc/foo-1.3","event":"upgraded","from":"app-misc/foo-1.2","time":200})",
+            R"({"cpv":"app-misc/bar-2","event":"uninstalled","time":300})"});
+}
+
+TEST_CASE("history takes one age or date, and packages") {
+    const auto now = at(2026y / oct / 6d, 12h);
+    const std::vector<std::string> arguments{"app-misc/foo", "3d", ">=dev-libs/a-2"};
+    const auto query = egraph::parse_history_query(arguments, now, utc());
+    CHECK(query->since == now - 72h);
+    CHECK(query->packages == std::vector<std::string>{"app-misc/foo", ">=dev-libs/a-2"});
+    CHECK_FALSE(egraph::parse_history_query({}, now, utc())->since.has_value());
+    const std::vector<std::string> twice{"3d", "2026-09-30"};
+    CHECK(egraph::parse_history_query(twice, now, utc()).error() ==
+          "history takes one age or date, not 3d and 2026-09-30");
+}
+
+TEST_CASE("history selects events by time and by package, before or after") {
+    const auto events = egraph::parse_history(logged);
+    CHECK(cpvs_of(*egraph::selected_events(events, {})) ==
+          std::vector<std::string>{"app-misc/foo-1.2", "app-misc/bar-2", "app-misc/foo-1.3",
+                                   "app-misc/bar-2"});
+    CHECK(cpvs_of(*egraph::selected_events(events, {.since = Seconds{150s}})) ==
+          std::vector<std::string>{"app-misc/bar-2", "app-misc/foo-1.3", "app-misc/bar-2"});
+    CHECK(cpvs_of(*egraph::selected_events(events, {.packages = {"app-misc/foo"}})) ==
+          std::vector<std::string>{"app-misc/foo-1.2", "app-misc/foo-1.3"});
+    // The upgrade from 1.2 is an event of 1.2 too.
+    CHECK(cpvs_of(*egraph::selected_events(events, {.packages = {"=app-misc/foo-1.2"}})) ==
+          std::vector<std::string>{"app-misc/foo-1.2", "app-misc/foo-1.3"});
+    CHECK(cpvs_of(*egraph::selected_events(events, {.packages = {"app-misc/bar-2"}})) ==
+          std::vector<std::string>{"app-misc/bar-2", "app-misc/bar-2"});
+}
+
+TEST_CASE("history cannot match what the log does not hold") {
+    const auto events = egraph::parse_history(logged);
+    CHECK(egraph::selected_events(events, {.packages = {"app-misc/foo:2"}}).error() ==
+          "app-misc/foo:2: history matches packages by name and version; the log holds no "
+          "slots, repositories or USE");
+    CHECK_FALSE(egraph::selected_events(events, {.packages = {"foo"}}).has_value());
+}
+
+TEST_CASE("a package arrives with its first event bringing a version in") {
+    const auto events =
+        egraph::parse_history(R"({"cpv":"app-misc/old-1","event":"uninstalled","time":50})"
+                              "\n" +
+                              logged);
+    CHECK(cpvs_of(egraph::arrivals(events)) ==
+          std::vector<std::string>{"app-misc/foo-1.2", "app-misc/bar-2"});
+}
+
+TEST_CASE("events read as differences, after their time") {
+    const auto events = egraph::parse_history(logged);
+    CHECK(egraph::event_records(events, utc()) ==
+          std::vector<std::string>{
+              "1970-01-01 00:01:40\t\tnew\tapp-misc/foo-1.2\t",
+              "1970-01-01 00:02:30\t\tnew\tapp-misc/bar-2\t",
+              "1970-01-01 00:03:20\tapp-misc/foo-1.2\tupgrade\tapp-misc/foo-1.3\t",
+              "1970-01-01 00:05:00\tapp-misc/bar-2\tuninstall\t\t"});
+}

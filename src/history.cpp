@@ -1,10 +1,15 @@
 #include "history.hpp"
 
+#include "atom.hpp"
 #include "check.hpp"
+#include "human.hpp"
 #include "json.hpp"
 #include "version.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <format>
 #include <fstream>
@@ -359,6 +364,154 @@ std::string event_line(const HistoryEvent& event) {
     }
     out << R"(,"time":)" << event.time.time_since_epoch().count() << '}';
     return std::move(out).str();
+}
+
+std::vector<HistoryEvent> parse_history(std::string_view text) {
+    std::vector<HistoryEvent> events;
+    for (const auto line : std::views::split(text, '\n')) {
+        const auto json = nlohmann::json::parse(std::string_view{line}, nullptr, false);
+        if (!json.is_object()) {
+            continue;
+        }
+        const auto cpv = json.find("cpv");
+        const auto event = json.find("event");
+        const auto time = json.find("time");
+        if (cpv == json.end() || !cpv->is_string() || event == json.end() || !event->is_string() ||
+            time == json.end() || !time->is_number_integer()) {
+            continue;
+        }
+        HistoryEvent read{.time = Seconds{std::chrono::seconds{time->get<std::int64_t>()}},
+                          .event = event->get<std::string>(),
+                          .cpv = cpv->get<std::string>()};
+        if (const auto from = json.find("from"); from != json.end() && from->is_string()) {
+            read.from = from->get<std::string>();
+        }
+        events.push_back(std::move(read));
+    }
+    return events;
+}
+
+std::expected<HistoryQuery, std::string> parse_history_query(std::span<const std::string> arguments,
+                                                             Seconds now,
+                                                             const std::chrono::time_zone& zone) {
+    HistoryQuery query;
+    std::optional<std::string_view> when;
+    for (const auto& argument : arguments) {
+        if (const auto base = parse_diff_base(argument, now, zone); base && base->at) {
+            if (when) {
+                return std::unexpected(
+                    std::format("history takes one age or date, not {} and {}", *when, argument));
+            }
+            when = argument;
+            query.since = base->at;
+        } else {
+            query.packages.push_back(argument);
+        }
+    }
+    return query;
+}
+
+namespace {
+
+std::string_view cp_of(std::string_view cpv) {
+    const auto parts = split_cpv(cpv);
+    return cpv.substr(0, parts.category.size() + 1 + parts.name.size());
+}
+
+// A package argument as history matches it: an exact cpv, or an atom by cp and version.
+struct LoggedPackage {
+    std::string cpv;
+    std::optional<Atom> atom;
+
+    [[nodiscard]] bool matches(std::string_view logged) const {
+        if (logged.empty()) {
+            return false;
+        }
+        if (!atom) {
+            return logged == cpv;
+        }
+        const auto version = parse_version(split_cpv(logged).version);
+        return version && egraph::matches(*atom, cp_of(logged), *version, "", "", "");
+    }
+};
+
+std::expected<LoggedPackage, std::string> logged_package(std::string_view text) {
+    // An operator starts a versioned atom, never a cpv.
+    const bool plain = !text.empty() && std::isalnum(static_cast<unsigned char>(text.front())) != 0;
+    if (const auto parts = split_cpv(text);
+        plain && !parts.category.empty() && !parts.version.empty()) {
+        return LoggedPackage{.cpv = std::string{text}, .atom = std::nullopt};
+    }
+    auto atom = parse_atom(text);
+    if (!atom) {
+        return std::unexpected(atom.error());
+    }
+    if (atom->slot || atom->sub_slot || atom->repo || !atom->use.empty()) {
+        return std::unexpected(std::format("{}: history matches packages by name and version; the "
+                                           "log holds no slots, repositories or USE",
+                                           text));
+    }
+    return LoggedPackage{.cpv = {}, .atom = std::move(*atom)};
+}
+
+} // namespace
+
+std::expected<std::vector<HistoryEvent>, std::string>
+selected_events(std::span<const HistoryEvent> events, const HistoryQuery& query) {
+    std::vector<LoggedPackage> packages;
+    for (const auto& text : query.packages) {
+        auto package = logged_package(text);
+        if (!package) {
+            return std::unexpected(std::move(package.error()));
+        }
+        packages.push_back(std::move(*package));
+    }
+    std::vector<HistoryEvent> selected;
+    for (const auto& event : events) {
+        if (query.since && event.time < *query.since) {
+            continue;
+        }
+        if (!packages.empty() && std::ranges::none_of(packages, [&event](const auto& package) {
+                return package.matches(event.cpv) || package.matches(event.from);
+            })) {
+            continue;
+        }
+        selected.push_back(event);
+    }
+    return selected;
+}
+
+std::vector<HistoryEvent> arrivals(std::span<const HistoryEvent> events) {
+    std::set<std::string_view> arrived;
+    std::vector<HistoryEvent> found;
+    for (const auto& event : events) {
+        if (event.event != "uninstalled" && arrived.insert(cp_of(event.cpv)).second) {
+            found.push_back(event);
+        }
+    }
+    return found;
+}
+
+std::vector<std::string> event_records(std::span<const HistoryEvent> events,
+                                       const std::chrono::time_zone& zone) {
+    std::vector<std::string> records;
+    records.reserve(events.size());
+    for (const auto& event : events) {
+        const auto time =
+            std::format("{:%Y-%m-%d %H:%M:%S}", std::chrono::zoned_time{&zone, event.time});
+        const auto& kind = event.event;
+        const std::string_view change = kind == "merged"       ? "new"
+                                        : kind == "upgraded"   ? "upgrade"
+                                        : kind == "downgraded" ? "downgrade"
+                                        : kind == "rebuilt"    ? "rebuild"
+                                                               : "uninstall";
+        const std::string_view before = change == "new"      ? std::string_view{}
+                                        : event.from.empty() ? std::string_view{event.cpv}
+                                                             : std::string_view{event.from};
+        const std::string_view after = change == "uninstall" ? std::string_view{} : event.cpv;
+        records.push_back(std::format("{}\t{}\t{}\t{}\t", time, before, change, after));
+    }
+    return records;
 }
 
 bool history_changed(const Store& before, const Store& after) {

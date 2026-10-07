@@ -158,6 +158,12 @@ TEST_CASE("diff takes an age, a date or a generation, and --json") {
     CHECK(aged.json);
 }
 
+TEST_CASE("history takes any arguments, sorted out later") {
+    CHECK(std::get<egraph::HistoryCommand>(parse("history").command).arguments.empty());
+    CHECK(std::get<egraph::HistoryCommand>(parse("history 3d app-misc/foo").command).arguments ==
+          std::vector<std::string>{"3d", "app-misc/foo"});
+}
+
 TEST_CASE("export takes a format and any number of packages") {
     const auto plain = parse("export");
     const auto* defaults = std::get_if<egraph::Export>(&plain.command);

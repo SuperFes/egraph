@@ -1013,6 +1013,28 @@ for a root set's; the
 compared against, and
 .BR since ,
 in seconds since the epoch.
+.SS history \fR[\fIwhen\fR] [\fIpackage\fR...]
+The system store's history log (see
+.I ${ROOT}${EPREFIX}/var/lib/egraph
+under
+.BR FILES ),
+oldest first: each merge, upgrade, downgrade, rebuild and uninstall with its time and versions.
+With packages, then, for each the log saw arrive, what pulled it in: its
+.B why
+chain in the first generation holding it, as the system was just after it merged, or as it is
+kept now when no generation holds it any more. As lines, the log's JSON objects as it holds
+them, without the chains.
+.TP
+.I when
+An age
+.RB ( 12h ", " 3d ", " 2w )
+or a date
+.RB ( 2026\-09\-30 ,
+from the start of that day, local time): only the events since.
+.TP
+.I package
+An installed cpv or a portage atom, matched by name and version against the versions each event
+names, before and after: the log holds no slots, repositories or USE.
 .SS tui
 The interactive interface: the installed packages, pending updates, orphans and broken ones, each
 package's page, the plan, the running emerges, a search through the repositories

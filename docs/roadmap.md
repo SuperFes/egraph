@@ -919,8 +919,12 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     generation by name. Before the history's start (the oldest generation's newest merge), it
     says since when. Lines like `updates`', the human layout `updates`' columns, and `--json`.
     A generation from another store format cannot be read, and says so.
-  - 17c4: `egraph history [atom]`: the event log; for a package, when it arrived and what pulled
-    it in (the why chain in the first generation holding it).
+  - 17c4 (done): `egraph history [when] [package...]`: the event log, oldest first, in diff's
+    columns after each event's time, from an age or date (as diff takes them); packages are
+    matched by cp and version against each event's versions, before and after (the log holds no
+    slots, repositories or USE, so an atom with them is refused). For each package the log saw
+    arrive, its `why` chain in the first generation that ended after its merge and holds it (the
+    system just after), else as kept now. As lines, the log's JSON objects as it holds them.
 - 17d: the precomputed plan: after each refresh, `-uDN @world` planned once and a small status
   file written (updates, rebuilds, held, security, the last sync's age), which the living app
   opens on and a status bar reads without running anything.
