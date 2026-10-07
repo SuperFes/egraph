@@ -2857,3 +2857,191 @@ TEST_CASE("the corner shows the status file's plan of @world") {
     egraph::tui::draw(narrow, app, ascii);
     CHECK_FALSE(contains(narrow.line(1), "@world +"));
 }
+
+namespace {
+
+egraph::tui::NoticesShown two_notices() {
+    using egraph::NoticeKind;
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    return {.notices = {{.kind = NoticeKind::glsa,
+                         .key = "glsa:202609-03",
+                         .title = "GLSA 202609-03: libfoo: heap overflow",
+                         .detail = {"affects dev-libs/b-1, fixed in >=dev-libs/b-2"},
+                         .fingerprint = "1",
+                         .since = now - std::chrono::hours{3}},
+                        {.kind = NoticeKind::news,
+                         .key = "news:gentoo/2026-09-01-x",
+                         .title = "Profile 23.0 is here",
+                         .detail = {"gentoo news 2026-09-01-x", "eselect news read to read it"},
+                         .fingerprint = "2",
+                         .since = now}},
+            .set_aside = 1};
+}
+
+} // namespace
+
+TEST_CASE("the notices page follows the sets, its tab counting them") {
+    egraph::tui::App app{both(), true};
+    FakeScreen screen{16, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK_FALSE(contains(screen.line(1), "notices"));
+    app.finish_notices(two_notices());
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(1), " @installed  @world  @system  notices 2 "));
+
+    for (int turn = 0; turn < 3; ++turn) {
+        CHECK_FALSE(app.on_notices());
+        app.handle(key(KeyKind::right));
+    }
+    REQUIRE(app.on_notices());
+    // The last page.
+    app.handle(key(KeyKind::right));
+    CHECK(app.on_notices());
+    egraph::tui::draw(screen, app, ascii);
+    const auto text = screen.text();
+    INFO(text);
+    CHECK(contains(screen.line(0), "2 notices  1 set aside"));
+    CHECK(contains(text, "glsa      GLSA 202609-03: libfoo: heap overflow"));
+    CHECK(contains(text, "news      Profile 23.0 is here"));
+    CHECK(contains(text, "3 hours ago"));
+    // The selected notice's detail, below.
+    CHECK(contains(text, "affects dev-libs/b-1, fixed in >=dev-libs/b-2"));
+    CHECK_FALSE(contains(text, "eselect news read"));
+    CHECK(contains(screen.line(15), " x dismiss  z later  "));
+
+    app.handle(character(U'j'));
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "eselect news read to read it"));
+    CHECK_FALSE(contains(screen.text(), "fixed in >=dev-libs/b-2"));
+
+    app.handle(character(U'h'));
+    CHECK_FALSE(app.on_notices());
+    CHECK(app.scope() == Scope::system);
+}
+
+TEST_CASE("the notices page needs no evaluated store") {
+    egraph::tui::App app{egraph::Stores{.installed = sample(), .evaluated = {}}, true};
+    REQUIRE_FALSE(app.has_evaluated());
+    FakeScreen screen{16, 120, {}};
+    app.handle(key(KeyKind::right));
+    CHECK_FALSE(app.on_notices());
+    app.finish_notices(egraph::tui::NoticesShown{});
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(1), " packages  notices 0 "));
+    app.handle(key(KeyKind::right));
+    REQUIRE(app.on_notices());
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "Nothing needs you"));
+    CHECK_FALSE(contains(screen.line(15), "x dismiss"));
+    // Nothing to set aside.
+    app.handle(character(U'x'));
+    app.handle(character(U'z'));
+    CHECK_FALSE(app.notice_change_requested().has_value());
+    CHECK_FALSE(app.putting_off());
+    app.handle(key(KeyKind::left));
+    CHECK_FALSE(app.on_notices());
+}
+
+TEST_CASE("x dismisses the selected notice, and z puts it off for the time chosen") {
+    egraph::tui::App app{both(), true};
+    app.finish_notices(two_notices());
+    for (int turn = 0; turn < 3; ++turn) {
+        app.handle(key(KeyKind::right));
+    }
+    REQUIRE(app.on_notices());
+
+    app.handle(character(U'x'));
+    REQUIRE(app.notice_change_requested().has_value());
+    CHECK(app.notice_change_requested()->notice.key == "glsa:202609-03");
+    CHECK_FALSE(app.notice_change_requested()->later.has_value());
+    app.finish_notice_change({});
+    CHECK_FALSE(app.notice_change_requested().has_value());
+    REQUIRE(app.notices().has_value());
+    REQUIRE(app.notices()->notices.size() == 1);
+    CHECK(app.notices()->notices.front().key == "news:gentoo/2026-09-01-x");
+    CHECK(app.notices()->set_aside == 2);
+
+    FakeScreen screen{16, 120, {}};
+    app.handle(character(U'z'));
+    CHECK(app.putting_off());
+    egraph::tui::draw(screen, app, ascii);
+    auto text = screen.text();
+    INFO(text);
+    CHECK(contains(text, " Put off "));
+    CHECK(contains(text, "1  an hour"));
+    CHECK(contains(text, "3  a week"));
+    CHECK(contains(text, " esc cancel "));
+    CHECK(contains(screen.line(15), " 1 an hour  2 a day  3 a week  esc cancel  "));
+    // Neither the keys list nor the pages while choosing.
+    app.handle(character(U'?'));
+    CHECK_FALSE(app.keys_shown());
+    CHECK(app.putting_off());
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.putting_off());
+    CHECK_FALSE(app.notice_change_requested().has_value());
+
+    app.handle(character(U'z'));
+    app.handle(character(U'2'));
+    CHECK_FALSE(app.putting_off());
+    REQUIRE(app.notice_change_requested().has_value());
+    CHECK(app.notice_change_requested()->later == std::chrono::days{1});
+    // A failure keeps the notice and says why.
+    app.finish_notice_change(std::unexpected(std::string{"read-only file system"}));
+    CHECK(app.notices()->notices.size() == 1);
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->error);
+    CHECK(app.dialog()->lines == std::vector<std::string>{"read-only file system"});
+}
+
+TEST_CASE("notices read again keep the cursor on its notice, and the page goes with them") {
+    egraph::tui::App app{both(), true};
+    app.finish_notices(two_notices());
+    for (int turn = 0; turn < 3; ++turn) {
+        app.handle(key(KeyKind::right));
+    }
+    app.handle(character(U'j'));
+    CHECK(app.notice_cursor().at == 1);
+    auto again = two_notices();
+    std::ranges::reverse(again.notices);
+    app.finish_notices(again);
+    CHECK(app.notice_cursor().at == 0);
+    // Gone, it leaves the cursor where it was, within the list.
+    app.handle(character(U'j'));
+    again.notices.pop_back();
+    app.finish_notices(again);
+    CHECK(app.notice_cursor().at == 0);
+    app.finish_notices(std::nullopt);
+    CHECK_FALSE(app.on_notices());
+    CHECK(app.scope() == Scope::system);
+}
+
+TEST_CASE("run reads the notices with the status and sets them aside through its services") {
+    egraph::tui::App app{both(), true};
+    FakeScreen screen{16,
+                      120,
+                      {key(KeyKind::right), key(KeyKind::right), key(KeyKind::right),
+                       character(U'z'), character(U'1'), character(U'x')}};
+    std::vector<std::pair<std::string, std::optional<std::chrono::seconds>>> set;
+    egraph::tui::run(screen, app, ascii,
+                     {.check = no_check,
+                      .notices = [] { return std::optional{two_notices()}; },
+                      .set_aside = [&set](const egraph::Notice& notice,
+                                          std::optional<std::chrono::seconds> later)
+                          -> std::expected<void, std::string> {
+                          set.emplace_back(notice.key, later);
+                          return {};
+                      }});
+    CHECK(set == std::vector<std::pair<std::string, std::optional<std::chrono::seconds>>>{
+                     {"glsa:202609-03", std::chrono::hours{1}},
+                     {"news:gentoo/2026-09-01-x", std::nullopt}});
+}
+
+TEST_CASE("a notice cannot be set aside by an egraph with no way to") {
+    egraph::tui::App app{both(), true};
+    FakeScreen screen{
+        16, 120, {key(KeyKind::right), key(KeyKind::right), key(KeyKind::right), character(U'x')}};
+    egraph::tui::run(screen, app, ascii,
+                     {.check = no_check, .notices = [] { return std::optional{two_notices()}; }});
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.notices()->notices.size() == 2);
+}

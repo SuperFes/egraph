@@ -248,6 +248,12 @@ Exit run_shell(Session& session, const Invocation& invocation, std::istream& in,
                std::ostream& err, bool prompt);
 // The status file find_status picks, for the interface's corner; none without one.
 std::optional<tui::StatusShown> shown_status(const Invocation& invocation);
+// The notices beside that status file, for the interface's notices page; none without them.
+std::optional<tui::NoticesShown> shown_notice_page(const Invocation& invocation);
+// Dismisses the notice, or puts it off for later, as egraph notices --dismiss or --later.
+std::expected<void, std::string> set_aside_from_page(const Invocation& invocation,
+                                                     const Notice& notice,
+                                                     std::optional<std::chrono::seconds> later);
 
 Exit execute(const Tui& command, Session& session, const Invocation& invocation, std::ostream& out,
              std::ostream& err);
@@ -1772,6 +1778,22 @@ std::expected<std::vector<SetAside>, std::string> read_set_aside() {
         [&path](const std::string& error) { return std::format("{}: {}", path->string(), error); });
 }
 
+// Keeps what this user set aside, for every egraph of theirs.
+std::expected<void, std::string> write_set_aside(std::span<const SetAside> set_aside) {
+    const auto path = user_set_aside_path();
+    if (!path) {
+        return std::unexpected(
+            std::string{"neither XDG_STATE_HOME nor HOME says where to keep them"});
+    }
+    std::error_code error;
+    std::filesystem::create_directories(path->parent_path(), error);
+    if (const auto written = os::replace_with_text(*path, set_aside_json(set_aside)); !written) {
+        return std::unexpected(
+            std::format("cannot write {}: {}", path->string(), written.error().message()));
+    }
+    return {};
+}
+
 // notices less what this user set aside, for showing; how many that was.
 std::size_t drop_set_aside(Notices& notices, Seconds now) {
     const auto set_aside = read_set_aside();
@@ -2038,11 +2060,8 @@ Exit set_notices_aside(const NoticesCommand& command, std::span<const Notice> no
             }
         }
     }
-    std::error_code error;
-    std::filesystem::create_directories(path->parent_path(), error);
-    if (const auto written = os::replace_with_text(*path, set_aside_json(*set_aside)); !written) {
-        return fail(err, std::format("notices: cannot write {}: {}", path->string(),
-                                     written.error().message()));
+    if (const auto written = write_set_aside(*set_aside); !written) {
+        return fail(err, std::format("notices: {}", written.error()));
     }
     return Exit::ok;
 }
@@ -2961,7 +2980,12 @@ Exit execute(const Tui&, Session& session, const Invocation& invocation, std::os
          .run = [&invocation, eroot = (*stores)->installed.meta.eroot](
                     const tui::Action& action) { return start_action(invocation, eroot, action); },
          .now = {},
-         .status = [&invocation] { return shown_status(invocation); }},
+         .status = [&invocation] { return shown_status(invocation); },
+         .notices = [&invocation] { return shown_notice_page(invocation); },
+         .set_aside =
+             [&invocation](const Notice& notice, std::optional<std::chrono::seconds> later) {
+                 return set_aside_from_page(invocation, notice, later);
+             }},
         warnings, err);
 }
 
@@ -3237,6 +3261,54 @@ std::expected<FoundStatus, std::string> find_status(const Invocation& invocation
                                        status_path(stores.front()).string()));
 }
 
+// The notices watch wrote beside the status file, as of now; none where it wrote none.
+std::optional<std::vector<Notice>> notices_beside(const FoundStatus& found,
+                                                  const Invocation& invocation, Seconds now) {
+    const auto file = read_notice_file(notices_path(found.path));
+    if (!file) {
+        return std::nullopt;
+    }
+    const auto settings = read_settings(settings_path(config_root(invocation)));
+    return current_notices(*file, now, settings.value_or(Settings{}).stale_days);
+}
+
+std::optional<tui::NoticesShown> shown_notice_page(const Invocation& invocation) {
+    const auto found = find_status(invocation);
+    if (!found) {
+        return std::nullopt;
+    }
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    const auto all = notices_beside(*found, invocation, now);
+    if (!all) {
+        return std::nullopt;
+    }
+    auto shown = shown_notices(*all, read_set_aside().value_or(std::vector<SetAside>{}), now);
+    const auto set_aside = all->size() - shown.size();
+    return tui::NoticesShown{.notices = std::move(shown), .set_aside = set_aside};
+}
+
+std::expected<void, std::string> set_aside_from_page(const Invocation& invocation,
+                                                     const Notice& notice,
+                                                     std::optional<std::chrono::seconds> later) {
+    auto set_aside = read_set_aside();
+    if (!set_aside) {
+        return std::unexpected(std::move(set_aside.error()));
+    }
+    const auto found = find_status(invocation);
+    if (!found) {
+        return std::unexpected(found.error());
+    }
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    // Without the notices, what else was set aside cannot be told from what is gone.
+    const auto notices = notices_beside(*found, invocation, now);
+    if (!notices) {
+        return std::unexpected(std::format("cannot read {}", notices_path(found->path).string()));
+    }
+    set_notice_aside(*set_aside, notice, later.transform([now](auto time) { return now + time; }),
+                     *notices);
+    return write_set_aside(*set_aside);
+}
+
 std::optional<tui::StatusShown> shown_status(const Invocation& invocation) {
     auto found = find_status(invocation);
     if (!found) {
@@ -3272,13 +3344,9 @@ Exit execute(const StatusCommand& command, Session& session, const Invocation& i
         return Exit::ok;
     }
     const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
-    // The notices watch wrote beside it, when it did.
     std::vector<Notice> notices;
-    if (const auto file = read_notice_file(notices_path(found->path)); file) {
-        const auto settings = read_settings(settings_path(config_root(invocation)));
-        notices =
-            shown_notices(current_notices(*file, now, settings.value_or(Settings{}).stale_days),
-                          read_set_aside().value_or(std::vector<SetAside>{}), now);
+    if (const auto all = notices_beside(*found, invocation, now)) {
+        notices = shown_notices(*all, read_set_aside().value_or(std::vector<SetAside>{}), now);
     }
     if (style(invocation).human) {
         auto lines = status_summary(found->status, found->current, now);

@@ -133,7 +133,8 @@ parse_set_aside(std::string_view text);
 
 // ${XDG_STATE_HOME:-$HOME/.local/state}/egraph/set-aside.json; none without either.
 [[nodiscard]] std::optional<std::filesystem::path>
-set_aside_path(const std::optional<std::string>& state_home, const std::optional<std::string>& home);
+set_aside_path(const std::optional<std::string>& state_home,
+               const std::optional<std::string>& home);
 
 // Whether the user set the notice aside as of now.
 [[nodiscard]] bool is_set_aside(const Notice& notice, std::span<const SetAside> set_aside,

@@ -218,6 +218,17 @@ struct StatusShown {
 // Reads the status file, nothing when there is none.
 using StatusReader = std::function<std::optional<StatusShown>()>;
 
+// The notices watch wrote, as of now, less those the user set aside, and how many that was.
+struct NoticesShown {
+    std::vector<Notice> notices;
+    std::size_t set_aside = 0;
+};
+
+using NoticesReader = std::function<std::optional<NoticesShown>()>;
+// Dismisses a notice, or with a time puts it off that long.
+using NoticeSetter = std::function<std::expected<void, std::string>(
+    const Notice&, std::optional<std::chrono::seconds>)>;
+
 // The pages of the package list, each the set its plan updates: -uDN @installed, @world or
 // @system.
 enum class Scope : std::uint8_t { installed, world, system };
@@ -296,6 +307,8 @@ struct Services {
     // The steady clock when empty.
     Clock now{};
     StatusReader status{};
+    NoticesReader notices{};
+    NoticeSetter set_aside{};
 };
 
 struct Watched;
@@ -388,7 +401,21 @@ struct Dialog {
     bool question = false;
     // The first line shown.
     std::size_t top = 0;
+    // The keys that close it, in place of " any key " or " y yes  n no ".
+    std::string closing{};
 };
+
+// A notice to dismiss, or to put off for a while, waiting for run() to do it.
+struct NoticeChange {
+    Notice notice;
+    std::optional<std::chrono::seconds> later{};
+};
+
+// The choices for putting a notice off, by the digit choosing each.
+inline constexpr std::array put_off_choices{
+    std::pair{std::string_view{"an hour"}, std::chrono::seconds{std::chrono::hours{1}}},
+    std::pair{std::string_view{"a day"}, std::chrono::seconds{std::chrono::days{1}}},
+    std::pair{std::string_view{"a week"}, std::chrono::seconds{std::chrono::weeks{1}}}};
 
 // A line of the plan view: a root set at depth 0, then the packages down the chain from it to
 // each merge, as updates --tree draws them.
@@ -527,6 +554,19 @@ class App {
     // The status file the watch service writes, as last read.
     [[nodiscard]] const std::optional<StatusShown>& status() const { return status_; }
     void finish_status(std::optional<StatusShown> status) { status_ = std::move(status); }
+    [[nodiscard]] const std::optional<NoticesShown>& notices() const { return notices_; }
+    // Keeps the cursor on the notice it was on, where that is still shown.
+    void finish_notices(std::optional<NoticesShown> notices);
+    // The notices page, after the sets, in place of the list.
+    [[nodiscard]] bool on_notices() const { return on_notices_; }
+    [[nodiscard]] const Cursor& notice_cursor() const { return notice_cursor_; }
+    // Choosing how long to put the selected notice off for.
+    [[nodiscard]] bool putting_off() const { return putting_off_; }
+    [[nodiscard]] const std::optional<NoticeChange>& notice_change_requested() const {
+        return notice_change_;
+    }
+    // Drops the notice from the page once set aside; shows why it could not be.
+    void finish_notice_change(const std::expected<void, std::string>& result);
     [[nodiscard]] const List& list() const { return list_; }
     // Pages opened from the list or the check view, the one showing last.
     [[nodiscard]] const std::vector<Page>& pages() const { return pages_; }
@@ -671,6 +711,7 @@ class App {
     void unfold(Page& page);
     void fold(Page& page);
     void handle_list(const Key& key);
+    void handle_notices(const Key& key);
     void handle_page(const Key& key);
     void handle_check(const Key& key);
     void handle_watch(const Key& key);
@@ -726,6 +767,11 @@ class App {
     // Counts the stores shown, so that a plan made for others is dropped.
     std::size_t generation_ = 0;
     std::optional<StatusShown> status_;
+    std::optional<NoticesShown> notices_;
+    bool on_notices_ = false;
+    Cursor notice_cursor_;
+    bool putting_off_ = false;
+    std::optional<NoticeChange> notice_change_;
     bool build_deps_ = true;
     Kept kept_;
     std::vector<std::optional<std::uint32_t>> root_of_;
@@ -765,6 +811,8 @@ struct Hint {
 
 // The ? overlay: every key of the view on top, aligned.
 [[nodiscard]] Dialog keys_dialog(std::span<const Hint> hints);
+// How long to put a notice off for.
+[[nodiscard]] Dialog put_off_dialog();
 
 // A piece of text in one pen, for putting several side by side.
 struct Span {
@@ -948,16 +996,23 @@ inline std::vector<Span> rebuild_flags(std::string_view flags) {
 
 // The pages as tabs, the list's picked out, one being planned spinning.
 inline std::vector<Span> page_spans(const App& app, const Glyphs& glyph) {
+    const Pen picked{.fg = palette::crust, .bg = palette::mauve, .bold = true};
     std::vector<Span> spans{{" ", {}}};
-    for (const auto scope : scopes) {
-        const bool shown = scope == app.scope();
+    if (!app.has_evaluated()) {
+        spans.push_back({" packages ", app.on_notices() ? tone_pen(Tone::note) : picked});
+    }
+    for (const auto scope : app.has_evaluated() ? std::span{scopes} : std::span<const Scope>{}) {
+        const bool shown = !app.on_notices() && scope == app.scope();
         const bool waiting = app.planning() == scope || (shown && !app.scope_planned(scope));
         auto text =
             waiting ? std::format(" {} {} ", spinner_frame(app.frame(), glyph), scope_name(scope))
                     : std::format(" {} ", scope_name(scope));
-        spans.push_back(
-            {std::move(text), shown ? Pen{.fg = palette::crust, .bg = palette::mauve, .bold = true}
-                                    : tone_pen(Tone::note)});
+        spans.push_back({std::move(text), shown ? picked : tone_pen(Tone::note)});
+    }
+    if (const auto& notices = app.notices()) {
+        const auto count = notices->notices.size();
+        spans.push_back({std::format(" notices {} ", count),
+                         app.on_notices() ? picked : tone_pen(count ? Tone::bad : Tone::note)});
     }
     return spans;
 }
@@ -996,7 +1051,7 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
     draw_title(screen, app, size.cols, title, glyph);
 
     std::vector<Span> search;
-    if (app.has_evaluated()) {
+    if (app.has_evaluated() || app.notices()) {
         search = page_spans(app, glyph);
         search.push_back({" ", {}});
     }
@@ -1072,6 +1127,83 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
     } else if (list.shown.empty()) {
         put_spans(screen, first, 5, {{std::string{empty_list(list)}, tone_pen(Tone::note)}},
                   size.cols);
+    }
+}
+
+inline Tone notice_tone(NoticeKind kind) {
+    switch (kind) {
+    case NoticeKind::glsa:
+    case NoticeKind::masked:
+    case NoticeKind::missing:
+        return Tone::bad;
+    case NoticeKind::preserved:
+        return Tone::use;
+    case NoticeKind::config:
+        return Tone::choice;
+    case NoticeKind::news:
+        return Tone::heading;
+    case NoticeKind::stale:
+        return Tone::note;
+    }
+    return Tone::note;
+}
+
+// The notices, one a row with its kind and age, and the selected one's detail below them.
+template <class S> void draw_notices(S& screen, App& app, const Glyphs& glyph, Size size) {
+    static const std::vector<Notice> none;
+    const auto& shown = app.notices();
+    const auto& notices = shown ? shown->notices : none;
+    std::vector<Span> title{
+        {std::format(" {} egraph ", glyph.package),
+         {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
+        {std::format(" {}  ", app.store().meta.eroot), tone_pen(Tone::note)},
+        {notices.size() == 1 ? std::string{"1 notice"} : std::format("{} notices", notices.size()),
+         tone_pen(Tone::count)}};
+    if (shown && shown->set_aside != 0) {
+        title.push_back({std::format("  {} set aside", shown->set_aside), tone_pen(Tone::note)});
+    }
+    draw_title(screen, app, size.cols, title, glyph);
+    put_spans(screen, 1, 0, page_spans(app, glyph), size.cols);
+
+    const auto& cursor = app.notice_cursor();
+    const unsigned first = 3;
+    const unsigned room = size.rows > first + 1 ? size.rows - first - 1 : 0;
+    std::span<const std::string> detail;
+    if (cursor.at < notices.size()) {
+        detail = notices.at(cursor.at).detail;
+    }
+    const auto detail_rows = static_cast<unsigned>(std::min<std::size_t>(detail.size(), room / 2));
+    const unsigned height = detail_rows ? room - detail_rows - 1 : room;
+    app.set_height(height);
+    put_spans(screen, 2, 0, {{"      kind      notice", tone_pen(Tone::note)}}, size.cols);
+    if (notices.empty()) {
+        put_spans(screen, first, 5, {{"Nothing needs you", tone_pen(Tone::note)}}, size.cols);
+    }
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    for (unsigned line = 0; line < height; ++line) {
+        const auto index = cursor.top + line;
+        if (index >= notices.size()) {
+            break;
+        }
+        const auto& notice = notices.at(index);
+        const bool selected = index == cursor.at;
+        const auto bg = selected ? std::optional<Color>{palette::surface} : std::nullopt;
+        if (selected) {
+            screen.fill_row(first + line, {.fg = std::nullopt, .bg = palette::surface});
+        }
+        const auto age = age_text(notice.since, now);
+        const auto right =
+            size.cols > columns(age) + 2 ? static_cast<unsigned>(size.cols - columns(age) - 2) : 0;
+        put_spans(screen, first + line, 0,
+                  {marker(selected, glyph),
+                   {std::format(" {:<10}", notice_kind_name(notice.kind)),
+                    tone_pen(notice_tone(notice.kind))},
+                   {notice.title, {}}},
+                  right, bg);
+        put_spans(screen, first + line, right, {{age, tone_pen(Tone::note)}}, size.cols, bg);
+    }
+    for (unsigned line = 0; line < detail_rows; ++line) {
+        put_spans(screen, first + height + 1 + line, 6, {{detail[line], {}}}, size.cols);
     }
 }
 
@@ -1605,7 +1737,9 @@ void draw_dialog(S& screen, const Dialog& dialog, const Glyphs& glyph, Size size
     title_pen.bold = true;
     const auto shown = std::min<std::size_t>(dialog.lines.size(), size.rows - 4);
     const auto top = std::min(dialog.top, dialog.lines.size() - shown);
-    std::string closing = dialog.question ? " y yes  n no " : " any key ";
+    std::string closing = !dialog.closing.empty() ? dialog.closing
+                          : dialog.question       ? " y yes  n no "
+                                                  : " any key ";
     if (shown < dialog.lines.size()) {
         closing = std::format(" {} scroll {}", glyph.move, closing.substr(1));
     }
@@ -1944,6 +2078,8 @@ template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
             draw_watch(screen, app, glyph, size);
         } else if (app.planned()) {
             draw_plan(screen, app, glyph, size);
+        } else if (app.on_notices()) {
+            draw_notices(screen, app, glyph, size);
         } else {
             draw_list(screen, app, glyph, size);
         }
@@ -1955,6 +2091,8 @@ template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
         app.set_dialog_height(size.rows - 4);
         if (app.dialog()) {
             draw_dialog(screen, *app.dialog(), glyph, size);
+        } else if (app.putting_off()) {
+            draw_dialog(screen, put_off_dialog(), glyph, size);
         } else if (app.keys_shown()) {
             draw_dialog(screen, keys_dialog(view_keys(app, glyph)), glyph, size);
         } else if (const auto& action = app.preview_requested()) {
@@ -2011,11 +2149,16 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
     std::optional<Job<IndexResult>> index;
     std::optional<Job<RunResult>> running;
     std::optional<Job<ScopePlan>> scoped;
-    auto next_status = now();
-    if (services.status) {
-        app.finish_status(services.status());
-        next_status = now() + stale_interval;
-    }
+    const auto read_status = [&] {
+        if (services.status) {
+            app.finish_status(services.status());
+        }
+        if (services.notices) {
+            app.finish_notices(services.notices());
+        }
+    };
+    read_status();
+    auto next_status = now() + stale_interval;
     draw(screen, app, glyph);
     while (!app.done()) {
         const auto refreshed = poll(
@@ -2044,9 +2187,9 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
         const auto planned = poll(
             scoped, app.scope_plan_requested(), [&] { return app.start_scope_plan(); },
             [&](ScopePlan plan) { app.finish_scope_plan(std::move(plan)); });
-        if (services.status && now() >= next_status) {
+        if (now() >= next_status) {
             next_status = now() + stale_interval;
-            app.finish_status(services.status());
+            read_status();
         }
         bool found_stale = false;
         if (watches && !app.stale() && now() >= next_check) {
@@ -2078,6 +2221,11 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
             app.finish_steve_change(services.set_steve
                                         ? services.set_steve(change->setting, change->value)
                                         : std::unexpected(std::string{"no way to change steve"}));
+        } else if (const auto& notice = app.notice_change_requested()) {
+            app.finish_notice_change(
+                services.set_aside
+                    ? services.set_aside(notice->notice, notice->later)
+                    : std::unexpected(std::string{"this egraph has no way to set notices aside"}));
         } else if (app.watch_requested()) {
             app.finish_watch(services.watch ? services.watch() : std::vector<emerge::Snapshot>{},
                              services.sample ? services.sample() : pressure::Sample{},

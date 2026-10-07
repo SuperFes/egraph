@@ -990,8 +990,8 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     (`notices --dismiss`, `--later`, `--for`, `--all`).
   - 17e5: the interface.
     - 17e5a (done): a contextual hint bar (the keys for what is selected, `?` for all).
-    - 17e5b: a notices page beside the sets, its tab counting them; enter shows one, `x`
-      dismisses, `z` puts off with a small chooser.
+    - 17e5b (done): a notices page beside the sets, its tab counting them, the selected one's
+      detail below; `x` dismisses, `z` puts off with a small chooser.
     - 17e5c: working on a notice from its page: a GLSA's or masked package's update, a rebuild
       for missing libraries, `@preserved-rebuild`, a sync, the news item read, the
       configuration files listed.

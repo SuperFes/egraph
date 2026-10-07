@@ -15,6 +15,8 @@ from egraph_build import installed, repository
 from egraph_build import store as egraph_store
 from test_build import add_package, age, fresh_vardb
 from test_refresh import builds, query, system  # noqa: F401 (a fixture)
+from test_refresh import egraph as run_egraph
+from test_refresh import updates_system  # noqa: F401 (a fixture)
 
 EGRAPH = os.environ.get("EGRAPH")
 
@@ -311,6 +313,68 @@ def test_tui_builds_the_repository_index_the_first_time_it_searches(system, tmp_
         wait_for(socket, "EXIT=0")
     finally:
         tmux(socket, "kill-server")
+
+
+def test_tui_dismisses_and_puts_off_notices(updates_system, tmp_path):
+    skip_without_tui()
+    playground, path, builder, _ = updates_system
+    assert run_egraph(updates_system, "status", "--update").returncode == 0
+    status = json.loads((path.parent / "status.json").read_text())
+    (path.parent / "notices.json").write_text(
+        json.dumps(
+            {
+                "format": 1,
+                "written": 1790000000,
+                "stores": status["stores"],
+                "repositories": [{"name": "test_repo", "synced": 1700000000}],
+                "notices": [
+                    {
+                        "kind": "masked",
+                        "key": "masked:app-misc/x-1",
+                        "title": "app-misc/x-1 is masked",
+                        "detail": ["by package.mask"],
+                        "fingerprint": "package.mask",
+                        "since": 1790000000,
+                    }
+                ],
+            }
+        )
+    )
+    state = path.parent / "state"
+
+    socket = f"egraph-test-{os.getpid()}"
+    command = (
+        f"env XDG_STATE_HOME={state} {EGRAPH} --store {path}"
+        f" --config-root {playground.eroot} --eprefix {playground.eprefix}"
+        f" --builder {builder} --no-refresh tui; echo EXIT=$?; sleep 30"
+    )
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "120", "-y", "20", command)
+    try:
+        wait_for(socket, " @installed  @world  @system  notices 2 ")
+        tmux(socket, "send-keys", "-t", "t", "l", "l", "l")
+        wait_for(
+            socket, "2 notices", "masked    app-misc/x-1 is masked", "by package.mask"
+        )
+        tmux(socket, "send-keys", "-t", "t", "x")
+        wait_for(socket, "1 notice  1 set aside", gone=["app-misc/x-1 is masked"])
+        tmux(socket, "send-keys", "-t", "t", "z")
+        wait_for(socket, " Put off ", "2  a day")
+        tmux(socket, "send-keys", "-t", "t", "2")
+        wait_for(socket, "0 notices  2 set aside", "Nothing needs you")
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")
+    set_aside = json.loads((state / "egraph" / "set-aside.json").read_text())[
+        "set_aside"
+    ]
+    assert [(entry["key"], "until" in entry) for entry in set_aside] == [
+        ("masked:app-misc/x-1", False),
+        ("stale:test_repo", True),
+    ]
+    # The command line leaves out what the interface set aside.
+    rows = run_egraph(updates_system, "status").stdout.splitlines()
+    assert "notices\t0" in rows
 
 
 def test_tui_watches_running_emerges(playgrounds, tmp_path):

@@ -1054,9 +1054,89 @@ void App::finish_scope_plan(ScopePlan plan) {
     }
 }
 
+void App::finish_notices(std::optional<NoticesShown> notices) {
+    std::optional<std::string> selected;
+    if (notices_ && notice_cursor_.at < notices_->notices.size()) {
+        selected = notices_->notices.at(notice_cursor_.at).key;
+    }
+    notices_ = std::move(notices);
+    if (!notices_) {
+        on_notices_ = false;
+        putting_off_ = false;
+        notice_cursor_ = {};
+        return;
+    }
+    const auto& list = notices_->notices;
+    if (const auto at = std::ranges::find(list, selected, &Notice::key); at != list.end()) {
+        notice_cursor_.at = static_cast<std::size_t>(at - list.begin());
+    }
+    notice_cursor_.at = std::min(notice_cursor_.at, list.empty() ? 0 : list.size() - 1);
+    keep_visible(notice_cursor_, height_);
+}
+
+void App::finish_notice_change(const std::expected<void, std::string>& result) {
+    if (!notice_change_) {
+        return;
+    }
+    const auto key = notice_change_->notice.key;
+    const bool later = notice_change_->later.has_value();
+    notice_change_.reset();
+    if (!result) {
+        show({.error = true,
+              .title = later ? "Cannot put the notice off" : "Cannot dismiss the notice",
+              .lines = {result.error()}});
+        return;
+    }
+    if (notices_ && std::erase_if(notices_->notices,
+                                  [&key](const Notice& notice) { return notice.key == key; })) {
+        ++notices_->set_aside;
+        auto again = std::move(notices_);
+        finish_notices(std::move(again));
+    }
+}
+
+void App::handle_notices(const Key& key) {
+    const auto count = notices_ ? notices_->notices.size() : 0;
+    const bool on_notice = notice_cursor_.at < count && !notice_change_;
+    if (putting_off_) {
+        if (key.kind == KeyKind::escape) {
+            putting_off_ = false;
+        } else if (key.kind == KeyKind::character && key.code >= U'1' &&
+                   key.code - U'1' < put_off_choices.size()) {
+            putting_off_ = false;
+            if (on_notice) {
+                notice_change_ = NoticeChange{
+                    .notice = notices_->notices.at(notice_cursor_.at),
+                    .later = put_off_choices.at(static_cast<std::size_t>(key.code - U'1')).second};
+            }
+        }
+        return;
+    }
+    if (is(key, U'q') || is(key, U'Q')) {
+        done_ = true;
+    } else if (key.kind == KeyKind::left || is(key, U'h')) {
+        turn_page(-1);
+    } else if (key.kind == KeyKind::right || is(key, U'l')) {
+        turn_page(1);
+    } else if (is(key, U'x') && on_notice) {
+        notice_change_ = NoticeChange{.notice = notices_->notices.at(notice_cursor_.at)};
+    } else if (is(key, U'z') && on_notice) {
+        putting_off_ = true;
+    } else if (is_move(key)) {
+        move(notice_cursor_, count, key, height_);
+    }
+}
+
 void App::turn_page(int step) {
-    const auto at = static_cast<int>(scope_) + step;
-    if (!has_evaluated() || at < 0 || at >= static_cast<int>(scopes.size())) {
+    const std::size_t sets = has_evaluated() ? scopes.size() : 1;
+    const auto count = static_cast<int>(sets + (notices_ ? 1 : 0));
+    const int shown = on_notices_ ? count - 1 : has_evaluated() ? static_cast<int>(scope_) : 0;
+    const auto at = shown + step;
+    if (at < 0 || at >= count) {
+        return;
+    }
+    on_notices_ = notices_.has_value() && at == count - 1;
+    if (on_notices_ || !has_evaluated()) {
         return;
     }
     scope_ = scopes.at(static_cast<std::size_t>(at));
@@ -1152,6 +1232,8 @@ void App::handle(const Key& key) {
         keys_shown_ = false;
     } else if (dialog_) {
         handle_dialog(key);
+    } else if (putting_off_) {
+        handle_notices(key);
     } else if (prompt_) {
         handle_prompt(*prompt_, key);
     } else if (is(key, U':') && !typing()) {
@@ -1176,6 +1258,8 @@ void App::handle(const Key& key) {
         handle_watch(key);
     } else if (planned_) {
         handle_plan(key);
+    } else if (on_notices_) {
+        handle_notices(key);
     } else {
         handle_list(key);
     }
@@ -2652,7 +2736,7 @@ std::vector<Hint> list_keys(const App& app, const Glyphs& glyph) {
     const bool on_package = list.cursor.at < list.shown.size();
     const bool evaluated = app.has_evaluated();
     std::vector<Hint> keys{{.key = std::string{glyph.move}, .meaning = "move"}};
-    if (evaluated) {
+    if (evaluated || app.notices()) {
         keys.push_back({.key = std::string{glyph.pages}, .meaning = "page"});
     }
     keys.push_back({.key = std::string{glyph.enter}, .meaning = "open", .bar = on_package});
@@ -2792,6 +2876,28 @@ std::vector<Hint> plan_keys(const Planned& planned, const Glyphs& glyph) {
     return keys;
 }
 
+std::vector<Hint> notice_keys(const App& app, const Glyphs& glyph) {
+    if (app.putting_off()) {
+        std::vector<Hint> keys;
+        keys.reserve(put_off_choices.size() + 1);
+        for (std::size_t choice = 0; choice < put_off_choices.size(); ++choice) {
+            keys.push_back({.key = std::to_string(choice + 1),
+                            .meaning = std::string{put_off_choices.at(choice).first},
+                            .bar = true});
+        }
+        keys.push_back({.key = "esc", .meaning = "cancel", .bar = true});
+        return keys;
+    }
+    const auto& notices = app.notices();
+    const bool on_notice = notices && app.notice_cursor().at < notices->notices.size();
+    std::vector<Hint> keys{{.key = std::string{glyph.move}, .meaning = "move"},
+                           {.key = std::string{glyph.pages}, .meaning = "page"},
+                           {.key = "x", .meaning = "dismiss", .bar = on_notice},
+                           {.key = "z", .meaning = "later", .bar = on_notice}};
+    add_common(keys);
+    return keys;
+}
+
 } // namespace
 
 // In the order draw() picks the view on top.
@@ -2817,7 +2923,23 @@ std::vector<Hint> view_keys(const App& app, const Glyphs& glyph) {
     if (const auto& planned = app.planned()) {
         return plan_keys(*planned, glyph);
     }
+    if (app.on_notices()) {
+        return notice_keys(app, glyph);
+    }
     return list_keys(app, glyph);
+}
+
+Dialog put_off_dialog() {
+    Dialog dialog{.error = false,
+                  .title = "Put off",
+                  .lines = {},
+                  .question = false,
+                  .top = 0,
+                  .closing = " esc cancel "};
+    for (std::size_t choice = 0; choice < put_off_choices.size(); ++choice) {
+        dialog.lines.push_back(std::format("{}  {}", choice + 1, put_off_choices.at(choice).first));
+    }
+    return dialog;
 }
 
 Dialog keys_dialog(std::span<const Hint> hints) {

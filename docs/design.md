@@ -625,6 +625,12 @@ on what is selected or undoes a mode (a filter's "all"); `?` shows the whole lis
 (17e5a). The bar no longer outgrows a terminal as views gain keys, and the list the overlay
 shows cannot drift from the bar's.
 
+The notices page reads `notices.json` with the status file, on the same interval, rather than
+running egraph-build's notices: the page then costs a file read, and shows what `status`
+counts. Setting one aside goes through the same file `notices --dismiss` writes, pruned against
+that file's notices, so the two never disagree; one set aside leaves the page at once rather
+than at the next read (17e5b).
+
 Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
 touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
 the set is emerge's own. `parse_request` takes sets the store does not hold from its caller
