@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <string>
@@ -41,6 +42,12 @@ inline constexpr std::uint32_t section_strings = 3;
 [[nodiscard]] std::expected<std::vector<std::span<const std::byte>>, StoreError>
 sections(std::span<const std::byte> data EGRAPH_LIFETIMEBOUND, const Magic& magic,
          std::string_view kind, std::uint32_t version, std::size_t count);
+
+// The build start in ns a store file's meta records, read from its header, section table and
+// meta section alone.
+[[nodiscard]] std::expected<std::uint64_t, StoreError>
+build_time(const std::filesystem::path& path, const Magic& magic, std::string_view kind,
+           std::uint32_t version, std::size_t count);
 
 // Reads one section. The first failure sticks: later reads return zero, which ends every loop,
 // and error() reports where it happened.

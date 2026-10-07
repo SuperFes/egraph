@@ -157,6 +157,10 @@ struct Stores {
 // every package id, stays the installed store's.
 [[nodiscard]] Store with_dynamic_deps(Store installed, const Evaluated& evaluated);
 
+// The build start the evaluated store at path records, without decoding the rest.
+[[nodiscard]] std::expected<std::uint64_t, StoreError>
+evaluated_build_time(const std::filesystem::path& path);
+
 // Beside the installed store: its last extension replaced by .evaluated.egraph.
 [[nodiscard]] std::filesystem::path evaluated_store_path(const std::filesystem::path& installed);
 

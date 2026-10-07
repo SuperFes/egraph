@@ -194,6 +194,11 @@ std::expected<Store, StoreError> load(const std::filesystem::path& path) {
     });
 }
 
+std::expected<std::uint64_t, StoreError> store_build_time(const std::filesystem::path& path) {
+    return encoding::build_time(path, encoding::installed_magic, "an egraph store",
+                                store_format_version, section_count);
+}
+
 std::filesystem::path default_store_path(const std::filesystem::path& root,
                                          const std::filesystem::path& eprefix) {
     return root / eprefix.relative_path() / "var/cache/egraph/installed.egraph";

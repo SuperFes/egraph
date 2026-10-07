@@ -314,7 +314,10 @@ def test_history_shows_what_pulled_a_package_in(system):
     now = egraph(system, "--layout", "human", "history", "dev-libs/alt-b")
     assert now.returncode == 0, now.stderr
     assert "dev-libs/alt-b-1 merged " in now.stdout
-    assert "; no generation holds it, so now:\n" in now.stdout and "@selected" in now.stdout
+    assert (
+        "; no generation holds it, so now:\n" in now.stdout
+        and "@selected" in now.stdout
+    )
     # Once a later change keeps the system it arrived in as a generation.
     shutil.rmtree(vdb(playground, "dev-libs/cond-1"))
     then = egraph(system, "--layout", "human", "history", "dev-libs/alt-b")

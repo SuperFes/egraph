@@ -934,12 +934,17 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     `updates --world -D -N --held` as lines, the counts (upgrades, downgrades, rebuilds, new,
     held, uninstalls, masked, refused), each repository's snapshot time (`metadata/timestamp.chk`,
     as `emerge --info` shows it; none for a plain git checkout) and the build times of the three
-    stores it was planned from, so a reader can tell it from a current one. Planned again when
+    stores it was planned from, each with its path (a user's installed store may read the
+    system's repository index), so a reader can tell it from a current one. Planned again when
     those differ from the file's (`sync`: only the repository index's, rebuilt by a sync or a
     configuration edit, not by a merge). Skipped where the user cannot write; never fails a
     refresh. Security waits for 17e's GLSA matching.
-  - 17d2: `egraph status`, reading it without planning: a summary on a terminal, `key\tvalue`
-    lines piped, `--json`; `--update` plans and writes it now, for systems without the service.
+  - 17d2 (done): `egraph status`, reading it without planning: the non-zero counts, each
+    repository's sync age and the plan's on a terminal, `key\tvalue` lines piped, `--json`;
+    current while each recorded store still records its build time, read from the header and
+    meta section alone (1 ms in all). Without `--store`, the system's file or the user's,
+    whichever is current, else the newer. `--update` plans and writes it now, for systems
+    without the service.
   - 17d3: the interface opens on the stored plan while it is current.
 - 17e: notifications, moved here from step 20: GLSAs matched against the store, a stale sync,
   broken soname dependencies after a merge, unread news, masked installed packages; in the

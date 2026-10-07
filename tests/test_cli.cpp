@@ -164,6 +164,15 @@ TEST_CASE("history takes any arguments, sorted out later") {
           std::vector<std::string>{"3d", "app-misc/foo"});
 }
 
+TEST_CASE("status takes --json and --update") {
+    const auto plain = std::get<egraph::StatusCommand>(parse("status").command);
+    CHECK_FALSE(plain.json);
+    CHECK_FALSE(plain.update);
+    const auto both = std::get<egraph::StatusCommand>(parse("status --update --json").command);
+    CHECK(both.json);
+    CHECK(both.update);
+}
+
 TEST_CASE("export takes a format and any number of packages") {
     const auto plain = parse("export");
     const auto* defaults = std::get_if<egraph::Export>(&plain.command);

@@ -266,7 +266,10 @@ def test_watch_writes_the_plan_to_the_status_file_after_each_refresh(updates_sys
         add_package(playground, "dev-libs/alt-b-1")
         assert "egraph: watch: refreshed in " in lines.get(timeout=120)
         second = status(system)
-        assert second["stores"]["installed"] > first["stores"]["installed"]
+        assert (
+            second["stores"]["installed"]["built"]
+            > first["stores"]["installed"]["built"]
+        )
         assert (
             second["lines"]
             == egraph(system, *first["command"].split()).stdout.splitlines()

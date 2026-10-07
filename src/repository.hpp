@@ -103,6 +103,10 @@ decode_repository(std::span<const std::byte> data);
 [[nodiscard]] std::expected<RepositoryIndex, StoreError>
 load_repository(const std::filesystem::path& path);
 
+// The build start the repository index at path records, without decoding the rest.
+[[nodiscard]] std::expected<std::uint64_t, StoreError>
+repository_build_time(const std::filesystem::path& path);
+
 // Beside the installed store: its last extension replaced by .repository.egraph.
 [[nodiscard]] std::filesystem::path repository_index_path(const std::filesystem::path& installed);
 

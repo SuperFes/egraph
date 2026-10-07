@@ -282,6 +282,11 @@ Store with_dynamic_deps(Store store, const Evaluated& evaluated) {
     return store;
 }
 
+std::expected<std::uint64_t, StoreError> evaluated_build_time(const std::filesystem::path& path) {
+    return encoding::build_time(path, encoding::evaluated_magic, "an evaluated egraph store",
+                                evaluated_format_version, section_count);
+}
+
 std::filesystem::path evaluated_store_path(const std::filesystem::path& installed) {
     auto path = installed;
     return path.replace_extension(".evaluated.egraph");

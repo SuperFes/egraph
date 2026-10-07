@@ -79,6 +79,10 @@ class Session {
 
     // The installed store's path, once one is loaded: the system store or the user's.
     [[nodiscard]] const std::filesystem::path& used() const EGRAPH_LIFETIMEBOUND { return used_; }
+    // The repository index's, once loaded: beside whichever installed store was current for it.
+    [[nodiscard]] const std::filesystem::path& repository_used() const EGRAPH_LIFETIMEBOUND {
+        return repository_used_;
+    }
 
   private:
     Invocation invocation_;
@@ -87,6 +91,7 @@ class Session {
     std::optional<Store> installed_;
     std::shared_ptr<const Stores> stores_;
     std::shared_ptr<const RepositoryIndex> repository_;
+    std::filesystem::path repository_used_;
     std::optional<Store> dynamic_;
     std::array<std::optional<Graph>, 2> graphs_;
     // By build_deps, then dynamic.

@@ -23,11 +23,19 @@ inline constexpr int status_format = 1;
 // The plan the status holds, as egraph's arguments.
 inline constexpr std::string_view status_command = "updates --world -D -N --held";
 
-// The stores a status was planned from, by their build times.
+// A store file and the build start it records.
+struct StoreBuild {
+    std::string path;
+    std::uint64_t built = 0;
+    auto operator<=>(const StoreBuild&) const = default;
+};
+
+// The stores a status was planned from, each where it was read: the repository index may be the
+// system's beside a user's installed store.
 struct StatusStores {
-    std::uint64_t installed = 0;
-    std::uint64_t evaluated = 0;
-    std::uint64_t repository = 0;
+    StoreBuild installed;
+    StoreBuild evaluated;
+    StoreBuild repository;
     auto operator<=>(const StatusStores&) const = default;
 };
 
@@ -71,14 +79,34 @@ struct Status {
 [[nodiscard]] std::optional<Seconds> repository_synced(const std::filesystem::path& location);
 
 // As one JSON object and a newline; parse_status takes it back, refusing another format.
-[[nodiscard]] std::string status_json(const Status& status);
+// With current, also whether it is current against its stores.
+[[nodiscard]] std::string status_json(const Status& status,
+                                      std::optional<bool> current = std::nullopt);
 [[nodiscard]] std::expected<Status, std::string> parse_status(std::string_view text);
 
 // Beside the installed store: status.json.
 [[nodiscard]] std::filesystem::path status_path(const std::filesystem::path& installed);
 
+// Whether each store file still records the build start it did: whether a status planned from
+// them is current.
+[[nodiscard]] bool stores_unchanged(const StatusStores& stores);
+
+// "just now", "1 minute ago", "5 hours ago", "3 days ago": from then to now, rounded down.
+[[nodiscard]] std::string age_text(Seconds then, Seconds now);
+
+// For a terminal: the counts that are not zero ("143 upgrades, 4 rebuilds, 2 held", or "no
+// updates"), and that emerge would refuse the plan; then each repository's sync age; then when it
+// was planned, or that the stores changed since (not current).
+[[nodiscard]] std::vector<std::string> status_summary(const Status& status, bool current,
+                                                      Seconds now);
+
+// For a status bar, "key<TAB>value": each count, refused and current as yes or no, written in
+// seconds, then "synced<TAB>repository<TAB>seconds" for each repository, empty without a time.
+[[nodiscard]] std::vector<std::string> status_lines(const Status& status, bool current);
+
 // Whether a refresh that left the stores at now plans anew, recorded being the stores the
-// status file was planned from (none without a readable one).
+// status file was planned from (none without a readable one); with sync, only when the
+// repository index differs.
 [[nodiscard]] bool status_due(PlanWhen when, const std::optional<StatusStores>& recorded,
                               const StatusStores& now);
 

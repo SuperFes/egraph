@@ -282,6 +282,7 @@ Loaded<RepositoryIndex> Session::repository() {
             return std::unexpected(std::move(loaded.error()));
         }
         repository_ = std::make_shared<const RepositoryIndex>(std::move(*loaded));
+        repository_used_ = repository_index_path(used);
     }
     return std::cref(*repository_);
 }

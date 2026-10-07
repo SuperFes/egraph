@@ -1,10 +1,13 @@
 #include "encoding.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <format>
+#include <fstream>
 #include <limits>
 #include <ranges>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 
 namespace egraph::encoding {
@@ -41,28 +44,54 @@ std::uint32_t size32(std::size_t size) {
     return static_cast<std::uint32_t>(size);
 }
 
+namespace {
+
+// The header of a file of size bytes, whose first bytes are header.
+std::optional<StoreError> check_header(std::span<const std::byte> header, std::uint64_t size,
+                                       const Magic& magic, std::string_view kind,
+                                       std::uint32_t version, std::size_t count) {
+    if (size > std::numeric_limits<std::uint32_t>::max()) {
+        return StoreError{.message = "store of 4 GiB or more"};
+    }
+    if (header.size() < header_size) {
+        return StoreError{.message = "truncated header"};
+    }
+    if (!std::ranges::equal(header.first(magic.size()), magic)) {
+        return StoreError{.message = std::format("not {}", kind)};
+    }
+    const auto found_version = size32(little_endian(header.subspan(8, 4)));
+    if (found_version != version) {
+        return StoreError{
+            .message = std::format("format version {}, expected {}", found_version, version),
+            .mismatch = FormatMismatch{
+                .kind = std::string{kind}, .found = found_version, .expected = version}};
+    }
+    if (little_endian(header.subspan(12, 4)) != count ||
+        size < header_size + (entry_size * count)) {
+        return StoreError{.message = "bad section table"};
+    }
+    return std::nullopt;
+}
+
+// length bytes of in from offset.
+std::optional<std::vector<std::byte>> read_at(std::ifstream& in, std::uint64_t offset,
+                                              std::uint64_t length) {
+    std::string buffer(static_cast<std::size_t>(length), '\0');
+    in.seekg(static_cast<std::streamoff>(offset));
+    if (!in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()))) {
+        return std::nullopt;
+    }
+    const auto bytes = std::as_bytes(std::span{buffer});
+    return std::vector<std::byte>(bytes.begin(), bytes.end());
+}
+
+} // namespace
+
 std::expected<std::vector<std::span<const std::byte>>, StoreError>
 sections(std::span<const std::byte> data, const Magic& magic, std::string_view kind,
          std::uint32_t version, std::size_t count) {
-    if (data.size() > std::numeric_limits<std::uint32_t>::max()) {
-        return failure("store of 4 GiB or more");
-    }
-    if (data.size() < header_size) {
-        return failure("truncated header");
-    }
-    if (!std::ranges::equal(data.first(magic.size()), magic)) {
-        return failure(std::format("not {}", kind));
-    }
-    const auto found_version = size32(little_endian(data.subspan(8, 4)));
-    if (found_version != version) {
-        return std::unexpected(StoreError{
-            .message = std::format("format version {}, expected {}", found_version, version),
-            .mismatch = FormatMismatch{
-                .kind = std::string{kind}, .found = found_version, .expected = version}});
-    }
-    if (little_endian(data.subspan(12, 4)) != count ||
-        data.size() < header_size + (entry_size * count)) {
-        return failure("bad section table");
+    if (auto error = check_header(data, data.size(), magic, kind, version, count)) {
+        return std::unexpected(std::move(*error));
     }
 
     std::vector<std::optional<std::span<const std::byte>>> found(count);
@@ -86,6 +115,66 @@ sections(std::span<const std::byte> data, const Magic& magic, std::string_view k
         out.push_back(section.value_or(std::span<const std::byte>{}));
     }
     return out;
+}
+
+std::expected<std::uint64_t, StoreError> build_time(const std::filesystem::path& path,
+                                                    const Magic& magic, std::string_view kind,
+                                                    std::uint32_t version, std::size_t count) {
+    const auto failed = [&path](StoreError error) {
+        error.message = std::format("{}: {}", path.string(), error.message);
+        if (error.mismatch) {
+            error.mismatch->path = path;
+        }
+        return std::unexpected(std::move(error));
+    };
+    std::ifstream in(path, std::ios::binary | std::ios::ate);
+    if (!in) {
+        const std::error_code error(errno, std::generic_category());
+        return failed(StoreError{.message = error.message()});
+    }
+    const auto end = in.tellg();
+    if (end < 0) {
+        return failed(StoreError{.message = "cannot determine size"});
+    }
+    const auto size = static_cast<std::uint64_t>(end);
+    const auto header = read_at(in, 0, std::min<std::uint64_t>(size, header_size));
+    if (!header) {
+        return failed(StoreError{.message = "short read"});
+    }
+    if (auto error = check_header(*header, size, magic, kind, version, count)) {
+        return failed(std::move(*error));
+    }
+    const auto table = read_at(in, header_size, entry_size * count);
+    if (!table) {
+        return failed(StoreError{.message = "short read"});
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto entry = std::span{*table}.subspan(entry_size * i, entry_size);
+        if (little_endian(entry.first(4)) != section_meta) {
+            continue;
+        }
+        const auto offset = little_endian(entry.subspan(4, 8));
+        const auto length = little_endian(entry.subspan(12, 8));
+        if (offset > size || length > size - offset) {
+            return failed(
+                StoreError{.message = std::format("section {} outside the file", section_meta)});
+        }
+        const auto meta = read_at(in, offset, length);
+        if (!meta) {
+            return failed(StoreError{.message = "short read"});
+        }
+        // Every kind's meta starts so.
+        Reader r(*meta, "meta");
+        r.text();
+        r.text();
+        r.text();
+        const auto time = r.varint();
+        if (const auto& error = r.error()) {
+            return failed(*error);
+        }
+        return time;
+    }
+    return failed(StoreError{.message = std::format("no section {}", section_meta)});
 }
 
 std::uint64_t Reader::varint() {

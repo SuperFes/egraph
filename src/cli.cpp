@@ -1438,41 +1438,11 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
         [&](const Invocation& again) { return execute(command, session, again, out, err); });
 }
 
-// With the session's stores just refreshed, the updates planned and written to the status file
-// beside them when the settings ask for it then; why not, when that failed. Skipped where this
-// user cannot write.
-std::optional<std::string> refresh_status(Session& session, const Invocation& invocation) {
-    const auto path = status_path(session.used());
-    if (!os::can_create(path)) {
-        return std::nullopt;
-    }
-    const auto settings = read_settings(settings_path(config_root(invocation)));
-    if (!settings) {
-        return settings.error() + ", so no plan is made";
-    }
-    const auto stores = session.stores();
-    if (!stores) {
-        return stores.error();
-    }
-    const auto index = session.repository();
-    if (!index) {
-        return index.error();
-    }
-    const StatusStores now{.installed = stores->get().installed.meta.build_time_ns,
-                           .evaluated = stores->get().evaluated.meta.build_time_ns,
-                           .repository = index->get().meta.build_time_ns};
-    std::optional<StatusStores> recorded;
-    if (const auto bytes = read_file(path)) {
-        std::string text(bytes->size(), '\0');
-        std::ranges::transform(*bytes, text.begin(),
-                               [](std::byte b) { return static_cast<char>(b); });
-        if (const auto old = parse_status(text)) {
-            recorded = old->stores;
-        }
-    }
-    if (!status_due(settings->plan, recorded, now)) {
-        return std::nullopt;
-    }
+// The updates planned on the session's stores, now, and written to the status file at path; why
+// not, when that failed.
+std::optional<std::string> write_status(Session& session, const Invocation& invocation,
+                                        const StatusStores& now,
+                                        const std::filesystem::path& path) {
     auto lines_invocation = invocation;
     lines_invocation.layout = Layout::lines;
     Updates command;
@@ -1496,6 +1466,10 @@ std::optional<std::string> refresh_status(Session& session, const Invocation& in
                   .counts = plan_counts(shown->plan),
                   .repositories = {},
                   .lines = {}};
+    const auto index = session.repository();
+    if (!index) {
+        return index.error();
+    }
     const auto& repository_index = index->get();
     for (const auto& repository : repository_index.repositories) {
         const auto location = repository_index.string(repository.location);
@@ -1512,6 +1486,58 @@ std::optional<std::string> refresh_status(Session& session, const Invocation& in
         return std::format("cannot write {}: {}", path.string(), written.error().message());
     }
     return std::nullopt;
+}
+
+// The build times of the session's stores, loading (and refreshing) them.
+std::expected<StatusStores, std::string> session_build_times(Session& session) {
+    const auto stores = session.stores();
+    if (!stores) {
+        return std::unexpected(stores.error());
+    }
+    const auto index = session.repository();
+    if (!index) {
+        return std::unexpected(index.error());
+    }
+    return StatusStores{.installed = {.path = session.used().string(),
+                                      .built = stores->get().installed.meta.build_time_ns},
+                        .evaluated = {.path = evaluated_store_path(session.used()).string(),
+                                      .built = stores->get().evaluated.meta.build_time_ns},
+                        .repository = {.path = session.repository_used().string(),
+                                       .built = index->get().meta.build_time_ns}};
+}
+
+// The status file at path, or why it cannot be read.
+std::expected<Status, std::string> read_status(const std::filesystem::path& path) {
+    const auto bytes = read_file(path);
+    if (!bytes) {
+        return std::unexpected(bytes.error().message);
+    }
+    std::string text(bytes->size(), '\0');
+    std::ranges::transform(*bytes, text.begin(), [](std::byte b) { return static_cast<char>(b); });
+    return parse_status(text).transform_error(
+        [&path](const std::string& error) { return std::format("{}: {}", path.string(), error); });
+}
+
+// With the session's stores just refreshed, the status file beside them written anew when the
+// settings ask for it then; why not, when that failed. Skipped where this user cannot write.
+std::optional<std::string> refresh_status(Session& session, const Invocation& invocation) {
+    const auto path = status_path(session.used());
+    if (!os::can_create(path)) {
+        return std::nullopt;
+    }
+    const auto settings = read_settings(settings_path(config_root(invocation)));
+    if (!settings) {
+        return settings.error() + ", so no plan is made";
+    }
+    const auto now = session_build_times(session);
+    if (!now) {
+        return now.error();
+    }
+    const auto old = read_status(path);
+    if (!status_due(settings->plan, old ? std::optional{old->stores} : std::nullopt, *now)) {
+        return std::nullopt;
+    }
+    return write_status(session, invocation, *now, path);
 }
 
 // The request the targets name, the cps only the repositories know evaluated first.
@@ -2932,6 +2958,92 @@ Exit execute(const Diff& command, Session& session, const Invocation& invocation
     return Exit::ok;
 }
 
+// A status file and whether it is current against the stores beside it.
+struct FoundStatus {
+    std::filesystem::path path;
+    Status status;
+    bool current = false;
+};
+
+FoundStatus found_status(const std::filesystem::path& path, Status status) {
+    const bool current = stores_unchanged(status.stores);
+    return {.path = path, .status = std::move(status), .current = current};
+}
+
+// The status file beside --store; without, the system store's or the user's, whichever is
+// current, else the newer. The error names where none was found.
+std::expected<FoundStatus, std::string> find_status(const Invocation& invocation) {
+    std::vector<std::filesystem::path> stores;
+    if (invocation.store) {
+        stores.push_back(*invocation.store);
+    } else {
+        stores.push_back(system_store_path(invocation));
+        if (const auto user = user_store_path(invocation); user && *user != stores.front()) {
+            stores.push_back(*user);
+        }
+    }
+    std::optional<FoundStatus> found;
+    std::string error;
+    for (const auto& installed : stores) {
+        auto status = read_status(status_path(installed));
+        if (!status) {
+            if (std::filesystem::exists(status_path(installed))) {
+                error = status.error();
+            }
+            continue;
+        }
+        auto candidate = found_status(status_path(installed), std::move(*status));
+        if (!found || (candidate.current && !found->current) ||
+            (candidate.current == found->current &&
+             candidate.status.written > found->status.written)) {
+            found = std::move(candidate);
+        }
+    }
+    if (found) {
+        return std::move(*found);
+    }
+    if (!error.empty()) {
+        return std::unexpected(std::move(error));
+    }
+    return std::unexpected(std::format("no status file at {}; egraphd writes it as it refreshes "
+                                       "the stores, or egraph status --update now",
+                                       status_path(stores.front()).string()));
+}
+
+Exit execute(const StatusCommand& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    std::expected<FoundStatus, std::string> found = std::unexpected(std::string{});
+    if (command.update) {
+        const auto now = session_build_times(session);
+        if (!now) {
+            return fail(err, now.error());
+        }
+        const auto path = status_path(session.used());
+        if (const auto error = write_status(session, invocation, *now, path)) {
+            err << "egraph: status: " << *error << '\n';
+            return Exit::failure;
+        }
+        found = read_status(path).transform(
+            [&path](Status status) { return found_status(path, std::move(status)); });
+    } else {
+        found = find_status(invocation);
+    }
+    if (!found) {
+        err << "egraph: status: " << found.error() << '\n';
+        return Exit::failure;
+    }
+    if (command.json) {
+        out << status_json(found->status, found->current);
+    } else if (style(invocation).human) {
+        write_lines(out, status_summary(found->status, found->current,
+                                        std::chrono::floor<std::chrono::seconds>(
+                                            std::chrono::system_clock::now())));
+    } else {
+        write_lines(out, status_lines(found->status, found->current));
+    }
+    return Exit::ok;
+}
+
 Exit execute(const HistoryCommand& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     using namespace std::chrono;
@@ -3450,6 +3562,16 @@ void configure(CLI::App& app, Invocation& invocation) {
               "An age (12h, 3d, 2w) or a date (2026-09-30) to start from, and installed cpvs "
               "or atoms")
         ->type_name("WHEN|PACKAGE");
+    CLI::App* status_cmd = add_command<StatusCommand>(
+        app, invocation,
+        "The updates egraph watch last planned, counted, and each repository's last sync, "
+        "without planning anything");
+    status_cmd->add_flag_callback(
+        "--json", [&invocation] { std::get<StatusCommand>(invocation.command).json = true; },
+        "Write the status file, and whether it is current, as JSON");
+    status_cmd->add_flag_callback(
+        "--update", [&invocation] { std::get<StatusCommand>(invocation.command).update = true; },
+        "Plan the updates and write the status file first");
     add_command<Tui>(app, invocation, "Browse the graph in a terminal interface");
     add_command<Shell>(app, invocation,
                        "Answer commands read one per line from standard input, loading the stores "

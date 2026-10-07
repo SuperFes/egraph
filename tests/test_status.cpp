@@ -1,6 +1,8 @@
 #include "status.hpp"
 
+#include "evaluated.hpp"
 #include "helpers.hpp"
+#include "store_writer.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -79,7 +81,11 @@ TEST_CASE("a repository's sync time is its timestamp.chk, as emerge --info reads
 TEST_CASE("a status goes to JSON and back") {
     const egraph::Status status{
         .written = at(2026y / oct / 6, 12h),
-        .stores = {.installed = 1, .evaluated = 2, .repository = 18'000'000'000'000'000'000U},
+        .stores = {.installed = {.path = "/var/cache/egraph/installed.egraph", .built = 1},
+                   .evaluated = {.path = "/var/cache/egraph/installed.evaluated.egraph",
+                                 .built = 2},
+                   .repository = {.path = "/var/cache/egraph/installed.repository.egraph",
+                                  .built = 18'000'000'000'000'000'000U}},
         .counts = {.upgrades = 3, .held = 1, .refused = true},
         .repositories = {{.name = "gentoo", .synced = at(2026y / oct / 5)}, {.name = "local"}},
         .lines = {"app-misc/foo-1\tupgrade\tapp-misc/foo-2\tgentoo"}};
@@ -102,9 +108,15 @@ TEST_CASE("the status file is beside the installed store") {
 }
 
 TEST_CASE("which refreshes plan anew") {
-    const StatusStores before{.installed = 1, .evaluated = 1, .repository = 1};
-    const StatusStores merged{.installed = 2, .evaluated = 2, .repository = 1};
-    const StatusStores synced{.installed = 1, .evaluated = 2, .repository = 2};
+    const auto stores = [](std::uint64_t installed, std::uint64_t evaluated,
+                           std::uint64_t repository) {
+        return StatusStores{.installed = {.path = "i", .built = installed},
+                            .evaluated = {.path = "e", .built = evaluated},
+                            .repository = {.path = "r", .built = repository}};
+    };
+    const auto before = stores(1, 1, 1);
+    const auto merged = stores(2, 2, 1);
+    const auto synced = stores(1, 2, 2);
     CHECK(egraph::status_due(PlanWhen::refresh, std::nullopt, before));
     CHECK(egraph::status_due(PlanWhen::sync, std::nullopt, before));
     CHECK(!egraph::status_due(PlanWhen::never, std::nullopt, before));
@@ -114,4 +126,98 @@ TEST_CASE("which refreshes plan anew") {
     CHECK(!egraph::status_due(PlanWhen::sync, before, merged));
     CHECK(egraph::status_due(PlanWhen::sync, before, synced));
     CHECK(!egraph::status_due(PlanWhen::never, before, synced));
+}
+
+TEST_CASE("a store's build time is read from its header and meta alone") {
+    const TempDir dir;
+    const auto installed = dir.path() / "installed.egraph";
+    // Packages that do not decode.
+    egraph::test::write_bytes(installed,
+                              egraph::test::with_section(4, egraph::test::Bytes{}.varint(9)));
+    REQUIRE(!egraph::load(installed));
+    CHECK(egraph::store_build_time(installed) == 42);
+    const auto evaluated = dir.path() / "installed.evaluated.egraph";
+    egraph::test::write_bytes(evaluated,
+                              egraph::test::assemble_evaluated(egraph::test::evaluated_sections()));
+    CHECK(egraph::evaluated_build_time(evaluated) == 43);
+    CHECK(egraph::store_build_time(evaluated).error().message ==
+          evaluated.string() + ": not an egraph store");
+    CHECK(egraph::store_build_time(dir.path() / "none.egraph")
+              .error()
+              .message.starts_with((dir.path() / "none.egraph").string() + ": "));
+    egraph::test::write_bytes(installed,
+                              egraph::test::assemble(egraph::test::sample_sections(), 1));
+    const auto old = egraph::store_build_time(installed);
+    REQUIRE(old.error().mismatch);
+    CHECK(old.error().mismatch->found == 1);
+    egraph::test::write_bytes(installed, egraph::test::assemble({}, egraph::store_format_version));
+    CHECK(!egraph::store_build_time(installed));
+}
+
+TEST_CASE("a status is current while its stores record the build times it does") {
+    const TempDir dir;
+    const auto installed = dir.path() / "installed.egraph";
+    const auto evaluated = dir.path() / "installed.evaluated.egraph";
+    egraph::test::write_bytes(installed, egraph::test::assemble(egraph::test::sample_sections()));
+    egraph::test::write_bytes(evaluated,
+                              egraph::test::assemble_evaluated(egraph::test::evaluated_sections()));
+    // No repository index decodes without one, so the evaluated store stands in for its path.
+    StatusStores stores{.installed = {.path = installed.string(), .built = 42},
+                        .evaluated = {.path = evaluated.string(), .built = 43},
+                        .repository = {.path = (dir.path() / "none").string(), .built = 1}};
+    CHECK(!egraph::stores_unchanged(stores));
+}
+
+TEST_CASE("ages, rounded down") {
+    const auto now = at(2026y / oct / 6, 12h);
+    CHECK(egraph::age_text(now - 59s, now) == "just now");
+    CHECK(egraph::age_text(now - 1min, now) == "1 minute ago");
+    CHECK(egraph::age_text(now - 119min, now) == "1 hour ago");
+    CHECK(egraph::age_text(now - 5h, now) == "5 hours ago");
+    CHECK(egraph::age_text(now - 47h, now) == "1 day ago");
+    CHECK(egraph::age_text(now - 72h, now) == "3 days ago");
+    // A clock set back.
+    CHECK(egraph::age_text(now + 1h, now) == "just now");
+}
+
+TEST_CASE("a status summed up for a terminal") {
+    const auto now = at(2026y / oct / 6, 12h);
+    egraph::Status status{
+        .written = now - 5min,
+        .stores = {},
+        .counts = {.upgrades = 143, .rebuilds = 4, .held = 2},
+        .repositories = {{.name = "gentoo", .synced = now - 72h}, {.name = "local"}},
+        .lines = {}};
+    CHECK(egraph::status_summary(status, true, now) ==
+          std::vector<std::string>{"143 upgrades, 4 rebuilds, 2 held", "gentoo synced 3 days ago",
+                                   "planned 5 minutes ago"});
+    status.counts = {.downgrades = 1, .added = 1, .uninstalls = 2, .masked = 1, .refused = true};
+    status.repositories.clear();
+    CHECK(egraph::status_summary(status, false, now) ==
+          std::vector<std::string>{
+              "1 downgrade, 1 new, 2 uninstalls, 1 masked; emerge would refuse the plan",
+              "planned 5 minutes ago, before the stores last changed"});
+    status.counts = {};
+    CHECK(egraph::status_summary(status, true, now).front() == "no updates");
+}
+
+TEST_CASE("a status as lines for a status bar") {
+    const egraph::Status status{
+        .written = at(2026y / oct / 6, 12h),
+        .stores = {},
+        .counts = {.upgrades = 3, .held = 1, .refused = true},
+        .repositories = {{.name = "gentoo", .synced = at(2026y / oct / 5)}, {.name = "local"}},
+        .lines = {}};
+    CHECK(egraph::status_lines(status, false) ==
+          std::vector<std::string>{"upgrades\t3", "downgrades\t0", "rebuilds\t0", "new\t0",
+                                   "held\t1", "uninstalls\t0", "masked\t0", "refused\tyes",
+                                   "current\tno", "written\t1791288000",
+                                   "synced\tgentoo\t1791158400", "synced\tlocal\t"});
+}
+
+TEST_CASE("a status as JSON says whether it is current when asked") {
+    const egraph::Status status;
+    CHECK(egraph::status_json(status).find("current") == std::string::npos);
+    CHECK(egraph::status_json(status, true).find("\"current\":true") != std::string::npos);
+    CHECK(egraph::parse_status(egraph::status_json(status, false)) == status);
 }

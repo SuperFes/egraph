@@ -163,6 +163,11 @@ std::expected<RepositoryIndex, StoreError> load_repository(const std::filesystem
     });
 }
 
+std::expected<std::uint64_t, StoreError> repository_build_time(const std::filesystem::path& path) {
+    return encoding::build_time(path, encoding::repository_magic, "an egraph repository index",
+                                repository_format_version, section_count);
+}
+
 std::filesystem::path repository_index_path(const std::filesystem::path& installed) {
     auto path = installed;
     return path.replace_extension(".repository.egraph");

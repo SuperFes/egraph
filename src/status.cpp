@@ -1,11 +1,17 @@
 #include "status.hpp"
 
+#include "evaluated.hpp"
+#include "repository.hpp"
+#include "store.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <format>
 #include <fstream>
 #include <locale>
 #include <sstream>
+#include <tuple>
 #include <utility>
 
 namespace egraph {
@@ -36,18 +42,36 @@ std::optional<Seconds> time_at(const Json& object, std::string_view key) {
     return Seconds{std::chrono::seconds{found->get<std::int64_t>()}};
 }
 
+std::optional<StoreBuild> build_of(const Json& stores, std::string_view key) {
+    const auto found = stores.find(key);
+    if (found == stores.end() || !found->is_object()) {
+        return std::nullopt;
+    }
+    const auto path = found->find("path");
+    const auto built = number_at(*found, "built");
+    if (path == found->end() || !path->is_string() || !built) {
+        return std::nullopt;
+    }
+    return StoreBuild{.path = path->get<std::string>(), .built = *built};
+}
+
 std::optional<StatusStores> stores_of(const Json& stores) {
     if (!stores.is_object()) {
         return std::nullopt;
     }
-    const auto installed = number_at(stores, "installed");
-    const auto evaluated = number_at(stores, "evaluated");
-    const auto repository = number_at(stores, "repository");
+    auto installed = build_of(stores, "installed");
+    auto evaluated = build_of(stores, "evaluated");
+    auto repository = build_of(stores, "repository");
     if (!installed || !evaluated || !repository) {
         return std::nullopt;
     }
-    return StatusStores{
-        .installed = *installed, .evaluated = *evaluated, .repository = *repository};
+    return StatusStores{.installed = std::move(*installed),
+                        .evaluated = std::move(*evaluated),
+                        .repository = std::move(*repository)};
+}
+
+Json build_json(const StoreBuild& build) {
+    return {{"path", build.path}, {"built", build.built}};
 }
 
 std::optional<PlanCounts> counts_of(const Json& counts) {
@@ -146,7 +170,7 @@ std::optional<Seconds> repository_synced(const std::filesystem::path& location) 
     return parse_sync_timestamp(line);
 }
 
-std::string status_json(const Status& status) {
+std::string status_json(const Status& status, std::optional<bool> current) {
     auto repositories = Json::array();
     for (const auto& repository : status.repositories) {
         Json entry{{"name", repository.name}};
@@ -156,24 +180,28 @@ std::string status_json(const Status& status) {
         repositories.push_back(std::move(entry));
     }
     const auto& counts = status.counts;
-    const Json document{{"format", status_format},
-                        {"command", std::string{status_command}},
-                        {"written", status.written.time_since_epoch().count()},
-                        {"stores",
-                         {{"installed", status.stores.installed},
-                          {"evaluated", status.stores.evaluated},
-                          {"repository", status.stores.repository}}},
-                        {"counts",
-                         {{"upgrades", counts.upgrades},
-                          {"downgrades", counts.downgrades},
-                          {"rebuilds", counts.rebuilds},
-                          {"new", counts.added},
-                          {"held", counts.held},
-                          {"uninstalls", counts.uninstalls},
-                          {"masked", counts.masked},
-                          {"refused", counts.refused}}},
-                        {"repositories", std::move(repositories)},
-                        {"lines", status.lines}};
+    auto stores = Json::object();
+    stores.emplace("installed", build_json(status.stores.installed));
+    stores.emplace("evaluated", build_json(status.stores.evaluated));
+    stores.emplace("repository", build_json(status.stores.repository));
+    Json document{{"format", status_format},
+                  {"command", std::string{status_command}},
+                  {"written", status.written.time_since_epoch().count()},
+                  {"stores", std::move(stores)},
+                  {"counts",
+                   {{"upgrades", counts.upgrades},
+                    {"downgrades", counts.downgrades},
+                    {"rebuilds", counts.rebuilds},
+                    {"new", counts.added},
+                    {"held", counts.held},
+                    {"uninstalls", counts.uninstalls},
+                    {"masked", counts.masked},
+                    {"refused", counts.refused}}},
+                  {"repositories", std::move(repositories)},
+                  {"lines", status.lines}};
+    if (current) {
+        document.emplace("current", *current);
+    }
     return document.dump(-1, ' ', false, Json::error_handler_t::replace) + '\n';
 }
 
@@ -208,6 +236,89 @@ std::expected<Status, std::string> parse_status(std::string_view text) {
 
 std::filesystem::path status_path(const std::filesystem::path& installed) {
     return installed.parent_path() / "status.json";
+}
+
+bool stores_unchanged(const StatusStores& stores) {
+    const auto built = [](const std::expected<std::uint64_t, StoreError>& time) {
+        return time ? std::optional{*time} : std::nullopt;
+    };
+    return built(store_build_time(stores.installed.path)) == stores.installed.built &&
+           built(evaluated_build_time(stores.evaluated.path)) == stores.evaluated.built &&
+           built(repository_build_time(stores.repository.path)) == stores.repository.built;
+}
+
+std::string age_text(Seconds then, Seconds now) {
+    using namespace std::chrono;
+    const auto age = now - then;
+    const auto ago = [](auto count, std::string_view unit) {
+        return std::format("{} {}{} ago", count, unit, count == 1 ? "" : "s");
+    };
+    if (age >= days{1}) {
+        return ago(floor<days>(age).count(), "day");
+    }
+    if (age >= hours{1}) {
+        return ago(floor<hours>(age).count(), "hour");
+    }
+    if (age >= minutes{1}) {
+        return ago(floor<minutes>(age).count(), "minute");
+    }
+    return "just now";
+}
+
+std::vector<std::string> status_summary(const Status& status, bool current, Seconds now) {
+    const auto& counts = status.counts;
+    std::string line;
+    for (const auto& [count, one, many] : {std::tuple{counts.upgrades, "upgrade", "upgrades"},
+                                           {counts.downgrades, "downgrade", "downgrades"},
+                                           {counts.rebuilds, "rebuild", "rebuilds"},
+                                           {counts.added, "new", "new"},
+                                           {counts.held, "held", "held"},
+                                           {counts.uninstalls, "uninstall", "uninstalls"},
+                                           {counts.masked, "masked", "masked"}}) {
+        if (count != 0) {
+            line +=
+                std::format("{}{} {}", line.empty() ? "" : ", ", count, count == 1 ? one : many);
+        }
+    }
+    if (line.empty()) {
+        line = "no updates";
+    }
+    if (counts.refused) {
+        line += "; emerge would refuse the plan";
+    }
+    std::vector<std::string> lines{std::move(line)};
+    for (const auto& repository : status.repositories) {
+        if (repository.synced) {
+            lines.push_back(
+                std::format("{} synced {}", repository.name, age_text(*repository.synced, now)));
+        }
+    }
+    lines.push_back(std::format("planned {}{}", age_text(status.written, now),
+                                current ? "" : ", before the stores last changed"));
+    return lines;
+}
+
+std::vector<std::string> status_lines(const Status& status, bool current) {
+    const auto& counts = status.counts;
+    const auto yes = [](bool value) { return value ? "yes" : "no"; };
+    std::vector<std::string> lines{
+        std::format("upgrades\t{}", counts.upgrades),
+        std::format("downgrades\t{}", counts.downgrades),
+        std::format("rebuilds\t{}", counts.rebuilds),
+        std::format("new\t{}", counts.added),
+        std::format("held\t{}", counts.held),
+        std::format("uninstalls\t{}", counts.uninstalls),
+        std::format("masked\t{}", counts.masked),
+        std::format("refused\t{}", yes(counts.refused)),
+        std::format("current\t{}", yes(current)),
+        std::format("written\t{}", status.written.time_since_epoch().count())};
+    for (const auto& repository : status.repositories) {
+        lines.push_back(std::format(
+            "synced\t{}\t{}", repository.name,
+            repository.synced ? std::format("{}", repository.synced->time_since_epoch().count())
+                              : ""));
+    }
+    return lines;
 }
 
 bool status_due(PlanWhen when, const std::optional<StatusStores>& recorded,

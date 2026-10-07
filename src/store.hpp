@@ -176,6 +176,10 @@ read_file(const std::filesystem::path& path);
 
 [[nodiscard]] std::expected<Store, StoreError> load(const std::filesystem::path& path);
 
+// The build start the store at path records, without decoding the rest.
+[[nodiscard]] std::expected<std::uint64_t, StoreError>
+store_build_time(const std::filesystem::path& path);
+
 // ${ROOT}${EPREFIX}/var/cache/egraph/installed.egraph
 [[nodiscard]] std::filesystem::path default_store_path(const std::filesystem::path& root,
                                                        const std::filesystem::path& eprefix);

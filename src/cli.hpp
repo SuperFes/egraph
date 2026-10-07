@@ -247,6 +247,14 @@ struct Diff {
     bool json = false;
 };
 
+// The updates egraph watch last planned, from the status file.
+struct StatusCommand {
+    static constexpr std::string_view name = "status";
+    bool json = false;
+    // Plan them and write the status file first.
+    bool update = false;
+};
+
 // The system store's history log, or a package's events and what pulled it in.
 struct HistoryCommand {
     static constexpr std::string_view name = "history";
@@ -300,7 +308,7 @@ using Command =
     std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Search, Versions,
                  Blockers, Orphans, Updates, PlanCommand, Update, Install, Exec, Remove, Select,
                  Deselect, Sync, NoticesCommand, Export, Stats, LogCommand, Diff, HistoryCommand,
-                 Rebuild, Refresh, Watch, Check, Tui, Shell, Complete, Affected>;
+                 StatusCommand, Rebuild, Refresh, Watch, Check, Tui, Shell, Complete, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.
