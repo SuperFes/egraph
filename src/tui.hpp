@@ -232,6 +232,8 @@ using NoticeSetter = std::function<std::expected<void, std::string>(
 using NewsText = std::function<std::expected<std::vector<std::string>, std::string>(const Notice&)>;
 // Marks a news item read in portage's news files.
 using NewsMarker = std::function<std::expected<void, std::string>(const Notice&)>;
+// A program the interface steps aside for, given the terminal until it exits: its exit status.
+using TerminalProgram = std::function<std::expected<int, std::string>()>;
 
 // The pages of the package list, each the set its plan updates: -uDN @installed, @world or
 // @system.
@@ -265,8 +267,8 @@ struct Action {
 // rebuilt, @preserved-rebuild, a stale repository synced; none for the rest.
 [[nodiscard]] std::optional<Action> notice_action(const Notice& notice);
 
-// What enter does on a notice, for the key bar: "update", "rebuild", "sync", "open", "read";
-// empty where it does nothing.
+// What enter does on a notice, for the key bar: "update", "rebuild", "sync", "open", "read",
+// "dispatch-conf"; empty where it does nothing.
 [[nodiscard]] std::string_view notice_work(const Notice& notice);
 
 // What the action would do, as its command shows it before asking, in the human layout.
@@ -328,6 +330,7 @@ struct Services {
     NoticeSetter set_aside{};
     NewsText news_text{};
     NewsMarker mark_read{};
+    TerminalProgram dispatch_conf{};
 };
 
 struct Watched;
@@ -593,6 +596,10 @@ class App {
     [[nodiscard]] const std::optional<Notice>& news_requested() const { return news_wanted_; }
     // Shows the text, marking the item read once closed.
     void finish_news(const std::expected<std::vector<std::string>, std::string>& text);
+    // Enter on the configuration notice: dispatch-conf, the interface stepping aside for it.
+    [[nodiscard]] bool dispatch_conf_requested() const { return dispatching_; }
+    // Says why dispatch-conf could not run or failed; the notices are read again after it.
+    void finish_dispatch_conf(const std::expected<int, std::string>& ran);
     [[nodiscard]] const List& list() const { return list_; }
     // Pages opened from the list or the check view, the one showing last.
     [[nodiscard]] const std::vector<Page>& pages() const { return pages_; }
@@ -800,6 +807,7 @@ class App {
     bool putting_off_ = false;
     std::optional<NoticeChange> notice_change_;
     std::optional<Notice> news_wanted_;
+    bool dispatching_ = false;
     // The news item the dialog shows.
     std::optional<Notice> reading_;
     bool build_deps_ = true;
@@ -2166,8 +2174,10 @@ Polled poll(std::optional<Job<T>>& job, bool requested, const Start& start, cons
 
 // Runs until the user quits or input ends, making the fresh build a check asks for, or the
 // rebuild, in the background once the waiting view is on screen; and looking at the stores'
-// inputs every stale_interval, refreshing them in the background once they changed.
-template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Services& services) {
+// inputs every stale_interval, refreshing them in the background once they changed. Stopping
+// early, why: the terminal could not be taken back from a program the interface stepped aside for.
+template <class S>
+std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const Services& services) {
     const auto now = [&services] {
         return services.now ? services.now() : std::chrono::steady_clock::now();
     };
@@ -2265,6 +2275,19 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
             app.finish_news(services.news_text
                                 ? services.news_text(*news)
                                 : std::unexpected(std::string{"this egraph cannot read news"}));
+        } else if (app.dispatch_conf_requested()) {
+            if (!services.dispatch_conf) {
+                app.finish_dispatch_conf(
+                    std::unexpected(std::string{"this egraph has no way to run dispatch-conf"}));
+            } else {
+                screen.suspend();
+                const auto exited = services.dispatch_conf();
+                if (auto resumed = screen.resume(); !resumed) {
+                    return std::move(resumed.error());
+                }
+                app.finish_dispatch_conf(exited);
+                read_status();
+            }
         } else if (app.watch_requested()) {
             app.finish_watch(services.watch ? services.watch() : std::vector<emerge::Snapshot>{},
                              services.sample ? services.sample() : pressure::Sample{},
@@ -2299,6 +2322,7 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
             draw(screen, app, glyph);
         }
     }
+    return std::nullopt;
 }
 
 // Opens the terminal and runs the interface over the stores, first showing any warnings from

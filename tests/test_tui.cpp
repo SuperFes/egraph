@@ -66,8 +66,22 @@ class FakeScreen {
         }
         return out;
     }
+    void suspend() {
+        suspended = true;
+        ++suspends;
+    }
+    std::expected<void, std::string> resume() {
+        suspended = false;
+        if (!resumable) {
+            return std::unexpected(std::string{"cannot start the terminal interface"});
+        }
+        return {};
+    }
     [[nodiscard]] bool keys_left() const { return !keys_.empty(); }
     int renders = 0;
+    bool suspended = false;
+    int suspends = 0;
+    bool resumable = true;
     // Each read's timeout.
     std::vector<std::optional<std::chrono::milliseconds>> timeouts;
 
@@ -2457,7 +2471,10 @@ TEST_CASE("enter on a notice updates, rebuilds or syncs what it is about") {
     CHECK_FALSE(notice_action(Notice{.kind = NoticeKind::glsa, .key = "glsa:1"}).has_value());
     CHECK(notice_work(Notice{.kind = NoticeKind::glsa, .key = "glsa:1"}).empty());
     CHECK(notice_work(Notice{.kind = NoticeKind::news, .key = "news:gentoo/x"}).empty());
-    CHECK(notice_work(Notice{.kind = NoticeKind::config, .key = "config"}).empty());
+    // Handed to dispatch-conf instead.
+    const Notice config{.kind = NoticeKind::config, .key = "config"};
+    CHECK_FALSE(notice_action(config).has_value());
+    CHECK(notice_work(config) == "dispatch-conf");
 }
 
 TEST_CASE("a log's tail is what a terminal would leave of its last lines") {
@@ -3140,6 +3157,112 @@ TEST_CASE("enter on a masked package opens its page, or says it is gone") {
     CHECK(app.pages().empty());
     REQUIRE(app.dialog().has_value());
     CHECK(app.dialog()->title == "x/gone-1 is no longer installed");
+}
+
+namespace {
+
+egraph::tui::NoticesShown config_notice() {
+    return {.notices = {{.kind = egraph::NoticeKind::config,
+                         .key = "config",
+                         .title = "1 configuration file has updates waiting",
+                         .detail = {"/etc/foo.conf"},
+                         .fingerprint = "/etc/._cfg0000_foo.conf"}},
+            .set_aside = 0};
+}
+
+} // namespace
+
+TEST_CASE("enter on the configuration notice asks for dispatch-conf, and says how it failed") {
+    egraph::tui::App app{both(), true};
+    app.finish_notices(config_notice());
+    for (int turn = 0; turn < 3; ++turn) {
+        app.handle(key(KeyKind::right));
+    }
+    REQUIRE(app.on_notices());
+    FakeScreen screen{16, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(15), " enter dispatch-conf  x dismiss  "));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.dispatch_conf_requested());
+    // Nothing else meanwhile.
+    app.handle(character(U'x'));
+    CHECK_FALSE(app.notice_change_requested().has_value());
+
+    app.finish_dispatch_conf(0);
+    CHECK_FALSE(app.dispatch_conf_requested());
+    CHECK_FALSE(app.dialog().has_value());
+
+    app.handle(key(KeyKind::enter));
+    app.finish_dispatch_conf(2);
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->error);
+    CHECK(app.dialog()->title == "dispatch-conf exited with status 2");
+    app.handle(key(KeyKind::escape));
+
+    app.handle(key(KeyKind::enter));
+    app.finish_dispatch_conf(std::unexpected(std::string{"cannot run dispatch-conf: not found"}));
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "Cannot run dispatch-conf");
+    CHECK(app.dialog()->lines == std::vector<std::string>{"cannot run dispatch-conf: not found"});
+}
+
+TEST_CASE("run steps aside for dispatch-conf, then reads the notices again") {
+    egraph::tui::App app{both(), true};
+    FakeScreen screen{
+        16,
+        120,
+        {key(KeyKind::right), key(KeyKind::right), key(KeyKind::right), key(KeyKind::enter)}};
+    int reads = 0;
+    bool suspended_while_run = false;
+    const auto stopped =
+        egraph::tui::run(screen, app, ascii,
+                         {.check = no_check,
+                          .notices =
+                              [&reads] {
+                                  ++reads;
+                                  return reads == 1 ? std::optional{config_notice()}
+                                                    : std::optional{egraph::tui::NoticesShown{}};
+                              },
+                          .dispatch_conf = [&]() -> std::expected<int, std::string> {
+                              suspended_while_run = screen.suspended;
+                              return 0;
+                          }});
+    CHECK_FALSE(stopped.has_value());
+    CHECK(suspended_while_run);
+    CHECK(screen.suspends == 1);
+    CHECK_FALSE(screen.suspended);
+    CHECK(reads == 2);
+    CHECK(app.notices()->notices.empty());
+}
+
+TEST_CASE("run stops when the terminal cannot be taken back from dispatch-conf") {
+    egraph::tui::App app{both(), true};
+    FakeScreen screen{16,
+                      120,
+                      {key(KeyKind::right), key(KeyKind::right), key(KeyKind::right),
+                       key(KeyKind::enter), character(U'j')}};
+    screen.resumable = false;
+    const auto stopped =
+        egraph::tui::run(screen, app, ascii,
+                         {.check = no_check,
+                          .notices = [] { return std::optional{config_notice()}; },
+                          .dispatch_conf = []() -> std::expected<int, std::string> { return 0; }});
+    CHECK(stopped == "cannot start the terminal interface");
+    // Nothing drawn or read after.
+    CHECK(screen.keys_left());
+}
+
+TEST_CASE("without a way to run dispatch-conf, run says so and keeps the terminal") {
+    egraph::tui::App app{both(), true};
+    FakeScreen screen{
+        16,
+        120,
+        {key(KeyKind::right), key(KeyKind::right), key(KeyKind::right), key(KeyKind::enter)}};
+    egraph::tui::run(screen, app, ascii,
+                     {.check = no_check, .notices = [] { return std::optional{config_notice()}; }});
+    CHECK(screen.suspends == 0);
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "Cannot run dispatch-conf");
 }
 
 TEST_CASE("the notices page needs no evaluated store") {

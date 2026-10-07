@@ -77,11 +77,16 @@ class Screen {
     void render();
     // Waits for the next key press, or with a timeout at most that long.
     Key read(std::optional<std::chrono::milliseconds> timeout = std::nullopt);
+    // Gives the terminal back, as for a program run in it, until resume takes it over again;
+    // nothing but resume is called in between.
+    void suspend();
+    std::expected<void, std::string> resume();
 
   private:
     struct Stop {
         void operator()(notcurses* terminal) const;
     };
+    static std::expected<std::unique_ptr<notcurses, Stop>, std::string> start();
     explicit Screen(std::unique_ptr<notcurses, Stop> terminal) : terminal_(std::move(terminal)) {}
 
     std::unique_ptr<notcurses, Stop> terminal_;

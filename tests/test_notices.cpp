@@ -435,3 +435,47 @@ TEST_CASE("news items read since the notices were written are left out") {
     CHECK(keys == std::vector<std::string>{"news:gentoo/2026-09-02-y", "news:local/2026-09-03-z",
                                            "glsa:202609-03"});
 }
+
+TEST_CASE("a configuration file waits while a ._cfg update is beside it, as emerge finds them") {
+    const egraph::test::TempDir root;
+    const auto etc = root.path() / "etc";
+    std::filesystem::create_directories(etc / "conf.d");
+    egraph::test::write_text(etc / "._cfg0000_foo.conf", "new\n");
+    egraph::test::write_text(etc / "conf.d/._cfg0012_net", "new\n");
+    // An editor's backup and a saved copy are not updates.
+    egraph::test::write_text(etc / "._cfg0000_bar.conf~", "old\n");
+    egraph::test::write_text(etc / "._cfg0001_baz.conf.BAK", "old\n");
+    // Nor is another file's update that merely ends alike.
+    egraph::test::write_text(etc / "._cfg0000_xfoo", "new\n");
+    CHECK(egraph::config_update_waiting(etc / "foo.conf"));
+    CHECK(egraph::config_update_waiting(etc / "conf.d/net"));
+    CHECK_FALSE(egraph::config_update_waiting(etc / "bar.conf~"));
+    CHECK_FALSE(egraph::config_update_waiting(etc / "bar.conf"));
+    CHECK_FALSE(egraph::config_update_waiting(etc / "baz.conf.BAK"));
+    CHECK_FALSE(egraph::config_update_waiting(etc / "foo"));
+    CHECK_FALSE(egraph::config_update_waiting(etc / "gone/foo.conf"));
+}
+
+TEST_CASE("configuration files dealt with since the notices were written are left out") {
+    using egraph::NoticeKind;
+    const std::vector<egraph::Notice> notices{
+        {.kind = NoticeKind::glsa, .key = "glsa:202609-03", .detail = {"/etc/a"}},
+        {.kind = NoticeKind::config,
+         .key = "config",
+         .title = egraph::config_title(3),
+         .detail = {"/etc/a", "/etc/b", "/etc/c"},
+         .fingerprint = "/etc/._cfg0000_a /etc/._cfg0000_b /etc/._cfg0000_c"}};
+    const auto only_b = [](const std::string& file) { return file == "/etc/b"; };
+    const auto left = egraph::still_waiting(notices, only_b);
+    REQUIRE(left.size() == 2);
+    CHECK(left.at(0) == notices.at(0));
+    CHECK(left.at(1).title == "1 configuration file has updates waiting");
+    CHECK(left.at(1).detail == std::vector<std::string>{"/etc/b"});
+    // The same updates as far as setting it aside goes, until watch looks again.
+    CHECK(left.at(1).fingerprint == notices.at(1).fingerprint);
+
+    CHECK(egraph::still_waiting(notices, [](const std::string&) { return true; }) == notices);
+    const auto none = egraph::still_waiting(notices, [](const std::string&) { return false; });
+    REQUIRE(none.size() == 1);
+    CHECK(none.at(0).kind == NoticeKind::glsa);
+}

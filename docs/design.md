@@ -648,6 +648,13 @@ name a news item's text file (`file`). Reading the notices file drops the news i
 in their repository's unread list, so an item read here or through eselect leaves the page and
 `status` at once rather than at watch's next refresh (17e5c2).
 
+The configuration notice hands the terminal to dispatch-conf: the screen stops Notcurses,
+dispatch-conf runs as it would from a shell, and the screen starts again and redraws, the
+notices read anew. Reading the notices file likewise keeps only the configuration files that
+still have a `._cfg????_` update beside them, matched as portage's `find_updated_config_files`
+matches them, so the files merged leave the notice, and the notice goes with the last of them
+(17e5c3).
+
 Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
 touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
 the set is emerge's own. `parse_request` takes sets the store does not hold from its caller

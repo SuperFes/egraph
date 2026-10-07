@@ -501,6 +501,71 @@ def test_tui_reads_news_and_marks_it_read(updates_system, tmp_path):
     assert "notices\t0" in run_egraph(updates_system, "status").stdout.splitlines()
 
 
+def test_tui_hands_the_terminal_to_dispatch_conf(updates_system, tmp_path):
+    skip_without_tui()
+    playground, path, builder, _ = updates_system
+    assert run_egraph(updates_system, "status", "--update").returncode == 0
+    status = json.loads((path.parent / "status.json").read_text())
+    etc = Path(playground.eroot, "etc")
+    etc.mkdir(parents=True, exist_ok=True)
+    (etc / "foo.conf").write_text("old\n")
+    update = etc / "._cfg0000_foo.conf"
+    update.write_text("new\n")
+    (path.parent / "notices.json").write_text(
+        json.dumps(
+            {
+                "format": 1,
+                "written": 1790000000,
+                "stores": status["stores"],
+                "repositories": [{"name": "test_repo", "synced": int(time.time())}],
+                "notices": [
+                    {
+                        "kind": "config",
+                        "key": "config",
+                        "title": "1 configuration file has updates waiting",
+                        "detail": [str(etc / "foo.conf")],
+                        "fingerprint": str(update),
+                        "since": 1790000000,
+                    }
+                ],
+            }
+        )
+    )
+    # Answers on the terminal the interface gave back, as dispatch-conf's prompts do.
+    dispatch_conf = tmp_path / "dispatch-conf"
+    dispatch_conf.write_text(
+        "#!/bin/sh\n"
+        "printf 'Merge foo.conf? '\n"
+        "read answer\n"
+        f"[ \"$answer\" = y ] && mv {shlex.quote(str(update))} {shlex.quote(str(etc / 'foo.conf'))}\n"
+    )
+    dispatch_conf.chmod(0o755)
+    socket = f"egraph-test-{os.getpid()}"
+    command = (
+        f"env XDG_STATE_HOME={path.parent / 'state'} {EGRAPH} --store {path}"
+        f" --config-root {playground.eroot} --eprefix {playground.eprefix}"
+        f" --builder {builder} --dispatch-conf {dispatch_conf} --no-refresh tui;"
+        " echo EXIT=$?; sleep 30"
+    )
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "120", "-y", "20", command)
+    try:
+        wait_for(socket, " notices 1 ")
+        tmux(socket, "send-keys", "-t", "t", "l", "l", "l")
+        wait_for(
+            socket, "1 configuration file has updates waiting", " dispatch-conf  x "
+        )
+        tmux(socket, "send-keys", "-t", "t", "Enter")
+        wait_for(socket, "Merge foo.conf?")
+        tmux(socket, "send-keys", "-t", "t", "y", "Enter")
+        wait_for(socket, "0 notices", "Nothing needs you")
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")
+    assert (etc / "foo.conf").read_text() == "new\n"
+    assert "notices\t0" in run_egraph(updates_system, "status").stdout.splitlines()
+
+
 def test_tui_watches_running_emerges(playgrounds, tmp_path):
     skip_without_tui()
     path = tmp_path / "installed.egraph"

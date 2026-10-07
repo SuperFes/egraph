@@ -76,7 +76,7 @@ void Screen::Stop::operator()(notcurses* terminal) const {
     notcurses_stop(terminal);
 }
 
-std::expected<Screen, std::string> Screen::open() {
+std::expected<std::unique_ptr<notcurses, Screen::Stop>, std::string> Screen::start() {
     notcurses_options options{};
     options.loglevel = NCLOGLEVEL_SILENT;
     options.flags = NCOPTION_SUPPRESS_BANNERS;
@@ -84,7 +84,21 @@ std::expected<Screen, std::string> Screen::open() {
     if (terminal == nullptr) {
         return std::unexpected(std::string{"cannot start the terminal interface"});
     }
-    return Screen{std::unique_ptr<notcurses, Stop>{terminal}};
+    return std::unique_ptr<notcurses, Stop>{terminal};
+}
+
+std::expected<Screen, std::string> Screen::open() {
+    return start().transform(
+        [](std::unique_ptr<notcurses, Stop> terminal) { return Screen{std::move(terminal)}; });
+}
+
+void Screen::suspend() {
+    terminal_.reset();
+}
+
+std::expected<void, std::string> Screen::resume() {
+    return start().transform(
+        [this](std::unique_ptr<notcurses, Stop> terminal) { terminal_ = std::move(terminal); });
 }
 
 Size Screen::size() const {

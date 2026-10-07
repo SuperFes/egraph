@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -229,6 +230,33 @@ std::optional<NoticeKind> notice_kind(std::string_view name) {
     return std::nullopt;
 }
 
+std::string config_title(std::size_t files) {
+    return std::format("{} configuration {} updates waiting", files,
+                       files == 1 ? "file has" : "files have");
+}
+
+bool config_update_waiting(const std::filesystem::path& file) {
+    // As find_updated_config_files: ._cfg????_<name>, less backups ending in ~ or .bak.
+    const std::string tail = file.filename().string();
+    std::string lower = tail;
+    std::ranges::transform(lower, lower.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (tail.empty() || tail.ends_with('~') || lower.ends_with(".bak")) {
+        return false;
+    }
+    constexpr std::string_view prefix = "._cfg0000_";
+    const std::string suffix = "_" + tail;
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator{file.parent_path(), error}) {
+        const std::string name = entry.path().filename().string();
+        if (name.size() == prefix.size() + tail.size() && name.starts_with("._cfg") &&
+            name.ends_with(suffix)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::vector<Notice> notice_list(const Notices& notices, Seconds now) {
     std::vector<Notice> list;
     const auto add = [&](NoticeKind kind, std::string key, std::string title,
@@ -300,8 +328,7 @@ std::vector<Notice> notice_list(const Notices& notices, Seconds now) {
             }
             fingerprint += std::format("{}{}", fingerprint.empty() ? "" : " ", update);
         }
-        auto title = std::format("{} configuration {} updates waiting", files.size(),
-                                 files.size() == 1 ? "file has" : "files have");
+        auto title = config_title(files.size());
         add(NoticeKind::config, "config", std::move(title), std::move(files),
             std::move(fingerprint));
     }

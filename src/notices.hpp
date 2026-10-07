@@ -141,6 +141,30 @@ template <class Unread>
     return notices;
 }
 
+// The configuration notice's title, for a count of files.
+[[nodiscard]] std::string config_title(std::size_t files);
+
+// Whether a protected file still has a ._cfg update beside it, as emerge's search finds them.
+[[nodiscard]] bool config_update_waiting(const std::filesystem::path& file);
+
+// The notices less the configuration files whose updates are gone, as once dispatch-conf has
+// run, and the configuration notice with them once none is left; waiting(file) tells.
+template <class Waiting>
+[[nodiscard]] std::vector<Notice> still_waiting(std::vector<Notice> notices,
+                                                const Waiting& waiting) {
+    for (auto& notice : notices) {
+        if (notice.kind == NoticeKind::config &&
+            std::erase_if(notice.detail,
+                          [&waiting](const std::string& file) { return !waiting(file); }) > 0) {
+            notice.title = config_title(notice.detail.size());
+        }
+    }
+    std::erase_if(notices, [](const Notice& notice) {
+        return notice.kind == NoticeKind::config && notice.detail.empty();
+    });
+    return notices;
+}
+
 // The notices whose keys previous lacks.
 [[nodiscard]] std::vector<Notice> new_notices(std::span<const Notice> notices,
                                               std::span<const Notice> previous);

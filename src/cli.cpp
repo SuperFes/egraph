@@ -2996,7 +2996,12 @@ Exit execute(const Tui&, Session& session, const Invocation& invocation, std::os
              },
          .news_text = news_text,
          .mark_read =
-             [&invocation](const Notice& notice) { return mark_news_read(invocation, notice); }},
+             [&invocation](const Notice& notice) { return mark_news_read(invocation, notice); },
+         .dispatch_conf =
+             [&invocation] {
+                 return os::run(dispatch_conf_command(invocation))
+                     .transform_error([](const os::SpawnError& e) { return e.message; });
+             }},
         warnings, err);
 }
 
@@ -3308,10 +3313,13 @@ std::optional<std::vector<Notice>> notices_beside(const FoundStatus& found,
         return std::nullopt;
     }
     const auto settings = read_settings(settings_path(config_root(invocation)));
-    // News read since, as with eselect, is gone without waiting for watch.
-    return still_unread(
-        current_notices(*file, now, settings.value_or(Settings{}).stale_days),
-        [&invocation](std::string_view repo) { return unread_news_items(invocation, repo); });
+    // News read since, as with eselect, and updates merged, as with dispatch-conf, are gone
+    // without waiting for watch.
+    return still_waiting(
+        still_unread(
+            current_notices(*file, now, settings.value_or(Settings{}).stale_days),
+            [&invocation](std::string_view repo) { return unread_news_items(invocation, repo); }),
+        [](const std::string& path) { return config_update_waiting(path); });
 }
 
 std::expected<std::vector<std::string>, std::string> news_text(const Notice& notice) {

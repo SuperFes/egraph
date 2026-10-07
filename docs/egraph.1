@@ -1202,7 +1202,12 @@ each shown first as an action is; a stale repository is synced as
 once asked; a masked package's page opens; a news item is shown, and marked read as it closes,
 as
 .B eselect news read
-does (set aside for the user instead where portage's news lists cannot be written).
+does (set aside for the user instead where portage's news lists cannot be written); and for
+configuration updates the interface steps aside while
+.B dispatch\-conf
+(or
+.BR \-\-dispatch\-conf )
+runs in the terminal, coming back once it exits.
 .SS shell
 Commands read one per line from standard input, the stores loaded once; the global options that
 choose the stores are taken from the command line only.
@@ -1396,7 +1401,9 @@ and its
 .BR format .
 Configuration updates and unread news can change without a refresh;
 .B notices
-reads them anew, and a news item no longer unread is left out of
+reads them anew, and a news item no longer unread, or a configuration file without a
+.I ._cfg
+update beside it any more, is left out of
 .B status
 and the interface.
 .TP

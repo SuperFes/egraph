@@ -1122,9 +1122,24 @@ void App::finish_news(const std::expected<std::vector<std::string>, std::string>
     reading_ = std::move(news);
 }
 
+void App::finish_dispatch_conf(const std::expected<int, std::string>& ran) {
+    if (!dispatching_) {
+        return;
+    }
+    dispatching_ = false;
+    if (!ran) {
+        show({.error = true, .title = "Cannot run dispatch-conf", .lines = {ran.error()}});
+    } else if (*ran != 0) {
+        show({.error = true,
+              .title = std::format("dispatch-conf exited with status {}", *ran),
+              .lines = {}});
+    }
+}
+
 void App::handle_notices(const Key& key) {
     const auto count = notices_ ? notices_->notices.size() : 0;
-    const bool on_notice = notice_cursor_.at < count && !notice_change_ && !news_wanted_;
+    const bool on_notice =
+        notice_cursor_.at < count && !notice_change_ && !news_wanted_ && !dispatching_;
     if (putting_off_) {
         if (key.kind == KeyKind::escape) {
             putting_off_ = false;
@@ -1168,6 +1183,8 @@ void App::work_on(const Notice& notice) {
         }
     } else if (notice.kind == NoticeKind::news && !notice.file.empty()) {
         news_wanted_ = notice;
+    } else if (notice.kind == NoticeKind::config) {
+        dispatching_ = true;
     } else if (auto action = notice_action(notice)) {
         act(std::move(*action));
     }
@@ -2410,6 +2427,9 @@ std::string_view notice_work(const Notice& notice) {
     if (notice.kind == NoticeKind::news) {
         return notice.file.empty() ? "" : "read";
     }
+    if (notice.kind == NoticeKind::config) {
+        return "dispatch-conf";
+    }
     const auto action = notice_action(notice);
     if (!action) {
         return {};
@@ -3130,7 +3150,10 @@ Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps, Glyph
     if (!warnings.empty()) {
         app.show({.error = false, .title = "Warning", .lines = {warnings.begin(), warnings.end()}});
     }
-    run(*screen, app, egraph::glyphs(glyphs), services);
+    if (const auto stopped = run(*screen, app, egraph::glyphs(glyphs), services)) {
+        err << "egraph: tui: " << *stopped << '\n';
+        return Exit::failure;
+    }
     return Exit::ok;
 #else
     (void)stores;

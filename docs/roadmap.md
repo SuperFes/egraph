@@ -997,7 +997,8 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
         and a sync, as actions; a masked package's page.
       - 17e5c2 (done): the news item shown, and marked read in portage's news files once closed, as
         `eselect news read` does (only set aside where they cannot be written).
-      - 17e5c3: dispatch-conf for configuration updates, the interface stepping aside for it.
+      - 17e5c3 (done): dispatch-conf for configuration updates, the interface stepping aside for
+        it.
   - 17e6: `egraph notify`: one summary notification (org.freedesktop.Notifications over the
     session bus) with Dismiss, Later (a day) and Open, which starts a terminal on the notice;
     started by an XDG autostart entry.
