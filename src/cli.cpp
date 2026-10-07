@@ -14,6 +14,7 @@
 #include "exec.hpp"
 #include "freshness.hpp"
 #include "graph.hpp"
+#include "history.hpp"
 #include "human.hpp"
 #include "json.hpp"
 #include "keep_going.hpp"
@@ -2716,6 +2717,15 @@ Exit execute(const Complete& command, Session&, const Invocation& invocation, st
     return Exit::ok;
 }
 
+// The time zone times are read and shown in; UTC without one.
+const std::chrono::time_zone& local_zone() {
+    try {
+        return *std::chrono::current_zone();
+    } catch (const std::runtime_error&) {
+        return *std::chrono::locate_zone("UTC");
+    }
+}
+
 Exit execute(const LogCommand& command, Session&, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
     std::vector<log::Event> events;
@@ -2736,12 +2746,7 @@ Exit execute(const LogCommand& command, Session&, const Invocation& invocation, 
         events = log::file_events(text.str());
     }
     const auto runs = log::summarize(events);
-    const std::chrono::time_zone* zone = nullptr;
-    try {
-        zone = std::chrono::current_zone();
-    } catch (const std::runtime_error&) {
-        zone = std::chrono::locate_zone("UTC");
-    }
+    const auto* zone = &local_zone();
     const bool human = output(invocation).human;
     if (!command.run) {
         for (const auto& run : runs) {
@@ -2758,6 +2763,89 @@ Exit execute(const LogCommand& command, Session&, const Invocation& invocation, 
         if (event.run == *found) {
             out << (human ? log::event_line(event, *zone) : log::file_line(event)) << '\n';
         }
+    }
+    return Exit::ok;
+}
+
+Exit execute(const Diff& command, Session& session, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    using namespace std::chrono;
+    const auto& zone = local_zone();
+    DiffBase base;
+    if (command.base) {
+        auto parsed = parse_diff_base(*command.base, floor<seconds>(system_clock::now()), zone);
+        if (!parsed) {
+            err << "egraph: diff: " << parsed.error() << '\n';
+            return Exit::usage;
+        }
+        base = std::move(*parsed);
+    }
+    const auto current = session.installed();
+    if (!current) {
+        return fail(err, current.error());
+    }
+    const auto directory = history_directory(invocation.root, invocation.eprefix.value_or(""));
+    std::vector<Seconds> generations;
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator{directory, error}) {
+        if (const auto ended = generation_time(entry.path().filename().string())) {
+            generations.push_back(*ended);
+        }
+    }
+    const auto ended =
+        base.generation ? generation_time(*base.generation) : generation_at(generations, base.at);
+    if (!ended && !base.at) {
+        err << std::format("egraph: diff: no generations in {} yet; a refresh of the system store "
+                           "keeps one when it changes the installed packages or the root sets\n",
+                           directory.string());
+        return Exit::failure;
+    }
+    const auto shown = [&zone](Seconds time) {
+        return std::format("{:%Y-%m-%d %H:%M:%S}", zoned_time{&zone, time});
+    };
+    // Without a generation, the system is as it was then.
+    std::optional<Store> old;
+    Seconds since = base.at.value_or(Seconds{});
+    if (ended) {
+        const auto path = directory / generation_name(*ended);
+        auto loaded = load(path);
+        if (!loaded) {
+            const auto& mismatch = loaded.error().mismatch;
+            err << "egraph: diff: "
+                << (mismatch ? std::format("{} is of store format {}, from another egraph version, "
+                                           "which this one cannot read",
+                                           path.string(), mismatch->found)
+                             : loaded.error().message)
+                << '\n';
+            return Exit::failure;
+        }
+        old = std::move(*loaded);
+        if (!base.at) {
+            // The last time a refresh found the system so.
+            since = floor<seconds>(sys_time<nanoseconds>{nanoseconds{old->meta.build_time_ns}});
+        } else if (*ended == std::ranges::min(generations)) {
+            // Before the oldest generation's newest merge, the system was as no generation holds.
+            const auto newest = std::ranges::max(old->packages, {}, &Package::merged).merged;
+            if (const Seconds start{seconds{newest}};
+                old->packages.size() != 0 && *base.at < start) {
+                err << std::format(
+                    "egraph: diff: the history starts at {}, so this is since then\n",
+                    shown(start));
+                since = start;
+            }
+        }
+    }
+    const auto changes = old ? differences(*old, *current) : std::vector<Difference>{};
+    if (command.json) {
+        const auto name = ended ? std::optional{generation_name(*ended)} : std::nullopt;
+        write_differences_json(out, changes, since, name);
+        return Exit::ok;
+    }
+    const auto lines = difference_lines(changes);
+    if (const auto style = output(invocation); style.human) {
+        human_diff(out, lines, shown(since), style.theme);
+    } else {
+        write_lines(out, lines);
     }
     return Exit::ok;
 }
@@ -3163,6 +3251,16 @@ void configure(CLI::App& app, Invocation& invocation) {
                                       "events of one"),
               invocation, "run", &LogCommand::run, "A run's id, or the start of it")
         ->type_name("RUN");
+    CLI::App* diff_cmd = add_command<Diff>(
+        app, invocation,
+        "The installed packages and root sets now against the system as the history kept it");
+    add_field(diff_cmd, invocation, "when", &Diff::base,
+              "An age (12h, 3d, 2w), a date (2026-09-30) or a generation's file name; the newest "
+              "generation when omitted")
+        ->type_name("WHEN");
+    diff_cmd->add_flag_callback(
+        "--json", [&invocation] { std::get<Diff>(invocation.command).json = true; },
+        "Write the changes as JSON");
     add_command<Tui>(app, invocation, "Browse the graph in a terminal interface");
     add_command<Shell>(app, invocation,
                        "Answer commands read one per line from standard input, loading the stores "

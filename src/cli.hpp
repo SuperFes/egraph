@@ -239,6 +239,14 @@ struct LogCommand {
     std::optional<std::string> run;
 };
 
+// The installed packages and root sets now against a generation of the system store's history.
+struct Diff {
+    static constexpr std::string_view name = "diff";
+    // An age, a date or a generation's name; the newest generation without one.
+    std::optional<std::string> base;
+    bool json = false;
+};
+
 struct Rebuild {
     static constexpr std::string_view name = "rebuild";
 };
@@ -284,8 +292,8 @@ struct Affected {
 using Command =
     std::variant<std::monostate, Deps, Rdeps, Why, Match, Soname, Broken, Search, Versions,
                  Blockers, Orphans, Updates, PlanCommand, Update, Install, Exec, Remove, Select,
-                 Deselect, Sync, NoticesCommand, Export, Stats, LogCommand, Rebuild, Refresh, Watch,
-                 Check, Tui, Shell, Complete, Affected>;
+                 Deselect, Sync, NoticesCommand, Export, Stats, LogCommand, Diff, Rebuild, Refresh,
+                 Watch, Check, Tui, Shell, Complete, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

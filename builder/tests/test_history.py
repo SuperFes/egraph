@@ -1,5 +1,6 @@
 """The system store's history: the generations refreshes replace, kept in var/lib/egraph."""
 
+import calendar
 import json
 import os
 import shutil
@@ -211,3 +212,83 @@ def test_the_log_records_merges_at_their_merge_time_and_uninstalls_when_found(sy
     assert (
         os.stat(os.path.join(history(system), "history.log")).st_mode & 0o777 == 0o644
     )
+
+
+def generation_time(name):
+    return calendar.timegm(time.strptime(name, "installed-%Y%m%dT%H%M%SZ.egraph"))
+
+
+def test_a_generation_is_named_by_when_the_system_left_it(system):
+    refresh(system)
+    time.sleep(1.1)
+    left = int(time.time())
+    add_package(system[0], "dev-libs/alt-b-1")
+    refresh(system)
+    [kept] = generations(system)
+    assert generation_time(kept) >= left
+
+
+def diff(system, *args):
+    result = egraph(system, "diff", *args)
+    assert result.returncode == 0, result.stderr
+    return result
+
+
+def test_diff_without_generations_says_so(system):
+    refresh(system)
+    result = egraph(system, "diff")
+    assert result.returncode == 1
+    assert result.stderr.startswith(
+        f"egraph: diff: no generations in {history(system)} yet"
+    )
+
+
+def test_diff_shows_what_the_last_change_did(system):
+    refresh(system)
+    add_package(system[0], "dev-libs/alt-b-1")
+    shutil.rmtree(vdb(system[0], "dev-libs/cond-1"))
+    add_to_world(system[0], "app-misc/old")
+    assert diff(system).stdout == (
+        "\tnew\tdev-libs/alt-b-1\t\n"
+        "dev-libs/cond-1\tuninstall\t\t\n"
+        "@selected\tadded\tapp-misc/old\n"
+    )
+
+
+def test_diff_by_age_and_date(system):
+    refresh(system)
+    add_package(system[0], "dev-libs/alt-b-1")
+    refresh(system)
+    assert diff(system, "1h").stdout == "\tnew\tdev-libs/alt-b-1\t\n"
+    # Nothing has changed since tomorrow.
+    tomorrow = time.strftime("%Y-%m-%d", time.localtime(time.time() + DAY))
+    assert diff(system, tomorrow).stdout == ""
+    [kept] = generations(system)
+    assert diff(system, kept).stdout == "\tnew\tdev-libs/alt-b-1\t\n"
+
+
+def test_diff_before_the_history_says_since_when(system):
+    refresh(system)
+    add_package(system[0], "dev-libs/alt-b-1")
+    refresh(system)
+    result = diff(system, "2000-01-01")
+    assert result.stdout == "\tnew\tdev-libs/alt-b-1\t\n"
+    assert result.stderr.startswith("egraph: diff: the history starts at ")
+
+
+def test_diff_as_json(system):
+    refresh(system)
+    add_package(system[0], "dev-libs/alt-b-1")
+    document = json.loads(diff(system, "--json").stdout)
+    [kept] = generations(system)
+    assert document["changes"] == [
+        {"after": "dev-libs/alt-b-1", "change": "new", "use": []}
+    ]
+    assert document["generation"] == kept
+    assert document["since"] <= time.time()
+
+
+def test_diff_takes_only_ages_dates_and_generations(system):
+    result = egraph(system, "diff", "yesterday")
+    assert result.returncode == 2
+    assert "not yesterday" in result.stderr

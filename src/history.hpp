@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <iosfwd>
 #include <optional>
 #include <span>
 #include <string>
@@ -35,9 +36,10 @@ struct Settings {
 
 using Seconds = std::chrono::sys_seconds;
 
-// A generation's file name from the time its store was built, in UTC:
-// installed-20261006T162600Z.egraph; and back, none for any other name.
-[[nodiscard]] std::string generation_name(Seconds built);
+// A generation's file name from the time the system stopped being as its store holds it (the
+// replacing store's build time), in UTC: installed-20261006T162600Z.egraph; and back, none for
+// any other name.
+[[nodiscard]] std::string generation_name(Seconds ended);
 [[nodiscard]] std::optional<Seconds> generation_time(std::string_view name);
 
 // Of the generations built at these times, those to delete at now: kept are all from the last
@@ -66,5 +68,46 @@ struct HistoryEvent {
 
 // Whether after differs from before in its installed packages or its root sets.
 [[nodiscard]] bool history_changed(const Store& before, const Store& after);
+
+// What diff compares against: the system as it was at a time, or a generation by its name; neither
+// for the newest generation.
+struct DiffBase {
+    std::optional<Seconds> at{};
+    std::optional<std::string> generation{};
+};
+
+// diff's argument: an age (12h, 3d, 2w) or a date (2026-09-30, its start in zone), or a
+// generation's file name.
+[[nodiscard]] std::expected<DiffBase, std::string>
+parse_diff_base(std::string_view text, Seconds now, const std::chrono::time_zone& zone);
+
+// Of the generations, by when each ended, the one holding the system as it was at `at`: the
+// oldest that ended after it, none when none did (it is as it was then); without `at`, the newest.
+[[nodiscard]] std::optional<Seconds> generation_at(std::span<const Seconds> generations,
+                                                   std::optional<Seconds> at);
+
+// A change from one store to another: an installed package's, or an atom of a root set's.
+struct Difference {
+    // upgrade, downgrade, rebuild (merged again, or its USE changed), new, uninstall; added or
+    // removed for an atom.
+    std::string kind;
+    // The cpvs, before empty for new and after for uninstall; for an atom, the set and the atom.
+    std::string before{};
+    std::string after{};
+    // Flags turned on ("+flag") and off ("-flag"), by flag.
+    std::vector<std::string> use{};
+};
+
+// Upgrades, downgrades, rebuilds, new and uninstalled packages, each by cpv, then the root sets'
+// atoms by set.
+[[nodiscard]] std::vector<Difference> differences(const Store& before, const Store& after);
+
+// As tab-separated lines: before, kind, after and the flags (separated by spaces) for a package;
+// the set, kind and atom for an atom.
+[[nodiscard]] std::vector<std::string> difference_lines(std::span<const Difference> changes);
+
+// {"changes":[...],"generation":name,"since":seconds}, the generation omitted without one.
+void write_differences_json(std::ostream& out, std::span<const Difference> changes, Seconds since,
+                            std::optional<std::string_view> generation);
 
 } // namespace egraph

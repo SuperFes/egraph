@@ -897,21 +897,28 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
   and the service user both write there:
   - 17c1 (done): generations: when a refresh of the system store changes the installed packages or the
     root sets (`drift`, and the roots compared by value), the store it replaced is kept whole as
-    `installed-<its build time>.egraph` (installed store only, 1.1 MB on the dev box: packages,
+    `installed-<ended>.egraph`, named by the replacing store's build time: when the system left
+    that state (its own build time is only the last refresh that found it unchanged), so the
+    generation for a time is the oldest that ended after it (installed store only, 1.1 MB on the dev box: packages,
     USE, deps and the why of the time; the evaluated store and the repository index are today's
     view, not history). Thinned by age after each: all from the last day, then the newest of
     each day, none past `history_days` (`${PORTAGE_CONFIGROOT}/etc/egraph/egraph.conf`, the
     settings file 17d–17f share; 90 by default, 0 keeps none). Keeping history never fails a
     refresh: a warning, and none kept.
   - 17c2 (done): the event log, `history.log`, kept whole: a JSON line per merged, upgraded,
-    downgraded (another version replaced in its slot), rebuilt (a new COUNTER) and uninstalled
+    downgraded (another version replaced in its slot), rebuilt (a new COUNTER, or other flags) and uninstalled
     package, oldest first. Merges are timed by their vdb entry's COUNTER file, which the merge
     writes (BUILD_TIME is when a binary package was built), uninstalls by the refresh that found
     them. The store records each package's COUNTER and merge time for it (format 6, the JSON
     export's format 4). Appended by writing it anew and renaming it over the old one under a
     lock on the directory, so root and the service user both can, whoever made the file.
-  - 17c3: `egraph diff [generation|date]`: added, removed, upgraded, downgraded and rebuilt
-    packages, with USE changes, against the newest generation by default.
+  - 17c3 (done): `egraph diff [when]`: upgraded, downgraded, rebuilt (a new COUNTER, or other
+    flags), new and uninstalled packages with the flags turned on and off, then the atoms each
+    root set gained and lost; against the newest generation by default (what the last change
+    did), the system as it was at an age (`12h`, `3d`, `2w`) or a date's local midnight, or a
+    generation by name. Before the history's start (the oldest generation's newest merge), it
+    says since when. Lines like `updates`', the human layout `updates`' columns, and `--json`.
+    A generation from another store format cannot be read, and says so.
   - 17c4: `egraph history [atom]`: the event log; for a package, when it arrived and what pulled
     it in (the why chain in the first generation holding it).
 - 17d: the precomputed plan: after each refresh, `-uDN @world` planned once and a small status

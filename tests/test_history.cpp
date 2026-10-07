@@ -6,7 +6,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <format>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -207,4 +209,132 @@ TEST_CASE("a version in a new slot merges beside, or after, the old slot") {
 TEST_CASE("no events for the same packages from the same merges") {
     const auto store = installed({{.cpv = "dev-libs/a-1", .counter = 3, .merged = 10}});
     CHECK(egraph::history_events(store, store, refreshed).empty());
+}
+
+TEST_CASE("a USE change with the same COUNTER is a rebuild too") {
+    const auto before = make_system({{.cpv = "app-misc/a-1", .iuse = "x"}}, {});
+    const auto after = make_system({{.cpv = "app-misc/a-1", .iuse = "x", .use = "x"}}, {});
+    CHECK(
+        lines(egraph::history_events(before.store, after.store, refreshed)) ==
+        std::vector<std::string>{R"({"cpv":"app-misc/a-1","event":"rebuilt","time":2000000000})"});
+}
+
+namespace {
+
+const auto& utc() {
+    return *std::chrono::locate_zone("UTC");
+}
+
+} // namespace
+
+TEST_CASE("diff takes an age back from now") {
+    const auto now = at(2026y / oct / 6d, 12h);
+    CHECK(egraph::parse_diff_base("12h", now, utc())->at == now - 12h);
+    CHECK(egraph::parse_diff_base("3d", now, utc())->at == now - 72h);
+    CHECK(egraph::parse_diff_base("2w", now, utc())->at == now - 14 * 24h);
+}
+
+TEST_CASE("diff takes a date as the start of that day where the user is") {
+    const auto now = at(2026y / oct / 6d, 12h);
+    CHECK(egraph::parse_diff_base("2026-09-30", now, utc())->at == at(2026y / 9 / 30d));
+    // Paris is two hours ahead in summer.
+    CHECK(
+        egraph::parse_diff_base("2026-09-30", now, *std::chrono::locate_zone("Europe/Paris"))->at ==
+        at(2026y / 9 / 29d, 22h));
+}
+
+TEST_CASE("diff takes a generation by its name") {
+    const auto base = egraph::parse_diff_base("installed-20261006T162605Z.egraph",
+                                              at(2026y / oct / 6d, 12h), utc());
+    CHECK(base->generation == "installed-20261006T162605Z.egraph");
+    CHECK_FALSE(base->at.has_value());
+}
+
+TEST_CASE("diff names what it takes for anything else") {
+    for (const auto* text : {"3x", "yesterday", "2026-13-01", "h", "2026-9-30", "-3d"}) {
+        CAPTURE(text);
+        CHECK(egraph::parse_diff_base(text, at(2026y / oct / 6d, 12h), utc()).error() ==
+              std::format("expected an age (12h, 3d, 2w), a date (2026-09-30) or a generation's "
+                          "name, not {}",
+                          text));
+    }
+}
+
+TEST_CASE("the generation for a time is the oldest that ended after it") {
+    const std::vector<Seconds> ended{at(2026y / oct / 3d), at(2026y / oct / 1d),
+                                     at(2026y / oct / 5d)};
+    CHECK(egraph::generation_at(ended, std::nullopt) == at(2026y / oct / 5d));
+    CHECK(egraph::generation_at(ended, at(2026y / oct / 2d)) == at(2026y / oct / 3d));
+    CHECK(egraph::generation_at(ended, at(2026y / oct / 3d)) == at(2026y / oct / 5d));
+    CHECK(egraph::generation_at(ended, at(2026y / 9 / 1d)) == at(2026y / oct / 1d));
+    // The system is as it was then.
+    CHECK_FALSE(egraph::generation_at(ended, at(2026y / oct / 6d)).has_value());
+    CHECK_FALSE(egraph::generation_at({}, std::nullopt).has_value());
+}
+
+TEST_CASE("differences name each package's change, with its flags") {
+    auto before = installed({{.cpv = "app-misc/up-1"},
+                             {.cpv = "app-misc/down-2"},
+                             {.cpv = "app-misc/same-1", .counter = 4},
+                             {.cpv = "app-misc/again-1", .counter = 5},
+                             {.cpv = "app-misc/gone-1"}});
+    const auto after = installed({{.cpv = "app-misc/up-2", .counter = 6},
+                                  {.cpv = "app-misc/down-1", .counter = 7},
+                                  {.cpv = "app-misc/same-1", .counter = 4},
+                                  {.cpv = "app-misc/again-1", .counter = 8},
+                                  {.cpv = "app-misc/new-1", .counter = 9}});
+    const auto lines = egraph::difference_lines(egraph::differences(before, after));
+    CHECK(lines == std::vector<std::string>{
+                       "app-misc/up-1\tupgrade\tapp-misc/up-2\t",
+                       "app-misc/down-2\tdowngrade\tapp-misc/down-1\t",
+                       "app-misc/again-1\trebuild\tapp-misc/again-1\t",
+                       "\tnew\tapp-misc/new-1\t",
+                       "app-misc/gone-1\tuninstall\t\t",
+                   });
+}
+
+TEST_CASE("differences show the flags turned on and off") {
+    const auto before = make_system({{.cpv = "app-misc/a-1", .iuse = "x y z", .use = "y z"},
+                                     {.cpv = "app-misc/b-1", .iuse = "x", .use = "x"}},
+                                    {});
+    const auto after = make_system({{.cpv = "app-misc/a-1", .iuse = "x y z", .use = "x z"},
+                                    {.cpv = "app-misc/b-2", .iuse = "x"}},
+                                   {});
+    CHECK(egraph::difference_lines(egraph::differences(before.store, after.store)) ==
+          std::vector<std::string>{"app-misc/b-1\tupgrade\tapp-misc/b-2\t-x",
+                                   "app-misc/a-1\trebuild\tapp-misc/a-1\t+x -y"});
+}
+
+TEST_CASE("differences show the atoms each root set gained and lost") {
+    const std::vector<Installed> packages{{.cpv = "app-misc/a-1"}, {.cpv = "dev-libs/b-1"}};
+    const auto before = make_system(packages, {}, {"app-misc/a"}, {"dev-libs/b"});
+    const auto after = make_system(packages, {}, {"dev-libs/b"});
+    CHECK(egraph::difference_lines(egraph::differences(before.store, after.store)) ==
+          std::vector<std::string>{"@selected\tadded\tdev-libs/b", "@selected\tremoved\tapp-misc/a",
+                                   "@system\tremoved\tdev-libs/b"});
+}
+
+TEST_CASE("no differences for the same system") {
+    const auto system = make_system({{.cpv = "app-misc/a-1"}}, {}, {"app-misc/a"});
+    CHECK(egraph::differences(system.store, system.store).empty());
+}
+
+TEST_CASE("differences as JSON") {
+    const std::vector<egraph::Difference> changes{
+        {.kind = "upgrade", .before = "a/b-1", .after = "a/b-2", .use = {"+x"}},
+        {.kind = "new", .after = "a/c-1"},
+        {.kind = "added", .before = "@selected", .after = "a/c"}};
+    std::ostringstream out;
+    egraph::write_differences_json(out, changes, Seconds{100s},
+                                   "installed-20261006T162605Z.egraph");
+    CHECK(out.str() ==
+          R"({"changes":[{"after":"a/b-2","before":"a/b-1","change":"upgrade","use":["+x"]},)"
+          R"({"after":"a/c-1","change":"new","use":[]},)"
+          R"({"atom":"a/c","change":"added","set":"@selected"}],)"
+          R"("generation":"installed-20261006T162605Z.egraph","since":100})"
+          "\n");
+    std::ostringstream none;
+    egraph::write_differences_json(none, {}, Seconds{100s}, std::nullopt);
+    CHECK(none.str() == R"({"changes":[],"since":100})"
+                        "\n");
 }

@@ -819,3 +819,37 @@ TEST_CASE("search shows each key's packages with their versions and metadata") {
                        "\n"
                        "? none  nothing found\n");
 }
+
+TEST_CASE("diff lines up versions, the flags after, then each root set's atoms") {
+    std::ostringstream out;
+    egraph::human_diff(out,
+                       std::vector<std::string>{
+                           "app-misc/up-1\tupgrade\tapp-misc/up-10\t+x -y",
+                           "app-misc/down-2\tdowngrade\tapp-misc/down-1\t",
+                           "app-misc/use-1\trebuild\tapp-misc/use-1\t+x",
+                           "\tnew\tapp-misc/new-1.2\t",
+                           "app-misc/gone-3\tuninstall\t\t",
+                           "@selected\tadded\tapp-misc/new",
+                           "@selected\tremoved\tapp-misc/gone",
+                           "@system\tadded\tapp-misc/up",
+                       },
+                       "2026-10-05 14:02:11", plain);
+    CHECK(out.str() == "Since 2026-10-05 14:02:11\n"
+                       "U app-misc/up    1 > 10   +x -y\n"
+                       "D app-misc/down  2 > 1\n"
+                       "R app-misc/use   1        +x\n"
+                       "N app-misc/new     > 1.2\n"
+                       "- app-misc/gone  3\n"
+                       "@ @selected  +app-misc/new  -app-misc/gone\n"
+                       "@ @system    +app-misc/up\n"
+                       "\n1 upgrade, 1 downgrade, 1 rebuild, 1 new, 1 uninstalled\n");
+}
+
+TEST_CASE("diff says when nothing changed") {
+    std::ostringstream out;
+    egraph::human_diff(out, {}, "2026-10-05 14:02:11", plain);
+    CHECK(out.str() == "+ Nothing changed since 2026-10-05 14:02:11.\n");
+    std::ostringstream roots;
+    egraph::human_diff(roots, std::vector<std::string>{"@selected\tadded\ta/b"}, "then", plain);
+    CHECK(roots.str() == "Since then\n@ @selected  +a/b\n");
+}

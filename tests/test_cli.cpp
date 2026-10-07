@@ -149,6 +149,15 @@ TEST_CASE("export neighborhoods take a depth and a direction") {
     CHECK_THROWS_AS(parse("export --direction sideways a/b"), CLI::ValidationError);
 }
 
+TEST_CASE("diff takes an age, a date or a generation, and --json") {
+    const auto plain = std::get<egraph::Diff>(parse("diff").command);
+    CHECK_FALSE(plain.base.has_value());
+    CHECK_FALSE(plain.json);
+    const auto aged = std::get<egraph::Diff>(parse("diff --json 3d").command);
+    CHECK(aged.base == "3d");
+    CHECK(aged.json);
+}
+
 TEST_CASE("export takes a format and any number of packages") {
     const auto plain = parse("export");
     const auto* defaults = std::get_if<egraph::Export>(&plain.command);

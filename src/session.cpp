@@ -110,10 +110,13 @@ void record_history(const std::vector<std::byte>& before, const std::filesystem:
     if (days == 0) {
         return;
     }
-    const auto built = floor<seconds>(sys_time<nanoseconds>{nanoseconds{old->meta.build_time_ns}});
+    // Named by when the system left the state it holds: its own build time is only the last
+    // refresh that found that state unchanged.
+    const auto ended =
+        floor<seconds>(sys_time<nanoseconds>{nanoseconds{current->meta.build_time_ns}});
     std::string text(before.size(), '\0');
     std::ranges::transform(before, text.begin(), [](std::byte b) { return static_cast<char>(b); });
-    const auto generation = directory / generation_name(built);
+    const auto generation = directory / generation_name(ended);
     if (const auto kept = os::replace_with_text(generation, text); !kept) {
         warnings << std::format("egraph: warning: cannot keep {}: {}\n", generation.string(),
                                 kept.error().message());

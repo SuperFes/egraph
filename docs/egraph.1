@@ -968,6 +968,51 @@ command, the status, the four counts, the seconds (empty when unfinished) and th
 .I run
 The events of the run whose id this is, or starts with: each with its time and message, or as
 lines, as the file holds them, a JSON object each.
+.SS diff \fR[\fIwhen\fR]
+The installed packages and root sets now against the system as its history kept it (see
+.I ${ROOT}${EPREFIX}/var/lib/egraph
+under
+.BR FILES ),
+by default against the newest generation: what the last change did. Each package upgraded,
+downgraded, rebuilt (merged again, or with other flags), new or uninstalled, with its versions and
+the flags turned on (+) and off (\-), then the atoms each root set gained and lost. As lines, the
+fields are separated by tabs: the cpv before (empty for a new package), the change
+.RB ( upgrade ", " downgrade ", " rebuild ", " new ", " uninstall ),
+the cpv after (empty for an uninstall) and the flags, separated by spaces; for a root set, the
+set, the change
+.RB ( added " or " removed )
+and the atom.
+.TP
+.I when
+An age
+.RB ( 12h ", " 3d ", " 2w )
+or a date
+.RB ( 2026\-09\-30 ,
+from the start of that day, local time): against the system as it was then, from the generation
+that held it; nothing changed when no generation ended since. When the history does not reach
+back that far, it says since when the changes are. Or a generation's file name.
+.TP
+.B \-\-json
+The changes as a JSON object:
+.BR changes ,
+a list of objects with the
+.BR change ,
+the cpvs
+.B before
+and
+.B after
+and the flags
+.RB ( use )
+for a package, or the
+.BR change ,
+.B set
+and
+.B atom
+for a root set's; the
+.B generation
+compared against, and
+.BR since ,
+in seconds since the epoch.
 .SS tui
 The interactive interface: the installed packages, pending updates, orphans and broken ones, each
 package's page, the plan, the running emerges, a search through the repositories
@@ -1087,8 +1132,8 @@ and the
 .B time
 it merged (when its vdb entry was written) or its uninstall was found; and the store it replaced
 is kept as
-.IR installed\-<built>.egraph ,
-named by when it was built (UTC). All generations from the last day are kept, then the newest of
+.IR installed\-<ended>.egraph ,
+named by when the system stopped being as it holds (UTC). All generations from the last day are kept, then the newest of
 each day, for
 .B history_days
 days; the log is kept whole.

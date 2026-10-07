@@ -1697,6 +1697,128 @@ void human_search(std::ostream& out, std::span<const std::string> records,
     }
 }
 
+void human_diff(std::ostream& out, std::span<const std::string> records, std::string_view since,
+                const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto& glyph = theme.glyph();
+    const auto rows = split_all(records);
+    if (rows.empty()) {
+        out << paint(glyph.good, Tone::good) << ' '
+            << paint(std::format("Nothing changed since {}.", since), Tone::good) << '\n';
+        return;
+    }
+    out << paint(std::format("Since {}", since), Tone::heading) << '\n';
+    const auto is_atom = [](const Fields& row) {
+        return row.at(1) == "added" || row.at(1) == "removed";
+    };
+    // A package row's cp and its versions before and after.
+    const auto parts = [](const Fields& row) {
+        const auto cpv = row.at(0).empty() ? row.at(2) : row.at(0);
+        const auto split = split_cpv(cpv);
+        const auto cp = cpv.substr(0, split.category.size() + 1 + split.name.size());
+        const auto version = [&cp](std::string_view of) {
+            return of.empty() ? of : of.substr(cp.size() + 1);
+        };
+        return std::tuple{cp, version(row.at(0)), version(row.at(2))};
+    };
+    std::size_t cp_width = 0;
+    std::size_t version_width = 0;
+    std::size_t move_width = 0;
+    std::size_t set_width = 0;
+    for (const auto& row : rows) {
+        if (is_atom(row)) {
+            set_width = std::max(set_width, row.at(0).size());
+            continue;
+        }
+        const auto [cp, from, to] = parts(row);
+        cp_width = std::max(cp_width, cp.size());
+        version_width = std::max(version_width, from.size());
+        if (row.at(1) != "rebuild" && !to.empty()) {
+            move_width = std::max(move_width, 3 + to.size());
+        }
+    }
+    // upgrade, downgrade, rebuild, new, uninstall
+    std::array<std::size_t, 5> counts{};
+    for (const auto& row : rows) {
+        if (is_atom(row)) {
+            continue;
+        }
+        const auto kind = row.at(1);
+        const auto index = kind == "upgrade"     ? 0U
+                           : kind == "downgrade" ? 1U
+                           : kind == "rebuild"   ? 2U
+                           : kind == "new"       ? 3U
+                                                 : 4U;
+        ++counts.at(index);
+        constexpr std::array<Tone, 5> tones{Tone::good, Tone::bad, Tone::use, Tone::good,
+                                            Tone::bad};
+        const std::array<std::string_view, 5> marks{glyph.upgrade, glyph.downgrade, glyph.rebuild,
+                                                    glyph.added, glyph.orphan};
+        const auto [cp, from, to] = parts(row);
+        out << paint(marks.at(index), tones.at(index)) << ' ' << paint_cpv(cp, paint);
+        const auto flags = row.size() > 3 ? row.at(3) : std::string_view{};
+        // The padding owed so far, written only when something follows it.
+        std::size_t pad = cp_width - cp.size() + 2;
+        if (!from.empty()) {
+            out << std::string(pad, ' ') << paint(from, Tone::version);
+            pad = 0;
+        }
+        pad += version_width - from.size();
+        if (index != 2 && !to.empty()) {
+            out << std::string(pad, ' ') << ' ' << paint(glyph.instead, Tone::note) << ' '
+                << paint(to, index == 1 ? Tone::bad : Tone::good);
+            pad = move_width - (3 + to.size());
+        } else {
+            pad += move_width;
+        }
+        if (!flags.empty()) {
+            out << std::string(pad, ' ') << ' ';
+            for (const auto flag : std::views::split(flags, ' ')) {
+                const std::string_view text{flag};
+                out << ' ' << paint(text, text.starts_with('+') ? Tone::use : Tone::note);
+            }
+        }
+        out << '\n';
+    }
+    // A line per set: the atoms it gained, then those it lost.
+    for (std::size_t i = 0; i < rows.size();) {
+        if (!is_atom(rows.at(i))) {
+            ++i;
+            continue;
+        }
+        const auto set = rows.at(i).at(0);
+        out << paint(set_glyph(set, glyph), Tone::root) << ' ' << paint(set, Tone::root)
+            << spaces(set.size(), set_width);
+        for (; i < rows.size() && is_atom(rows.at(i)) && rows.at(i).at(0) == set; ++i) {
+            const bool added = rows.at(i).at(1) == "added";
+            out << "  " << paint(added ? "+" : "-", added ? Tone::good : Tone::bad)
+                << paint(rows.at(i).at(2), added ? Tone::version : Tone::note);
+        }
+        out << '\n';
+    }
+    if (std::ranges::all_of(counts, [](std::size_t count) { return count == 0; })) {
+        return;
+    }
+    constexpr std::array<std::array<std::string_view, 2>, 5> nouns{
+        {{" upgrade", " upgrades"},
+         {" downgrade", " downgrades"},
+         {" rebuild", " rebuilds"},
+         {" new", " new"},
+         {" uninstalled", " uninstalled"}}};
+    out << '\n';
+    bool first = true;
+    for (std::size_t i = 0; i < counts.size(); ++i) {
+        if (counts.at(i) == 0) {
+            continue;
+        }
+        out << (first ? "" : paint(", ", Tone::note))
+            << paint(std::to_string(counts.at(i)), Tone::count)
+            << paint(nouns.at(i).at(counts.at(i) == 1 ? 0 : 1), Tone::note);
+        first = false;
+    }
+    out << '\n';
+}
+
 void human_match(std::ostream& out, std::span<const std::string> records,
                  std::span<const std::string> atoms, const Theme& theme) {
     const auto& paint = theme.paint;

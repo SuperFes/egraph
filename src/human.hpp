@@ -250,6 +250,12 @@ void human_removal(std::ostream& out, std::span<const std::string> records, cons
 void human_update_tree(std::ostream& out, std::span<const std::string> table,
                        std::span<const std::string> tree, const Theme& theme);
 
+// difference_lines' records under a heading of when they are since: a line per package with its
+// versions and flags, then a line per root set with the atoms it gained and lost; for none, that
+// nothing changed.
+void human_diff(std::ostream& out, std::span<const std::string> records, std::string_view since,
+                const Theme& theme);
+
 // match records, one block per atom in the given order.
 void human_match(std::ostream& out, std::span<const std::string> records,
                  std::span<const std::string> atoms, const Theme& theme);
