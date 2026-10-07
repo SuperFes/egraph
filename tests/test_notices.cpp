@@ -57,7 +57,7 @@ TEST_CASE("malformed notices are an error") {
     CHECK(egraph::notice_lines(*empty).empty());
 }
 
-TEST_CASE("notice lines give configuration updates, then news") {
+TEST_CASE("notice lines give configuration updates, news, preserved libraries, then GLSAs") {
     const egraph::Notices notices{
         .config = {{.file = "/etc/a.conf", .update = "/etc/._cfg0000_a.conf"},
                    {.file = "/etc/a.conf", .update = "/etc/._cfg0001_a.conf"}},
@@ -68,13 +68,19 @@ TEST_CASE("notice lines give configuration updates, then news") {
                  .package = "dev-libs/foo-2",
                  .consumers = {"app-misc/bar-1", "app-misc/baz-1"}},
                 {.path = "/usr/lib/libold.so.1", .package = "dev-libs/old-2", .consumers = {}}},
-        .rebuild = std::vector<std::string>{"app-misc/bar:0", "app-misc/baz:0"}};
-    CHECK(egraph::notice_lines(notices) ==
-          std::vector<std::string>{
-              "/etc/a.conf\tconfig\t/etc/._cfg0000_a.conf",
-              "/etc/a.conf\tconfig\t/etc/._cfg0001_a.conf",
-              "2026-09-01-x\tnews\tgentoo\tX happened",
-              "/usr/lib/libfoo.so.1\tpreserved\tdev-libs/foo-2\tapp-misc/bar-1 app-misc/baz-1",
-              "/usr/lib/libold.so.1\tpreserved\tdev-libs/old-2\t", "app-misc/bar:0\trebuild",
-              "app-misc/baz:0\trebuild"});
+        .rebuild = std::vector<std::string>{"app-misc/bar:0", "app-misc/baz:0"},
+        .advisories = {{.id = "202601-01",
+                        .title = "foo: overflow",
+                        .revision = 2,
+                        .packages = {{.cpv = "dev-libs/foo-2",
+                                      .fixed = {">=dev-libs/foo-2.1", ">=dev-libs/foo-3"}}}}}};
+    CHECK(
+        egraph::notice_lines(notices) ==
+        std::vector<std::string>{
+            "/etc/a.conf\tconfig\t/etc/._cfg0000_a.conf",
+            "/etc/a.conf\tconfig\t/etc/._cfg0001_a.conf", "2026-09-01-x\tnews\tgentoo\tX happened",
+            "/usr/lib/libfoo.so.1\tpreserved\tdev-libs/foo-2\tapp-misc/bar-1 app-misc/baz-1",
+            "/usr/lib/libold.so.1\tpreserved\tdev-libs/old-2\t", "app-misc/bar:0\trebuild",
+            "app-misc/baz:0\trebuild",
+            "202601-01\tglsa\tfoo: overflow\tdev-libs/foo-2\t>=dev-libs/foo-2.1 >=dev-libs/foo-3"});
 }

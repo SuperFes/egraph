@@ -723,6 +723,34 @@ void human_elog(std::ostream& out, std::span<const std::string> records, const T
 void human_notices(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
     const auto& paint = theme.paint;
     const auto rows = split_all(records);
+    bool printed = false;
+    const auto heading = [&](std::string_view title, std::string_view note) {
+        out << (printed ? "\n" : "") << paint(title, Tone::heading) << paint(note, Tone::note)
+            << ":\n";
+        printed = true;
+    };
+    std::string_view advisory;
+    for (const auto& row : rows) {
+        if (row.at(1) != "glsa") {
+            continue;
+        }
+        if (!printed) {
+            heading("Security advisories", " (egraph install -1 the fixed versions)");
+        }
+        if (row.front() != advisory) {
+            advisory = row.front();
+            out << "  " << paint(advisory, Tone::bad) << "  " << row.at(2) << '\n';
+        }
+        out << "    " << paint_cpv(row.at(3), paint);
+        bool first = true;
+        for (const auto part : std::views::split(row.at(4), ' ')) {
+            if (const std::string_view atom{part}; !atom.empty()) {
+                out << paint(first ? ", fixed in " : " or ", Tone::note) << atom;
+                first = false;
+            }
+        }
+        out << '\n';
+    }
     // Each file once, with how many updates wait for it; rows come grouped by file.
     std::vector<std::pair<std::string_view, std::size_t>> files;
     for (const auto& row : rows) {
@@ -735,8 +763,7 @@ void human_notices(std::ostream& out, std::span<const std::string> records, cons
         ++files.back().second;
     }
     if (!files.empty()) {
-        out << paint("Configuration updates", Tone::heading)
-            << paint(" (dispatch-conf)", Tone::note) << ":\n";
+        heading("Configuration updates", " (dispatch-conf)");
         for (const auto& [file, count] : files) {
             out << "  " << file;
             if (count > 1) {
@@ -752,8 +779,7 @@ void human_notices(std::ostream& out, std::span<const std::string> records, cons
             continue;
         }
         if (first) {
-            out << (files.empty() ? "" : "\n") << paint("Unread news", Tone::heading)
-                << paint(" (eselect news read)", Tone::note) << ":\n";
+            heading("Unread news", " (eselect news read)");
             first = false;
         }
         out << "  " << paint(row.front(), Tone::note);
@@ -762,16 +788,14 @@ void human_notices(std::ostream& out, std::span<const std::string> records, cons
         }
         out << '\n';
     }
-    bool preserved_first = true;
+    first = true;
     for (const auto& row : rows) {
         if (row.at(1) != "preserved") {
             continue;
         }
-        if (preserved_first) {
-            out << (files.empty() && first ? "" : "\n")
-                << paint("Preserved libraries", Tone::heading)
-                << paint(" (egraph install -1 @preserved-rebuild)", Tone::note) << ":\n";
-            preserved_first = false;
+        if (first) {
+            heading("Preserved libraries", " (egraph install -1 @preserved-rebuild)");
+            first = false;
         }
         out << "  " << row.front() << "  " << paint("from ", Tone::note)
             << paint_cpv(row.at(2), paint);

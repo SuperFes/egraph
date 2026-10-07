@@ -5,6 +5,7 @@
 #include "repository.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <map>
 #include <sstream>
@@ -99,6 +100,27 @@ class IndexBuilder {
             index_.ids.push_back(intern(word));
         }
         return {.first = first, .count = static_cast<std::uint32_t>(index_.ids.size()) - first};
+    }
+
+    // A GLSA; packages are (cp, arch, vulnerable atoms, unaffected atoms), atoms space-separated.
+    void advisory(std::string_view id, std::string_view title,
+                  const std::vector<std::array<std::string, 4>>& packages,
+                  std::uint64_t revision = 1) {
+        egraph::Advisory advisory;
+        advisory.id = intern(id);
+        advisory.title = intern(title);
+        advisory.synopsis = intern("");
+        advisory.revision = revision;
+        advisory.packages.first = static_cast<std::uint32_t>(index_.advisory_packages.size());
+        for (const auto& [cp, arch, vulnerable, unaffected] : packages) {
+            index_.advisory_packages.push_back({.cp = intern(cp),
+                                                .arch = intern(arch),
+                                                .vulnerable = ids(vulnerable),
+                                                .unaffected = ids(unaffected)});
+        }
+        advisory.packages.count =
+            static_cast<std::uint32_t>(index_.advisory_packages.size()) - advisory.packages.first;
+        index_.advisories.push_back(advisory);
     }
 
     egraph::VisibilityConfig& config() { return index_.visibility; }

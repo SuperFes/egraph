@@ -17,7 +17,8 @@ using encoding::size32;
 constexpr std::uint32_t section_repositories = 4;
 constexpr std::uint32_t section_versions = 5;
 constexpr std::uint32_t section_visibility = 6;
-constexpr std::size_t section_count = 6;
+constexpr std::uint32_t section_advisories = 7;
+constexpr std::size_t section_count = 7;
 
 std::optional<StoreError> read_meta(std::span<const std::byte> section, RepositoryIndex& index) {
     Reader r(section, "meta");
@@ -116,10 +117,43 @@ std::optional<StoreError> read_visibility(std::span<const std::byte> section,
     return r.error();
 }
 
+std::optional<StoreError> read_advisories(std::span<const std::byte> section,
+                                          RepositoryIndex& index) {
+    Reader r(section, "advisories");
+    const auto count = r.count();
+    const auto strings = size32(index.strings.size());
+    for (std::uint32_t i = 0; i < count && r.ok(); ++i) {
+        Advisory advisory;
+        advisory.id = r.index(strings, "string");
+        advisory.title = r.index(strings, "string");
+        advisory.synopsis = r.index(strings, "string");
+        advisory.revision = r.varint();
+        const auto packages = r.count();
+        const auto first = size32(index.advisory_packages.size());
+        for (std::uint32_t j = 0; j < packages && r.ok(); ++j) {
+            AdvisoryPackage package;
+            package.cp = r.index(strings, "string");
+            package.arch = r.index(strings, "string");
+            package.vulnerable = read_ids(r, index.ids, strings, "string");
+            package.unaffected = read_ids(r, index.ids, strings, "string");
+            index.advisory_packages.push_back(package);
+        }
+        advisory.packages = {.first = first,
+                             .count = size32(index.advisory_packages.size()) - first};
+        index.advisories.push_back(advisory);
+    }
+    r.finish();
+    return r.error();
+}
+
 } // namespace
 
 std::span<const ConfigEntry> RepositoryIndex::entries_in(Range range) const {
     return std::span{entries}.subspan(range.first, range.count);
+}
+
+std::span<const AdvisoryPackage> RepositoryIndex::packages_in(Range range) const {
+    return std::span{advisory_packages}.subspan(range.first, range.count);
 }
 
 std::expected<RepositoryIndex, StoreError> decode_repository(std::span<const std::byte> data) {
@@ -143,7 +177,8 @@ std::expected<RepositoryIndex, StoreError> decode_repository(std::span<const std
     }
     for (const auto& error : {read_repositories(section(section_repositories), index),
                               read_versions(section(section_versions), index),
-                              read_visibility(section(section_visibility), index)}) {
+                              read_visibility(section(section_visibility), index),
+                              read_advisories(section(section_advisories), index)}) {
         if (error) {
             return std::unexpected(*error);
         }

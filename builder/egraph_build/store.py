@@ -10,6 +10,8 @@ from egraph_build.installed import InstalledLayer, Node, Package
 from egraph_build.model import DEP_KINDS
 from egraph_build.profile import ImplicitIuse, has_iuse_effective
 from egraph_build.repository import (
+    Advisory,
+    AdvisoryPackage,
     Eapi,
     Entry,
     Repository,
@@ -61,8 +63,10 @@ EVALUATED_SECTIONS = (
 )
 
 REPOSITORY_MAGIC = b"EGRAPHRI"
-REPOSITORY_FORMAT_VERSION = 3
-SECTION_REPOSITORIES, SECTION_VERSIONS, SECTION_VISIBILITY = range(4, 7)
+REPOSITORY_FORMAT_VERSION = 4
+SECTION_REPOSITORIES, SECTION_VERSIONS, SECTION_VISIBILITY, SECTION_ADVISORIES = range(
+    4, 8
+)
 REPOSITORY_SECTIONS = (
     SECTION_META,
     SECTION_INPUTS,
@@ -70,6 +74,7 @@ REPOSITORY_SECTIONS = (
     SECTION_REPOSITORIES,
     SECTION_VERSIONS,
     SECTION_VISIBILITY,
+    SECTION_ADVISORIES,
 )
 
 _HEADER = struct.Struct("<8sII")
@@ -431,6 +436,20 @@ def encode_repository(index, meta, inputs=()):
         w.ids([strings(value) for value in accepted])
         _write_entries(w, entries, strings)
     sections[SECTION_VISIBILITY] = w.out
+
+    w = _Writer()
+    w.varint(len(index.advisories))
+    for a in index.advisories:
+        for value in (a.id, a.title, a.synopsis):
+            w.varint(strings(value))
+        w.varint(a.revision)
+        w.varint(len(a.packages))
+        for p in a.packages:
+            w.varint(strings(p.cp))
+            w.varint(strings(p.arch))
+            for atoms in (p.vulnerable, p.unaffected):
+                w.ids([strings(atom) for atom in atoms])
+    sections[SECTION_ADVISORIES] = w.out
 
     sections[SECTION_STRINGS] = _write_strings(strings)
     return _frame(
@@ -843,7 +862,22 @@ def decode_repository(data):
         unmasks,
         *accepted,
     )
-    return meta, inputs, RepositoryIndex(repositories, tuple(versions), visibility)
+
+    r, s, listed, _ = reader(SECTION_ADVISORIES, "advisories")
+    advisories = []
+    for _ in range(r.count()):
+        nr, title, synopsis = s(), s(), s()
+        revision = r.varint()
+        packages = tuple(
+            AdvisoryPackage(s(), s(), listed(), listed()) for _ in range(r.count())
+        )
+        advisories.append(Advisory(nr, title, synopsis, revision, packages))
+    r.done()
+    return (
+        meta,
+        inputs,
+        RepositoryIndex(repositories, tuple(versions), visibility, tuple(advisories)),
+    )
 
 
 def write(path, data):

@@ -908,7 +908,14 @@ with
 updates waiting (which portage finds only where the user can write), the repositories'
 unread news items with their titles, and the libraries emerge preserved for what still uses
 them, with the packages that do, read through
-.BR "egraph\-build \-\-notices" .
+.BR "egraph\-build \-\-notices" ;
+and, matched against the stores, the GLSAs affecting an installed package, as
+.B glsa\-check \-t affected
+finds them: those the repository index holds, for the system's
+.BR ARCH ,
+less those
+.B glsa\-check \-\-inject
+marked applied.
 As lines, an update is its file,
 .BR config
 and the update; a news item is the item,
@@ -918,7 +925,10 @@ its repository and its title; a preserved library is its path,
 the package it comes from and the packages using it, space-separated; and each atom of
 .B @preserved\-rebuild
 follows with
-.BR rebuild .
+.BR rebuild ;
+then for each package a GLSA affects, the GLSA's id,
+.BR glsa ,
+its title, the installed version and the versions that fix it, space-separated.
 After an action run from a terminal without
 .BR \-\-yes ,
 preserved libraries have

@@ -24,6 +24,13 @@ Each commit passes the resolver suite on its own.
 
 ## Portage bugs found
 
+- The glsa module's `revisionMatch` fails on a slotted revision range (`>=~cat/pkg-1-r1:2`): it
+  splits the atom with its slot still on (`pkgsplit` returns None), so `glsa-check` dies on such
+  a GLSA. None in the tree has one; egraph honours the slot ("a slotted revision range honours
+  its slot" in `test_glsa.cpp`).
+- `Glsa.isVulnerable` raises on a package entry whose arch fails `ARCH_REGEX` (a comma-separated
+  list), outside `glsa-check`'s handler, so `glsa-check -t affected` dies there. The builder
+  leaves such a GLSA out (`test_advisories_are_read_as_the_glsa_module_parses_them`).
 - `emerge --usepkg=n` counts as `--usepkg` for `--with-bdeps`' default: the parser stores the
   `n` as `False` in `myopts`, and `create_depgraph_params` asks only whether the key is there,
   so build-time dependencies stop weighing and a rebuild bound through DEPEND alone is dropped

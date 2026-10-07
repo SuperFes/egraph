@@ -1,6 +1,7 @@
 """The repository index: every version in the repositories, and what portage decides their
 visibility from, its metadata and its configuration as portage parsed them
-(docs/store-format.md). egraph evaluates the visibility itself.
+(docs/store-format.md), and the main repository's security advisories. egraph evaluates the
+visibility, and which advisories affect the system, itself.
 
 That configuration is private to portage's config; this module is the one place egraph reads it.
 """
@@ -89,11 +90,32 @@ class Repository(NamedTuple):
     description_index: bool
 
 
+class AdvisoryPackage(NamedTuple):
+    """A package entry of a GLSA: its ranges as portage's glsa module makes them atoms."""
+
+    cp: str
+    # "*" or the keywords it applies to, space-separated.
+    arch: str
+    vulnerable: tuple
+    unaffected: tuple
+
+
+class Advisory(NamedTuple):
+    id: str
+    title: str
+    synopsis: str
+    # The <revised> count, which a change to it raises.
+    revision: int
+    packages: tuple
+
+
 class RepositoryIndex(NamedTuple):
     # Repository records, in portage's order: the highest priority first.
     repositories: tuple
     versions: tuple
     visibility: Visibility
+    # Sorted by id.
+    advisories: tuple = ()
 
 
 def _tokens(text):
@@ -190,12 +212,58 @@ def repositories(portdb):
     return tuple(found)
 
 
-def assemble(portdb, versions):
-    """The index of versions, with the repositories and the visibility configuration now."""
+def advisory_directory(settings):
+    """Where portage's glsa module reads the GLSAs from; None without a main repository."""
+    if "GLSA_DIR" in settings:
+        return settings["GLSA_DIR"]
+    if not settings.get("PORTDIR"):
+        return None
+    return os.path.join(settings["PORTDIR"], "metadata", "glsa")
+
+
+def read_advisories(settings):
+    """The GLSAs portage's glsa module reads, as it parses them, sorted by id. Those it cannot
+    parse, or whose arch it would refuse to test, are left out, as glsa-check skips the first.
+    """
+    from portage import glsa
+
+    if advisory_directory(settings) is None:
+        return ()
+    found = []
+    for nr in sorted(glsa.get_glsa_list(settings)):
+        try:
+            advisory = glsa.Glsa(nr, settings, None, None)
+        except Exception:
+            # Anything from a malformed XML file to a bad atom: glsa-check gives up on it too.
+            continue
+        packages = tuple(
+            AdvisoryPackage(
+                str(cp),
+                path["arch"],
+                tuple(atom.strip() for atom in path["vul_atoms"]),
+                tuple(atom.strip() for atom in path["unaff_atoms"]),
+            )
+            for cp, paths in advisory.packages.items()
+            for path in paths
+        )
+        if not all(glsa.ARCH_REGEX.match(p.arch) for p in packages):
+            continue
+        found.append(
+            Advisory(nr, advisory.title, advisory.synopsis, advisory.count, packages)
+        )
+    return tuple(found)
+
+
+def assemble(portdb, versions, advisories=None):
+    """The index of versions, with the repositories, the visibility configuration and, unless
+    given, the advisories now."""
     return RepositoryIndex(
         repositories=repositories(portdb),
         versions=tuple(versions),
         visibility=read_visibility(portdb.settings, {v.eapi for v in versions}),
+        advisories=(
+            read_advisories(portdb.settings) if advisories is None else advisories
+        ),
     )
 
 
@@ -282,7 +350,25 @@ def to_json(index):
     """The index as canonical JSON: sorted keys, everything in the store's order."""
     v = index.visibility
     document = {
-        "format": 3,
+        "format": 4,
+        "advisories": [
+            {
+                "id": a.id,
+                "title": a.title,
+                "synopsis": a.synopsis,
+                "revision": a.revision,
+                "packages": [
+                    {
+                        "cp": p.cp,
+                        "arch": p.arch,
+                        "vulnerable": list(p.vulnerable),
+                        "unaffected": list(p.unaffected),
+                    }
+                    for p in a.packages
+                ],
+            }
+            for a in index.advisories
+        ],
         "repositories": [
             {
                 "name": r.name,

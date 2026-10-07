@@ -587,6 +587,15 @@ whose files the store's freshness check could not afford to stat. Reading never 
 unread lists, so egraph stays read-only outside its actions. On a terminal without `--yes`,
 configuration updates offer `dispatch-conf`, given the roots through the environment.
 
+The GLSAs that affect the system come with the notices too (17e1), but from the stores: the
+repository index holds every GLSA as portage's `glsa` module parses it (its ranges made atoms,
+revision ranges included), and egraph matches them against the installed store as
+`Glsa.isVulnerable` does, leaving out those `glsa-check --inject` marked applied. Matching in
+the builder would go stale with every merge, which changes no repository input; parsing in
+egraph would mean reading XML portage already reads. `test_glsa.py` holds the matching to the
+module's on a generated corpus over every scenario. A sync replaces the GLSAs' files, so their
+directory alone is an input, and a change to it reads them again without anything else.
+
 Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
 touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
 the set is emerge's own. `parse_request` takes sets the store does not hold from its caller

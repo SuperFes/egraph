@@ -1758,11 +1758,43 @@ void show_notices(const Notices& notices, const Invocation& invocation, std::ost
     }
 }
 
+// The GLSAs affecting the installed packages, glsa-check's applied ones left out.
+std::expected<std::vector<AffectedAdvisory>, std::string> advisories_of(Session& session) {
+    const auto index = session.repository();
+    if (!index) {
+        return std::unexpected(index.error());
+    }
+    const auto installed = session.installed();
+    if (!installed) {
+        return std::unexpected(installed.error());
+    }
+    const auto& repository = index->get();
+    return affected_advisories(repository, installed->get(),
+                               applied_advisories(repository.meta.eroot));
+}
+
+// The notices with the GLSAs; those left out, said on err, when the stores cannot match them.
+std::expected<Notices, std::string> read_notices(std::string_view name, Session& session,
+                                                 const Invocation& invocation, std::ostream& err) {
+    auto notices = read_notices(invocation);
+    if (!notices) {
+        return notices;
+    }
+    if (auto advisories = advisories_of(session); advisories) {
+        notices->advisories = std::move(*advisories);
+    } else {
+        err << "egraph: " << name << ": the GLSAs could not be matched: " << advisories.error()
+            << '\n';
+    }
+    return notices;
+}
+
 // The notices, set apart from what a run printed before them; nullopt, said on err, when they
 // could not be read.
-std::optional<Notices> show_notices_after(std::string_view name, const Invocation& invocation,
-                                          std::ostream& out, std::ostream& err) {
-    auto notices = read_notices(invocation);
+std::optional<Notices> show_notices_after(std::string_view name, Session& session,
+                                          const Invocation& invocation, std::ostream& out,
+                                          std::ostream& err) {
+    auto notices = read_notices(name, session, invocation, err);
     if (!notices) {
         err << "egraph: " << name << ": the notices could not be read: " << notices.error() << '\n';
         return std::nullopt;
@@ -1807,7 +1839,7 @@ std::expected<int, std::string> run_handed_over(const HandOver& hand_over,
 // rebuild of what uses preserved libraries planned and offered, once.
 void follow_up(std::string_view name, bool yes, Session& session, const Invocation& invocation,
                std::ostream& out, std::ostream& err) {
-    const auto notices = show_notices_after(name, invocation, out, err);
+    const auto notices = show_notices_after(name, session, invocation, out, err);
     if (!notices || yes || !invocation.ask) {
         return;
     }
@@ -1833,9 +1865,9 @@ void follow_up(std::string_view name, bool yes, Session& session, const Invocati
     std::ignore = execute(rebuild, session, again, out, err);
 }
 
-Exit execute(const NoticesCommand&, Session&, const Invocation& invocation, std::ostream& out,
-             std::ostream& err) {
-    const auto notices = read_notices(invocation);
+Exit execute(const NoticesCommand&, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    const auto notices = read_notices(NoticesCommand::name, session, invocation, err);
     if (!notices) {
         return fail(err, std::format("notices: {}", notices.error()));
     }
@@ -1864,7 +1896,7 @@ Exit execute(const Sync& command, Session& session, const Invocation& invocation
     }
     const auto status =
         execute(static_cast<const Updates&>(command), session, invocation, out, err);
-    std::ignore = show_notices_after(Sync::name, invocation, out, err);
+    std::ignore = show_notices_after(Sync::name, session, invocation, out, err);
     if (!ran) {
         err << "egraph: " << Sync::name << ": " << ran.error() << '\n';
         return Exit::failure;
@@ -1983,7 +2015,7 @@ Exit confirm_and_carry_out(std::string_view name, bool yes, std::string_view que
     if (follow) {
         follow_up(name, yes, session, invocation, out, err);
     } else {
-        std::ignore = show_notices_after(name, invocation, out, err);
+        std::ignore = show_notices_after(name, session, invocation, out, err);
     }
     if (!ran) {
         err << "egraph: " << name << ": " << ran.error() << '\n';

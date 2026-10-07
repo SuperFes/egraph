@@ -361,8 +361,34 @@ void write_layers(std::ostream& out, const RepositoryIndex& index, std::span<con
 } // namespace
 
 void write_repository_json(std::ostream& out, const RepositoryIndex& index) {
-    out << R"({"format":3,"repositories":[)";
+    out << R"({"advisories":[)";
     bool first = true;
+    for (const auto& advisory : index.advisories) {
+        out << (first ? "{\"id\":" : ",{\"id\":");
+        first = false;
+        write_string(out, index, advisory.id);
+        out << ",\"packages\":[";
+        bool first_package = true;
+        for (const auto& package : index.packages_in(advisory.packages)) {
+            out << (first_package ? "{\"arch\":" : ",{\"arch\":");
+            first_package = false;
+            write_string(out, index, package.arch);
+            out << ",\"cp\":";
+            write_string(out, index, package.cp);
+            out << ",\"unaffected\":";
+            write_string_list(out, index, package.unaffected);
+            out << ",\"vulnerable\":";
+            write_string_list(out, index, package.vulnerable);
+            out << '}';
+        }
+        out << "],\"revision\":" << advisory.revision << ",\"synopsis\":";
+        write_string(out, index, advisory.synopsis);
+        out << ",\"title\":";
+        write_string(out, index, advisory.title);
+        out << '}';
+    }
+    out << R"(],"format":4,"repositories":[)";
+    first = true;
     for (const auto& repository : index.repositories) {
         out << (first ? "{" : ",{")
             << "\"description_index\":" << (repository.description_index ? "true" : "false")

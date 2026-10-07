@@ -97,6 +97,16 @@ std::vector<std::string> notice_lines(const Notices& notices) {
     for (const auto& atom : notices.rebuild.value_or(std::vector<std::string>{})) {
         lines.push_back(std::format("{}\trebuild", atom));
     }
+    for (const auto& advisory : notices.advisories) {
+        for (const auto& [cpv, fixed] : advisory.packages) {
+            std::string joined;
+            for (const auto& atom : fixed) {
+                joined += std::format("{}{}", joined.empty() ? "" : " ", atom);
+            }
+            lines.push_back(
+                std::format("{}\tglsa\t{}\t{}\t{}", advisory.id, advisory.title, cpv, joined));
+        }
+    }
     return lines;
 }
 

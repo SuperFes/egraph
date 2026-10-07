@@ -978,8 +978,9 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
   dismissed (until it changes), put off (an hour, a day or a week) or worked on now (a GLSA's
   upgrade planned, news read, a sync, `@preserved-rebuild`, the masked package's page,
   dispatch-conf).
-  - 17e1: GLSAs in the repository index, as portage's `glsa` module parses them, matched
-    against the installed store in C++ (shadowed against `Glsa.isVulnerable`), in `notices`.
+  - 17e1 (done): GLSAs in the repository index, as portage's `glsa` module parses them,
+    matched against the installed store in C++ (shadowed against `Glsa.isVulnerable`), in
+    `notices`.
   - 17e2: every kind as one notice with a stable key, in `notices` and the status file, written
     as watch refreshes, new ones logged.
   - 17e3: dismissed and put-off notices, per user under `XDG_STATE_HOME`.

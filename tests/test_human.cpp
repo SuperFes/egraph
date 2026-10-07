@@ -214,6 +214,25 @@ TEST_CASE("notices list preserved libraries with what they come from and what us
                        "  /usr/lib/libold.so.1  from dev-libs/old-2\n");
 }
 
+TEST_CASE("notices list the GLSAs first, each affected package with its fixes") {
+    std::ostringstream out;
+    egraph::human_notices(
+        out,
+        std::vector<std::string>{"2026-09-01-x\tnews\tgentoo\tX happened",
+                                 "202601-01\tglsa\tfoo: overflow\tdev-libs/foo-1\t>=dev-libs/foo-2",
+                                 "202601-01\tglsa\tfoo: overflow\tdev-libs/foo-2.5\t"
+                                 ">=dev-libs/foo-2.6:2 >=dev-libs/foo-3",
+                                 "202602-01\tglsa\tbar: leak\tdev-libs/bar-1\t"},
+        plain);
+    CHECK(out.str() == "Security advisories (egraph install -1 the fixed versions):\n"
+                       "  202601-01  foo: overflow\n"
+                       "    dev-libs/foo-1, fixed in >=dev-libs/foo-2\n"
+                       "    dev-libs/foo-2.5, fixed in >=dev-libs/foo-2.6:2 or >=dev-libs/foo-3\n"
+                       "  202602-01  bar: leak\n"
+                       "    dev-libs/bar-1\n"
+                       "\nUnread news (eselect news read):\n  2026-09-01-x  X happened\n");
+}
+
 TEST_CASE("a verified removal says emerge removes the same") {
     std::ostringstream same;
     egraph::human_verification(same, {}, plain, "removes");

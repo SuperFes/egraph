@@ -236,12 +236,13 @@ and ebuilds of every such cp it carries.
 ## The repository index
 
 Every version of every cp in the repositories, with what visibility is decided from: the ebuilds'
-metadata and the configuration as portage parsed it, for egraph to evaluate (`design.md`). It lives
+metadata and the configuration as portage parsed it, for egraph to evaluate (`design.md`); and
+the main repository's GLSAs, for egraph to match against the installed packages. It lives
 beside the installed store, named after it (`installed.egraph` → `installed.repository.egraph`),
 and is written by its own builder run (`egraph-build --repository`), as it changes with the
 repositories and the configuration rather than with the installed packages.
 
-It uses the installed store's framing with magic `EGRAPHRI` and its own format version, now 3.
+It uses the installed store's framing with magic `EGRAPHRI` and its own format version, now 4.
 
 | Id | Section | Contents |
 |---|---|---|
@@ -251,8 +252,9 @@ It uses the installed store's framing with magic `EGRAPHRI` and its own format v
 | 4 | Repositories | count, then `(name, location, description index)`: string ids, and 1 when emerge --search finds a `metadata/pkg_desc_index` for it (in the repository or under the dependency cache), else 0; in portage's order (`getRepositories`, the highest priority first) |
 | 5 | Versions | count, then the records below, sorted by cp, then by repository in section 4's order, then by version as `cp_list` gives them |
 | 6 | Visibility | the configuration records below |
+| 7 | Advisories | count, then the GLSA records below, sorted by id |
 
-All six sections are required.
+All seven sections are required.
 
 A version record, for each ebuild whose metadata portage could read:
 
@@ -289,6 +291,16 @@ The visibility section holds, in order, each as portage's config parsed it:
 6. `ACCEPT_PROPERTIES`: list of string ids; then `package.properties` as an entry list.
 7. `ACCEPT_RESTRICT`: list of string ids; then `package.accept_restrict` as an entry list.
 
+A GLSA record holds what portage's `glsa` module parses from one under `GLSA_DIR`, by default
+the main repository's `metadata/glsa` (those it cannot parse, or whose arch it would refuse,
+left out):
+
+1. String ids: id, title, synopsis; then the `<revised>` count.
+2. Package entries: count, then `(cp, arch, vulnerable, unaffected)`: string ids for the cp and
+   the arch (`*` or keywords, space-separated), then two lists of string ids, the ranges as the
+   module makes them atoms (`vul_atoms`, `unaff_atoms`), leading space stripped: plain atoms,
+   or `>=~`, `>~`, `<=~` and `<~` for a range over the revisions of one version.
+
 An entry list is a count, then `(atom, tokens)`: the atom's string id (a wildcard atom such as
 `*/*` included) and a list of string ids. Entries of plain cps come first, then the wildcard
 ones, each group in portage's order (`ExtendedAtomDict`), as a lookup for a cp collects them.
@@ -296,4 +308,4 @@ ones, each group in portage's order (`ExtendedAtomDict`), as a lookup for a cp c
 Inputs are the evaluated store's configuration inputs, and per repository its root, layout,
 repository-wide masks, license groups, categories and eclass directory, every category
 directory, the metadata cache directory of every category, and outside the main repository
-every package directory and ebuild.
+every package directory and ebuild; and the GLSAs' directory, which a change reads again alone.

@@ -186,8 +186,12 @@ def evaluated_inputs(settings, portdb, cps):
 
 
 def repository_inputs(portdb):
-    """The inputs of the repository index: every cp's, the configuration and the builder."""
+    """The inputs of the repository index: every cp's, the configuration, the advisories'
+    directory (a sync replaces its files) and the builder."""
     paths = _evaluated_paths(portdb.settings, portdb, portdb.cp_all())
+    advisories = repository.advisory_directory(portdb.settings)
+    if advisories is not None:
+        paths.append(advisories)
     paths.extend(builder_paths())
     return tuple(sorted({stat_input(path) for path in paths}))
 
@@ -258,12 +262,16 @@ def index(portdb):
 
 # An index input that bears only on the visibility configuration.
 _CONFIGURATION = "configuration"
+# One that bears only on the advisories.
+_ADVISORIES = ("advisories",)
 
 
-def _index_scope(path, locations, categories):
-    """The category or cp an index input bears on alone, _CONFIGURATION, ("eclass", location)
-    for a repository's eclasses, or None when it can bear on any version. locations are the
-    repositories', longest first."""
+def _index_scope(path, locations, categories, advisories):
+    """The category or cp an index input bears on alone, _CONFIGURATION, _ADVISORIES for the
+    advisories' directory, ("eclass", location) for a repository's eclasses, or None when it
+    can bear on any version. locations are the repositories', longest first."""
+    if path == advisories:
+        return _ADVISORIES
     for location in locations:
         if not path.startswith(location + os.sep):
             continue
@@ -323,8 +331,10 @@ def index_incremental(portdb, previous):
             configuration.update(_tree(os.path.join(user, name)))
     categories = frozenset(settings.categories)
     locations = sorted((r.location for r in old.repositories), key=len, reverse=True)
+    advisories = repository.advisory_directory(settings)
     scopes = set()
     reconfigured = False
+    readvised = False
     for path in recorded.keys() | by_path.keys():
         before, after = recorded.get(path), by_path.get(path)
         if before is not None and after is not None:
@@ -337,19 +347,21 @@ def index_incremental(portdb, previous):
         scope = (
             _CONFIGURATION
             if path in configuration
-            else _index_scope(path, locations, categories)
+            else _index_scope(path, locations, categories, advisories)
         )
         if scope is None:
             return index(portdb)
         if scope == _CONFIGURATION:
             reconfigured = True
+        elif scope == _ADVISORIES:
+            readvised = True
         else:
             scopes.add(scope)
     cps = set(portdb.cp_all())
     old_cps = {v.cp for v in old.versions}
     inheriting = set()
     for scope in scopes:
-        if isinstance(scope, tuple):
+        if isinstance(scope, tuple) and scope[0] == "eclass":
             inheriting.update(_inheriting(portdb, scope[1]))
     in_inheriting = {v.cp for v in old.versions if v.repo in inheriting}
     if inheriting:
@@ -372,7 +384,11 @@ def index_incremental(portdb, previous):
             kept.setdefault(version.cp, []).append(version)
     versions = [v for cp in sorted(cps) for v in kept.get(cp) or read.get(cp, ())]
     return RepositoryBuild(
-        repository.assemble(portdb, versions), current, started, dirty, False
+        repository.assemble(portdb, versions, None if readvised else old.advisories),
+        current,
+        started,
+        dirty,
+        False,
     )
 
 

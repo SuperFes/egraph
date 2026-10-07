@@ -495,3 +495,14 @@ process including load and the freshness check of 2,575 inputs.
   to do; the portage hooks run it after every emerge and sync, off the query's path.
 - Builds were not timed live: with ccache, whichever tool builds second compiles warm. 16k4c's
   playground comparison (above) is the scheduling one.
+
+## GLSAs in the repository index (2026-10-07, roadmap step 17e1)
+
+- 3,853 GLSAs in the main repository. Portage's `glsa` module parses them all in 1.8 s
+  (minidom), which a full index build adds and an incremental one skips unless their directory
+  changed. They take 0.96 MB of the index (now 6.5 MB).
+- `egraph notices` with the GLSAs matched: 0.43 s, nearly all of it `egraph-build --notices`;
+  none affect this box, as `glsa-check -t affected` agrees.
+- A generated corpus of 240 GLSAs on each of the 27 scenarios (every range kind, slots, arch
+  rules, applied ones) finds 30 to 605 affected packages each; egraph and the module agree on
+  all.
