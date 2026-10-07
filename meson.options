@@ -47,6 +47,13 @@ option(
   description: 'The terminal interface (egraph tui), which needs Notcurses',
 )
 option(
+  'notify',
+  type: 'feature',
+  value: 'auto',
+  description: 'Desktop notifications of the notices (egraph notify), which need sd-bus: '
+  + 'libsystemd, or libelogind',
+)
+option(
   'journal',
   type: 'feature',
   value: 'auto',

@@ -1006,7 +1006,7 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
       fingerprint, kept in the user's state) and those put off whose time has come; the
       summary's title and body; the terminal Open starts (xdg-terminal-exec, `$TERMINAL`, a
       short list, or the settings file's `terminal`) with `egraph tui` on the notices page.
-    - 17e6b: the session bus through sd-bus, in `bus.cpp` alone (a `notify` feature, as
+    - 17e6b (done): the session bus through sd-bus, in `bus.cpp` alone (a `notify` feature, as
       Notcurses is `tui`): post or replace the summary, close it, and its actions and closing as
       events; tested against a fake notification server on a private bus.
     - 17e6c: the user daemon: notices.json watched (inotify) and put-offs timed, one summary

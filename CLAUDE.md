@@ -52,7 +52,7 @@ build/egraph watch                                    # keep the stores fresh un
 build/egraph                                          # interactive: TUI on a terminal, : for commands
 meson test -C build --print-errorlogs                 # Catch2 + pytest (a worker per core with pytest-xdist)
 CC=clang CXX=clang++ meson setup build-san -Db_sanitize=address,undefined -Db_lundef=false ...  # plus the fork options; gcc 16.2.1's libasan fails at thread exit
-meson setup build-notui -Dtui=disabled -Djournal=disabled ...  # without Notcurses or libsystemd
+meson setup build-notui -Dtui=disabled -Djournal=disabled -Dnotify=disabled ...  # without Notcurses or libsystemd
 clang-tidy -p build src/*.cpp                         # safety checks, config in .clang-tidy
 clang-format -i src/*.cpp src/*.hpp tests/*.cpp tests/*.hpp
 black builder
@@ -140,7 +140,8 @@ needs the heap.
 - Do not hold iterators or references into a container across a mutation of it.
 - Hand `argc`/`argv` straight to CLI11; never index `argv` (that is pointer arithmetic).
 - C APIs (process spawning, anything `std::filesystem` does not cover) live only in `src/os.cpp`
-  behind value-typed wrappers, and Notcurses only in `src/screen.cpp` (the `Screen` class).
+  behind value-typed wrappers, Notcurses only in `src/screen.cpp` (the `Screen` class), and
+  sd-bus only in `src/bus.cpp` (the `bus::Session` class).
   If a task seems to need an unsafe construct, stop and ask.
 - Errors are values: `std::expected` for anything fallible (I/O, parsing, spawning). Exceptions only
   for programmer errors.

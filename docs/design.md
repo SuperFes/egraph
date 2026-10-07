@@ -666,6 +666,16 @@ tui --notices` in a terminal: the settings file's `terminal`, else xdg-terminal-
 `$TERMINAL`, else the first of a short list found in PATH, each given the command as it expects
 (17e6a).
 
+The session bus is sd-bus (libsystemd, or elogind's copy), confined to `src/bus.cpp` behind the
+value-typed `bus::Session` as Notcurses is to `screen.cpp`, and built with the `notify` feature
+(`-Dnotify=auto`). Only non-variadic calls are used: messages are built a field at a time. The
+signal callbacks write into a heap `Inbox` the session owns, so a moved session never leaves
+them a dangling pointer; they keep only the actions and closings of notifications this session
+posted, which is all a server's broadcast signals are filtered by. The daemon waits on the bus
+beside its inotify watch, as one more descriptor to `Watcher::wait`. `test_bus.py` drives the
+layer through a small probe against a fake server (dbus-python) on a private bus with no
+service directories, so no desktop's notification daemon is ever started (17e6b).
+
 Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
 touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
 the set is emerge's own. `parse_request` takes sets the store does not hold from its caller

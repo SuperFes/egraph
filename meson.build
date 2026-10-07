@@ -46,6 +46,13 @@ notcurses = dependency(
 )
 
 libsystemd = dependency('libsystemd', required: get_option('journal'), include_type: 'system')
+# elogind carries sd-bus too, under the same header names.
+sd_bus = dependency(
+  'libsystemd',
+  'libelogind',
+  required: get_option('notify'),
+  include_type: 'system',
+)
 
 build_info_hpp = configure_file(
   input: 'src/build_info.hpp.in',
@@ -54,12 +61,16 @@ build_info_hpp = configure_file(
     'VERSION': meson.project_version(),
     'HAVE_TUI': notcurses.found() ? 1 : 0,
     'HAVE_JOURNAL': libsystemd.found() ? 1 : 0,
+    'HAVE_NOTIFY': sd_bus.found() ? 1 : 0,
   },
 )
 
 egraph_sources = []
 if notcurses.found()
   egraph_sources += 'src/screen.cpp'
+endif
+if sd_bus.found()
+  egraph_sources += 'src/bus.cpp'
 endif
 
 egraph_lib = static_library(
@@ -122,12 +133,12 @@ egraph_lib = static_library(
   'src/visibility.cpp',
   'src/watch.cpp',
   build_info_hpp,
-  dependencies: [cli11, json, notcurses, libsystemd],
+  dependencies: [cli11, json, notcurses, libsystemd, sd_bus],
 )
 egraph_dep = declare_dependency(
   link_with: egraph_lib,
   include_directories: include_directories('src', '.'),
-  dependencies: [cli11, notcurses, libsystemd],
+  dependencies: [cli11, notcurses, libsystemd, sd_bus],
 )
 
 egraph_exe = executable('egraph', 'src/main.cpp', dependencies: egraph_dep, install: true)
@@ -335,6 +346,10 @@ shadow_exe = executable(
   'tests/shadow.cpp',
   dependencies: [egraph_dep, json],
 )
+# Drives the session bus layer for test_bus.py, against a fake notification server.
+if sd_bus.found()
+  bus_probe_exe = executable('bus-probe', 'tests/bus_probe.cpp', dependencies: egraph_dep)
+endif
 # Tests set egraph's options themselves, whatever the user's environment says.
 egraph_variables = ['EGRAPH_STORE', 'EGRAPH_BUILD', 'EGRAPH_EMERGE', 'EGRAPH_LAYOUT', 'EGRAPH_GLYPHS',
                     'EGRAPH_LOG', 'EGRAPH_LOG_FILE', 'ROOT', 'PORTAGE_CONFIGROOT',
@@ -363,6 +378,9 @@ if pytest.found()
   builder_env.set('EGRAPH', egraph_exe.full_path())
   builder_env.set('EGRAPH_COMPLETIONS', meson.current_build_dir())
   builder_env.set('EGRAPH_SHADOW', shadow_exe.full_path())
+  if sd_bus.found()
+    builder_env.set('EGRAPH_BUS_PROBE', bus_probe_exe.full_path())
+  endif
   # Runs log to their playground's file, not the journal of the system running the tests.
   builder_env.set('EGRAPH_LOG', 'file')
   builder_env.set('EGRAPH_REPLACE_SLOTS', '/dev/null')

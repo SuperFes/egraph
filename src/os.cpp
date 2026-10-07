@@ -544,12 +544,17 @@ std::expected<void, std::error_code> Watcher::add(const std::filesystem::path& d
 }
 
 std::expected<Woken, std::error_code>
-Watcher::wait(std::optional<std::chrono::milliseconds> timeout) {
+Watcher::wait(std::optional<std::chrono::milliseconds> timeout, Pollable also) {
     if (stop_asked != 0) {
-        return Woken{.changed = false, .stop = true};
+        return Woken{.changed = false, .stop = true, .ready = false};
     }
-    std::array<pollfd, 2> watched{{{.fd = fd_.get(), .events = POLLIN, .revents = 0},
-                                   {.fd = stop_read, .events = POLLIN, .revents = 0}}};
+    if (!std::in_range<short>(also.events)) {
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+    }
+    std::array<pollfd, 3> watched{
+        {{.fd = fd_.get(), .events = POLLIN, .revents = 0},
+         {.fd = stop_read, .events = POLLIN, .revents = 0},
+         {.fd = also.fd, .events = static_cast<short>(also.events), .revents = 0}}};
     int wait = -1;
     if (timeout) {
         wait = static_cast<int>(std::clamp<std::chrono::milliseconds::rep>(
@@ -560,7 +565,9 @@ Watcher::wait(std::optional<std::chrono::milliseconds> timeout) {
     if (events < 0 && errno != EINTR) {
         return std::unexpected(last_error());
     }
-    Woken woken{.changed = false, .stop = stop_asked != 0};
+    Woken woken{.changed = false,
+                .stop = stop_asked != 0,
+                .ready = events > 0 && watched.at(2).revents != 0};
     if (events > 0 && watched.at(0).revents != 0) {
         // What changed matters less than that something did: the refresh finds out.
         std::array<std::byte, 16384> events_read{};

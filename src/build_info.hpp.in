@@ -4,6 +4,8 @@
 #define EGRAPH_HAVE_TUI @HAVE_TUI@
 // Whether egraph logs to the systemd journal (libsystemd was found).
 #define EGRAPH_HAVE_JOURNAL @HAVE_JOURNAL@
+// Whether egraph notify is built in (sd-bus was found).
+#define EGRAPH_HAVE_NOTIFY @HAVE_NOTIFY@
 
 #include <string_view>
 

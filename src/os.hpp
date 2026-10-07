@@ -176,6 +176,14 @@ wait_for(std::span<Talk> talks,
 struct Woken {
     bool changed = false;
     bool stop = false;
+    // The other descriptor it waited on is ready.
+    bool ready = false;
+};
+
+// A descriptor to wait on beside a Watcher's, and for what, as poll(2) takes them.
+struct Pollable {
+    int fd = -1;
+    int events = 0;
 };
 
 // Directories watched (inotify) for an entry created, deleted, moved, written or changing its
@@ -185,10 +193,10 @@ class Watcher {
     [[nodiscard]] static std::expected<Watcher, std::error_code> open();
     // An error for a directory gone or unreadable, or beyond the watches the system allows.
     [[nodiscard]] std::expected<void, std::error_code> add(const std::filesystem::path& directory);
-    // Waits until a watched directory changes, a stop is asked, or the timeout passes; a stop
-    // asked before is found at once, every time.
+    // Waits until a watched directory changes, a stop is asked, also is ready, or the timeout
+    // passes; a stop asked before is found at once, every time.
     [[nodiscard]] std::expected<Woken, std::error_code>
-    wait(std::optional<std::chrono::milliseconds> timeout);
+    wait(std::optional<std::chrono::milliseconds> timeout, Pollable also = {});
 
   private:
     explicit Watcher(Descriptor fd) : fd_{std::move(fd)} {}
