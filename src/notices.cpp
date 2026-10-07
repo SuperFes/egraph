@@ -231,25 +231,29 @@ std::optional<NoticeKind> notice_kind(std::string_view name) {
 std::vector<Notice> notice_list(const Notices& notices, Seconds now) {
     std::vector<Notice> list;
     const auto add = [&](NoticeKind kind, std::string key, std::string title,
-                         std::vector<std::string> detail, std::string fingerprint) {
+                         std::vector<std::string> detail, std::string fingerprint,
+                         std::vector<std::string> packages = {}) {
         list.push_back({.kind = kind,
                         .key = std::move(key),
                         .title = std::move(title),
                         .detail = std::move(detail),
+                        .packages = std::move(packages),
                         .fingerprint = std::move(fingerprint),
                         .since = now});
     };
     for (const auto& advisory : notices.advisories) {
         std::vector<std::string> detail;
+        std::vector<std::string> packages;
         auto fingerprint = std::to_string(advisory.revision);
         for (const auto& [cpv, fixed] : advisory.packages) {
             detail.push_back(
                 fixed.empty() ? cpv : std::format("{}, fixed in {}", cpv, joined(fixed, " or ")));
+            packages.push_back(cpv);
             fingerprint += " " + cpv;
         }
         add(NoticeKind::glsa, "glsa:" + advisory.id,
             std::format("GLSA {}: {}", advisory.id, advisory.title), std::move(detail),
-            std::move(fingerprint));
+            std::move(fingerprint), std::move(packages));
     }
     for (std::size_t i = 0; i < notices.missing.size();) {
         const auto cpv = notices.missing.at(i).cpv;
@@ -261,7 +265,7 @@ std::vector<Notice> notice_list(const Notices& notices, Seconds now) {
         auto fingerprint = joined(detail, " ");
         add(NoticeKind::missing, "missing:" + cpv,
             std::format("{} needs libraries nothing installed provides", cpv), std::move(detail),
-            std::move(fingerprint));
+            std::move(fingerprint), {cpv});
     }
     if (const auto& preserved = notices.preserved; preserved && !preserved->empty()) {
         std::vector<std::string> detail;
@@ -279,7 +283,7 @@ std::vector<Notice> notice_list(const Notices& notices, Seconds now) {
     }
     for (const auto& [cpv, reasons] : notices.masked) {
         add(NoticeKind::masked, "masked:" + cpv, std::format("{} is masked", cpv), reasons,
-            joined(reasons, ", "));
+            joined(reasons, ", "), {cpv});
     }
     for (const auto& [name, synced] : notices.stale) {
         add(NoticeKind::stale, "stale:" + name,

@@ -330,8 +330,13 @@ def test_watch_writes_the_notices_and_logs_new_ones(system):
         second = notices(system)
         assert second["stores"] != first["stores"]
         added = [n for n in second["notices"] if n["key"] not in keys]
-        assert [(n["key"], n["detail"], n["since"]) for n in added] == [
-            ("missing:dev-libs/needy-1", ["libgone.so.9 (x86_64)"], second["written"])
+        assert [(n["key"], n["detail"], n["packages"], n["since"]) for n in added] == [
+            (
+                "missing:dev-libs/needy-1",
+                ["libgone.so.9 (x86_64)"],
+                ["dev-libs/needy-1"],
+                second["written"],
+            )
         ]
         kept = {n["key"]: n["since"] for n in second["notices"] if n["key"] in keys}
         assert kept == {n["key"]: n["since"] for n in first["notices"]}

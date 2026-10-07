@@ -992,9 +992,12 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     - 17e5a (done): a contextual hint bar (the keys for what is selected, `?` for all).
     - 17e5b (done): a notices page beside the sets, its tab counting them, the selected one's
       detail below; `x` dismisses, `z` puts off with a small chooser.
-    - 17e5c: working on a notice from its page: a GLSA's or masked package's update, a rebuild
-      for missing libraries, `@preserved-rebuild`, a sync, the news item read, the
-      configuration files listed.
+    - 17e5c: working on a notice from its page with enter.
+      - 17e5c1 (done): a GLSA's update, a rebuild for missing libraries, `@preserved-rebuild`
+        and a sync, as actions; a masked package's page.
+      - 17e5c2: the news item shown, and marked read in portage's news files once closed, as
+        `eselect news read` does (only set aside where they cannot be written).
+      - 17e5c3: dispatch-conf for configuration updates, the interface stepping aside for it.
   - 17e6: `egraph notify`: one summary notification (org.freedesktop.Notifications over the
     session bus) with Dismiss, Later (a day) and Open, which starts a terminal on the notice;
     started by an XDG autostart entry.

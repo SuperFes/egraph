@@ -1190,6 +1190,16 @@ puts it off for an hour, a day or a week, as
 and
 .B \-\-later
 do.
+.B enter
+works on it: a GLSA's packages are updated as
+.B U
+updates them, a package missing libraries is rebuilt as
+.BR "exec \-\-oneshot" ,
+preserved libraries as
+.BR "exec \-\-oneshot @preserved\-rebuild" ,
+each shown first as an action is; a stale repository is synced as
+.BR sync ,
+once asked; a masked package's page opens.
 .SS shell
 Commands read one per line from standard input, the stores loaded once; the global options that
 choose the stores are taken from the command line only.
@@ -1361,7 +1371,9 @@ a
 it keeps while it lasts, a
 .BR title ,
 .B detail
-lines, a
+lines, the installed
+.B packages
+it is about, a
 .B fingerprint
 that changes with what it says, and since when it was noticed, as
 .BR since ),

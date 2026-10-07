@@ -220,10 +220,12 @@ TEST_CASE("notices list as one, the most pressing first") {
     CHECK(glsa.detail == std::vector<std::string>{
                              "dev-libs/foo-2, fixed in >=dev-libs/foo-2.1 or >=dev-libs/foo-3"});
     CHECK(glsa.fingerprint == "2 dev-libs/foo-2");
+    CHECK(glsa.packages == std::vector<std::string>{"dev-libs/foo-2"});
     const auto& missing = list.at(1);
     CHECK(missing.title == "app-misc/a-1 needs libraries nothing installed provides");
     CHECK(missing.detail ==
           std::vector<std::string>{"libgone.so.2 (x86_64)", "libold.so.3 (x86_64)"});
+    CHECK(missing.packages == std::vector<std::string>{"app-misc/a-1"});
     const auto& preserved = list.at(2);
     CHECK(preserved.title == "1 preserved library");
     CHECK(preserved.detail ==
@@ -231,6 +233,8 @@ TEST_CASE("notices list as one, the most pressing first") {
     const auto& masked = list.at(3);
     CHECK(masked.title == "app-misc/b-1 is masked");
     CHECK(masked.detail == std::vector<std::string>{"package.mask", "~x86 keyword"});
+    CHECK(masked.packages == std::vector<std::string>{"app-misc/b-1"});
+    CHECK(preserved.packages.empty());
     const auto& stale = list.at(4);
     CHECK(stale.title == "gentoo synced 8 days ago");
     CHECK(stale.fingerprint ==

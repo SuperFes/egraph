@@ -377,6 +377,66 @@ def test_tui_dismisses_and_puts_off_notices(updates_system, tmp_path):
     assert "notices\t0" in rows
 
 
+def test_tui_works_on_notices(updates_system, tmp_path):
+    skip_without_tui()
+    playground, path, builder, _ = updates_system
+    assert run_egraph(updates_system, "status", "--update").returncode == 0
+    status = json.loads((path.parent / "status.json").read_text())
+
+    def notice(kind, key, title):
+        return {
+            "kind": kind,
+            "key": key,
+            "title": title,
+            "detail": [],
+            "packages": ["app-misc/up-1"],
+            "fingerprint": "1",
+            "since": 1790000000,
+        }
+
+    (path.parent / "notices.json").write_text(
+        json.dumps(
+            {
+                "format": 1,
+                "written": 1790000000,
+                "stores": status["stores"],
+                "repositories": [{"name": "test_repo", "synced": int(time.time())}],
+                "notices": [
+                    notice("glsa", "glsa:202609-03", "GLSA 202609-03: up: overflow"),
+                    notice("masked", "masked:app-misc/up-1", "app-misc/up-1 is masked"),
+                ],
+            }
+        )
+    )
+    socket = f"egraph-test-{os.getpid()}"
+    command = (
+        f"env XDG_STATE_HOME={path.parent / 'state'} {EGRAPH} --store {path}"
+        f" --config-root {playground.eroot} --eprefix {playground.eprefix}"
+        f" --builder {builder} --no-refresh tui; echo EXIT=$?; sleep 30"
+    )
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "120", "-y", "20", command)
+    try:
+        wait_for(socket, " notices 2 ")
+        tmux(socket, "send-keys", "-t", "t", "l", "l", "l")
+        wait_for(socket, "2 notices", " update  x dismiss ")
+        # The GLSA's update, previewed as U previews one, and declined.
+        tmux(socket, "send-keys", "-t", "t", "Enter")
+        wait_for(socket, "Run egraph exec?", "app-misc/up  1 → 2")
+        tmux(socket, "send-keys", "-t", "t", "n")
+        wait_for(socket, "2 notices", gone=["Run egraph exec?"])
+        # The masked package's page.
+        tmux(socket, "send-keys", "-t", "t", "j")
+        wait_for(socket, " open  x dismiss ")
+        tmux(socket, "send-keys", "-t", "t", "Enter")
+        wait_for(socket, "app-misc/up-1", gone=["2 notices"])
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        wait_for(socket, "2 notices")
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")
+
+
 def test_tui_watches_running_emerges(playgrounds, tmp_path):
     skip_without_tui()
     path = tmp_path / "installed.egraph"

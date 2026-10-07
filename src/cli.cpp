@@ -814,7 +814,10 @@ Job<tui::RunResult> start_action(const Invocation& invocation, const std::filesy
     std::ranges::move(egraph_options(invocation), std::back_inserter(argv));
     argv.insert(argv.end(), {"--layout", "human", "--color", "never"});
     std::ranges::move(tui::action_arguments(action), std::back_inserter(argv));
-    argv.emplace_back("--yes");
+    // A sync never asks.
+    if (tui::previewed(action)) {
+        argv.emplace_back("--yes");
+    }
     if (!invocation.dynamic_deps) {
         argv.insert(argv.end(), {"--dynamic-deps", "n"});
     }
@@ -828,8 +831,9 @@ Job<tui::RunResult> start_action(const Invocation& invocation, const std::filesy
         return ready(tui::RunResult{.error = child.error().message});
     }
     return [running = Detached{std::move(*child)}, state, output, since,
-            merges = action.kind !=
-                     tui::Action::Kind::remove]() mutable -> std::optional<tui::RunResult> {
+            merges =
+                action.kind != tui::Action::Kind::remove &&
+                action.kind != tui::Action::Kind::sync]() mutable -> std::optional<tui::RunResult> {
         auto ended = running.child.poll();
         if (!ended) {
             return std::nullopt;

@@ -94,12 +94,15 @@ struct Notice {
     NoticeKind kind = NoticeKind::news;
     // Stable while it lasts: "glsa:202609-03", "news:gentoo/2026-09-01-x", "config",
     // "preserved", "stale:gentoo", "masked:cat/pkg-1", "missing:cat/pkg-1".
-    std::string key;
-    std::string title;
-    std::vector<std::string> detail;
+    std::string key{};
+    std::string title{};
+    std::vector<std::string> detail{};
+    // The installed packages it is about, as cpvs: a GLSA's affected ones, the masked package,
+    // the one missing libraries.
+    std::vector<std::string> packages{};
     // Changes when what it says does (a GLSA revised, another version affected, a new sync),
     // which brings a dismissed notice back.
-    std::string fingerprint;
+    std::string fingerprint{};
     // When it was first noticed.
     Seconds since{};
     auto operator<=>(const Notice&) const = default;

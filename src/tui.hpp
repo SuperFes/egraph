@@ -236,11 +236,12 @@ inline constexpr std::array scopes{Scope::installed, Scope::world, Scope::system
 [[nodiscard]] std::string_view scope_name(Scope scope);
 
 // What the interface carries out once confirmed: merges through egraph exec, removals through
-// egraph remove.
+// egraph remove, syncs through egraph sync.
 struct Action {
-    enum class Kind : std::uint8_t { install, update, remove };
+    enum class Kind : std::uint8_t { install, update, rebuild, remove, sync };
     Kind kind = Kind::install;
-    // Atoms; an update without any takes every update of the scope's set.
+    // Atoms, or for a sync repositories; an update without any takes every update of the scope's
+    // set.
     std::vector<std::string> targets{};
     Scope scope = Scope::installed;
     // For a removal, as remove --with-bdeps.
@@ -249,8 +250,20 @@ struct Action {
 };
 
 // The command carrying the action out, without the program and --yes: install as exec, update as
-// exec --oneshot -u -N (every update as -D and the scope's set), remove as remove.
+// exec --oneshot -u -N (every update as -D and the scope's set), rebuild as exec --oneshot, remove
+// as remove, sync as sync.
 [[nodiscard]] std::vector<std::string> action_arguments(const Action& action);
+
+// Whether the action's command shows what it would do before doing it: a sync does not.
+[[nodiscard]] bool previewed(const Action& action);
+
+// The action enter takes on a notice: a GLSA's packages updated, a package missing libraries
+// rebuilt, @preserved-rebuild, a stale repository synced; none for the rest.
+[[nodiscard]] std::optional<Action> notice_action(const Notice& notice);
+
+// What enter does on a notice, for the key bar: "update", "rebuild", "sync", "open"; empty where
+// it does nothing.
+[[nodiscard]] std::string_view notice_work(const Notice& notice);
 
 // What the action would do, as its command shows it before asking, in the human layout.
 struct Preview {
@@ -712,6 +725,7 @@ class App {
     void fold(Page& page);
     void handle_list(const Key& key);
     void handle_notices(const Key& key);
+    void work_on(const Notice& notice);
     void handle_page(const Key& key);
     void handle_check(const Key& key);
     void handle_watch(const Key& key);

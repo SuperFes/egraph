@@ -1122,8 +1122,25 @@ void App::handle_notices(const Key& key) {
         notice_change_ = NoticeChange{.notice = notices_->notices.at(notice_cursor_.at)};
     } else if (is(key, U'z') && on_notice) {
         putting_off_ = true;
+    } else if (key.kind == KeyKind::enter && on_notice) {
+        work_on(notices_->notices.at(notice_cursor_.at));
     } else if (is_move(key)) {
         move(notice_cursor_, count, key, height_);
+    }
+}
+
+void App::work_on(const Notice& notice) {
+    if (notice.kind == NoticeKind::masked && !notice.packages.empty()) {
+        const auto& cpv = notice.packages.front();
+        if (const auto id = find(cpv)) {
+            open(*id);
+        } else {
+            show({.error = false,
+                  .title = std::format("{} is no longer installed", cpv),
+                  .lines = {}});
+        }
+    } else if (auto action = notice_action(notice)) {
+        act(std::move(*action));
     }
 }
 
@@ -1332,6 +1349,18 @@ void App::act(Action action) {
         show({.error = false,
               .title = "A run is going",
               .lines = {"One runs at a time; the emerge view shows this one."}});
+        return;
+    }
+    if (!previewed(action)) {
+        std::string command = "egraph";
+        for (const auto& word : action_arguments(action)) {
+            command += ' ' + word;
+        }
+        show({.error = false,
+              .title = std::format("Run egraph {}?", action_arguments(action).front()),
+              .lines = {std::move(command)},
+              .question = true});
+        confirming_ = std::move(action);
         return;
     }
     previewing_ = std::move(action);
@@ -2303,6 +2332,66 @@ std::string progress_bar(std::uint64_t done, std::uint64_t total, std::size_t wi
     return bar + repeat(glyph.bar_empty, width - used);
 }
 
+bool previewed(const Action& action) {
+    return action.kind != Action::Kind::sync;
+}
+
+std::optional<Action> notice_action(const Notice& notice) {
+    const auto named = notice.key.substr(notice.key.find(':') + 1);
+    switch (notice.kind) {
+    case NoticeKind::glsa: {
+        Action update{.kind = Action::Kind::update};
+        for (const auto& cpv : notice.packages) {
+            const auto parts = split_cpv(cpv);
+            auto cp = std::format("{}/{}", parts.category, parts.name);
+            if (!std::ranges::contains(update.targets, cp)) {
+                update.targets.push_back(std::move(cp));
+            }
+        }
+        if (update.targets.empty()) {
+            return std::nullopt;
+        }
+        return update;
+    }
+    case NoticeKind::missing:
+        if (notice.packages.empty()) {
+            return std::nullopt;
+        }
+        return Action{.kind = Action::Kind::rebuild, .targets = {"=" + notice.packages.front()}};
+    case NoticeKind::preserved:
+        return Action{.kind = Action::Kind::rebuild, .targets = {"@preserved-rebuild"}};
+    case NoticeKind::stale:
+        return Action{.kind = Action::Kind::sync, .targets = {named}};
+    case NoticeKind::masked:
+    case NoticeKind::news:
+    case NoticeKind::config:
+        break;
+    }
+    return std::nullopt;
+}
+
+std::string_view notice_work(const Notice& notice) {
+    if (notice.kind == NoticeKind::masked) {
+        return notice.packages.empty() ? "" : "open";
+    }
+    const auto action = notice_action(notice);
+    if (!action) {
+        return {};
+    }
+    switch (action->kind) {
+    case Action::Kind::update:
+        return "update";
+    case Action::Kind::rebuild:
+        return "rebuild";
+    case Action::Kind::sync:
+        return "sync";
+    case Action::Kind::install:
+    case Action::Kind::remove:
+        break;
+    }
+    return {};
+}
+
 std::vector<std::string> action_arguments(const Action& action) {
     std::vector<std::string> words;
     switch (action.kind) {
@@ -2315,11 +2404,17 @@ std::vector<std::string> action_arguments(const Action& action) {
             words.insert(words.end(), {"-D", std::string{scope_name(action.scope)}});
         }
         break;
+    case Action::Kind::rebuild:
+        words = {"exec", "--oneshot"};
+        break;
     case Action::Kind::remove:
         words = {"remove"};
         if (!action.build_deps) {
             words.insert(words.end(), {"--with-bdeps", "n"});
         }
+        break;
+    case Action::Kind::sync:
+        words = {"sync"};
         break;
     }
     words.insert(words.end(), action.targets.begin(), action.targets.end());
@@ -2890,10 +2985,16 @@ std::vector<Hint> notice_keys(const App& app, const Glyphs& glyph) {
     }
     const auto& notices = app.notices();
     const bool on_notice = notices && app.notice_cursor().at < notices->notices.size();
+    const auto work =
+        on_notice ? notice_work(notices->notices.at(app.notice_cursor().at)) : std::string_view{};
     std::vector<Hint> keys{{.key = std::string{glyph.move}, .meaning = "move"},
-                           {.key = std::string{glyph.pages}, .meaning = "page"},
-                           {.key = "x", .meaning = "dismiss", .bar = on_notice},
-                           {.key = "z", .meaning = "later", .bar = on_notice}};
+                           {.key = std::string{glyph.pages}, .meaning = "page"}};
+    if (!work.empty()) {
+        keys.push_back(
+            {.key = std::string{glyph.enter}, .meaning = std::string{work}, .bar = true});
+    }
+    keys.insert(keys.end(), {{.key = "x", .meaning = "dismiss", .bar = on_notice},
+                             {.key = "z", .meaning = "later", .bar = on_notice}});
     add_common(keys);
     return keys;
 }

@@ -631,6 +631,14 @@ counts. Setting one aside goes through the same file `notices --dismiss` writes,
 that file's notices, so the two never disagree; one set aside leaves the page at once rather
 than at the next read (17e5b).
 
+Enter works on a notice through the actions the list already has: a GLSA's packages are
+updated as `U` updates them, a package missing libraries is rebuilt (`exec --oneshot` of its
+version), `@preserved-rebuild` is run, a stale repository synced, each previewed and confirmed
+as any action; a sync, which has no preview, is asked about straight away. A masked package
+opens its page, whose versions show whether an update or a removal is the answer. Notices name
+their packages as cpvs in `notices.json` (`packages`), so the interface never parses the
+detail lines meant for reading (17e5c1).
+
 Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
 touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
 the set is emerge's own. `parse_request` takes sets the store does not hold from its caller

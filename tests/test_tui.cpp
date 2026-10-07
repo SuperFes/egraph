@@ -2405,6 +2405,59 @@ TEST_CASE("an action's command: exec for merges, remove for removals") {
     CHECK(egraph::tui::action_arguments(
               {.kind = Action::Kind::remove, .targets = {"=a/b-1"}, .build_deps = false}) ==
           Words{"remove", "--with-bdeps", "n", "=a/b-1"});
+    CHECK(egraph::tui::action_arguments(
+              {.kind = Action::Kind::rebuild, .targets = {"@preserved-rebuild"}}) ==
+          Words{"exec", "--oneshot", "@preserved-rebuild"});
+    CHECK(egraph::tui::action_arguments({.kind = Action::Kind::sync, .targets = {"gentoo"}}) ==
+          Words{"sync", "gentoo"});
+    CHECK(egraph::tui::previewed({.kind = Action::Kind::rebuild}));
+    CHECK_FALSE(egraph::tui::previewed({.kind = Action::Kind::sync}));
+}
+
+TEST_CASE("enter on a notice updates, rebuilds or syncs what it is about") {
+    using egraph::Notice;
+    using egraph::NoticeKind;
+    using egraph::tui::Action;
+    using egraph::tui::notice_action;
+    using egraph::tui::notice_work;
+    const Notice glsa{.kind = NoticeKind::glsa,
+                      .key = "glsa:202609-03",
+                      .title = "",
+                      .detail = {},
+                      .packages = {"dev-libs/b-1", "dev-libs/b-1.5", "app-misc/c-2"},
+                      .fingerprint = "",
+                      .since = {}};
+    // Each package once, whichever of its versions are affected.
+    CHECK(notice_action(glsa) ==
+          Action{.kind = Action::Kind::update, .targets = {"dev-libs/b", "app-misc/c"}});
+    CHECK(notice_work(glsa) == "update");
+    const Notice missing{.kind = NoticeKind::missing,
+                         .key = "missing:dev-libs/b-1",
+                         .title = "",
+                         .detail = {},
+                         .packages = {"dev-libs/b-1"},
+                         .fingerprint = "",
+                         .since = {}};
+    CHECK(notice_action(missing) ==
+          Action{.kind = Action::Kind::rebuild, .targets = {"=dev-libs/b-1"}});
+    CHECK(notice_work(missing) == "rebuild");
+    const Notice preserved{.kind = NoticeKind::preserved, .key = "preserved"};
+    CHECK(notice_action(preserved) ==
+          Action{.kind = Action::Kind::rebuild, .targets = {"@preserved-rebuild"}});
+    CHECK(notice_work(preserved) == "rebuild");
+    const Notice stale{.kind = NoticeKind::stale, .key = "stale:gentoo"};
+    CHECK(notice_action(stale) == Action{.kind = Action::Kind::sync, .targets = {"gentoo"}});
+    CHECK(notice_work(stale) == "sync");
+    // Opened as a page instead.
+    const Notice masked{
+        .kind = NoticeKind::masked, .key = "masked:dev-libs/b-1", .packages = {"dev-libs/b-1"}};
+    CHECK_FALSE(notice_action(masked).has_value());
+    CHECK(notice_work(masked) == "open");
+    // A notices file from before notices named their packages.
+    CHECK_FALSE(notice_action(Notice{.kind = NoticeKind::glsa, .key = "glsa:1"}).has_value());
+    CHECK(notice_work(Notice{.kind = NoticeKind::glsa, .key = "glsa:1"}).empty());
+    CHECK(notice_work(Notice{.kind = NoticeKind::news, .key = "news:gentoo/x"}).empty());
+    CHECK(notice_work(Notice{.kind = NoticeKind::config, .key = "config"}).empty());
 }
 
 TEST_CASE("a log's tail is what a terminal would leave of its last lines") {
@@ -2917,6 +2970,97 @@ TEST_CASE("the notices page follows the sets, its tab counting them") {
     app.handle(character(U'h'));
     CHECK_FALSE(app.on_notices());
     CHECK(app.scope() == Scope::system);
+}
+
+TEST_CASE("enter on a notice previews its action, or asks before a sync") {
+    using egraph::NoticeKind;
+    egraph::tui::App app{both(), true};
+    auto shown = two_notices();
+    shown.notices.front().packages = {"dev-libs/b-1"};
+    shown.notices.push_back(
+        {.kind = NoticeKind::stale, .key = "stale:gentoo", .title = "gentoo synced 9 days ago"});
+    app.finish_notices(shown);
+    for (int turn = 0; turn < 3; ++turn) {
+        app.handle(key(KeyKind::right));
+    }
+    REQUIRE(app.on_notices());
+    FakeScreen screen{16, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(15), " enter update  x dismiss  z later  "));
+
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.preview_requested().has_value());
+    CHECK(*app.preview_requested() ==
+          Action{.kind = Action::Kind::update, .targets = {"dev-libs/b"}});
+    confirm(app);
+    REQUIRE(app.run_requested().has_value());
+    // In the emerge view, as any run; leaving it goes back to the notices.
+    CHECK(app.watched().has_value());
+    app.finish_run(egraph::tui::RunResult{});
+    app.handle(character(U'x'));
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.watched().has_value());
+    CHECK(app.on_notices());
+
+    // The news item: nothing to do on it yet.
+    app.handle(character(U'j'));
+    egraph::tui::draw(screen, app, ascii);
+    CHECK_FALSE(contains(screen.line(15), "enter"));
+    app.handle(key(KeyKind::enter));
+    CHECK_FALSE(app.preview_requested().has_value());
+    CHECK_FALSE(app.dialog().has_value());
+
+    app.handle(character(U'j'));
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(15), " enter sync  "));
+    app.handle(key(KeyKind::enter));
+    // Nothing to preview: a sync is asked about straight away.
+    CHECK_FALSE(app.preview_requested().has_value());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->question);
+    CHECK(app.dialog()->title == "Run egraph sync?");
+    CHECK(app.dialog()->lines == std::vector<std::string>{"egraph sync gentoo"});
+    app.handle(character(U'y'));
+    REQUIRE(app.run_requested().has_value());
+    CHECK(*app.run_requested() == Action{.kind = Action::Kind::sync, .targets = {"gentoo"}});
+    app.finish_run(egraph::tui::RunResult{});
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "egraph sync finished");
+}
+
+TEST_CASE("enter on a masked package opens its page, or says it is gone") {
+    using egraph::NoticeKind;
+    egraph::tui::App app{both(), true};
+    const auto cpv = std::string{app.store().string(app.store().packages.at(1).cpv)};
+    egraph::tui::NoticesShown shown{.notices = {{.kind = NoticeKind::masked,
+                                                 .key = "masked:" + cpv,
+                                                 .title = cpv + " is masked",
+                                                 .packages = {cpv}},
+                                                {.kind = NoticeKind::masked,
+                                                 .key = "masked:x/gone-1",
+                                                 .title = "x/gone-1 is masked",
+                                                 .packages = {"x/gone-1"}}},
+                                    .set_aside = 0};
+    app.finish_notices(shown);
+    for (int turn = 0; turn < 3; ++turn) {
+        app.handle(key(KeyKind::right));
+    }
+    REQUIRE(app.on_notices());
+    FakeScreen screen{16, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(15), " enter open  "));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    CHECK(app.pages().back().package == 1);
+    app.handle(key(KeyKind::escape));
+    CHECK(app.pages().empty());
+    CHECK(app.on_notices());
+
+    app.handle(character(U'j'));
+    app.handle(key(KeyKind::enter));
+    CHECK(app.pages().empty());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "x/gone-1 is no longer installed");
 }
 
 TEST_CASE("the notices page needs no evaluated store") {

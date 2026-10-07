@@ -239,6 +239,7 @@ egraph::NoticeFile notice_file() {
                      .key = "glsa:202601-01",
                      .title = "GLSA 202601-01: foo",
                      .detail = {"dev-libs/foo-2"},
+                     .packages = {"dev-libs/foo-2"},
                      .fingerprint = "2 dev-libs/foo-2",
                      .since = sys_days{2026y / October / 2}},
                     {.kind = egraph::NoticeKind::stale,
@@ -257,6 +258,16 @@ TEST_CASE("a notices file round-trips through JSON") {
     const auto read = egraph::parse_notice_file(egraph::notice_file_json(file));
     REQUIRE(read);
     CHECK(*read == file);
+}
+
+TEST_CASE("a notices file from before notices named their packages is read without them") {
+    auto text = egraph::notice_file_json(notice_file());
+    const std::string field = R"("packages":["dev-libs/foo-2"],)";
+    REQUIRE(text.contains(field));
+    text.replace(text.find(field), field.size(), "");
+    const auto read = egraph::parse_notice_file(text);
+    REQUIRE(read);
+    CHECK(read->notices.front().packages.empty());
 }
 
 TEST_CASE("a notices file of another format or none at all is refused") {
