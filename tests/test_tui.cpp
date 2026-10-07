@@ -227,8 +227,81 @@ TEST_CASE("the list shows every package and quits on q") {
     // The cursor moved down to b-1 before q.
     CHECK(app.list().cursor.at == 1);
     CHECK(screen.line(4).starts_with(" >    dev-libs/b-1"));
-    CHECK(contains(screen.line(9), "q quit"));
+    CHECK(contains(screen.line(9), "? keys"));
     CHECK(screen.keys_left());
+}
+
+TEST_CASE("the hint bar shows the keys for what is selected, and ? lists them all") {
+    egraph::tui::App app{only_b_updates(), true};
+    FakeScreen screen{24, 120, {}};
+    const auto bar = [&] {
+        egraph::tui::draw(screen, app, ascii);
+        return screen.line(23);
+    };
+    // On b-1's update, the updates shown.
+    CHECK(contains(bar(), " enter open  space pick  U update  u all  "));
+    CHECK(contains(bar(), "? keys"));
+    CHECK_FALSE(contains(bar(), "q quit"));
+    CHECK_FALSE(contains(bar(), "o orphans"));
+    CHECK_FALSE(contains(bar(), "r remove"));
+
+    app.handle(character(U'?'));
+    CHECK(app.keys_shown());
+    egraph::tui::draw(screen, app, ascii);
+    const auto text = screen.text();
+    CHECK(contains(text, " Keys "));
+    CHECK(contains(text, "j/k    move"));
+    CHECK(contains(text, "o      orphans"));
+    CHECK(contains(text, "s      search the repositories"));
+    CHECK(contains(text, "q      quit"));
+    // The next key only closes the list.
+    app.handle(character(U'q'));
+    CHECK_FALSE(app.keys_shown());
+    CHECK_FALSE(app.done());
+
+    // a-1 has no update; picked, it can be removed.
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::home));
+    CHECK_FALSE(contains(bar(), "U update"));
+    CHECK_FALSE(contains(bar(), "u updates"));
+    app.handle(character(U' '));
+    CHECK(contains(bar(), "U update  r remove"));
+    app.handle(key(KeyKind::home));
+    app.handle(character(U' '));
+    CHECK(app.picked().empty());
+    // The pick taken back, on to b-1.
+    CHECK(contains(bar(), " enter open  space pick  U update  "));
+    CHECK_FALSE(contains(bar(), "r remove"));
+
+    // While a filter is typed, its keys are all there is and ? is part of it.
+    app.handle(character(U'/'));
+    CHECK(contains(bar(), " enter keep  esc clear  type to filter"));
+    CHECK_FALSE(contains(bar(), "? keys"));
+    app.handle(character(U'?'));
+    CHECK_FALSE(app.keys_shown());
+    CHECK(app.list().query == "?");
+    app.handle(key(KeyKind::escape));
+    CHECK(app.list().query.empty());
+
+    // On a page, back is always there.
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    CHECK(contains(bar(), "esc back"));
+    CHECK_FALSE(contains(bar(), "q quit"));
+    app.handle(character(U'?'));
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "q      quit"));
+}
+
+TEST_CASE("the keys overlay aligns each key's meaning") {
+    const std::vector<egraph::tui::Hint> hints{{.key = "j/k", .meaning = "move", .bar = false},
+                                               {.key = "enter", .meaning = "open", .bar = true},
+                                               {.key = "q", .meaning = "quit", .bar = false}};
+    const auto dialog = egraph::tui::keys_dialog(hints);
+    CHECK_FALSE(dialog.error);
+    CHECK_FALSE(dialog.question);
+    CHECK(dialog.title == "Keys");
+    CHECK(dialog.lines == std::vector<std::string>{"j/k    move", "enter  open", "q      quit"});
 }
 
 TEST_CASE("typing after / filters the list as it goes") {
@@ -473,7 +546,7 @@ TEST_CASE("! shows only broken packages, and a page lists what is not installed"
     FakeScreen screen{14, 120, {}};
     egraph::tui::draw(screen, app, ascii);
     CHECK(screen.line(3).starts_with(" > @! app-misc/a-1"));
-    CHECK(contains(screen.text(), "! broken"));
+    CHECK_FALSE(contains(screen.text(), "! broken"));
 
     app.handle(character(U'!'));
     CHECK(app.list().shown == std::vector<std::uint32_t>{0});
@@ -901,7 +974,7 @@ TEST_CASE("e watches the running emerges, reading them again each second") {
     CHECK(contains(text, "waiting to merge      55s"));
     CHECK(contains(text, "    `- \\ p app-misc/baz-1"));
     CHECK(contains(text, "starting"));
-    CHECK(contains(screen.line(11), "move"));
+    CHECK(contains(screen.line(11), "enter open"));
 }
 
 TEST_CASE("the emerge view says how to publish when nothing runs") {
@@ -1396,7 +1469,7 @@ TEST_CASE("the list opens on pending updates, and u shows them among the rest") 
     egraph::tui::draw(screen, app, ascii);
     CHECK_FALSE(contains(screen.line(3), "  U "));
     CHECK(contains(screen.line(4), "dev-libs/b-1  U 2"));
-    CHECK(contains(screen.line(9), "u updates"));
+    CHECK_FALSE(contains(screen.line(9), "u updates"));
 }
 
 TEST_CASE("the list says when nothing is pending") {
@@ -1873,7 +1946,7 @@ TEST_CASE("p shows the plan as a tree under each root set") {
     egraph::tui::App app{shared(glibmm_system()), true};
     FakeScreen screen{16, 120, {}};
     egraph::tui::draw(screen, app, ascii);
-    CHECK(contains(screen.line(15), "p plan"));
+    CHECK_FALSE(contains(screen.line(15), "p plan"));
     app.handle(character(U'p'));
     REQUIRE(app.planned().has_value());
     CHECK(described(app) == std::vector<std::string>{
@@ -2683,7 +2756,8 @@ TEST_CASE("left and right turn the list's pages, each planning its set as exec w
     FakeScreen screen{16, 120, {}};
     egraph::tui::draw(screen, app, ascii);
     CHECK(contains(screen.line(1), " @installed  @world  @system "));
-    CHECK(contains(screen.line(15), "h/l page"));
+    CHECK(std::ranges::contains(egraph::tui::view_keys(app, ascii),
+                                egraph::tui::Hint{.key = "h/l", .meaning = "page", .bar = false}));
     CHECK(app.scope() == Scope::installed);
     CHECK_FALSE(app.scope_plan_requested());
     CHECK(shown_cpvs(app) == std::vector<std::string>{"app-misc/glibmm-1", "app-misc/loose-1"});

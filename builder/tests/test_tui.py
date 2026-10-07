@@ -171,10 +171,11 @@ def test_bare_egraph_opens_the_interface_and_runs_commands(playgrounds, tmp_path
     try:
         wait_for(socket, "/ to search")
         tmux(socket, "send-keys", "-t", "t", ":", "updates -N", "Enter")
-        # The output view's own hints: the prompt shows the command while it runs.
+        # The output view's title and hints: the prompt shows the command while it runs.
         screen = wait_for(
             socket,
-            "command  esc back",
+            ":updates -N  ",
+            "esc back",
             "dev-libs/lib-2 ",
             "dev-libs/lib-2.1",
             "test_repo",
@@ -190,7 +191,7 @@ def test_bare_egraph_opens_the_interface_and_runs_commands(playgrounds, tmp_path
         tmux(socket, "send-keys", "-t", "t", "Enter")
         wait_for(socket, "Depends on")
         tmux(socket, "send-keys", "-t", "t", "Escape")
-        wait_for(socket, "command  esc back")
+        wait_for(socket, ":updates -N  ", gone=["Depends on"])
         tmux(socket, "send-keys", "-t", "t", ":", "nonsense", "Enter")
         wait_for(socket, "nonsense: no such command")
         tmux(socket, "send-keys", "-t", "t", "x", ":", "quit", "Enter")
@@ -267,9 +268,9 @@ def test_tui_refreshes_the_store_when_the_system_changes(system, tmp_path):
         assert builds(system)[-1].startswith("--incremental --store ")
         # Commands answer from the refreshed store too.
         tmux(socket, "send-keys", "-t", "t", ":", "orphans", "Enter")
-        wait_for(socket, "command  esc back", "dev-libs/alt-b-1")
+        wait_for(socket, ":orphans  ", "esc back", "dev-libs/alt-b-1")
         tmux(socket, "send-keys", "-t", "t", "Escape")
-        wait_for(socket, gone=["command  esc back"])
+        wait_for(socket, gone=[":orphans  "])
         tmux(socket, "send-keys", "-t", "t", "q")
         wait_for(socket, "EXIT=0")
     finally:
@@ -297,7 +298,7 @@ def test_tui_builds_the_repository_index_the_first_time_it_searches(system, tmp_
         wait_for(socket, "1 found", "dev-libs/alt-a", seconds=120)
         # A command's search answers from the same index, built once.
         tmux(socket, "send-keys", "-t", "t", ":", "search alt-a", "Enter")
-        wait_for(socket, "command  esc back", "dev-libs/alt-a")
+        wait_for(socket, ":search alt-a  ", "esc back", "dev-libs/alt-a")
         repository_builds = [
             line
             for line in log.read_text().splitlines()
@@ -305,7 +306,7 @@ def test_tui_builds_the_repository_index_the_first_time_it_searches(system, tmp_
         ]
         assert len(repository_builds) == 1
         tmux(socket, "send-keys", "-t", "t", "Escape")
-        wait_for(socket, "1 found", gone=["command  esc back"])
+        wait_for(socket, "1 found", gone=[":search alt-a  "])
         tmux(socket, "send-keys", "-t", "t", "q")
         wait_for(socket, "EXIT=0")
     finally:

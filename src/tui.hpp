@@ -598,6 +598,8 @@ class App {
     // Over the list, the check view and the emerge view, under pages opened from it.
     [[nodiscard]] const std::optional<Output>& output() const { return output_; }
     [[nodiscard]] const std::optional<Dialog>& dialog() const { return dialog_; }
+    // Whether ? has the view's keys listed over it, until the next key.
+    [[nodiscard]] bool keys_shown() const { return keys_shown_; }
     void show(Dialog dialog) { dialog_ = std::move(dialog); }
     [[nodiscard]] Update update() const { return update_; }
     [[nodiscard]] Source source() const { return source_; }
@@ -733,6 +735,7 @@ class App {
     std::optional<Planned> planned_;
     std::vector<Page> pages_;
     std::optional<Dialog> dialog_;
+    bool keys_shown_ = false;
     std::vector<std::string> picked_;
     std::optional<Action> previewing_;
     // The action the dialog asks to run; while a run goes, an empty one asks to quit.
@@ -748,6 +751,20 @@ class App {
     std::size_t height_ = 1;
     bool done_ = false;
 };
+
+// A key and what it does: the hint bar shows those for what is selected, and ? lists them all.
+struct Hint {
+    std::string key;
+    std::string meaning;
+    bool bar = false;
+    auto operator<=>(const Hint&) const = default;
+};
+
+// The keys of the view on top.
+[[nodiscard]] std::vector<Hint> view_keys(const App& app, const Glyphs& glyph);
+
+// The ? overlay: every key of the view on top, aligned.
+[[nodiscard]] Dialog keys_dialog(std::span<const Hint> hints);
 
 // A piece of text in one pen, for putting several side by side.
 struct Span {
@@ -782,19 +799,23 @@ void put_spans(S& screen, unsigned row, unsigned col, const std::vector<Span>& s
     }
 }
 
-// The hint bar: pairs of key and what it does.
+// The hint bar: the keys for what is selected, and ? on the right where the view has more.
 template <class S>
-void draw_hints(S& screen, unsigned row, unsigned width,
-                const std::vector<std::pair<std::string_view, std::string_view>>& hints) {
+void draw_hints(S& screen, unsigned row, unsigned width, std::span<const Hint> hints) {
     const Pen bar{.fg = palette::overlay, .bg = palette::mantle};
+    const Pen key{.fg = palette::mauve, .bg = palette::mantle, .bold = true};
     screen.fill_row(row, bar);
     std::vector<Span> spans{{" ", bar}};
-    for (const auto& [key, meaning] : hints) {
-        spans.push_back(
-            {std::string{key}, {.fg = palette::mauve, .bg = palette::mantle, .bold = true}});
-        spans.push_back({std::format(" {}  ", meaning), bar});
+    for (const auto& hint : hints) {
+        if (hint.bar) {
+            spans.push_back({hint.key, key});
+            spans.push_back({std::format(" {}  ", hint.meaning), bar});
+        }
     }
     put_spans(screen, row, 0, spans, width);
+    if (std::ranges::any_of(hints, [](const Hint& hint) { return !hint.bar; }) && width > 8) {
+        put_spans(screen, row, width - 8, {{"?", key}, {" keys  ", bar}}, width);
+    }
 }
 
 // The trail, and on the right a refresh under way or failed, and a warning while a fresh build
@@ -1052,34 +1073,6 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
         put_spans(screen, first, 5, {{std::string{empty_list(list)}, tone_pen(Tone::note)}},
                   size.cols);
     }
-    if (list.searching) {
-        draw_hints(screen, size.rows - 1, size.cols,
-                   {{glyph.enter, "keep"}, {"esc", "clear"}, {"type", "to filter"}});
-    } else {
-        std::vector<std::pair<std::string_view, std::string_view>> hints{{glyph.move, "move"},
-                                                                         {glyph.enter, "open"}};
-        if (app.has_evaluated()) {
-            hints.emplace_back(glyph.pages, "page");
-        }
-        hints.insert(hints.end(), {{"/", "search"},
-                                   {"o", list.only == Only::orphans ? "all" : "orphans"},
-                                   {"!", list.only == Only::broken ? "all" : "broken"}});
-        if (app.has_evaluated()) {
-            hints.emplace_back("u", list.only == Only::updates ? "all" : "updates");
-            hints.emplace_back("p", "plan");
-        }
-        hints.insert(hints.end(), {{"b", app.build_deps() ? "run time only" : "build deps"},
-                                   {"c", "check"},
-                                   {"e", "emerges"},
-                                   {"q", "quit"},
-                                   {":", "command"},
-                                   {"space", "pick"}});
-        if (app.has_evaluated()) {
-            hints.emplace_back("U", "update");
-        }
-        hints.emplace_back("r", "remove");
-        draw_hints(screen, size.rows - 1, size.cols, hints);
-    }
 }
 
 // A version of a package: whether it is installed, the version (in the bad tone when masked),
@@ -1288,17 +1281,6 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
         }
         }
     }
-    if (page.cursor.at < page.rows.size() && page.rows.at(page.cursor.at).version) {
-        draw_hints(screen, size.rows - 1, size.cols,
-                   {{glyph.move, "move"}, {"i", "install"}, {"esc", "back"}, {"q", "quit"}});
-    } else {
-        draw_hints(screen, size.rows - 1, size.cols,
-                   {{glyph.move, "move"},
-                    {"space", "unfold"},
-                    {glyph.enter, "open"},
-                    {"esc", "back"},
-                    {"q", "quit"}});
-    }
 }
 
 // A drift line's sign, as a glyph and what it means.
@@ -1334,7 +1316,6 @@ template <class S> void draw_check(S& screen, App& app, const Glyphs& glyph, Siz
                         : " Rebuilding the store; this takes a few seconds",
                     tone_pen(Tone::note)}},
                   size.cols);
-        draw_hints(screen, size.rows - 1, size.cols, {{"esc", "stop"}, {"q", "quit"}});
         return;
     }
     const bool rebuilt = checked.stage == Stage::rebuilt;
@@ -1382,14 +1363,6 @@ template <class S> void draw_check(S& screen, App& app, const Glyphs& glyph, Siz
             put_spans(screen, first + line, 0, spans, size.cols, bg);
         }
     }
-    std::vector<std::pair<std::string_view, std::string_view>> hints{
-        {"r", "again"}, {"esc", "back"}, {"q", "quit"}};
-    if (!rebuilt && !checked.drift.empty()) {
-        hints.insert(hints.begin(), {{glyph.move, "move"},
-                                     {glyph.enter, "open"},
-                                     {"u", app.update() == Update::save ? "rebuild" : "preview"}});
-    }
-    draw_hints(screen, size.rows - 1, size.cols, hints);
 }
 
 // A merge in the plan view, as updates --tree draws it: its kind, name, version and any it moves
@@ -1502,12 +1475,6 @@ template <class S> void draw_plan(S& screen, App& app, const Glyphs& glyph, Size
     if (planned.rows.empty()) {
         put_spans(screen, first, 5, {{"nothing to merge", tone_pen(Tone::note)}}, size.cols);
     }
-    std::vector<std::pair<std::string_view, std::string_view>> hints{
-        {"esc", "back"}, {"q", "quit"}, {":", "command"}};
-    if (!planned.rows.empty()) {
-        hints.insert(hints.begin(), {{glyph.move, "move"}, {glyph.enter, "open"}});
-    }
-    draw_hints(screen, size.rows - 1, size.cols, hints);
 }
 
 // A search result: whether it is installed, its cp, best version (in the bad tone when masked),
@@ -1575,24 +1542,6 @@ template <class S> void draw_search(S& screen, App& app, const Glyphs& glyph, Si
         std::ranges::move(found_spans(search.results.at(index), glyph), std::back_inserter(spans));
         put_spans(screen, first + line, 0, spans, size.cols, bg);
     }
-    if (search.typing) {
-        draw_hints(screen, size.rows - 1, size.cols,
-                   {{glyph.enter, "search"},
-                    {"tab", search.descriptions ? "names only" : "descriptions too"},
-                    {"esc", "stop"}});
-    } else {
-        std::vector<std::pair<std::string_view, std::string_view>> hints{
-            {"/", "search again"},
-            {"tab", search.descriptions ? "names only" : "descriptions too"},
-            {"esc", "back"},
-            {"q", "quit"},
-            {":", "command"}};
-        if (!search.results.empty()) {
-            hints.insert(hints.begin(),
-                         {{glyph.move, "move"}, {glyph.enter, "open"}, {"i", "install"}});
-        }
-        draw_hints(screen, size.rows - 1, size.cols, hints);
-    }
 }
 
 template <class S> void draw_listing(S& screen, App& app, const Glyphs& glyph, Size size) {
@@ -1640,9 +1589,6 @@ template <class S> void draw_listing(S& screen, App& app, const Glyphs& glyph, S
             put_spans(screen, at, 3, {{row.text, tone_pen(Tone::note)}}, size.cols);
         }
     }
-    draw_hints(
-        screen, size.rows - 1, size.cols,
-        {{glyph.move, "move"}, {"i", "install"}, {"esc", "back"}, {"q", "quit"}, {":", "command"}});
 }
 
 // text repeated count times.
@@ -1813,22 +1759,6 @@ inline constexpr unsigned pressure_rows = 5;
                                                             const Limits& limits, std::size_t width,
                                                             const Glyphs& glyph);
 
-// Moving and opening where there are tasks, and while steve's settings are being changed, how.
-template <class S>
-void draw_watch_hints(S& screen, const Watched& watched, const Glyphs& glyph, Size size) {
-    using Hints = std::vector<std::pair<std::string_view, std::string_view>>;
-    if (watched.editing) {
-        draw_hints(screen, size.rows - 1, size.cols,
-                   {{"h/l", "setting"}, {"+/-", "change"}, {"s", "done"}, {"q", "quit"}});
-        return;
-    }
-    Hints hints{{"s", "steve"}, {"esc", "back"}, {"q", "quit"}};
-    if (!watched.snapshots.empty()) {
-        hints.insert(hints.begin(), {{glyph.move, "move"}, {glyph.enter, "open"}});
-    }
-    draw_hints(screen, size.rows - 1, size.cols, hints);
-}
-
 template <class S> void draw_watch(S& screen, App& app, const Glyphs& glyph, Size size) {
     const auto& open = app.watched();
     if (!open) {
@@ -1868,7 +1798,6 @@ template <class S> void draw_watch(S& screen, App& app, const Glyphs& glyph, Siz
                   {{"egraph exec to /run/egraph; this view reads them again every second.",
                     tone_pen(Tone::note)}},
                   size.cols);
-        draw_watch_hints(screen, watched, glyph, size);
         return;
     }
     // Every line, with the selected one's index, then a window that keeps it in view.
@@ -1920,7 +1849,6 @@ template <class S> void draw_watch(S& screen, App& app, const Glyphs& glyph, Siz
         }
         put_spans(screen, first + line, 0, shown.spans, size.cols, bg);
     }
-    draw_watch_hints(screen, watched, glyph, size);
 }
 
 // A command's output: its tab-separated fields in columns, lined up across each run of rows with
@@ -1978,8 +1906,6 @@ template <class S> void draw_output(S& screen, App& app, const Glyphs& glyph, Si
         put_spans(screen, first, 5, {{"the command printed nothing", tone_pen(Tone::note)}},
                   size.cols);
     }
-    draw_hints(screen, size.rows - 1, size.cols,
-               {{glyph.move, "move"}, {glyph.enter, "open"}, {":", "command"}, {"esc", "back"}});
 }
 
 // The : prompt over the hint bar, or the command it runs.
@@ -2023,10 +1949,14 @@ template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
         }
         if (app.prompt() || app.command_requested()) {
             draw_prompt(screen, app, size);
+        } else {
+            draw_hints(screen, size.rows - 1, size.cols, view_keys(app, glyph));
         }
         app.set_dialog_height(size.rows - 4);
         if (app.dialog()) {
             draw_dialog(screen, *app.dialog(), glyph, size);
+        } else if (app.keys_shown()) {
+            draw_dialog(screen, keys_dialog(view_keys(app, glyph)), glyph, size);
         } else if (const auto& action = app.preview_requested()) {
             std::string command = "egraph";
             for (const auto& word : action_arguments(*action)) {

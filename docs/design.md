@@ -620,6 +620,11 @@ hide its next revision, nor dismissing a stale repository its next week without 
 filter (`notices`, the follow-up after an action, `status`); the file only drops entries whose
 notices are gone as it is written.
 
+The interface's keys are one list per view (`view_keys`), each marked for the bar when it acts
+on what is selected or undoes a mode (a filter's "all"); `?` shows the whole list over the view
+(17e5a). The bar no longer outgrows a terminal as views gain keys, and the list the overlay
+shows cannot drift from the bar's.
+
 Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
 touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
 the set is emerge's own. `parse_request` takes sets the store does not hold from its caller

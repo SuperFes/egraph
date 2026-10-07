@@ -1148,12 +1148,16 @@ void App::handle(const Key& key) {
         if (refresh_requested() || index_requested() || running_ || planning_) {
             ++frame_;
         }
+    } else if (keys_shown_) {
+        keys_shown_ = false;
     } else if (dialog_) {
         handle_dialog(key);
     } else if (prompt_) {
         handle_prompt(*prompt_, key);
     } else if (is(key, U':') && !typing()) {
         prompt_.emplace();
+    } else if (is(key, U'?') && !typing()) {
+        keys_shown_ = true;
     } else if (!pages_.empty()) {
         handle_page(key);
         // Back at the emerge view, whatever it shows is stale.
@@ -2628,6 +2632,205 @@ std::vector<Span> version_spans(const PackageVersion& version, const Glyphs& gly
         spans.push_back({std::format("masked: {}", reasons), tone_pen(Tone::bad)});
     }
     return spans;
+}
+
+namespace {
+
+// What every view that is not taking text has: the prompt and quitting.
+void add_common(std::vector<Hint>& keys) {
+    keys.push_back({.key = ":", .meaning = "command"});
+    keys.push_back({.key = "q", .meaning = "quit"});
+}
+
+std::vector<Hint> list_keys(const App& app, const Glyphs& glyph) {
+    const auto& list = app.list();
+    if (list.searching) {
+        return {{.key = std::string{glyph.enter}, .meaning = "keep", .bar = true},
+                {.key = "esc", .meaning = "clear", .bar = true},
+                {.key = "type", .meaning = "to filter", .bar = true}};
+    }
+    const bool on_package = list.cursor.at < list.shown.size();
+    const bool evaluated = app.has_evaluated();
+    std::vector<Hint> keys{{.key = std::string{glyph.move}, .meaning = "move"}};
+    if (evaluated) {
+        keys.push_back({.key = std::string{glyph.pages}, .meaning = "page"});
+    }
+    keys.push_back({.key = std::string{glyph.enter}, .meaning = "open", .bar = on_package});
+    keys.push_back({.key = "space", .meaning = "pick", .bar = on_package});
+    if (evaluated) {
+        const bool update = !app.picked().empty() || list.only == Only::updates ||
+                            (on_package && app.update_of(list.shown.at(list.cursor.at)));
+        keys.push_back({.key = "U", .meaning = "update", .bar = update});
+    }
+    keys.push_back(
+        {.key = "r",
+         .meaning = "remove",
+         .bar = !app.picked().empty() || (list.only == Only::orphans && !list.shown.empty())});
+    const auto filter = [&](std::string_view key, Only only, std::string_view meaning) {
+        keys.push_back({.key = std::string{key},
+                        .meaning = std::string{list.only == only ? "all" : meaning},
+                        .bar = list.only == only});
+    };
+    filter("o", Only::orphans, "orphans");
+    filter("!", Only::broken, "broken");
+    if (evaluated) {
+        filter("u", Only::updates, "updates");
+    }
+    keys.push_back({.key = "esc", .meaning = "clear the filter", .bar = !list.query.empty()});
+    keys.push_back({.key = "/", .meaning = "filter"});
+    keys.push_back({.key = "s", .meaning = "search the repositories"});
+    if (evaluated) {
+        keys.push_back({.key = "p", .meaning = "plan"});
+    }
+    keys.push_back(
+        {.key = "b", .meaning = app.build_deps() ? "run-time deps only" : "build deps too"});
+    keys.push_back({.key = "c", .meaning = "check the store"});
+    keys.push_back({.key = "e", .meaning = "running emerges"});
+    add_common(keys);
+    return keys;
+}
+
+std::vector<Hint> page_keys(const App& app, const Glyphs& glyph) {
+    const auto& page = app.pages().back();
+    const auto row = page.cursor.at < page.rows.size() ? std::optional{page.rows.at(page.cursor.at)}
+                                                       : std::nullopt;
+    const bool on_link = row && selectable(*row);
+    const bool unfolded = on_link && row->unfolded;
+    const auto installed = row && row->version ? row->version->installed : std::nullopt;
+    const bool opens =
+        on_link ? row->link.package != page.package : installed && *installed != page.package;
+    std::vector<Hint> keys{
+        {.key = std::string{glyph.move}, .meaning = "move"},
+        {.key = std::string{glyph.enter}, .meaning = "open", .bar = opens},
+        {.key = "space",
+         .meaning = unfolded ? "fold" : "unfold",
+         .bar = unfolded || (on_link && app.can_unfold(*row))},
+        {.key = "i", .meaning = "install", .bar = row && row->version.has_value()},
+        {.key = "esc", .meaning = "back", .bar = true}};
+    add_common(keys);
+    return keys;
+}
+
+std::vector<Hint> check_keys(const App& app, const Glyphs& glyph) {
+    const auto& checked = *app.checked();
+    using Stage = Checked::Stage;
+    if (checked.stage == Stage::checking || checked.stage == Stage::rebuilding) {
+        return {{.key = "esc", .meaning = "stop", .bar = true},
+                {.key = "q", .meaning = "quit", .bar = true}};
+    }
+    const bool drift = checked.stage != Stage::rebuilt && !checked.drift.empty();
+    std::vector<Hint> keys{
+        {.key = std::string{glyph.move}, .meaning = "move"},
+        {.key = std::string{glyph.enter}, .meaning = "open", .bar = drift},
+        {.key = "u", .meaning = app.update() == Update::save ? "rebuild" : "preview", .bar = drift},
+        {.key = "r", .meaning = "check again"},
+        {.key = "esc", .meaning = "back", .bar = true}};
+    add_common(keys);
+    return keys;
+}
+
+std::vector<Hint> watch_keys(const App& app, const Glyphs& glyph) {
+    const auto& watched = *app.watched();
+    if (watched.editing) {
+        return {{.key = "h/l", .meaning = "setting", .bar = true},
+                {.key = "+/-", .meaning = "change", .bar = true},
+                {.key = "s", .meaning = "done", .bar = true},
+                {.key = "q", .meaning = "quit", .bar = true}};
+    }
+    std::vector<Hint> keys{
+        {.key = std::string{glyph.move}, .meaning = "move"},
+        {.key = std::string{glyph.enter}, .meaning = "open", .bar = !watched.snapshots.empty()},
+        {.key = "s", .meaning = "steve", .bar = true},
+        {.key = "esc", .meaning = "back", .bar = true}};
+    add_common(keys);
+    return keys;
+}
+
+std::vector<Hint> search_keys(const App& app, const Glyphs& glyph) {
+    const auto& search = *app.search();
+    const std::string tab = search.descriptions ? "names only" : "descriptions too";
+    if (search.typing) {
+        return {{.key = std::string{glyph.enter}, .meaning = "search", .bar = true},
+                {.key = "tab", .meaning = tab, .bar = true},
+                {.key = "esc", .meaning = "stop", .bar = true}};
+    }
+    const bool found = !search.results.empty();
+    std::vector<Hint> keys{{.key = std::string{glyph.move}, .meaning = "move"},
+                           {.key = std::string{glyph.enter}, .meaning = "open", .bar = found},
+                           {.key = "i", .meaning = "install", .bar = found},
+                           {.key = "/", .meaning = "search again"},
+                           {.key = "tab", .meaning = tab},
+                           {.key = "esc", .meaning = "back", .bar = true}};
+    add_common(keys);
+    return keys;
+}
+
+std::vector<Hint> listing_keys(const Glyphs& glyph) {
+    std::vector<Hint> keys{{.key = std::string{glyph.move}, .meaning = "move"},
+                           {.key = "i", .meaning = "install", .bar = true},
+                           {.key = "esc", .meaning = "back", .bar = true}};
+    add_common(keys);
+    return keys;
+}
+
+std::vector<Hint> output_keys(const App::Output& output, const Glyphs& glyph) {
+    const bool linked =
+        output.cursor.at < output.links.size() && output.links.at(output.cursor.at).has_value();
+    std::vector<Hint> keys{{.key = std::string{glyph.move}, .meaning = "move"},
+                           {.key = std::string{glyph.enter}, .meaning = "open", .bar = linked},
+                           {.key = "esc", .meaning = "back", .bar = true}};
+    add_common(keys);
+    return keys;
+}
+
+std::vector<Hint> plan_keys(const Planned& planned, const Glyphs& glyph) {
+    std::vector<Hint> keys{
+        {.key = std::string{glyph.move}, .meaning = "move"},
+        {.key = std::string{glyph.enter}, .meaning = "open", .bar = !planned.rows.empty()},
+        {.key = "esc", .meaning = "back", .bar = true}};
+    add_common(keys);
+    return keys;
+}
+
+} // namespace
+
+// In the order draw() picks the view on top.
+std::vector<Hint> view_keys(const App& app, const Glyphs& glyph) {
+    if (!app.pages().empty()) {
+        return page_keys(app, glyph);
+    }
+    if (app.listing()) {
+        return listing_keys(glyph);
+    }
+    if (const auto& output = app.output()) {
+        return output_keys(*output, glyph);
+    }
+    if (app.search()) {
+        return search_keys(app, glyph);
+    }
+    if (app.checked()) {
+        return check_keys(app, glyph);
+    }
+    if (app.watched()) {
+        return watch_keys(app, glyph);
+    }
+    if (const auto& planned = app.planned()) {
+        return plan_keys(*planned, glyph);
+    }
+    return list_keys(app, glyph);
+}
+
+Dialog keys_dialog(std::span<const Hint> hints) {
+    std::size_t widest = 0;
+    for (const auto& hint : hints) {
+        widest = std::max(widest, columns(hint.key));
+    }
+    Dialog dialog{.error = false, .title = "Keys", .lines = {}, .question = false, .top = 0};
+    for (const auto& hint : hints) {
+        dialog.lines.push_back(std::format(
+            "{}{}  {}", hint.key, std::string(widest - columns(hint.key), ' '), hint.meaning));
+    }
+    return dialog;
 }
 
 std::vector<Span> found_spans(const Found& found, const Glyphs& glyph) {
