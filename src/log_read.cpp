@@ -149,6 +149,10 @@ std::vector<RunSummary> summarize(std::span<const Event> events) {
     std::vector<RunSummary> runs;
     std::map<std::string, std::size_t, std::less<>> index;
     for (const auto& event : events) {
+        // Notices belong to no run of the system's.
+        if (event.kind == "notice") {
+            continue;
+        }
         auto [at, added] = index.try_emplace(event.run, runs.size());
         if (added) {
             runs.push_back({.run = event.run, .started = event.time, .status = "unfinished"});

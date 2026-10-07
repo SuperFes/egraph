@@ -603,6 +603,16 @@ that no installed package provides (the installed store's `REQUIRES` entries wit
 providers). A soname a preserved library still provides is that library's notice, matched by
 its file name, not a second one.
 
+`watch` writes the notices to `notices.json` beside the status file (17e3) whenever a store
+changed, whatever `plan` says: they are cheap next to a plan, and the reason the service exists
+for a user who never plans. One notice per thing to act on, each with a key that lasts as long
+as it does (a GLSA's id, a package's cpv) and a fingerprint of what it says, for the per-user
+dismissals to come. `since` carries over by key; a key the last file lacked is logged once, as
+a warning for what can break or expose the system and a syslog notice for the rest, outside any
+run (`egraph log` passes over them). Staleness grows with no refresh to see it, so the file
+keeps each repository's sync time and readers find the stale ones again; the other kinds change
+only with a store, but for `._cfg` files and the unread lists, which `notices` reads anew.
+
 Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
 touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
 the set is emerge's own. `parse_request` takes sets the store does not hold from its caller

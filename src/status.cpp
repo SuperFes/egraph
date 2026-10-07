@@ -9,8 +9,10 @@
 #include <chrono>
 #include <format>
 #include <fstream>
+#include <iterator>
 #include <locale>
 #include <sstream>
+#include <string>
 #include <tuple>
 #include <utility>
 
@@ -332,6 +334,152 @@ bool status_due(PlanWhen when, const std::optional<StatusStores>& recorded,
         return !recorded || *recorded != now;
     }
     return true;
+}
+
+std::string notice_file_json(const NoticeFile& file) {
+    auto repositories = Json::array();
+    for (const auto& repository : file.repositories) {
+        Json entry{{"name", repository.name}};
+        if (repository.synced) {
+            entry.emplace("synced", repository.synced->time_since_epoch().count());
+        }
+        repositories.push_back(std::move(entry));
+    }
+    auto stores = Json::object();
+    stores.emplace("installed", build_json(file.stores.installed));
+    stores.emplace("evaluated", build_json(file.stores.evaluated));
+    stores.emplace("repository", build_json(file.stores.repository));
+    auto notices = Json::array();
+    for (const auto& notice : file.notices) {
+        notices.push_back({{"kind", notice_kind_name(notice.kind)},
+                           {"key", notice.key},
+                           {"title", notice.title},
+                           {"detail", notice.detail},
+                           {"fingerprint", notice.fingerprint},
+                           {"since", notice.since.time_since_epoch().count()}});
+    }
+    const Json document{{"format", notice_file_format},
+                        {"written", file.written.time_since_epoch().count()},
+                        {"stores", std::move(stores)},
+                        {"repositories", std::move(repositories)},
+                        {"notices", std::move(notices)}};
+    return document.dump(-1, ' ', false, Json::error_handler_t::replace) + '\n';
+}
+
+std::expected<NoticeFile, std::string> parse_notice_file(std::string_view text) {
+    const auto document = Json::parse(text, nullptr, false);
+    if (!document.is_object()) {
+        return std::unexpected("not a notices file");
+    }
+    const auto format = number_at(document, "format");
+    if (format && *format != notice_file_format) {
+        return std::unexpected(std::format("format {}, from another egraph version", *format));
+    }
+    const auto at = [&document](std::string_view key) -> const Json& {
+        static const Json missing;
+        const auto found = document.find(key);
+        return found == document.end() ? missing : *found;
+    };
+    const auto written = time_at(document, "written");
+    auto stores = stores_of(at("stores"));
+    auto repositories = repositories_of(at("repositories"));
+    const auto& listed = at("notices");
+    if (!format || !written || !stores || !repositories || !listed.is_array()) {
+        return std::unexpected("not a notices file");
+    }
+    NoticeFile file{.written = *written,
+                    .stores = *stores,
+                    .repositories = std::move(*repositories),
+                    .notices = {}};
+    for (const auto& entry : listed) {
+        if (!entry.is_object()) {
+            return std::unexpected("not a notices file");
+        }
+        const auto text_at = [&entry](std::string_view key) -> std::optional<std::string> {
+            const auto found = entry.find(key);
+            if (found == entry.end() || !found->is_string()) {
+                return std::nullopt;
+            }
+            return found->get<std::string>();
+        };
+        const auto kind_name = text_at("kind");
+        const auto kind = kind_name ? notice_kind(*kind_name) : std::nullopt;
+        auto key = text_at("key");
+        auto title = text_at("title");
+        auto fingerprint = text_at("fingerprint");
+        auto detail = lines_of(entry.value("detail", Json{}));
+        const auto since = time_at(entry, "since");
+        if (!kind || !key || !title || !fingerprint || !detail || !since) {
+            return std::unexpected("not a notices file");
+        }
+        file.notices.push_back({.kind = *kind,
+                                .key = std::move(*key),
+                                .title = std::move(*title),
+                                .detail = std::move(*detail),
+                                .fingerprint = std::move(*fingerprint),
+                                .since = *since});
+    }
+    return file;
+}
+
+std::filesystem::path notices_path(const std::filesystem::path& installed) {
+    return installed.parent_path() / "notices.json";
+}
+
+std::vector<Notice> current_notices(const NoticeFile& file, Seconds now, int stale_days) {
+    std::vector<Notice> notices;
+    std::ranges::copy_if(file.notices, std::back_inserter(notices),
+                         [](const Notice& notice) { return notice.kind != NoticeKind::stale; });
+    if (stale_days <= 0) {
+        return notices;
+    }
+    const std::chrono::days allowed{stale_days};
+    Notices stale;
+    for (const auto& repository : file.repositories) {
+        if (repository.synced && *repository.synced < now - allowed) {
+            stale.stale.push_back({.name = repository.name, .synced = *repository.synced});
+        }
+    }
+    auto found = notice_list(stale, now);
+    // When each went stale, unless the file saw it before; the list holds them alone, in order.
+    for (std::size_t i = 0; i < found.size(); ++i) {
+        found.at(i).since = stale.stale.at(i).synced + allowed;
+    }
+    carry_since(found, file.notices);
+    notices.insert(notices.end(), std::make_move_iterator(found.begin()),
+                   std::make_move_iterator(found.end()));
+    return notices;
+}
+
+std::optional<std::string> notices_summary(std::span<const Notice> notices) {
+    if (notices.empty()) {
+        return std::nullopt;
+    }
+    const auto count = [&](NoticeKind kind) {
+        return std::ranges::count(notices, kind, &Notice::kind);
+    };
+    std::string parts;
+    const auto add = [&parts](std::string part) {
+        parts += std::format("{}{}", parts.empty() ? "" : ", ", part);
+    };
+    for (const auto& [kind, one, many] :
+         {std::tuple{NoticeKind::glsa, "GLSA", "GLSAs"},
+          {NoticeKind::missing, "package missing libraries", "packages missing libraries"},
+          {NoticeKind::masked, "masked package", "masked packages"},
+          {NoticeKind::stale, "stale repository", "stale repositories"},
+          {NoticeKind::news, "news item", "news items"}}) {
+        if (const auto n = count(kind); n != 0) {
+            add(std::format("{} {}", n, n == 1 ? one : many));
+        }
+        if (kind == NoticeKind::missing && count(NoticeKind::preserved) != 0) {
+            add("preserved libraries");
+        }
+        if (kind == NoticeKind::stale && count(NoticeKind::config) != 0) {
+            add("configuration updates");
+        }
+    }
+    return std::format("{} {}: {}", notices.size(), notices.size() == 1 ? "notice" : "notices",
+                       parts);
 }
 
 } // namespace egraph

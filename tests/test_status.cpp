@@ -221,3 +221,95 @@ TEST_CASE("a status as JSON says whether it is current when asked") {
     CHECK(egraph::status_json(status, true).find("\"current\":true") != std::string::npos);
     CHECK(egraph::parse_status(egraph::status_json(status, false)) == status);
 }
+
+namespace {
+
+egraph::NoticeFile notice_file() {
+    using namespace std::chrono;
+    egraph::NoticeFile file;
+    file.written = sys_days{2026y / October / 9};
+    file.stores = {
+        .installed = {.path = "/var/cache/egraph/installed.egraph", .built = 1},
+        .evaluated = {.path = "/var/cache/egraph/installed.evaluated.egraph", .built = 2},
+        .repository = {.path = "/var/cache/egraph/installed.repository.egraph", .built = 3}};
+    file.repositories = {
+        {.name = "gentoo", .synced = egraph::Seconds{sys_days{2026y / October / 1}}},
+        {.name = "local", .synced = std::nullopt}};
+    file.notices = {{.kind = egraph::NoticeKind::glsa,
+                     .key = "glsa:202601-01",
+                     .title = "GLSA 202601-01: foo",
+                     .detail = {"dev-libs/foo-2"},
+                     .fingerprint = "2 dev-libs/foo-2",
+                     .since = sys_days{2026y / October / 2}},
+                    {.kind = egraph::NoticeKind::stale,
+                     .key = "stale:gentoo",
+                     .title = "gentoo synced 7 days ago",
+                     .detail = {},
+                     .fingerprint = "1790812800",
+                     .since = sys_days{2026y / October / 8}}};
+    return file;
+}
+
+} // namespace
+
+TEST_CASE("a notices file round-trips through JSON") {
+    const auto file = notice_file();
+    const auto read = egraph::parse_notice_file(egraph::notice_file_json(file));
+    REQUIRE(read);
+    CHECK(*read == file);
+}
+
+TEST_CASE("a notices file of another format or none at all is refused") {
+    CHECK(egraph::parse_notice_file("[]").error() == "not a notices file");
+    CHECK(egraph::parse_notice_file(R"({"format": 1, "written": 1})").error() ==
+          "not a notices file");
+    CHECK(egraph::parse_notice_file(R"({"format": 9})").error() ==
+          "format 9, from another egraph version");
+    auto text = egraph::notice_file_json(notice_file());
+    text.replace(text.find("\"glsa\""), 6, "\"what\"");
+    CHECK(egraph::parse_notice_file(text).error() == "not a notices file");
+}
+
+TEST_CASE("stale repositories are found again as time passes") {
+    using namespace std::chrono;
+    const auto file = notice_file();
+    const auto at = [&](sys_days day, int stale_days) {
+        std::vector<std::string> found;
+        for (const auto& notice : egraph::current_notices(file, day, stale_days)) {
+            found.push_back(notice.key + " " + notice.title);
+        }
+        return found;
+    };
+    CHECK(at(2026y / October / 5, 7) ==
+          std::vector<std::string>{"glsa:202601-01 GLSA 202601-01: foo"});
+    CHECK(at(2026y / October / 12, 7) ==
+          std::vector<std::string>{"glsa:202601-01 GLSA 202601-01: foo",
+                                   "stale:gentoo gentoo synced 11 days ago"});
+    CHECK(at(2026y / October / 12, 0).size() == 1);
+    // A stale notice keeps when it was first noticed; one noticed now dates from when it went
+    // stale.
+    const auto later = egraph::current_notices(file, sys_days{2026y / October / 12}, 7);
+    CHECK(later.back().since == egraph::Seconds{sys_days{2026y / October / 8}});
+    auto unseen = file;
+    unseen.notices.pop_back();
+    const auto found = egraph::current_notices(unseen, sys_days{2026y / October / 12}, 7);
+    CHECK(found.back().since == egraph::Seconds{sys_days{2026y / October / 8}});
+}
+
+TEST_CASE("notices summed up in a line") {
+    CHECK_FALSE(egraph::notices_summary({}));
+    const auto notice = [](egraph::NoticeKind kind) {
+        return egraph::Notice{
+            .kind = kind, .key = "", .title = "", .detail = {}, .fingerprint = "", .since = {}};
+    };
+    using egraph::NoticeKind;
+    const std::vector<egraph::Notice> notices{
+        notice(NoticeKind::glsa),      notice(NoticeKind::missing), notice(NoticeKind::missing),
+        notice(NoticeKind::preserved), notice(NoticeKind::masked),  notice(NoticeKind::stale),
+        notice(NoticeKind::config),    notice(NoticeKind::news),    notice(NoticeKind::news)};
+    CHECK(egraph::notices_summary(notices) ==
+          "9 notices: 1 GLSA, 2 packages missing libraries, preserved libraries, 1 masked "
+          "package, 1 stale repository, configuration updates, 2 news items");
+    CHECK(egraph::notices_summary(std::vector{notice(NoticeKind::news)}) ==
+          "1 notice: 1 news item");
+}

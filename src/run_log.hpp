@@ -6,6 +6,7 @@
 
 #include "exec.hpp"
 #include "log.hpp"
+#include "notices.hpp"
 #include "schedule.hpp"
 
 #include <cstddef>
@@ -90,5 +91,9 @@ struct HandOver {
 [[nodiscard]] log::Event handed_back(const std::string& run, const HandOver& hand_over,
                                      const std::expected<int, std::string>& ran, double started,
                                      double now);
+
+// A notice watch found new: a warning for a GLSA, missing libraries, preserved libraries or a
+// masked package, else a syslog notice. Not part of any run's summary.
+[[nodiscard]] log::Event noticed(const std::string& run, const Notice& notice, double now);
 
 } // namespace egraph

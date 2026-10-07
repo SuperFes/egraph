@@ -316,6 +316,7 @@ watch_all(std::span<const std::filesystem::path> directories, std::size_t& unrea
 }
 
 std::optional<std::string> refresh_status(Session& session, const Invocation& invocation);
+void refresh_notices(Session& session, const Invocation& invocation, std::ostream& err);
 
 Exit execute(const Watch&, Session& session, const Invocation& invocation, std::ostream&,
              std::ostream& err) {
@@ -344,6 +345,7 @@ Exit execute(const Watch&, Session& session, const Invocation& invocation, std::
         if (const auto error = refresh_status(session, invocation)) {
             err << "egraph: watch: " << *error << '\n';
         }
+        refresh_notices(session, invocation, err);
         // Nothing reads them until the next refresh.
         session.reload();
         const auto took = std::chrono::duration<double>(Clock::now() - started).count();
@@ -1885,6 +1887,73 @@ void follow_up(std::string_view name, bool yes, Session& session, const Invocati
     std::ignore = execute(rebuild, session, again, out, err);
 }
 
+// The notices file at path, or why it cannot be read.
+std::expected<NoticeFile, std::string> read_notice_file(const std::filesystem::path& path) {
+    const auto bytes = read_file(path);
+    if (!bytes) {
+        return std::unexpected(bytes.error().message);
+    }
+    std::string text(bytes->size(), '\0');
+    std::ranges::transform(*bytes, text.begin(), [](std::byte b) { return static_cast<char>(b); });
+    return parse_notice_file(text).transform_error(
+        [&path](const std::string& error) { return std::format("{}: {}", path.string(), error); });
+}
+
+// With the session's stores just refreshed, the notices file beside them written anew when they
+// changed since it was, the notices new since then logged; what went wrong said on err. Skipped
+// where this user cannot write.
+void refresh_notices(Session& session, const Invocation& invocation, std::ostream& err) {
+    const auto path = notices_path(session.used());
+    if (!os::can_create(path)) {
+        return;
+    }
+    const auto stores = session_build_times(session);
+    if (!stores) {
+        err << "egraph: watch: " << stores.error() << '\n';
+        return;
+    }
+    const auto old = read_notice_file(path);
+    if (old && old->stores == *stores) {
+        return;
+    }
+    const auto notices = read_notices("watch", session, invocation, err);
+    if (!notices) {
+        err << "egraph: watch: the notices could not be read: " << notices.error() << '\n';
+        return;
+    }
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    NoticeFile file{.written = now,
+                    .stores = *stores,
+                    .repositories = {},
+                    .notices = notice_list(*notices, now)};
+    if (const auto index = session.repository(); index) {
+        const auto& repository_index = index->get();
+        for (const auto& repository : repository_index.repositories) {
+            file.repositories.push_back(
+                {.name = std::string{repository_index.string(repository.name)},
+                 .synced =
+                     repository_synced(std::string{repository_index.string(repository.location)})});
+        }
+    }
+    const std::span<const Notice> previous =
+        old ? std::span<const Notice>{old->notices} : std::span<const Notice>{};
+    carry_since(file.notices, previous);
+    if (const auto written = os::replace_with_text(path, notice_file_json(file)); !written) {
+        err << "egraph: watch: cannot write " << path.string() << ": " << written.error().message()
+            << '\n';
+        return;
+    }
+    // The first file has nothing to be new against: everything in it was there already.
+    if (!old) {
+        return;
+    }
+    auto logger = logger_of(invocation, err);
+    const auto run = log::new_run();
+    for (const auto& notice : new_notices(file.notices, previous)) {
+        logger.write(noticed(run, notice, epoch_seconds()));
+    }
+}
+
 Exit execute(const NoticesCommand&, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     const auto notices = read_notices(NoticesCommand::name, session, invocation, err);
@@ -3098,12 +3167,25 @@ Exit execute(const StatusCommand& command, Session& session, const Invocation& i
     }
     if (command.json) {
         out << status_json(found->status, found->current);
-    } else if (style(invocation).human) {
-        write_lines(out, status_summary(found->status, found->current,
-                                        std::chrono::floor<std::chrono::seconds>(
-                                            std::chrono::system_clock::now())));
+        return Exit::ok;
+    }
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    // The notices watch wrote beside it, when it did.
+    std::vector<Notice> notices;
+    if (const auto file = read_notice_file(notices_path(found->path)); file) {
+        const auto settings = read_settings(settings_path(config_root(invocation)));
+        notices = current_notices(*file, now, settings.value_or(Settings{}).stale_days);
+    }
+    if (style(invocation).human) {
+        auto lines = status_summary(found->status, found->current, now);
+        if (const auto summary = notices_summary(notices)) {
+            lines.insert(lines.begin() + 1, *summary);
+        }
+        write_lines(out, lines);
     } else {
-        write_lines(out, status_lines(found->status, found->current));
+        auto lines = status_lines(found->status, found->current);
+        lines.push_back(std::format("notices\t{}", notices.size()));
+        write_lines(out, lines);
     }
     return Exit::ok;
 }

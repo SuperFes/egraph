@@ -80,10 +80,12 @@ def expected(playground):
 
 
 def builds(system):
-    """The store builds, apart from the repository index's."""
+    """The store builds, apart from the repository index's (and the notices' reads)."""
     log = system[3]
     lines = log.read_text().splitlines() if log.exists() else []
-    return [line for line in lines if not line.startswith("--repository")]
+    return [
+        line for line in lines if not line.startswith(("--repository", "--notices"))
+    ]
 
 
 def test_first_query_builds_the_store(system):
@@ -195,7 +197,8 @@ def start_watch(system):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
-        env=dict(playground.settings.environ(), EGRAPH_STRICT="1"),
+        # Its log to the playground's file, never the journal.
+        env=dict(playground.settings.environ(), EGRAPH_STRICT="1", EGRAPH_LOG="file"),
     )
     lines = queue.Queue()
     threading.Thread(
@@ -276,6 +279,60 @@ def test_watch_writes_the_plan_to_the_status_file_after_each_refresh(updates_sys
         )
         process.send_signal(signal.SIGTERM)
         assert process.wait(timeout=30) == 0
+    finally:
+        stop(process)
+
+
+def notices(system):
+    path = system[1].parent / "notices.json"
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def logged_notices(system):
+    path = os.path.join(system[0].eprefix, "var", "log", "egraph.log")
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        events = [json.loads(line) for line in f]
+    return [e for e in events if e["event"] == "notice"]
+
+
+def test_watch_writes_the_notices_and_logs_new_ones(system):
+    """notices.json holds what notices lists, kept up as the system changes, whatever plan says;
+    a notice new since the last file is logged once."""
+    settings(system, "plan = never\n")
+    process, lines = start_watch(system)
+    try:
+        assert "egraph: watch: watching " in lines.get(timeout=120)
+        first = notices(system)
+        assert first is not None
+        assert status(system) is None
+        keys = [notice["key"] for notice in first["notices"]]
+        listed = egraph(system, "notices").stdout.splitlines()
+        assert keys == [
+            f"masked:{row.split()[0]}"
+            for row in listed
+            if row.split("\t")[1] == "masked"
+        ]
+        assert logged_notices(system) == []
+        add_package(
+            system[0],
+            "dev-libs/needy-1",
+            KEYWORDS="x86",
+            REQUIRES="x86_64: libgone.so.9",
+        )
+        assert "egraph: watch: refreshed in " in lines.get(timeout=120)
+        second = notices(system)
+        assert second["stores"] != first["stores"]
+        added = [n for n in second["notices"] if n["key"] not in keys]
+        assert [(n["key"], n["detail"], n["since"]) for n in added] == [
+            ("missing:dev-libs/needy-1", ["libgone.so.9 (x86_64)"], second["written"])
+        ]
+        kept = {n["key"]: n["since"] for n in second["notices"] if n["key"] in keys}
+        assert kept == {n["key"]: n["since"] for n in first["notices"]}
+        assert [
+            (e["key"], e["notice"], e["priority"]) for e in logged_notices(system)
+        ] == [("missing:dev-libs/needy-1", "missing", 4)]
     finally:
         stop(process)
 

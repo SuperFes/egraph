@@ -61,3 +61,39 @@ def test_a_broken_status_file_says_so(mutable_playground, tmp_path):
     assert result.stderr == (
         f"egraph: status: {status_file(system)}: format 99, from another egraph version\n"
     )
+
+
+def test_status_counts_the_notices_watch_wrote(mutable_playground, tmp_path):
+    system = scenario_system(mutable_playground, tmp_path, "updates")
+    assert egraph(system, "status", "--update").returncode == 0
+    fields = dict(
+        line.split("\t", 1) for line in egraph(system, "status").stdout.splitlines()
+    )
+    assert fields["notices"] == "0"
+    stores = json.loads(status_file(system).read_text())["stores"]
+    notice = {
+        "kind": "masked",
+        "key": "masked:app-misc/x-1",
+        "title": "app-misc/x-1 is masked",
+        "detail": ["package.mask"],
+        "fingerprint": "package.mask",
+        "since": 1790000000,
+    }
+    (status_file(system).parent / "notices.json").write_text(
+        json.dumps(
+            {
+                "format": 1,
+                "written": 1790000000,
+                "stores": stores,
+                # Long since synced: stale now, though it was not when written.
+                "repositories": [{"name": "test_repo", "synced": 1700000000}],
+                "notices": [notice],
+            }
+        )
+    )
+    fields = dict(
+        line.split("\t", 1) for line in egraph(system, "status").stdout.splitlines()
+    )
+    assert fields["notices"] == "2"
+    human = egraph(system, "--layout", "human", "status").stdout.splitlines()
+    assert human[1] == "2 notices: 1 masked package, 1 stale repository"

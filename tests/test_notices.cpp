@@ -172,3 +172,140 @@ TEST_CASE("a soname a preserved library provides is that library's notice") {
     REQUIRE(notices.missing.size() == 1);
     CHECK(notices.missing.front().soname == "libgone.so.2");
 }
+
+namespace {
+
+egraph::Notices every_kind() {
+    using namespace std::chrono;
+    egraph::Notices notices;
+    notices.config = {{.file = "/etc/a.conf", .update = "/etc/._cfg0000_a.conf"},
+                      {.file = "/etc/a.conf", .update = "/etc/._cfg0001_a.conf"},
+                      {.file = "/etc/b.conf", .update = "/etc/._cfg0000_b.conf"}};
+    notices.news = {{.repo = "gentoo", .item = "2026-09-01-x", .title = "X happened"},
+                    {.repo = "gentoo", .item = "2026-09-02-y", .title = ""}};
+    notices.preserved = std::vector<egraph::Notices::Preserved>{
+        {.path = "/usr/lib/libfoo.so.1",
+         .package = "dev-libs/foo-2",
+         .consumers = {"app-misc/bar-1", "app-misc/baz-1"}}};
+    notices.rebuild = std::vector<std::string>{"app-misc/bar:0"};
+    notices.advisories = {{.id = "202601-01",
+                           .title = "foo: overflow",
+                           .revision = 2,
+                           .packages = {{.cpv = "dev-libs/foo-2",
+                                         .fixed = {">=dev-libs/foo-2.1", ">=dev-libs/foo-3"}}}}};
+    notices.stale = {{.name = "gentoo", .synced = egraph::Seconds{sys_days{2026y / October / 1}}}};
+    notices.masked = {{.cpv = "app-misc/b-1", .reasons = {"package.mask", "~x86 keyword"}}};
+    notices.missing = {{.cpv = "app-misc/a-1", .category = "x86_64", .soname = "libgone.so.2"},
+                       {.cpv = "app-misc/a-1", .category = "x86_64", .soname = "libold.so.3"}};
+    return notices;
+}
+
+} // namespace
+
+TEST_CASE("notices list as one, the most pressing first") {
+    using namespace std::chrono;
+    const egraph::Seconds now = sys_days{2026y / October / 9};
+    const auto list = egraph::notice_list(every_kind(), now);
+    std::vector<std::string> keys;
+    for (const auto& notice : list) {
+        keys.push_back(notice.key);
+        CHECK(notice.since == now);
+    }
+    CHECK(keys == std::vector<std::string>{"glsa:202601-01", "missing:app-misc/a-1", "preserved",
+                                           "masked:app-misc/b-1", "stale:gentoo", "config",
+                                           "news:gentoo/2026-09-01-x", "news:gentoo/2026-09-02-y"});
+    const auto& glsa = list.at(0);
+    CHECK(glsa.kind == egraph::NoticeKind::glsa);
+    CHECK(glsa.title == "GLSA 202601-01: foo: overflow");
+    CHECK(glsa.detail == std::vector<std::string>{
+                             "dev-libs/foo-2, fixed in >=dev-libs/foo-2.1 or >=dev-libs/foo-3"});
+    CHECK(glsa.fingerprint == "2 dev-libs/foo-2");
+    const auto& missing = list.at(1);
+    CHECK(missing.title == "app-misc/a-1 needs libraries nothing installed provides");
+    CHECK(missing.detail ==
+          std::vector<std::string>{"libgone.so.2 (x86_64)", "libold.so.3 (x86_64)"});
+    const auto& preserved = list.at(2);
+    CHECK(preserved.title == "1 preserved library");
+    CHECK(preserved.detail ==
+          std::vector<std::string>{"/usr/lib/libfoo.so.1, used by app-misc/bar-1, app-misc/baz-1"});
+    const auto& masked = list.at(3);
+    CHECK(masked.title == "app-misc/b-1 is masked");
+    CHECK(masked.detail == std::vector<std::string>{"package.mask", "~x86 keyword"});
+    const auto& stale = list.at(4);
+    CHECK(stale.title == "gentoo synced 8 days ago");
+    CHECK(stale.fingerprint ==
+          std::to_string(sys_seconds{sys_days{2026y / October / 1}}.time_since_epoch().count()));
+    const auto& config = list.at(5);
+    CHECK(config.title == "2 configuration files have updates waiting");
+    CHECK(config.detail == std::vector<std::string>{"/etc/a.conf", "/etc/b.conf"});
+    CHECK(list.at(6).title == "X happened");
+    // An item without a title goes by its name.
+    CHECK(list.at(7).title == "2026-09-02-y");
+}
+
+TEST_CASE("a fingerprint changes with what the notice says") {
+    using namespace std::chrono;
+    const egraph::Seconds now = sys_days{2026y / October / 9};
+    auto notices = every_kind();
+    const auto before = egraph::notice_list(notices, now);
+    notices.advisories.front().revision = 3;
+    notices.masked.front().reasons = {"package.mask"};
+    notices.config.pop_back();
+    const auto after = egraph::notice_list(notices, now);
+    REQUIRE(before.size() == after.size());
+    std::vector<std::string> changed;
+    for (std::size_t i = 0; i < before.size(); ++i) {
+        CHECK(before.at(i).key == after.at(i).key);
+        if (before.at(i).fingerprint != after.at(i).fingerprint) {
+            changed.push_back(after.at(i).key);
+        }
+    }
+    CHECK(changed == std::vector<std::string>{"glsa:202601-01", "masked:app-misc/b-1", "config"});
+}
+
+TEST_CASE("since carries over by key, and new notices are those with new keys") {
+    using namespace std::chrono;
+    const egraph::Seconds then = sys_days{2026y / October / 1};
+    const egraph::Seconds now = sys_days{2026y / October / 9};
+    const std::vector<egraph::Notice> previous{{.kind = egraph::NoticeKind::news,
+                                                .key = "news:gentoo/a",
+                                                .title = "A",
+                                                .detail = {},
+                                                .fingerprint = "a",
+                                                .since = then},
+                                               {.kind = egraph::NoticeKind::masked,
+                                                .key = "masked:x/y-1",
+                                                .title = "gone",
+                                                .detail = {},
+                                                .fingerprint = "",
+                                                .since = then}};
+    std::vector<egraph::Notice> notices{{.kind = egraph::NoticeKind::news,
+                                         .key = "news:gentoo/a",
+                                         .title = "A",
+                                         .detail = {},
+                                         .fingerprint = "a",
+                                         .since = now},
+                                        {.kind = egraph::NoticeKind::news,
+                                         .key = "news:gentoo/b",
+                                         .title = "B",
+                                         .detail = {},
+                                         .fingerprint = "b",
+                                         .since = now}};
+    egraph::carry_since(notices, previous);
+    CHECK(notices.at(0).since == then);
+    CHECK(notices.at(1).since == now);
+    const auto added = egraph::new_notices(notices, previous);
+    REQUIRE(added.size() == 1);
+    CHECK(added.front().key == "news:gentoo/b");
+}
+
+TEST_CASE("notice kinds have names") {
+    for (const auto kind :
+         {egraph::NoticeKind::glsa, egraph::NoticeKind::news, egraph::NoticeKind::config,
+          egraph::NoticeKind::preserved, egraph::NoticeKind::stale, egraph::NoticeKind::masked,
+          egraph::NoticeKind::missing}) {
+        CHECK(egraph::notice_kind(egraph::notice_kind_name(kind)) == kind);
+    }
+    CHECK(egraph::notice_kind_name(egraph::NoticeKind::glsa) == "glsa");
+    CHECK_FALSE(egraph::notice_kind("other"));
+}

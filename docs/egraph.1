@@ -1064,6 +1064,12 @@ last planned (see
 under
 .BR FILES ),
 read without planning anything: for a status bar. On a terminal, the counts that are not zero,
+the notices
+.B watch
+found (see
+.I notices.json
+under
+.BR FILES ),
 each repository's last sync and when the plan was made, or that the stores changed since. As
 lines, tab-separated: a key and its value for
 .BR upgrades ", " downgrades ", " rebuilds ", " new ", " held ", " uninstalls ", " masked ,
@@ -1073,7 +1079,9 @@ and
 .B written
 (seconds since the epoch), then
 .BR synced ,
-the repository and its sync time in seconds for each repository, empty without one. Without
+the repository and its sync time in seconds for each repository, empty without one, and
+.B notices
+and how many. Without
 .BR \-\-store ,
 the status file beside the system store or the user's, whichever is current against its stores,
 else the newer.
@@ -1149,7 +1157,11 @@ setting says, the updates are planned as
 .B "updates \-\-world \-D \-N \-\-held"
 plans them and written to
 .I status.json
-beside the store. The
+beside the store; and whatever that setting, when a store changed, the notices are found as
+.B notices
+finds them and written to
+.I notices.json
+beside it, each notice new since the last file logged. The
 .B egraphd
 service runs it as the
 .B egraph
@@ -1282,6 +1294,39 @@ it was planned from (in nanoseconds), when it was
 .BR written ,
 and its
 .BR format .
+.TP
+.I ${ROOT}${EPREFIX}/var/cache/egraph/notices.json
+The notices
+.B watch
+last found, beside the store it refreshed: a JSON object with the
+.B notices
+(each its
+.B kind
+.RB ( glsa ", " missing ", " preserved ", " masked ", " stale ", " config " or " news ),
+a
+.B key
+it keeps while it lasts, a
+.BR title ,
+.B detail
+lines, a
+.B fingerprint
+that changes with what it says, and since when it was noticed, as
+.BR since ),
+a GLSA, a news item, a stale repository, a masked package and a package's missing libraries
+each one notice, the configuration updates and the preserved libraries one each; each
+repository's
+.B name
+and when it
+.BR synced ,
+from which a reader finds the stale ones again as time passes; the build times of the
+.BR stores ,
+when it was
+.BR written ,
+and its
+.BR format .
+Configuration updates and unread news can change without a refresh;
+.B notices
+reads them anew.
 .TP
 .I ${XDG_CACHE_HOME}/egraph/installed.egraph
 The store of a user who cannot write the system store, used while the system store is not

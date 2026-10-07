@@ -97,7 +97,9 @@ TEST_CASE("runs are summed up from their first and last events, typed or from th
         event("run3", "end", 1700000212,
               {{.name = "status", .value = std::string{"failed"}},
                {.name = "merged", .value = std::string{"3"}},
-               {.name = "seconds", .value = std::string{"12.5"}}})};
+               {.name = "seconds", .value = std::string{"12.5"}}}),
+        // A notice watch logged belongs to no run.
+        event("note1", "notice", 1700000300, {{.name = "key", .value = std::string{"config"}}})};
     const auto runs = egraph::log::summarize(events);
     REQUIRE(runs.size() == 3);
     CHECK(runs.at(0).run == "run1");

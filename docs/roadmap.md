@@ -983,8 +983,9 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     `notices`.
   - 17e2 (done): `notices` gains repositories synced longer ago than `stale_days` (7 by
     default), masked installed packages, and required sonames nothing installed provides.
-  - 17e3: every kind as one notice with a stable key and a fingerprint, in `notices.json`
-    beside the status file, written as watch refreshes, new ones logged; `status` counts them.
+  - 17e3 (done): every kind as one notice with a stable key and a fingerprint, in
+    `notices.json` beside the status file, written as watch refreshes, new ones logged;
+    `status` counts them.
   - 17e4: dismissed and put-off notices, per user under `XDG_STATE_HOME`.
   - 17e5: the interface: a contextual hint bar (the keys for what is selected, `?` for all),
     and a notices page beside the sets, its tab counting them; enter works on one, `x`

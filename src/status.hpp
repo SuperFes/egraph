@@ -4,6 +4,7 @@
 // without running anything (a status bar, the interface).
 
 #include "history.hpp"
+#include "notices.hpp"
 #include "plan.hpp"
 
 #include <compare>
@@ -109,5 +110,30 @@ struct Status {
 // repository index differs.
 [[nodiscard]] bool status_due(PlanWhen when, const std::optional<StatusStores>& recorded,
                               const StatusStores& now);
+
+inline constexpr int notice_file_format = 1;
+
+// The notices egraph watch finds as it refreshes, beside the status file.
+struct NoticeFile {
+    Seconds written{};
+    StatusStores stores;
+    std::vector<RepositorySync> repositories;
+    std::vector<Notice> notices;
+    auto operator<=>(const NoticeFile&) const = default;
+};
+
+[[nodiscard]] std::string notice_file_json(const NoticeFile& file);
+[[nodiscard]] std::expected<NoticeFile, std::string> parse_notice_file(std::string_view text);
+
+// Beside the installed store: notices.json.
+[[nodiscard]] std::filesystem::path notices_path(const std::filesystem::path& installed);
+
+// The file's notices as of now: its stale repositories found again from when each synced, as a
+// repository goes stale with no refresh to notice it.
+[[nodiscard]] std::vector<Notice> current_notices(const NoticeFile& file, Seconds now,
+                                                  int stale_days);
+
+// "3 notices: 1 GLSA, 2 news items", or none without notices.
+[[nodiscard]] std::optional<std::string> notices_summary(std::span<const Notice> notices);
 
 } // namespace egraph

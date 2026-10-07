@@ -223,4 +223,16 @@ log::Event handed_back(const std::string& run, const HandOver& hand_over,
     return found;
 }
 
+log::Event noticed(const std::string& run, const Notice& notice, double now) {
+    const bool warning = notice.kind == NoticeKind::glsa || notice.kind == NoticeKind::missing ||
+                         notice.kind == NoticeKind::preserved || notice.kind == NoticeKind::masked;
+    return {.time = now,
+            .run = run,
+            .kind = "notice",
+            .message = std::format("notice: {}", notice.title),
+            .priority = warning ? 4 : 5,
+            .fields = {{.name = "notice", .value = std::string{notice_kind_name(notice.kind)}},
+                       {.name = "key", .value = notice.key}}};
+}
+
 } // namespace egraph

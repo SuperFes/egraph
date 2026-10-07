@@ -174,3 +174,22 @@ TEST_CASE("a command handing over to emerge logs the command line and how it exi
     CHECK_FALSE(field<std::int64_t>(unrun, "exit_status"));
     CHECK(field<std::string>(unrun, "error") == "emerge: not found");
 }
+
+TEST_CASE("a new notice logs as a warning or a notice by its kind") {
+    egraph::Notice notice{.kind = egraph::NoticeKind::glsa,
+                          .key = "glsa:202601-01",
+                          .title = "GLSA 202601-01: foo",
+                          .detail = {},
+                          .fingerprint = "1",
+                          .since = {}};
+    const auto event = egraph::noticed("r1", notice, 1700000000);
+    CHECK(event.kind == "notice");
+    CHECK(event.run == "r1");
+    CHECK(event.message == "notice: GLSA 202601-01: foo");
+    CHECK(event.priority == 4);
+    CHECK(event.fields ==
+          std::vector<egraph::log::Field>{{.name = "notice", .value = std::string{"glsa"}},
+                                          {.name = "key", .value = std::string{"glsa:202601-01"}}});
+    notice.kind = egraph::NoticeKind::news;
+    CHECK(egraph::noticed("r1", notice, 1700000000).priority == 5);
+}
