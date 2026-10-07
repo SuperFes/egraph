@@ -1,5 +1,6 @@
 #include "tui.hpp"
 
+#include "helpers.hpp"
 #include "index_builder.hpp"
 #include "store_writer.hpp"
 #include "system_builder.hpp"
@@ -2653,4 +2654,132 @@ TEST_CASE("without a way to preview, an action says so") {
     REQUIRE(app.dialog().has_value());
     CHECK(app.dialog()->error);
     CHECK(app.dialog()->lines == std::vector<std::string>{"this egraph has no way to run actions"});
+}
+
+namespace {
+
+using egraph::tui::Scope;
+
+std::vector<std::string> shown_cpvs(const egraph::tui::App& app) {
+    std::vector<std::string> cpvs;
+    for (const auto id : app.list().shown) {
+        cpvs.emplace_back(app.store().string(app.store().packages.at(id).cpv));
+    }
+    return cpvs;
+}
+
+void plan_page(egraph::tui::App& app) {
+    REQUIRE(app.scope_plan_requested());
+    auto job = app.start_scope_plan();
+    CHECK(app.planning() == app.scope());
+    app.finish_scope_plan(egraph::test::finish(std::move(job)));
+    CHECK_FALSE(app.planning());
+}
+
+} // namespace
+
+TEST_CASE("left and right turn the list's pages, each planning its set as exec would") {
+    egraph::tui::App app{shared(glibmm_system()), true};
+    FakeScreen screen{16, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(1), " @installed  @world  @system "));
+    CHECK(contains(screen.line(15), "h/l page"));
+    CHECK(app.scope() == Scope::installed);
+    CHECK_FALSE(app.scope_plan_requested());
+    CHECK(shown_cpvs(app) == std::vector<std::string>{"app-misc/glibmm-1", "app-misc/loose-1"});
+
+    app.handle(key(KeyKind::right));
+    CHECK(app.scope() == Scope::world);
+    CHECK(app.pages().empty());
+    CHECK(app.scope_plan_requested());
+    CHECK(shown_cpvs(app).empty());
+    // Nothing to show of a plan not made yet.
+    app.handle(character(U'p'));
+    CHECK_FALSE(app.planned().has_value());
+    plan_page(app);
+    // Nothing keeps loose, so -uDN @world leaves it.
+    CHECK(shown_cpvs(app) == std::vector<std::string>{"app-misc/glibmm-1"});
+    app.handle(character(U'p'));
+    REQUIRE(app.planned().has_value());
+    CHECK(app.plan().merges.size() == 3);
+    app.handle(key(KeyKind::escape));
+
+    app.handle(character(U'U'));
+    REQUIRE(app.preview_requested().has_value());
+    CHECK(egraph::tui::action_arguments(*app.preview_requested()) ==
+          std::vector<std::string>{"exec", "--oneshot", "-u", "-N", "-D", "@world"});
+    app.finish_preview({.ready = false, .out = "", .err = ""});
+    app.handle(key(KeyKind::escape));
+
+    // An empty @system asks for nothing.
+    app.handle(character(U'l'));
+    CHECK(app.scope() == Scope::system);
+    plan_page(app);
+    CHECK(shown_cpvs(app).empty());
+    CHECK(app.plan().merges.empty());
+    app.handle(key(KeyKind::right));
+    CHECK(app.scope() == Scope::system);
+
+    // Each page keeps its plan.
+    app.handle(character(U'h'));
+    CHECK_FALSE(app.scope_plan_requested());
+    CHECK(shown_cpvs(app) == std::vector<std::string>{"app-misc/glibmm-1"});
+    app.handle(key(KeyKind::left));
+    app.handle(key(KeyKind::left));
+    CHECK(app.scope() == Scope::installed);
+    CHECK(shown_cpvs(app) == std::vector<std::string>{"app-misc/glibmm-1", "app-misc/loose-1"});
+    app.handle(key(KeyKind::enter));
+    CHECK(app.pages().size() == 1);
+}
+
+TEST_CASE("a page's plan made for stores since replaced is dropped and made again") {
+    egraph::tui::App app{shared(glibmm_system()), true};
+    app.handle(key(KeyKind::right));
+    auto job = app.start_scope_plan();
+    app.finish_refresh(shared(glibmm_system("2")));
+    app.finish_scope_plan(egraph::test::finish(std::move(job)));
+    CHECK_FALSE(app.scope_planned(Scope::world));
+    plan_page(app);
+    CHECK(app.scope_planned(Scope::world));
+    CHECK(shown_cpvs(app) == std::vector<std::string>{"app-misc/glibmm-1"});
+}
+
+TEST_CASE("run makes a page's plan in the background, saying so meanwhile") {
+    egraph::tui::App app{shared(glibmm_system()), true};
+    FakeScreen screen{16, 120, {key(KeyKind::right)}};
+    egraph::tui::run(screen, app, ascii, {.check = no_check});
+    CHECK(contains(screen.text(), "planning @world"));
+    // Its spinner turns.
+    CHECK(screen.timeouts.back() == egraph::tui::wait_interval);
+}
+
+TEST_CASE("the corner shows the status file's plan of @world") {
+    using namespace std::chrono;
+    const auto now = floor<seconds>(system_clock::now());
+    egraph::tui::StatusShown shown{
+        .status = {.written = now,
+                   .stores = {},
+                   .counts = {.upgrades = 3, .rebuilds = 2, .held = 1},
+                   .repositories = {{.name = "local"},
+                                    {.name = "gentoo", .synced = now - hours{1}},
+                                    {.name = "guru", .synced = now - minutes{5}}},
+                   .lines = {}},
+        .current = true};
+    egraph::tui::App app{both(), true};
+    FakeScreen screen{10, 120, {}};
+    egraph::tui::run(screen, app, ascii, {.check = no_check, .status = [&shown] { return shown; }});
+    REQUIRE(app.status().has_value());
+    CHECK(screen.line(1).ends_with("@world U3 R2 H1  gentoo synced 1 hour ago "));
+    shown.current = false;
+    shown.status.counts = {.refused = true};
+    app.finish_status(shown);
+    FakeScreen wide{10, 160, {}};
+    egraph::tui::draw(wide, app, ascii);
+    INFO(wide.line(1));
+    CHECK(
+        contains(wide.line(1),
+                 "@world + up to date ! refused  gentoo synced 1 hour ago  older than the stores"));
+    FakeScreen narrow{10, 60, {}};
+    egraph::tui::draw(narrow, app, ascii);
+    CHECK_FALSE(contains(narrow.line(1), "@world +"));
 }

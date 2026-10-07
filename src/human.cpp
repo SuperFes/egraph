@@ -104,6 +104,7 @@ constexpr Glyphs nerd_glyphs{
     .spark = "▁▂▃▄▅▆▇█",
     .move = "↑↓",
     .enter = "⏎",
+    .pages = "←→",
     .trail = "\uE0B1",
     .cursor = "▌",
 };
@@ -151,6 +152,7 @@ constexpr Glyphs unicode_glyphs{
     .spark = "▁▂▃▄▅▆▇█",
     .move = "↑↓",
     .enter = "⏎",
+    .pages = "←→",
     .trail = "›",
     .cursor = "▌",
 };
@@ -198,6 +200,7 @@ constexpr Glyphs ascii_glyphs{
     .spark = "_.-~=+*#",
     .move = "j/k",
     .enter = "enter",
+    .pages = "h/l",
     .trail = ">",
     .cursor = ">",
 };

@@ -945,7 +945,21 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     meta section alone (1 ms in all). Without `--store`, the system's file or the user's,
     whichever is current, else the newer. `--update` plans and writes it now, for systems
     without the service.
-  - 17d3: the interface opens on the stored plan while it is current.
+  - 17d3 (done): the interface, decided with the user (2026-10-07): the status file's @world
+    plan counted in the list's corner by glyph (with the repository synced longest ago, and
+    whether the stores changed since), and the list in pages, one per set planned:
+    `@installed` (as before), `@world` and `@system`, turned with left and right (enter opens a
+    package). The two sets plan as `exec -uDN` would, the set its arguments (an empty set
+    plans nothing), each the first time it shows, in the background (`std::async`, the stores
+    shared with the job; a plan made for stores since replaced is dropped), a spinner on its
+    tab meanwhile; the updates filter, the plan view and `U` follow the page. Reading the
+    stored lines instead was dropped: the views need the plan itself, and the corner needs only
+    the counts.
+- 17d4 (outlines, not scheduled; the user's, 2026-10-07):
+  - utility pages for sets portage resolves on demand, `@preserved-rebuild` (opened by itself
+    at the end of an emerge that leaves preserved libraries) and `@smart-live-rebuild`;
+  - the other package sets, as a thing of their own: repositories ship any number of them;
+  - a package's page showing every piece of metadata the stores hold, not only the ebuild's.
 - 17e: notifications, moved here from step 20: GLSAs matched against the store, a stale sync,
   broken soname dependencies after a merge, unread news, masked installed packages; in the
   status file and the log, and on the desktop through a user-side `egraph notify` (the service

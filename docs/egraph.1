@@ -1076,11 +1076,26 @@ adds descriptions) whose packages not installed open a listing of their versions
 .B :
 prompt taking these commands. It keeps the store current while it is open, and loads the
 repository index the first time it searches, building it where it is missing or stale.
+The list has a page per set its updates are planned for:
+.BR @installed ,
+.B @world
+and
+.BR @system ,
+turned with the left and right arrows
+.RB ( h " and " l );
+.B enter
+opens a package. A page's plan is made in the background the first time it shows, as
+.B exec \-uDN
+on its set plans it. Beside them, the plan of
+.B @world
+the status file holds (see
+.BR status ),
+counted, with the repository synced longest ago.
 It also changes the system:
 .B space
 picks packages in the list,
 .B U
-updates them (every update with none picked) as
+updates them (every update of the page's set with none picked) as
 .BR "exec \-\-oneshot \-u \-N" ,
 .B r
 removes them (every orphan shown with none picked) as

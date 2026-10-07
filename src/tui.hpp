@@ -18,6 +18,7 @@
 #include "repository.hpp"
 #include "screen.hpp"
 #include "search.hpp"
+#include "status.hpp"
 #include "steve.hpp"
 #include "store.hpp"
 #include "visibility.hpp"
@@ -209,20 +210,35 @@ struct Answer {
 // Runs a command line, as `egraph shell` runs one.
 using Commander = std::function<Answer(const std::string&)>;
 
+// The status file the watch service writes, and whether it is current against its stores.
+struct StatusShown {
+    Status status;
+    bool current = false;
+};
+// Reads the status file, nothing when there is none.
+using StatusReader = std::function<std::optional<StatusShown>()>;
+
+// The pages of the package list, each the set its plan updates: -uDN @installed, @world or
+// @system.
+enum class Scope : std::uint8_t { installed, world, system };
+inline constexpr std::array scopes{Scope::installed, Scope::world, Scope::system};
+[[nodiscard]] std::string_view scope_name(Scope scope);
+
 // What the interface carries out once confirmed: merges through egraph exec, removals through
 // egraph remove.
 struct Action {
     enum class Kind : std::uint8_t { install, update, remove };
     Kind kind = Kind::install;
-    // Atoms; an update without any takes every update the list shows.
+    // Atoms; an update without any takes every update of the scope's set.
     std::vector<std::string> targets{};
+    Scope scope = Scope::installed;
     // For a removal, as remove --with-bdeps.
     bool build_deps = true;
     bool operator==(const Action&) const = default;
 };
 
 // The command carrying the action out, without the program and --yes: install as exec, update as
-// exec --oneshot -u -N (every update as -D @installed), remove as remove.
+// exec --oneshot -u -N (every update as -D and the scope's set), remove as remove.
 [[nodiscard]] std::vector<std::string> action_arguments(const Action& action);
 
 // What the action would do, as its command shows it before asking, in the human layout.
@@ -279,6 +295,7 @@ struct Services {
     Runner run{};
     // The steady clock when empty.
     Clock now{};
+    StatusReader status{};
 };
 
 struct Watched;
@@ -403,6 +420,22 @@ enum class Only : std::uint8_t { all, orphans, broken, updates };
 // The rebuilds for USE the interface shows beside replacements: all of --newuse's.
 inline constexpr UseRebuilds shown_rebuilds = UseRebuilds::all;
 
+// A page's plan, and what the list shows of it per package.
+struct ScopePlan {
+    Scope scope = Scope::installed;
+    Plan plan;
+    std::vector<std::optional<PendingUpdate>> updates;
+    // What the merge a slot-operator rebuild is for; empty otherwise.
+    std::vector<std::string> rebuilt_for;
+    // The held update, as an index into plan.held and remedies.
+    std::vector<std::optional<std::uint32_t>> held;
+    std::vector<Remedy> remedies;
+    // Why the set could not be planned.
+    std::optional<std::string> error;
+    // The stores it was made for, as App counts them.
+    std::size_t generation = 0;
+};
+
 class App {
   public:
     // The installed store alone: its own dependencies, every package unmasked, no updates.
@@ -467,16 +500,33 @@ class App {
     // Whether the search waits for the repository index, which run() then loads.
     [[nodiscard]] bool index_requested() const { return search_ && !indexed_ && !index_failed_; }
     void finish_index(IndexResult result);
-    // What emerge -uD would merge for the package, as the plan weighs it.
+    // What emerge -uDN would merge for the package, as the page's plan weighs it.
     [[nodiscard]] const std::optional<PendingUpdate>& update_of(std::uint32_t package) const {
-        return updates_.at(package);
+        return current().updates.at(package);
     }
     // The package's update the plan holds back, as an index into plan().held and remedies().
     [[nodiscard]] std::optional<std::uint32_t> held_of(std::uint32_t package) const {
-        return held_.at(package);
+        return current().held.at(package);
     }
-    [[nodiscard]] const Plan& plan() const { return plan_; }
-    [[nodiscard]] const std::vector<Remedy>& remedies() const { return remedies_; }
+    [[nodiscard]] const Plan& plan() const { return current().plan; }
+    [[nodiscard]] const std::vector<Remedy>& remedies() const { return current().remedies; }
+    // The list's page, whose set the plan updates.
+    [[nodiscard]] Scope scope() const { return scope_; }
+    // Whether the scope has its plan made, for these stores.
+    [[nodiscard]] bool scope_planned(Scope scope) const;
+    // Why the page's set could not be planned.
+    [[nodiscard]] const std::optional<std::string>& scope_error() const { return current().error; }
+    // Whether run() is to make a page's plan in the background: the page's, missing, or one
+    // being made.
+    [[nodiscard]] bool scope_plan_requested() const;
+    // The scope whose plan is being made.
+    [[nodiscard]] std::optional<Scope> planning() const { return planning_; }
+    // Makes the page's missing plan beside the caller.
+    [[nodiscard]] Job<ScopePlan> start_scope_plan();
+    void finish_scope_plan(ScopePlan plan);
+    // The status file the watch service writes, as last read.
+    [[nodiscard]] const std::optional<StatusShown>& status() const { return status_; }
+    void finish_status(std::optional<StatusShown> status) { status_ = std::move(status); }
     [[nodiscard]] const List& list() const { return list_; }
     // Pages opened from the list or the check view, the one showing last.
     [[nodiscard]] const std::vector<Page>& pages() const { return pages_; }
@@ -599,7 +649,11 @@ class App {
     // The first installed package a command's output fields name.
     [[nodiscard]] std::optional<std::uint32_t>
     link_of(const std::vector<std::string>& fields) const;
-    void own(std::unique_ptr<const Loaded> loaded);
+    void own(std::shared_ptr<const Loaded> loaded);
+    // The page's plan, or none yet.
+    [[nodiscard]] const ScopePlan& current() const;
+    // Moves the list to the page step pages on, the first and last staying put.
+    void turn_page(int step);
     void filter();
     void recompute();
     void open(std::uint32_t package);
@@ -636,8 +690,9 @@ class App {
     std::reference_wrapper<const Store> installed_;
     std::reference_wrapper<const Evaluated> evaluated_;
     std::reference_wrapper<const Graph> graph_;
-    // Behind a pointer so the references stay valid when the app moves.
-    std::unique_ptr<const Loaded> owned_;
+    // Behind a pointer so the references stay valid when the app moves; shared with a plan
+    // made in the background.
+    std::shared_ptr<const Loaded> owned_;
     // The repository index and its masks, behind a pointer as the stores are.
     struct Indexed {
         explicit Indexed(std::shared_ptr<const RepositoryIndex> loaded)
@@ -660,12 +715,15 @@ class App {
     std::vector<std::size_t> broken_;
     std::vector<std::size_t> broken_at_run_time_;
     std::vector<Masking> masking_;
-    std::vector<std::optional<PendingUpdate>> updates_;
-    // Per package, what the merge a slot-operator rebuild is for; empty otherwise.
-    std::vector<std::string> rebuilt_for_;
-    Plan plan_;
-    std::vector<Remedy> remedies_;
-    std::vector<std::optional<std::uint32_t>> held_;
+    // By scope.
+    std::array<std::optional<ScopePlan>, scopes.size()> plans_;
+    // A plan of nothing, shown while the page's is made.
+    ScopePlan blank_;
+    Scope scope_ = Scope::installed;
+    std::optional<Scope> planning_;
+    // Counts the stores shown, so that a plan made for others is dropped.
+    std::size_t generation_ = 0;
+    std::optional<StatusShown> status_;
     bool build_deps_ = true;
     Kept kept_;
     std::vector<std::optional<std::uint32_t>> root_of_;
@@ -867,6 +925,27 @@ inline std::vector<Span> rebuild_flags(std::string_view flags) {
     return spans;
 }
 
+// The pages as tabs, the list's picked out, one being planned spinning.
+inline std::vector<Span> page_spans(const App& app, const Glyphs& glyph) {
+    std::vector<Span> spans{{" ", {}}};
+    for (const auto scope : scopes) {
+        const bool shown = scope == app.scope();
+        const bool waiting = app.planning() == scope || (shown && !app.scope_planned(scope));
+        auto text =
+            waiting ? std::format(" {} {} ", spinner_frame(app.frame(), glyph), scope_name(scope))
+                    : std::format(" {} ", scope_name(scope));
+        spans.push_back(
+            {std::move(text), shown ? Pen{.fg = palette::crust, .bg = palette::mauve, .bold = true}
+                                    : tone_pen(Tone::note)});
+    }
+    return spans;
+}
+
+// The status file's plan of @world for the corner: its counts by glyph, whether emerge would
+// refuse it, the repository synced longest ago, and whether the stores changed since.
+[[nodiscard]] std::vector<Span> status_spans(const StatusShown& shown, const Glyphs& glyph,
+                                             Seconds now);
+
 template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size size) {
     const auto& list = app.list();
     const auto& store = app.store();
@@ -895,7 +974,12 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
     }
     draw_title(screen, app, size.cols, title, glyph);
 
-    std::vector<Span> search{{std::format(" {} ", glyph.search), tone_pen(Tone::heading)}};
+    std::vector<Span> search;
+    if (app.has_evaluated()) {
+        search = page_spans(app, glyph);
+        search.push_back({" ", {}});
+    }
+    search.push_back({std::format(" {} ", glyph.search), tone_pen(Tone::heading)});
     if (list.searching || !list.query.empty()) {
         search.push_back({list.query, {.fg = palette::text, .bg = std::nullopt, .bold = true}});
         if (list.searching) {
@@ -905,6 +989,22 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
         search.push_back({"/ to search", tone_pen(Tone::note)});
     }
     put_spans(screen, 1, 0, search, size.cols);
+    if (const auto& shown = app.status(); shown && app.has_evaluated()) {
+        const auto corner = status_spans(
+            *shown, glyph,
+            std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()));
+        std::size_t used = 0;
+        for (const auto& span : search) {
+            used += columns(span.text);
+        }
+        std::size_t wanted = 0;
+        for (const auto& span : corner) {
+            wanted += columns(span.text);
+        }
+        if (used + wanted + 2 <= size.cols) {
+            put_spans(screen, 1, static_cast<unsigned>(size.cols - wanted), corner, size.cols);
+        }
+    }
 
     const unsigned first = 3;
     const unsigned height = size.rows - first - 1;
@@ -938,7 +1038,17 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
                    {std::format("{:>11}", app.dependents(id)), tone_pen(Tone::count)}},
                   size.cols, bg);
     }
-    if (list.shown.empty()) {
+    if (const auto& error = app.scope_error()) {
+        put_spans(screen, first, 5,
+                  {{std::format("{} {}", glyph.broken, *error), tone_pen(Tone::bad)}}, size.cols);
+    } else if (app.has_evaluated() && !app.scope_planned(app.scope()) &&
+               list.only == Only::updates) {
+        put_spans(screen, first, 5,
+                  {{std::format("{} planning {}", spinner_frame(app.frame(), glyph),
+                                scope_name(app.scope())),
+                    tone_pen(Tone::note)}},
+                  size.cols);
+    } else if (list.shown.empty()) {
         put_spans(screen, first, 5, {{std::string{empty_list(list)}, tone_pen(Tone::note)}},
                   size.cols);
     }
@@ -946,12 +1056,14 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
         draw_hints(screen, size.rows - 1, size.cols,
                    {{glyph.enter, "keep"}, {"esc", "clear"}, {"type", "to filter"}});
     } else {
-        std::vector<std::pair<std::string_view, std::string_view>> hints{
-            {glyph.move, "move"},
-            {glyph.enter, "open"},
-            {"/", "search"},
-            {"o", list.only == Only::orphans ? "all" : "orphans"},
-            {"!", list.only == Only::broken ? "all" : "broken"}};
+        std::vector<std::pair<std::string_view, std::string_view>> hints{{glyph.move, "move"},
+                                                                         {glyph.enter, "open"}};
+        if (app.has_evaluated()) {
+            hints.emplace_back(glyph.pages, "page");
+        }
+        hints.insert(hints.end(), {{"/", "search"},
+                                   {"o", list.only == Only::orphans ? "all" : "orphans"},
+                                   {"!", list.only == Only::broken ? "all" : "broken"}});
         if (app.has_evaluated()) {
             hints.emplace_back("u", list.only == Only::updates ? "all" : "updates");
             hints.emplace_back("p", "plan");
@@ -1968,6 +2080,12 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
     std::optional<Job<RefreshResult>> refresh;
     std::optional<Job<IndexResult>> index;
     std::optional<Job<RunResult>> running;
+    std::optional<Job<ScopePlan>> scoped;
+    auto next_status = now();
+    if (services.status) {
+        app.finish_status(services.status());
+        next_status = now() + stale_interval;
+    }
     draw(screen, app, glyph);
     while (!app.done()) {
         const auto refreshed = poll(
@@ -1993,6 +2111,13 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
                            : ready(RunResult{.error = "this egraph has no way to run actions"});
             },
             [&](RunResult result) { app.finish_run(std::move(result)); });
+        const auto planned = poll(
+            scoped, app.scope_plan_requested(), [&] { return app.start_scope_plan(); },
+            [&](ScopePlan plan) { app.finish_scope_plan(std::move(plan)); });
+        if (services.status && now() >= next_status) {
+            next_status = now() + stale_interval;
+            app.finish_status(services.status());
+        }
         bool found_stale = false;
         if (watches && !app.stale() && now() >= next_check) {
             next_check = now() + stale_interval;
@@ -2017,7 +2142,7 @@ template <class S> void run(S& screen, App& app, const Glyphs& glyph, const Serv
             [&](RebuildResult result) { app.finish_rebuild(std::move(result)); });
         if (checked == Polled::finished || rebuilt == Polled::finished ||
             refreshed == Polled::finished || indexed == Polled::finished ||
-            ran == Polled::finished || found_stale) {
+            ran == Polled::finished || planned == Polled::finished || found_stale) {
             // Drawn below before any key is read.
         } else if (const auto change = app.steve_change_requested()) {
             app.finish_steve_change(services.set_steve

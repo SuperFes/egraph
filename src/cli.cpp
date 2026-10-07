@@ -246,6 +246,9 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
                     std::ostream& out, std::ostream& err, Context context);
 Exit run_shell(Session& session, const Invocation& invocation, std::istream& in, std::ostream& out,
                std::ostream& err, bool prompt);
+// The status file find_status picks, for the interface's corner; none without one.
+std::optional<tui::StatusShown> shown_status(const Invocation& invocation);
+
 Exit execute(const Tui& command, Session& session, const Invocation& invocation, std::ostream& out,
              std::ostream& err);
 
@@ -2734,7 +2737,8 @@ Exit execute(const Tui&, Session& session, const Invocation& invocation, std::os
              },
          .run = [&invocation, eroot = (*stores)->installed.meta.eroot](
                     const tui::Action& action) { return start_action(invocation, eroot, action); },
-         .now = {}},
+         .now = {},
+         .status = [&invocation] { return shown_status(invocation); }},
         warnings, err);
 }
 
@@ -3008,6 +3012,14 @@ std::expected<FoundStatus, std::string> find_status(const Invocation& invocation
     return std::unexpected(std::format("no status file at {}; egraphd writes it as it refreshes "
                                        "the stores, or egraph status --update now",
                                        status_path(stores.front()).string()));
+}
+
+std::optional<tui::StatusShown> shown_status(const Invocation& invocation) {
+    auto found = find_status(invocation);
+    if (!found) {
+        return std::nullopt;
+    }
+    return tui::StatusShown{.status = std::move(found->status), .current = found->current};
 }
 
 Exit execute(const StatusCommand& command, Session& session, const Invocation& invocation,

@@ -148,6 +148,7 @@ struct Glyphs {
     // Key hints.
     std::string_view move;
     std::string_view enter;
+    std::string_view pages;
     // The terminal interface's trail separator and selection marker.
     std::string_view trail;
     std::string_view cursor;

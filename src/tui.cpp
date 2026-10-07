@@ -1,8 +1,10 @@
 #include "tui.hpp"
 
 #include "build_info.hpp"
+#include "request.hpp"
 
 #include <cmath>
+#include <future>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -578,7 +580,124 @@ bool paired(const Store& installed, const Evaluated& evaluated) {
     return !evaluated.packages.empty() && evaluated.packages.size() == installed.packages.size();
 }
 
+// The plan's updates, rebuilds and held updates per package, and the held ones' remedies.
+ScopePlan scoped(Scope scope, Plan plan, const Store& store, const Evaluated& evaluated,
+                 const Graph& graph, const Targets& targets, const Rescope& rescope) {
+    const auto count = store.packages.size();
+    ScopePlan made{.scope = scope,
+                   .plan = std::move(plan),
+                   .updates = std::vector<std::optional<PendingUpdate>>(count),
+                   .rebuilt_for = std::vector<std::string>(count),
+                   .held = std::vector<std::optional<std::uint32_t>>(count),
+                   .remedies = {},
+                   .error = std::nullopt,
+                   .generation = 0};
+    for (const auto& merge : made.plan.merges) {
+        if (!merge.replaces) {
+            continue;
+        }
+        made.updates.at(*merge.replaces) =
+            PendingUpdate{.kind = merge.kind, .target = merge.candidate, .flags = merge.flags};
+        if (const auto& why = merge.rebuilt_for) {
+            made.rebuilt_for.at(*merge.replaces) =
+                std::format("{} {}", member_cpv(store, evaluated, why->member), why->atom);
+        }
+    }
+    made.remedies =
+        egraph::remedies(store, evaluated, graph, made.plan, shown_rebuilds, targets, rescope);
+    for (std::uint32_t i = 0; i < made.plan.held.size(); ++i) {
+        made.held.at(made.plan.held.at(i).package) = i;
+    }
+    return made;
+}
+
+// The plan of -uDN on the set, as exec makes it for a set argument: depclean's kept packages
+// and what the set reaches in scope, the set's atoms emerge's arguments.
+ScopePlan plan_set(Scope scope, const Store& store, const Evaluated& evaluated, const Graph& graph,
+                   const std::vector<Masking>& masking, bool dynamic_deps) {
+    const auto request =
+        parse_request(store, evaluated, std::array{std::string{scope_name(scope)}});
+    if (!request) {
+        ScopePlan failed = scoped(scope, {}, store, evaluated, graph, {}, {});
+        failed.error = std::format("cannot plan {}: {}", scope_name(scope), request.error());
+        return failed;
+    }
+    // An empty set asks for nothing; without arguments the roots would be every root set's.
+    if (request->arguments.empty()) {
+        return scoped(scope, {}, store, evaluated, graph, {}, {});
+    }
+    const KeepOptions options{.build_deps = true,
+                              .masking = masking,
+                              .removed = {},
+                              .protect = {},
+                              .dropped = {},
+                              .without_selected = false};
+    Targets targets{.scope = keep(store, options).packages, .roots = true};
+    targets.reach = request_reach(store, evaluated, *request);
+    for (std::size_t id = 0; id < targets.scope.size(); ++id) {
+        targets.scope.at(id) = targets.scope.at(id) || targets.reach.at(id);
+    }
+    targets.request = request->arguments;
+    targets.dynamic_deps = dynamic_deps;
+    auto plan = plan_updates(store, evaluated, shown_rebuilds, targets);
+    const Rescope rescope = [&store, &options](const std::vector<bool>& removed) {
+        auto without = options;
+        without.removed = removed;
+        return keep(store, without).packages;
+    };
+    return scoped(scope, std::move(plan), store, evaluated, graph, targets, rescope);
+}
+
 } // namespace
+
+std::vector<Span> status_spans(const StatusShown& shown, const Glyphs& glyph, Seconds now) {
+    const auto& counts = shown.status.counts;
+    std::vector<Span> spans{{"@world", tone_pen(Tone::heading)}};
+    for (const auto& [count, mark, tone] : {std::tuple{counts.upgrades, glyph.upgrade, Tone::good},
+                                            {counts.downgrades, glyph.downgrade, Tone::bad},
+                                            {counts.rebuilds, glyph.rebuild, Tone::use},
+                                            {counts.added, glyph.added, Tone::good},
+                                            {counts.held, glyph.held, Tone::bad}}) {
+        if (count != 0) {
+            spans.push_back({std::format(" {}{}", mark, count), tone_pen(tone)});
+        }
+    }
+    if (spans.size() == 1) {
+        spans.push_back({std::format(" {} up to date", glyph.good), tone_pen(Tone::good)});
+    }
+    if (counts.refused) {
+        spans.push_back({std::format(" {} refused", glyph.broken), tone_pen(Tone::bad)});
+    }
+    const auto& repositories = shown.status.repositories;
+    const RepositorySync* oldest = nullptr;
+    for (const auto& repository : repositories) {
+        if (repository.synced && (!oldest || repository.synced < oldest->synced)) {
+            oldest = &repository;
+        }
+    }
+    if (oldest) {
+        spans.push_back({std::format("  {} synced {}", oldest->name,
+                                     age_text(oldest->synced.value_or(now), now)),
+                         tone_pen(Tone::note)});
+    }
+    if (!shown.current) {
+        spans.push_back({"  older than the stores", tone_pen(Tone::bad)});
+    }
+    spans.push_back({" ", {}});
+    return spans;
+}
+
+std::string_view scope_name(Scope scope) {
+    switch (scope) {
+    case Scope::installed:
+        return "@installed";
+    case Scope::world:
+        return "@world";
+    case Scope::system:
+        return "@system";
+    }
+    return "@installed";
+}
 
 App::Loaded::Loaded(std::shared_ptr<const Stores> shared, bool dynamic_deps)
     : stores(std::move(shared)),
@@ -600,7 +719,7 @@ App::App(Stores stores, bool dynamic_deps, Update update)
 App::App(std::shared_ptr<const Stores> stores, bool dynamic_deps, Update update)
     : App(no_store(), no_graph(), update) {
     dynamic_deps_ = dynamic_deps;
-    own(std::make_unique<const Loaded>(std::move(stores), dynamic_deps));
+    own(std::make_shared<const Loaded>(std::move(stores), dynamic_deps));
     index();
     recompute();
     // What there is to do first, when the evaluated store says.
@@ -610,7 +729,7 @@ App::App(std::shared_ptr<const Stores> stores, bool dynamic_deps, Update update)
     filter();
 }
 
-void App::own(std::unique_ptr<const Loaded> loaded) {
+void App::own(std::shared_ptr<const Loaded> loaded) {
     // It reads the stores being replaced; index() makes it anew.
     catalogue_.reset();
     store_ = loaded->dynamic ? *loaded->dynamic : loaded->stores->installed;
@@ -659,11 +778,16 @@ void App::index() {
         }
     }
     masking_.clear();
-    updates_.assign(count, std::nullopt);
-    rebuilt_for_.assign(count, {});
-    held_.assign(count, std::nullopt);
-    plan_ = {};
-    remedies_.clear();
+    ++generation_;
+    plans_ = {};
+    blank_ = {.scope = scope_,
+              .plan = {},
+              .updates = std::vector<std::optional<PendingUpdate>>(count),
+              .rebuilt_for = std::vector<std::string>(count),
+              .held = std::vector<std::optional<std::uint32_t>>(count),
+              .remedies = {},
+              .error = std::nullopt,
+              .generation = generation_};
     if (has_evaluated()) {
         masking_.reserve(count);
         for (std::uint32_t id = 0; id < count; ++id) {
@@ -671,22 +795,11 @@ void App::index() {
             masking_.push_back(
                 {.masked = dynamic_deps_ ? pkg.masked : pkg.vdb_masked, .visible = pkg.visible});
         }
-        plan_ = plan_updates(store, evaluated(), shown_rebuilds);
-        for (const auto& merge : plan_.merges) {
-            if (!merge.replaces) {
-                continue;
-            }
-            updates_.at(*merge.replaces) =
-                PendingUpdate{.kind = merge.kind, .target = merge.candidate, .flags = merge.flags};
-            if (const auto& why = merge.rebuilt_for) {
-                rebuilt_for_.at(*merge.replaces) =
-                    std::format("{} {}", member_cpv(store, evaluated(), why->member), why->atom);
-            }
-        }
-        remedies_ = egraph::remedies(store, evaluated(), graph, plan_, shown_rebuilds, {});
-        for (std::uint32_t i = 0; i < plan_.held.size(); ++i) {
-            held_.at(plan_.held.at(i).package) = i;
-        }
+        // The first page's, at once; the others' in the background once shown.
+        auto installed = scoped(Scope::installed, plan_updates(store, evaluated(), shown_rebuilds),
+                                store, evaluated(), graph, {}, {});
+        installed.generation = generation_;
+        plans_.front() = std::move(installed);
     }
     if (indexed_ && !catalogue_) {
         catalogue_.emplace(installed(), evaluated(), *indexed_->index, indexed_->masks);
@@ -695,7 +808,7 @@ void App::index() {
 }
 
 void App::adopt(std::shared_ptr<const Stores> stores, Source source) {
-    own(std::make_unique<const Loaded>(std::move(stores), dynamic_deps_));
+    own(std::make_shared<const Loaded>(std::move(stores), dynamic_deps_));
     source_ = source;
     // They were built after any refresh asked for.
     stale_.reset();
@@ -788,7 +901,7 @@ void App::replace(std::shared_ptr<const Stores> stores) {
         opened.push_back(std::move(entry));
     }
 
-    own(std::make_unique<const Loaded>(std::move(stores), dynamic_deps_));
+    own(std::make_shared<const Loaded>(std::move(stores), dynamic_deps_));
     index();
     recompute();
     filter();
@@ -893,13 +1006,72 @@ void App::recompute() {
     }
 }
 
+const ScopePlan& App::current() const {
+    const auto& plan = plans_.at(static_cast<std::size_t>(scope_));
+    return plan ? *plan : blank_;
+}
+
+bool App::scope_planned(Scope scope) const {
+    return plans_.at(static_cast<std::size_t>(scope)).has_value();
+}
+
+bool App::scope_plan_requested() const {
+    return planning_ || (has_evaluated() && !scope_planned(scope_));
+}
+
+Job<ScopePlan> App::start_scope_plan() {
+    planning_ = scope_;
+    // Copies and shared stores, as the app may move on to others meanwhile.
+    auto made =
+        std::async(std::launch::async, [scope = scope_, loaded = owned_, store = store_,
+                                        evaluated = evaluated_, graph = graph_, masking = masking_,
+                                        dynamic_deps = dynamic_deps_, generation = generation_] {
+            auto plan =
+                plan_set(scope, store.get(), evaluated.get(), graph.get(), masking, dynamic_deps);
+            plan.generation = generation;
+            return plan;
+        });
+    return [made = std::move(made)]() mutable -> std::optional<ScopePlan> {
+        if (made.wait_for(std::chrono::seconds{0}) != std::future_status::ready) {
+            return std::nullopt;
+        }
+        return made.get();
+    };
+}
+
+void App::finish_scope_plan(ScopePlan plan) {
+    planning_.reset();
+    if (plan.generation != generation_) {
+        return;
+    }
+    if (plan.error) {
+        show({.error = true, .title = "No plan", .lines = {*plan.error}});
+    }
+    const auto scope = plan.scope;
+    plans_.at(static_cast<std::size_t>(scope)) = std::move(plan);
+    if (scope == scope_ && list_.only == Only::updates) {
+        filter();
+    }
+}
+
+void App::turn_page(int step) {
+    const auto at = static_cast<int>(scope_) + step;
+    if (!has_evaluated() || at < 0 || at >= static_cast<int>(scopes.size())) {
+        return;
+    }
+    scope_ = scopes.at(static_cast<std::size_t>(at));
+    if (list_.only == Only::updates) {
+        filter();
+    }
+}
+
 void App::filter() {
     const auto query = folded(list_.query);
     list_.shown.clear();
     for (std::uint32_t id = 0; id < folded_.size(); ++id) {
         if ((list_.only == Only::orphans && kept_.packages.at(id)) ||
             (list_.only == Only::broken && broken(id) == 0) ||
-            (list_.only == Only::updates && !updates_.at(id) && !held_.at(id))) {
+            (list_.only == Only::updates && !update_of(id) && !held_of(id))) {
             continue;
         }
         if (folded_.at(id).find(query) != std::string::npos) {
@@ -912,11 +1084,13 @@ void App::filter() {
 void App::open(std::uint32_t package) {
     Page page{
         .package = package, .rows = kept_rows(store(), kept_, package, build_deps_), .cursor = {}};
-    std::ranges::move(update_rows(updates_.at(package), rebuilt_for_.at(package)),
+    const auto& planned = current();
+    std::ranges::move(update_rows(planned.updates.at(package), planned.rebuilt_for.at(package)),
                       std::back_inserter(page.rows));
-    if (const auto held = held_.at(package)) {
-        std::ranges::move(held_rows(store(), graph_.get(), evaluated(), plan_, remedies_.at(*held)),
-                          std::back_inserter(page.rows));
+    if (const auto held = planned.held.at(package)) {
+        std::ranges::move(
+            held_rows(store(), graph_.get(), evaluated(), planned.plan, planned.remedies.at(*held)),
+            std::back_inserter(page.rows));
     }
 
     std::ranges::move(unsatisfied_rows(store(), package, build_deps_),
@@ -971,7 +1145,7 @@ void App::handle(const Key& key) {
                          checked_->stage == Checked::Stage::rebuilding)) {
             ++checked_->frame;
         }
-        if (refresh_requested() || index_requested() || running_) {
+        if (refresh_requested() || index_requested() || running_ || planning_) {
             ++frame_;
         }
     } else if (dialog_) {
@@ -1414,7 +1588,7 @@ void App::handle_steve(const Key& key) {
 
 std::optional<std::chrono::milliseconds> App::refresh() const {
     if (check_requested() || rebuild_requested() || refresh_requested() || index_requested() ||
-        running_) {
+        running_ || planning_) {
         return wait_interval;
     }
     if (watched_ && pages_.empty()) {
@@ -1570,8 +1744,12 @@ void App::handle_list(const Key& key) {
         checked_.emplace();
     } else if (is(key, U'e')) {
         watched_.emplace();
-    } else if (is(key, U'p') && has_evaluated()) {
+    } else if (is(key, U'p') && has_evaluated() && scope_planned(scope_)) {
         open_plan();
+    } else if (key.kind == KeyKind::left || is(key, U'h')) {
+        turn_page(-1);
+    } else if (key.kind == KeyKind::right || is(key, U'l')) {
+        turn_page(1);
     } else if (is(key, U'b')) {
         build_deps_ = !build_deps_;
         recompute();
@@ -1588,7 +1766,8 @@ void App::handle_list(const Key& key) {
             move(list_.cursor, list_.shown.size(), {.kind = KeyKind::down, .code = 0}, height_);
         }
     } else if (is(key, U'U') && has_evaluated()) {
-        Action action{.kind = Action::Kind::update, .targets = {}, .build_deps = true};
+        Action action{
+            .kind = Action::Kind::update, .targets = {}, .scope = scope_, .build_deps = true};
         for (const auto& cpv : picked_) {
             if (const auto id = find(cpv)) {
                 const auto& pkg = store().packages.at(*id);
@@ -1619,7 +1798,7 @@ void App::handle_list(const Key& key) {
     } else if (key.kind == KeyKind::escape && !list_.query.empty()) {
         list_.query.clear();
         filter();
-    } else if (key.kind == KeyKind::enter || key.kind == KeyKind::right || is(key, U'l')) {
+    } else if (key.kind == KeyKind::enter) {
         if (list_.cursor.at < list_.shown.size()) {
             open(list_.shown.at(list_.cursor.at));
         }
@@ -1629,11 +1808,11 @@ void App::handle_list(const Key& key) {
 }
 
 Planned& App::open_plan(std::optional<std::string> selected) {
-    Planned planned{.rows = plan_rows(store(), evaluated(), kept_, plan_),
-                    .places = std::vector<std::size_t>(plan_.merges.size(), 0),
+    Planned planned{.rows = plan_rows(store(), evaluated(), kept_, plan()),
+                    .places = std::vector<std::size_t>(plan().merges.size(), 0),
                     .cursor = {}};
-    for (std::size_t place = 0; place < plan_.order.size(); ++place) {
-        planned.places.at(plan_.order.at(place)) = place + 1;
+    for (std::size_t place = 0; place < plan().order.size(); ++place) {
+        planned.places.at(plan().order.at(place)) = place + 1;
     }
     const auto& rows = planned.rows;
     auto at = std::ranges::find_if(
@@ -1673,7 +1852,7 @@ void App::handle_plan(const Key& key) {
         }
         std::vector<std::string> lines;
         if (row.merge) {
-            const auto& merge = plan_.merges.at(*row.merge);
+            const auto& merge = plan().merges.at(*row.merge);
             if (const auto& by = merge.pulled_by) {
                 lines.push_back(std::format("The plan pulls it in for {}'s {}.",
                                             member_cpv(store(), evaluated(), by->member),
@@ -2045,7 +2224,7 @@ std::vector<std::string> action_arguments(const Action& action) {
     case Action::Kind::update:
         words = {"exec", "--oneshot", "-u", "-N"};
         if (action.targets.empty()) {
-            words.insert(words.end(), {"-D", "@installed"});
+            words.insert(words.end(), {"-D", std::string{scope_name(action.scope)}});
         }
         break;
     case Action::Kind::remove:
