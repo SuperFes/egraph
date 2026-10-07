@@ -209,6 +209,38 @@ def write_stores(system, path, request_all=False, eroot="/"):
     store.write(store.evaluated_path(path), store.encode_evaluated(layer, meta))
 
 
+def write_index(system, path, eroot="/"):
+    """The repository index beside the installed store at path."""
+    from egraph_build import repository, store
+
+    meta = store.RepositoryMeta("0", "0", eroot, 0)
+    index = repository.read(portdb(system))
+    store.write(store.repository_path(path), store.encode_repository(index, meta))
+
+
+def notice_lines(system, path, tmp_path):
+    """egraph notices as lines, on the stores at path (not refreshed), egraph-build reading the
+    rest of system."""
+    builder = tmp_path / "egraph-build"
+    builder_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    portage_lib = os.path.dirname(os.path.dirname(portage.__file__))
+    builder.write_text(
+        "#!/bin/sh\n"
+        f'PYTHONPATH="{builder_dir}:{portage_lib}" exec "{sys.executable}" -m egraph_build "$@"\n'
+    )
+    builder.chmod(0o755)
+    result = subprocess.run(
+        [os.environ["EGRAPH"], "--store", str(path), "--no-refresh"]
+        + ["--config-root", system.eroot, "--builder", str(builder), "notices"],
+        capture_output=True,
+        text=True,
+        env=system.vardb.settings.environ(),
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    return result.stdout.splitlines()
+
+
 def fake_vartree(system):
     """emerge's own view of the installed packages under --dynamic-deps=y (test code only)."""
     from _emerge.FakeVartree import FakeVartree

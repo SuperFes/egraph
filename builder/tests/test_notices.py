@@ -5,7 +5,16 @@ import os
 
 import pytest
 
+from conftest import notice_lines, write_index, write_stores
+from portage.dep.soname.parse import parse_soname_deps
+
+import update
 from egraph_build import cli, notices
+
+EGRAPH = os.environ.get("EGRAPH")
+needs_egraph = pytest.mark.skipif(
+    not EGRAPH, reason="set EGRAPH to the egraph binary (meson test does)"
+)
 
 NEWS = """Title: Something happened
 Author: A Developer <dev@example.org>
@@ -132,3 +141,51 @@ def test_an_unreadable_registry_is_unknown(system, tmp_path):
     written = json.loads(notices.to_json([], [], None, None))
     assert written["preserved"] is None
     assert written["rebuild"] is None
+
+
+def rows(lines, kind):
+    return [line.split("\t") for line in lines if line.split("\t")[1] == kind]
+
+
+@needs_egraph
+def test_egraph_lists_the_installed_packages_depgraph_finds_masked(scenario, tmp_path):
+    path = tmp_path / "installed.egraph"
+    write_stores(scenario, path)
+    write_index(scenario, path)
+    found = {
+        row[0]: tuple(row[2].split(", "))
+        for row in rows(notice_lines(scenario, path, tmp_path), "masked")
+    }
+    masked = update.masked(scenario.trees, scenario.eroot)
+    reasons = update.mask_reasons(scenario.trees, scenario.eroot)
+    assert found == {
+        cpv: reasons[cpv][0] for cpv, is_masked in masked.items() if is_masked
+    }
+
+
+@needs_egraph
+def test_egraph_lists_the_sonames_nothing_installed_provides(scenario, tmp_path):
+    path = tmp_path / "installed.egraph"
+    write_stores(scenario, path)
+    write_index(scenario, path)
+    found = {
+        (row[0], row[2], row[3])
+        for row in rows(notice_lines(scenario, path, tmp_path), "missing")
+    }
+    vardb = scenario.vardb
+    provided = set()
+    required = set()
+    for cpv in vardb.cpv_all():
+        provides, requires = vardb.aux_get(cpv, ["PROVIDES", "REQUIRES"])
+        try:
+            provided.update(
+                (a.multilib_category, a.soname) for a in parse_soname_deps(provides)
+            )
+            required.update(
+                (str(cpv), a.multilib_category, a.soname)
+                for a in parse_soname_deps(requires)
+            )
+        except Exception:
+            # A string portage cannot parse, which the store records as an error instead.
+            continue
+    assert found == {r for r in required if r[1:] not in provided}

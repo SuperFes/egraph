@@ -5,6 +5,7 @@
 // information, so tests of the records cover both.
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <iosfwd>
 #include <optional>
@@ -241,7 +242,9 @@ void human_elog(std::ostream& out, std::span<const std::string> records, const T
 
 // notice_lines records under headings, a blank line between: the configuration files with
 // updates waiting, how many when more than one, then the unread news by item; nothing for none.
-void human_notices(std::ostream& out, std::span<const std::string> records, const Theme& theme);
+// now is when a stale repository's sync age counts to.
+void human_notices(std::ostream& out, std::span<const std::string> records, const Theme& theme,
+                   std::chrono::sys_seconds now);
 
 // removal_lines' records: what goes, then what is kept with what keeps it, and a count.
 void human_removal(std::ostream& out, std::span<const std::string> records, const Theme& theme);

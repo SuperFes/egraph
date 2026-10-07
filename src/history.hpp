@@ -26,6 +26,8 @@ struct Settings {
     // How many days of generations to keep; 0 keeps none.
     int history_days = 90;
     PlanWhen plan = PlanWhen::refresh;
+    // After how many days since its sync a repository is a notice; 0 never.
+    int stale_days = 7;
 };
 
 // "key = value" lines, blank lines and "#" comments skipped. An error names the line of an

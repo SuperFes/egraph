@@ -596,6 +596,13 @@ egraph would mean reading XML portage already reads. `test_glsa.py` holds the ma
 module's on a generated corpus over every scenario. A sync replaces the GLSAs' files, so their
 directory alone is an input, and a change to it reads them again without anything else.
 
+The stores answer three more kinds (17e2): repositories synced longer ago than `stale_days`, by
+their `metadata/timestamp.chk` (a checkout without one has no known age and is never stale);
+installed packages the evaluated store finds masked; and sonames an installed package requires
+that no installed package provides (the installed store's `REQUIRES` entries without
+providers). A soname a preserved library still provides is that library's notice, matched by
+its file name, not a second one.
+
 Preserved libraries come from portage's registry and linkage map (private: `notices.py` alone
 touches them), with the atoms of `@preserved-rebuild` loaded through the set configuration, so
 the set is emerge's own. `parse_request` takes sets the store does not hold from its caller

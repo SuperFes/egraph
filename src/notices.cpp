@@ -1,10 +1,15 @@
 #include "notices.hpp"
 
+#include "status.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <filesystem>
 #include <format>
 #include <initializer_list>
+#include <tuple>
 
 namespace egraph {
 
@@ -107,7 +112,88 @@ std::vector<std::string> notice_lines(const Notices& notices) {
                 std::format("{}\tglsa\t{}\t{}\t{}", advisory.id, advisory.title, cpv, joined));
         }
     }
+    for (const auto& [name, synced] : notices.stale) {
+        lines.push_back(std::format("{}\tstale\t{}", name, synced.time_since_epoch().count()));
+    }
+    for (const auto& [cpv, reasons] : notices.masked) {
+        std::string joined;
+        for (const auto& reason : reasons) {
+            joined += std::format("{}{}", joined.empty() ? "" : ", ", reason);
+        }
+        lines.push_back(std::format("{}\tmasked\t{}", cpv, joined));
+    }
+    for (const auto& [cpv, category, soname] : notices.missing) {
+        lines.push_back(std::format("{}\tmissing\t{}\t{}", cpv, category, soname));
+    }
     return lines;
+}
+
+std::vector<Notices::Stale> stale_repositories(const RepositoryIndex& index, Seconds now,
+                                               int days) {
+    std::vector<Notices::Stale> found;
+    if (days <= 0) {
+        return found;
+    }
+    const auto oldest = now - std::chrono::days{days};
+    for (const auto& repository : index.repositories) {
+        const auto synced = repository_synced(std::string{index.string(repository.location)});
+        if (synced && *synced < oldest) {
+            found.push_back(
+                {.name = std::string{index.string(repository.name)}, .synced = *synced});
+        }
+    }
+    return found;
+}
+
+std::vector<Notices::Masked> masked_installed(const Store& store, const Evaluated& evaluated,
+                                              bool dynamic_deps) {
+    std::vector<Notices::Masked> found;
+    for (std::size_t id = 0; id < store.packages.size(); ++id) {
+        const auto& record = evaluated.packages.at(id);
+        if (!(dynamic_deps ? record.masked : record.vdb_masked)) {
+            continue;
+        }
+        Notices::Masked masked{.cpv = std::string{store.string(store.packages.at(id).cpv)},
+                               .reasons = {}};
+        for (const auto reason :
+             evaluated.ids_in(dynamic_deps ? record.mask_reasons : record.vdb_mask_reasons)) {
+            masked.reasons.emplace_back(evaluated.string(reason));
+        }
+        found.push_back(std::move(masked));
+    }
+    std::ranges::sort(found, {}, &Notices::Masked::cpv);
+    return found;
+}
+
+std::vector<Notices::Missing> missing_sonames(const Store& store) {
+    const auto key = [](const Notices::Missing& missing) {
+        return std::tie(missing.cpv, missing.category, missing.soname);
+    };
+    std::vector<Notices::Missing> found;
+    for (const auto& pkg : store.packages) {
+        for (const auto& required : store.required_in(pkg.required)) {
+            if (required.providers.count == 0) {
+                found.push_back({.cpv = std::string{store.string(pkg.cpv)},
+                                 .category = std::string{store.string(required.category)},
+                                 .soname = std::string{store.string(required.soname)}});
+            }
+        }
+    }
+    std::ranges::sort(found, {}, key);
+    const auto [first, last] = std::ranges::unique(found, {}, key);
+    found.erase(first, last);
+    return found;
+}
+
+void drop_preserved(Notices& notices) {
+    if (!notices.preserved) {
+        return;
+    }
+    std::erase_if(notices.missing, [&](const Notices::Missing& missing) {
+        return std::ranges::any_of(*notices.preserved, [&](const Notices::Preserved& library) {
+            return std::filesystem::path{library.path}.filename() == missing.soname;
+        });
+    });
 }
 
 } // namespace egraph

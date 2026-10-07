@@ -38,6 +38,12 @@ struct Installed {
     // Space-separated flags: its IUSE, and those it was built with.
     std::string iuse = {};
     std::string use = {};
+    // Why the evaluated store finds it masked, under both --dynamic-deps settings; not masked
+    // when empty.
+    std::vector<std::string> masked = {};
+    // "category:soname" words.
+    std::string provides = {};
+    std::string required = {};
 };
 
 struct Available {
@@ -240,6 +246,40 @@ inline System make_system(const std::vector<Installed>& installed, std::vector<A
         }
         store.packages.push_back(record);
     }
+    // Sonames, once every package's are known: each requirement's providers.
+    for (std::size_t i = 0; i < installed.size(); ++i) {
+        auto& record = store.packages.at(i);
+        record.provided.first = static_cast<std::uint32_t>(store.pairs.size());
+        for (const auto& word : detail::tokens(installed.at(i).provides)) {
+            const auto colon = word.find(':');
+            store.pairs.push_back({.first = store_intern(word.substr(0, colon)),
+                                   .second = store_intern(word.substr(colon + 1))});
+        }
+        record.provided.count =
+            static_cast<std::uint32_t>(store.pairs.size()) - record.provided.first;
+    }
+    for (std::size_t i = 0; i < installed.size(); ++i) {
+        auto& record = store.packages.at(i);
+        record.required.first = static_cast<std::uint32_t>(store.required.size());
+        for (const auto& word : detail::tokens(installed.at(i).required)) {
+            const auto colon = word.find(':');
+            Require required{
+                .category = store_intern(word.substr(0, colon)),
+                .soname = store_intern(word.substr(colon + 1)),
+                .providers = {.first = static_cast<std::uint32_t>(store.ids.size()), .count = 0}};
+            for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
+                for (const auto& pair : store.pairs_in(store.packages.at(id).provided)) {
+                    if (pair.first == required.category && pair.second == required.soname) {
+                        store.ids.push_back(id);
+                        ++required.providers.count;
+                    }
+                }
+            }
+            store.required.push_back(required);
+        }
+        record.required.count =
+            static_cast<std::uint32_t>(store.required.size()) - record.required.first;
+    }
     const detail::Matcher match = [&store](std::string_view text) {
         std::vector<std::uint32_t> ids;
         const auto atom = parse_atom(text);
@@ -390,6 +430,15 @@ inline System make_system(const std::vector<Installed>& installed, std::vector<A
             if (order > 0 || (!record.visible && available.at(*best).cpv != pkg.cpv)) {
                 record.target = best;
             }
+        }
+        if (!pkg.masked.empty()) {
+            record.masked = record.vdb_masked = true;
+            record.mask_reasons = {.first = static_cast<std::uint32_t>(evaluated.ids.size()),
+                                   .count = static_cast<std::uint32_t>(pkg.masked.size())};
+            for (const auto& reason : pkg.masked) {
+                evaluated.ids.push_back(evaluated_intern(reason));
+            }
+            record.vdb_mask_reasons = record.mask_reasons;
         }
         evaluated.packages.push_back(record);
     }

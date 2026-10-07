@@ -1,3 +1,4 @@
+#include "history.hpp"
 #include "human.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -183,7 +184,7 @@ TEST_CASE("elog messages follow by package, each class and phase once") {
 
 TEST_CASE("notices list configuration updates by file, then unread news") {
     std::ostringstream none;
-    egraph::human_notices(none, {}, plain);
+    egraph::human_notices(none, {}, plain, egraph::Seconds{});
     CHECK(none.str().empty());
     std::ostringstream out;
     egraph::human_notices(out,
@@ -191,11 +192,12 @@ TEST_CASE("notices list configuration updates by file, then unread news") {
                                                    "/etc/a\tconfig\t/etc/._cfg0001_a",
                                                    "/etc/b\tconfig\t/etc/._cfg0000_b",
                                                    "2026-09-01-x\tnews\tgentoo\tX happened"},
-                          plain);
+                          plain, egraph::Seconds{});
     CHECK(out.str() == "Configuration updates (dispatch-conf):\n  /etc/a  2 updates\n  /etc/b\n"
                        "\nUnread news (eselect news read):\n  2026-09-01-x  X happened\n");
     std::ostringstream news;
-    egraph::human_notices(news, std::vector<std::string>{"2026-09-01-x\tnews\tgentoo\t"}, plain);
+    egraph::human_notices(news, std::vector<std::string>{"2026-09-01-x\tnews\tgentoo\t"}, plain,
+                          egraph::Seconds{});
     CHECK(news.str() == "Unread news (eselect news read):\n  2026-09-01-x\n");
 }
 
@@ -207,7 +209,7 @@ TEST_CASE("notices list preserved libraries with what they come from and what us
                                  "/usr/lib/libfoo.so.1\tpreserved\tdev-libs/foo-2\ta/bar-1 a/baz-1",
                                  "/usr/lib/libold.so.1\tpreserved\tdev-libs/old-2\t",
                                  "a/bar:0\trebuild", "a/baz:0\trebuild"},
-        plain);
+        plain, egraph::Seconds{});
     CHECK(out.str() == "Unread news (eselect news read):\n  2026-09-01-x  X happened\n"
                        "\nPreserved libraries (egraph install -1 @preserved-rebuild):\n"
                        "  /usr/lib/libfoo.so.1  from dev-libs/foo-2, used by a/bar-1, a/baz-1\n"
@@ -223,7 +225,7 @@ TEST_CASE("notices list the GLSAs first, each affected package with its fixes") 
                                  "202601-01\tglsa\tfoo: overflow\tdev-libs/foo-2.5\t"
                                  ">=dev-libs/foo-2.6:2 >=dev-libs/foo-3",
                                  "202602-01\tglsa\tbar: leak\tdev-libs/bar-1\t"},
-        plain);
+        plain, egraph::Seconds{});
     CHECK(out.str() == "Security advisories (egraph install -1 the fixed versions):\n"
                        "  202601-01  foo: overflow\n"
                        "    dev-libs/foo-1, fixed in >=dev-libs/foo-2\n"
@@ -231,6 +233,22 @@ TEST_CASE("notices list the GLSAs first, each affected package with its fixes") 
                        "  202602-01  bar: leak\n"
                        "    dev-libs/bar-1\n"
                        "\nUnread news (eselect news read):\n  2026-09-01-x  X happened\n");
+}
+
+TEST_CASE("notices list stale repositories, masked packages and missing libraries last") {
+    using namespace std::chrono;
+    std::ostringstream out;
+    egraph::human_notices(out,
+                          std::vector<std::string>{"2026-09-01-x\tnews\tgentoo\tX happened",
+                                                   "gentoo\tstale\t1790000000",
+                                                   "app-misc/b-1\tmasked\tpackage.mask",
+                                                   "app-misc/a-1\tmissing\tx86_64\tlibgone.so.2"},
+                          plain, egraph::Seconds{seconds{1790000000}} + days{9});
+    CHECK(out.str() == "Unread news (eselect news read):\n  2026-09-01-x  X happened\n"
+                       "\nStale repositories (egraph sync):\n  gentoo  synced 9 days ago\n"
+                       "\nMasked installed packages:\n  app-misc/b-1  package.mask\n"
+                       "\nMissing libraries (rebuild what needs them):\n"
+                       "  app-misc/a-1  needs libgone.so.2 (x86_64)\n");
 }
 
 TEST_CASE("a verified removal says emerge removes the same") {

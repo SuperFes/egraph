@@ -3,7 +3,11 @@
 // What needs the user once emerge has run, as egraph-build --notices writes it, and the GLSAs
 // affecting the installed packages.
 
+#include "evaluated.hpp"
 #include "glsa.hpp"
+#include "history.hpp"
+#include "repository.hpp"
+#include "store.hpp"
 
 #include <expected>
 #include <optional>
@@ -40,9 +44,44 @@ struct Notices {
     // @preserved-rebuild's atoms, as emerge loads the set; none when the libraries' consumers
     // cannot be found.
     std::optional<std::vector<std::string>> rebuild;
-    // Matched against the stores rather than read by egraph-build.
+    // The rest come from the stores rather than egraph-build.
     std::vector<AffectedAdvisory> advisories;
+    // A repository synced longer ago than the settings allow.
+    struct Stale {
+        std::string name;
+        Seconds synced;
+    };
+    std::vector<Stale> stale;
+    // An installed package masked now, with why as emerge words it.
+    struct Masked {
+        std::string cpv;
+        std::vector<std::string> reasons;
+    };
+    std::vector<Masked> masked;
+    // A soname an installed package needs that nothing installed provides.
+    struct Missing {
+        std::string cpv;
+        std::string category;
+        std::string soname;
+    };
+    std::vector<Missing> missing;
 };
+
+// The repositories whose timestamp.chk is older than days before now; none when days is 0, nor
+// for one without the file.
+[[nodiscard]] std::vector<Notices::Stale> stale_repositories(const RepositoryIndex& index,
+                                                             Seconds now, int days);
+
+// The installed packages the evaluated store finds masked, under --dynamic-deps=y or =n.
+[[nodiscard]] std::vector<Notices::Masked>
+masked_installed(const Store& store, const Evaluated& evaluated, bool dynamic_deps);
+
+// Each soname an installed package requires that no installed package provides, by cpv.
+[[nodiscard]] std::vector<Notices::Missing> missing_sonames(const Store& store);
+
+// notices.missing less the sonames a preserved library still provides, by its file name: those
+// are the preserved libraries' notices.
+void drop_preserved(Notices& notices);
 
 [[nodiscard]] std::expected<Notices, std::string> parse_notices(std::string_view text);
 
@@ -50,7 +89,10 @@ struct Notices {
 // "item<TAB>news<TAB>repo<TAB>title" for each unread news item,
 // "path<TAB>preserved<TAB>package<TAB>consumers" (space-separated) for each preserved library,
 // then "atom<TAB>rebuild" for each atom of @preserved-rebuild, and
-// "id<TAB>glsa<TAB>title<TAB>cpv<TAB>fixed" (space-separated) for each package a GLSA affects.
+// "id<TAB>glsa<TAB>title<TAB>cpv<TAB>fixed" (space-separated) for each package a GLSA affects,
+// "repo<TAB>stale<TAB>synced" (seconds) for each stale repository,
+// "cpv<TAB>masked<TAB>reasons" (comma-separated) for each masked installed package, and
+// "cpv<TAB>missing<TAB>category<TAB>soname" for each soname nothing provides.
 [[nodiscard]] std::vector<std::string> notice_lines(const Notices& notices);
 
 } // namespace egraph

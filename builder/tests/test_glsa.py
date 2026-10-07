@@ -4,12 +4,11 @@ matching of them against the installed packages is held to that module's."""
 import os
 import random
 import subprocess
-import sys
 from xml.sax.saxutils import escape
 
 import portage
 import pytest
-from conftest import portdb, write_stores
+from conftest import notice_lines, portdb, write_stores
 from scenarios import SCENARIOS
 from test_build import age, fresh_databases
 from test_repository import first_index, rebuilt
@@ -17,8 +16,6 @@ from test_repository import first_index, rebuilt
 from egraph_build import installed, repository, store
 
 EGRAPH = os.environ.get("EGRAPH")
-BUILDER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PORTAGE_LIB = os.path.dirname(os.path.dirname(portage.__file__))
 
 RANGES = ("le", "lt", "eq", "gt", "ge", "rge", "rle", "rgt", "rlt")
 
@@ -269,29 +266,6 @@ def portage_affected(settings, vardb, db, ids, applied):
     return found
 
 
-def builder_script(tmp_path):
-    builder = tmp_path / "egraph-build"
-    builder.write_text(
-        "#!/bin/sh\n"
-        f'PYTHONPATH="{BUILDER_DIR}:{PORTAGE_LIB}" exec "{sys.executable}" -m egraph_build "$@"\n'
-    )
-    builder.chmod(0o755)
-    return builder
-
-
-def egraph_notices(system, playground_env, path, builder):
-    result = subprocess.run(
-        [EGRAPH, "--store", str(path), "--no-refresh", "--config-root", system.eroot]
-        + ["--builder", str(builder), "notices"],
-        capture_output=True,
-        text=True,
-        env=playground_env,
-    )
-    assert result.returncode == 0, result.stderr
-    assert result.stderr == ""
-    return result.stdout.splitlines()
-
-
 @pytest.mark.skipif(
     not EGRAPH, reason="set EGRAPH to the egraph binary (meson test does)"
 )
@@ -319,9 +293,7 @@ def test_egraph_finds_the_advisories_the_glsa_module_does(name, playgrounds, tmp
     assert len(index.advisories) == len(generated)
     meta = store.RepositoryMeta("0.0.0", "3.0.0", str(eroot), 0)
     store.write(store.repository_path(path), store.encode_repository(index, meta))
-    lines = egraph_notices(
-        system, vardb.settings.environ(), path, builder_script(tmp_path)
-    )
+    lines = notice_lines(system, path, tmp_path)
     found = {
         (row[0], row[3])
         for row in (line.split("\t") for line in lines)

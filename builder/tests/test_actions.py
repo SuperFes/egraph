@@ -674,6 +674,16 @@ def preserving(gnupg_home, tmp_path):
         playground.cleanup()
 
 
+def without_libc(lines):
+    """Lines less the libc the merged programs need, which no package of a playground
+    provides."""
+    return [
+        line
+        for line in lines
+        if not ("\tmissing\t" in line and line.endswith("\tlibc.so.6"))
+    ]
+
+
 def registry(machine):
     path = os.path.join(
         machine.playground.eroot, "var", "lib", "portage", "preserved_libs_registry"
@@ -691,11 +701,11 @@ def test_preserved_libraries_follow_the_merge_that_preserves_them(preserving):
         f"{library}\tpreserved\tdev-libs/foo-2\tapp-misc/bar-1",
         "app-misc/bar:0\trebuild",
     ]
-    assert result.stdout.splitlines()[-2:] == expected
+    assert without_libc(result.stdout.splitlines())[-2:] == expected
     # --yes offers no rebuild.
     assert len(machine.emerged()) == 1
     # Preserved libraries alone are something to list.
-    assert machine.egraph("notices").stdout.splitlines() == expected
+    assert without_libc(machine.egraph("notices").stdout.splitlines()) == expected
     human = machine.egraph("--layout", "human", "notices")
     assert "Preserved libraries" in human.stdout
 
@@ -710,7 +720,7 @@ def test_preserved_rebuild_is_planned_verified_and_run(preserving):
     assert result.returncode == 0, result.stdout + result.stderr
     assert machine.emerged()[-1][-2:] == ["--oneshot", "@preserved-rebuild"]
     assert registry(machine) == {}
-    assert machine.egraph("notices").stdout == ""
+    assert without_libc(machine.egraph("notices").stdout.splitlines()) == []
 
 
 def test_without_preserved_libraries_the_set_is_empty(preserving):

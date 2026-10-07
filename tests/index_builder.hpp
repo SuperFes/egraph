@@ -124,6 +124,10 @@ class IndexBuilder {
     }
 
     egraph::VisibilityConfig& config() { return index_.visibility; }
+    void locate(std::string_view repository, std::string_view location) {
+        const auto at = std::ranges::find(names_, repository) - names_.begin();
+        index_.repositories.at(static_cast<std::size_t>(at)).location = intern(location);
+    }
     // The repository's descriptions come from a metadata/pkg_desc_index.
     void describe(std::string_view repository) {
         const auto at = std::ranges::find(names_, repository) - names_.begin();

@@ -1,11 +1,15 @@
 #include "human.hpp"
 #include "required_use.hpp"
+#include "status.hpp"
 
 #include "version.hpp"
 
 #include <algorithm>
 #include <array>
+#include <charconv>
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <format>
 #include <map>
 #include <optional>
@@ -720,7 +724,8 @@ void human_elog(std::ostream& out, std::span<const std::string> records, const T
     }
 }
 
-void human_notices(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+void human_notices(std::ostream& out, std::span<const std::string> records, const Theme& theme,
+                   Seconds now) {
     const auto& paint = theme.paint;
     const auto rows = split_all(records);
     bool printed = false;
@@ -808,6 +813,48 @@ void human_notices(std::ostream& out, std::span<const std::string> records, cons
             }
         }
         out << '\n';
+    }
+    first = true;
+    for (const auto& row : rows) {
+        if (row.at(1) != "stale") {
+            continue;
+        }
+        if (first) {
+            heading("Stale repositories", " (egraph sync)");
+            first = false;
+        }
+        const auto digits = row.at(2);
+        std::int64_t seconds = 0;
+        std::from_chars(digits.begin(), digits.end(), seconds);
+        out << "  " << row.front() << "  "
+            << paint(
+                   std::format("synced {}", age_text(Seconds{std::chrono::seconds{seconds}}, now)),
+                   Tone::note)
+            << '\n';
+    }
+    first = true;
+    for (const auto& row : rows) {
+        if (row.at(1) != "masked") {
+            continue;
+        }
+        if (first) {
+            heading("Masked installed packages", "");
+            first = false;
+        }
+        out << "  " << paint_cpv(row.front(), paint) << "  " << paint(row.at(2), Tone::note)
+            << '\n';
+    }
+    first = true;
+    for (const auto& row : rows) {
+        if (row.at(1) != "missing") {
+            continue;
+        }
+        if (first) {
+            heading("Missing libraries", " (rebuild what needs them)");
+            first = false;
+        }
+        out << "  " << paint_cpv(row.front(), paint) << paint("  needs ", Tone::note) << row.at(3)
+            << paint(std::format(" ({})", row.at(2)), Tone::note) << '\n';
     }
 }
 
@@ -1398,12 +1445,12 @@ void human_update_tree(std::ostream& out, std::span<const std::string> table,
     for (std::size_t i = 0; i < rows.size(); ++i) {
         merges.emplace(rows.at(i).at(2), i);
     }
-    struct Node {
+    struct TreeNode {
         std::string_view label;
         std::vector<std::size_t> children;
     };
     // Node 0 holds the roots; children keep the order the merges first reach them in.
-    std::vector<Node> nodes(1);
+    std::vector<TreeNode> nodes(1);
     const auto child = [&nodes](std::size_t parent, std::string_view label) {
         for (const auto index : nodes.at(parent).children) {
             if (nodes.at(index).label == label) {

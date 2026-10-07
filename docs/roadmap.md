@@ -981,13 +981,15 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
   - 17e1 (done): GLSAs in the repository index, as portage's `glsa` module parses them,
     matched against the installed store in C++ (shadowed against `Glsa.isVulnerable`), in
     `notices`.
-  - 17e2: every kind as one notice with a stable key, in `notices` and the status file, written
-    as watch refreshes, new ones logged.
-  - 17e3: dismissed and put-off notices, per user under `XDG_STATE_HOME`.
-  - 17e4: the interface: a contextual hint bar (the keys for what is selected, `?` for all),
+  - 17e2 (done): `notices` gains repositories synced longer ago than `stale_days` (7 by
+    default), masked installed packages, and required sonames nothing installed provides.
+  - 17e3: every kind as one notice with a stable key and a fingerprint, in `notices.json`
+    beside the status file, written as watch refreshes, new ones logged; `status` counts them.
+  - 17e4: dismissed and put-off notices, per user under `XDG_STATE_HOME`.
+  - 17e5: the interface: a contextual hint bar (the keys for what is selected, `?` for all),
     and a notices page beside the sets, its tab counting them; enter works on one, `x`
     dismisses, `z` puts off with a small chooser.
-  - 17e5: `egraph notify`: one summary notification (org.freedesktop.Notifications over the
+  - 17e6: `egraph notify`: one summary notification (org.freedesktop.Notifications over the
     session bus) with Dismiss, Later (a day) and Open, which starts a terminal on the notice;
     started by an XDG autostart entry.
 - 17f: what a configuration edit did: on a change under `/etc/portage`, the plan before and

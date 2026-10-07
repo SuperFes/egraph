@@ -1752,7 +1752,9 @@ std::string appended(const std::string& path, std::uintmax_t offset) {
 void show_notices(const Notices& notices, const Invocation& invocation, std::ostream& out) {
     const auto lines = notice_lines(notices);
     if (const auto style = output(invocation); style.human) {
-        human_notices(out, lines, style.theme);
+        human_notices(
+            out, lines, style.theme,
+            std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()));
     } else {
         write_lines(out, lines);
     }
@@ -1785,6 +1787,24 @@ std::expected<Notices, std::string> read_notices(std::string_view name, Session&
     } else {
         err << "egraph: " << name << ": the GLSAs could not be matched: " << advisories.error()
             << '\n';
+    }
+    const auto settings = read_settings(settings_path(config_root(invocation)));
+    if (!settings) {
+        err << "egraph: " << name << ": " << settings.error() << '\n';
+    }
+    if (const auto index = session.repository(); index) {
+        notices->stale = stale_repositories(
+            index->get(),
+            std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()),
+            settings.value_or(Settings{}).stale_days);
+    }
+    if (const auto stores = session.stores(); stores) {
+        const auto& [installed, evaluated] = stores->get();
+        notices->masked = masked_installed(installed, evaluated, invocation.dynamic_deps);
+        notices->missing = missing_sonames(installed);
+        drop_preserved(*notices);
+    } else {
+        err << "egraph: " << name << ": " << stores.error() << '\n';
     }
     return notices;
 }

@@ -915,7 +915,11 @@ finds them: those the repository index holds, for the system's
 .BR ARCH ,
 less those
 .B glsa\-check \-\-inject
-marked applied.
+marked applied; the repositories synced longer ago than
+.B stale_days
+allows; the installed packages masked now, with why as emerge words it; and the sonames an
+installed package needs that nothing installed provides, less those a preserved library still
+does.
 As lines, an update is its file,
 .BR config
 and the update; a news item is the item,
@@ -928,7 +932,14 @@ follows with
 .BR rebuild ;
 then for each package a GLSA affects, the GLSA's id,
 .BR glsa ,
-its title, the installed version and the versions that fix it, space-separated.
+its title, the installed version and the versions that fix it, space-separated; a stale
+repository is its name,
+.B stale
+and when it synced in seconds since the epoch; a masked package is its cpv,
+.B masked
+and its reasons, comma-separated; and a missing soname is the cpv needing it,
+.BR missing ,
+its multilib category and the soname.
 After an action run from a terminal without
 .BR \-\-yes ,
 preserved libraries have
@@ -1207,6 +1218,11 @@ plans the updates for
 .IR status.json :
 each (the default), only those after a sync or a configuration edit (the repository index
 rebuilt), or none.
+.TP
+.BI stale_days " days"
+After how many days since its sync (its
+.IR metadata/timestamp.chk )
+a repository is among the notices (default 7); 0 never.
 .RE
 .TP
 .I ${ROOT}${EPREFIX}/var/lib/egraph
