@@ -972,8 +972,23 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
 - 17e: notifications, moved here from step 20: GLSAs matched against the store, a stale sync,
   broken soname dependencies after a merge, unread news, masked installed packages; in the
   status file and the log, and on the desktop through a user-side `egraph notify` (the service
-  cannot reach a user's session bus): XDG desktop notifications (org.freedesktop.Notifications
-  over the session bus), started by an XDG autostart entry.
+  cannot reach a user's session bus). Checked as their inputs change: GLSAs, news and masks
+  when the repository index is rebuilt, sonames, preserved libraries and `._cfg` files after a
+  merge, a stale sync on every refresh (`stale_after`, a week by default). Every notice can be
+  dismissed (until it changes), put off (an hour, a day or a week) or worked on now (a GLSA's
+  upgrade planned, news read, a sync, `@preserved-rebuild`, the masked package's page,
+  dispatch-conf).
+  - 17e1: GLSAs in the repository index, as portage's `glsa` module parses them, matched
+    against the installed store in C++ (shadowed against `Glsa.isVulnerable`), in `notices`.
+  - 17e2: every kind as one notice with a stable key, in `notices` and the status file, written
+    as watch refreshes, new ones logged.
+  - 17e3: dismissed and put-off notices, per user under `XDG_STATE_HOME`.
+  - 17e4: the interface: a contextual hint bar (the keys for what is selected, `?` for all),
+    and a notices page beside the sets, its tab counting them; enter works on one, `x`
+    dismisses, `z` puts off with a small chooser.
+  - 17e5: `egraph notify`: one summary notification (org.freedesktop.Notifications over the
+    session bus) with Dismiss, Later (a day) and Open, which starts a terminal on the notice;
+    started by an XDG autostart entry.
 - 17f: what a configuration edit did: on a change under `/etc/portage`, the plan before and
   after compared ("+4 rebuilds for USE=foo on media-libs/bar, 1 new, the plan now refuses: ..."),
   in the status file and as a notification. Linting proper stays step 18.
