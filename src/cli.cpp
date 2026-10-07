@@ -258,7 +258,7 @@ Exit execute(const std::monostate&, Session& session, const Invocation& invocati
 
 Exit execute(const Rebuild&, Session&, const Invocation& invocation, std::ostream&,
              std::ostream& err) {
-    if (const auto error = run_builder(invocation, "--full", store_path(invocation))) {
+    if (const auto error = refresh_store(invocation, "--full", store_path(invocation), err)) {
         err << "egraph: " << *error << '\n';
         return Exit::failure;
     }
@@ -912,10 +912,6 @@ Exit fail(std::ostream& err, std::string_view message) {
 // Whether the plan is for the running system: emerge treats strong blockers differently there.
 bool running_root(const Invocation& invocation) {
     return invocation.root.lexically_normal() == "/";
-}
-
-std::filesystem::path config_root(const Invocation& invocation) {
-    return invocation.config_root.value_or(invocation.eprefix.value_or(std::filesystem::path{"/"}));
 }
 
 // The replace-slots list a plan for command reads.
@@ -3216,6 +3212,10 @@ Style style(const Invocation& invocation) {
     return {.human = human,
             .color = invocation.truecolor ? ColorDepth::truecolor : ColorDepth::palette,
             .glyphs = glyphs};
+}
+
+std::filesystem::path config_root(const Invocation& invocation) {
+    return invocation.config_root.value_or(invocation.eprefix.value_or(std::filesystem::path{"/"}));
 }
 
 std::filesystem::path system_store_path(const Invocation& invocation) {

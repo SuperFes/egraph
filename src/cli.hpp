@@ -356,6 +356,9 @@ struct Style {
 };
 [[nodiscard]] Style style(const Invocation& invocation);
 
+// Where portage reads its configuration: --config-root, else ${EPREFIX}, else /.
+[[nodiscard]] std::filesystem::path config_root(const Invocation& invocation);
+
 // The store under the root: ${ROOT}${EPREFIX}/var/cache/egraph/installed.egraph.
 [[nodiscard]] std::filesystem::path system_store_path(const Invocation& invocation);
 

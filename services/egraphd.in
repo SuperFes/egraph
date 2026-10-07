@@ -19,5 +19,5 @@ depend() {
 }
 
 start_pre() {
-	checkpath --directory --owner egraph:egraph --mode 0755 /var/cache/egraph
+	checkpath --directory --owner egraph:egraph --mode 0755 /var/cache/egraph /var/lib/egraph
 }

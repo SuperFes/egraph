@@ -1016,7 +1016,7 @@ service runs it as the
 user, a member of the
 .B portage
 group, with only
-.I /var/cache/egraph
+.IR /var/cache/egraph " and " /var/lib/egraph
 writable:
 .B systemctl enable \-\-now egraphd
 or
@@ -1059,6 +1059,27 @@ Atoms, one a line
 .RB ( #
 starts a comment), of the packages whose old slots a plan replaces rather than keeps beside a new
 one; none by default, as emerge.
+.TP
+.I ${PORTAGE_CONFIGROOT}/etc/egraph/egraph.conf
+Settings,
+.IB key " = " value
+a line
+.RB ( #
+starts a comment):
+.RS
+.TP
+.BI history_days " days"
+How long generations of the system store are kept (default 90); 0 keeps none.
+.RE
+.TP
+.I ${ROOT}${EPREFIX}/var/lib/egraph
+The system store's history: when a refresh changes the installed packages or the root sets, the
+store it replaced is kept as
+.IR installed\-<built>.egraph ,
+named by when it was built (UTC). All from the last day are kept, then the newest of each day,
+for
+.B history_days
+days.
 .TP
 .I ${ROOT}${EPREFIX}/var/cache/egraph/installed.egraph
 The system store, with the evaluated store and the repository index

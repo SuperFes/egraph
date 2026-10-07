@@ -891,10 +891,25 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
   refreshing all three stores and stopping with 0. The acct-user/acct-group ebuilds (dynamic
   IDs, as an overlay sets them) are in the Bonbon overlay; the egraph ebuild picks them up with
   the next release.
-- 17c: history: each refresh keeps the previous store generation (whole files, the last N,
-  configurable), and the vdb watch logs every merge and uninstall as it lands, whatever ran it
-  (emerge's too; times from the vdb's BUILD_TIME, coarser than exec's step 20 records).
-  `diff` against a generation or a date, and "when did this get pulled in, and by what".
+- 17c: history, decided with the user (2026-10-06): recency is what matters (anything past a
+  few months is broken by USE changes since), and unexecuted plans are not history. In
+  `${EPREFIX}/var/lib/egraph` (state, not cache; the services' `StateDirectory=`), flat, as root
+  and the service user both write there:
+  - 17c1 (done): generations: when a refresh of the system store changes the installed packages or the
+    root sets (`drift`, and the roots compared by value), the store it replaced is kept whole as
+    `installed-<its build time>.egraph` (installed store only, 1.1 MB on the dev box: packages,
+    USE, deps and the why of the time; the evaluated store and the repository index are today's
+    view, not history). Thinned by age after each: all from the last day, then the newest of
+    each day, none past `history_days` (`${PORTAGE_CONFIGROOT}/etc/egraph/egraph.conf`, the
+    settings file 17d–17f share; 90 by default, 0 keeps none). Keeping history never fails a
+    refresh: a warning, and none kept.
+  - 17c2: the event log, kept whole (a line per merge): each change appends what merged (times
+    from the vdb's BUILD_TIME), rebuilt and uninstalled (at the refresh's time; coarser than
+    exec's step 20 records).
+  - 17c3: `egraph diff [generation|date]`: added, removed, upgraded, downgraded and rebuilt
+    packages, with USE changes, against the newest generation by default.
+  - 17c4: `egraph history [atom]`: the event log; for a package, when it arrived and what pulled
+    it in (the why chain in the first generation holding it).
 - 17d: the precomputed plan: after each refresh, `-uDN @world` planned once and a small status
   file written (updates, rebuilds, held, security, the last sync's age), which the living app
   opens on and a status bar reads without running anything.

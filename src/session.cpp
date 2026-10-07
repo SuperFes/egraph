@@ -1,6 +1,7 @@
 #include "session.hpp"
 
 #include "freshness.hpp"
+#include "history.hpp"
 #include "os.hpp"
 
 #include <algorithm>
@@ -63,7 +64,7 @@ std::expected<Loaded, std::string> open_current(const Invocation& invocation, st
         std::this_thread::sleep_for(settle_wait(
             *loaded, static_cast<std::uint64_t>(std::max<std::int64_t>(now.count(), 0))));
     }
-    if (auto error = run_builder(invocation, mode, path)) {
+    if (auto error = refresh_store(invocation, mode, path, err)) {
         return std::unexpected(std::move(*error));
     }
     return load_path(path).transform_error([&invocation](const StoreError& error) {
@@ -78,6 +79,71 @@ std::optional<std::string> run_builder(const Invocation& invocation, std::string
                                        const std::optional<std::filesystem::path>& log,
                                        std::span<const std::string> cps) {
     return builder_error(invocation, os::run(builder_command(invocation, mode, path, cps), log));
+}
+
+namespace {
+
+// Keeps before, the store a refresh replaced at path, in directory if what it holds changed,
+// and thins the generations there.
+void keep_generation(const std::vector<std::byte>& before, const std::filesystem::path& path,
+                     const std::filesystem::path& directory, int days, std::ostream& warnings) {
+    namespace fs = std::filesystem;
+    using namespace std::chrono;
+    // A store from another format version is not history this egraph can read.
+    const auto old = decode(before);
+    const auto now = load(path);
+    if (!old || !now || !history_changed(*old, *now)) {
+        return;
+    }
+    const auto built = floor<seconds>(sys_time<nanoseconds>{nanoseconds{old->meta.build_time_ns}});
+    std::string text(before.size(), '\0');
+    std::ranges::transform(before, text.begin(), [](std::byte b) { return static_cast<char>(b); });
+    const auto generation = directory / generation_name(built);
+    if (const auto kept = os::replace_with_text(generation, text); !kept) {
+        warnings << std::format("egraph: warning: cannot keep {}: {}\n", generation.string(),
+                                kept.error().message());
+        return;
+    }
+    std::vector<Seconds> generations;
+    std::error_code error;
+    for (const auto& entry : fs::directory_iterator{directory, error}) {
+        if (const auto time = generation_time(entry.path().filename().string())) {
+            generations.push_back(*time);
+        }
+    }
+    for (const auto gone : thinned(generations, floor<seconds>(system_clock::now()), days)) {
+        fs::remove(directory / generation_name(gone), error);
+    }
+}
+
+} // namespace
+
+std::optional<std::string> refresh_store(const Invocation& invocation, std::string_view mode,
+                                         const std::filesystem::path& path,
+                                         std::ostream& warnings) {
+    std::optional<std::vector<std::byte>> before;
+    const auto directory = history_directory(invocation.root, invocation.eprefix.value_or(""));
+    int days = 0;
+    // The repository index's builds leave the installed store as it is.
+    if (mode != "--repository" && !invocation.store && path == system_store_path(invocation)) {
+        if (const auto settings = read_settings(settings_path(config_root(invocation)))) {
+            days = settings->history_days;
+        } else {
+            warnings << "egraph: warning: " << settings.error() << ", so no history is kept\n";
+        }
+        if (days > 0 && os::can_create(directory / generation_name({}))) {
+            if (auto bytes = read_file(path)) {
+                before = std::move(*bytes);
+            }
+        }
+    }
+    if (auto error = run_builder(invocation, mode, path)) {
+        return error;
+    }
+    if (before) {
+        keep_generation(*before, path, directory, days, warnings);
+    }
+    return std::nullopt;
 }
 
 std::string built_store_error(std::string_view builder, const StoreError& error) {

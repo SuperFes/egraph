@@ -100,6 +100,14 @@ run_builder(const Invocation& invocation, std::string_view mode, const std::file
             const std::optional<std::filesystem::path>& log = std::nullopt,
             std::span<const std::string> cps = {});
 
+// run_builder on the store at path; when that is the system store and the build changed its
+// installed packages or root sets, the store it replaced is kept as a generation in the history
+// directory, which is then thinned. Keeping history never fails the refresh: a warning instead.
+[[nodiscard]] std::optional<std::string> refresh_store(const Invocation& invocation,
+                                                       std::string_view mode,
+                                                       const std::filesystem::path& path,
+                                                       std::ostream& warnings);
+
 // Why the store builder (egraph-build, as builder_program names it) has just written cannot be
 // read: for one in another format, that egraph and it are from different versions.
 [[nodiscard]] std::string built_store_error(std::string_view builder, const StoreError& error);

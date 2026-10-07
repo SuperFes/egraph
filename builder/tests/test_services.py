@@ -25,12 +25,13 @@ def unit():
     return parser
 
 
-def test_the_unit_runs_egraph_watch_as_the_egraph_user_with_only_its_cache_writable():
+def test_the_unit_runs_egraph_watch_as_the_egraph_user_with_only_its_directories_writable():
     service = unit()["Service"]
     assert service["ExecStart"].endswith("bin/egraph watch")
     assert service["User"] == "egraph"
     assert "portage" in service["SupplementaryGroups"].split()
     assert service["CacheDirectory"] == "egraph"
+    assert service["StateDirectory"] == "egraph"
     assert service["ProtectSystem"] == "strict"
 
 
@@ -70,6 +71,6 @@ def test_the_openrc_script_supervises_egraph_watch_as_the_egraph_user():
     assert checkpath.startswith(
         "checkpath --directory --owner egraph:egraph --mode 0755 "
     )
-    assert checkpath.endswith("/var/cache/egraph")
+    assert checkpath.endswith(" /var/cache/egraph /var/lib/egraph")
     assert run.startswith("supervise-daemon ")
     assert run.endswith("bin/egraph watch egraph:egraph")
