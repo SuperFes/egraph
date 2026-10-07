@@ -963,7 +963,10 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
   - USE flags on a package's page, toggled in place: REQUIRED_USE (`^^`, `??`, `||`, conditionals)
     greys out or flips what a toggle excludes, and the plan is redone with the change, its new
     rebuilds and pulls lit up; the evaluated store already holds REQUIRED_USE and the dependency
-    trees, so it needs no portage call. Kept as a trial edit until written to package.use.
+    trees, so it needs no portage call. A trial edit at first; persisting it is open: perhaps a
+    USE database egraph manages (system, package and wildcard levels), rendered to one
+    generated file under `/etc/portage/package.use/` since portage reads only files, with the
+    hand-written files left alone.
 - 17e: notifications, moved here from step 20: GLSAs matched against the store, a stale sync,
   broken soname dependencies after a merge, unread news, masked installed packages; in the
   status file and the log, and on the desktop through a user-side `egraph notify` (the service
