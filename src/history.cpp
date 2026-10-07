@@ -224,6 +224,17 @@ std::expected<Settings, std::string> parse_settings(std::string_view text) {
                     "line {}: history_days takes a number of days, not {}", line_number, value));
             }
             settings.history_days = *days;
+        } else if (key == "plan") {
+            if (value == "refresh") {
+                settings.plan = PlanWhen::refresh;
+            } else if (value == "sync") {
+                settings.plan = PlanWhen::sync;
+            } else if (value == "never") {
+                settings.plan = PlanWhen::never;
+            } else {
+                return std::unexpected(std::format(
+                    "line {}: plan takes refresh, sync or never, not {}", line_number, value));
+            }
         } else {
             return std::unexpected(std::format("line {}: unknown setting {}", line_number, key));
         }

@@ -1,5 +1,6 @@
 """egraph refreshing its store through egraph-build as the system changes."""
 
+import json
 import os
 import queue
 import shutil
@@ -24,9 +25,8 @@ BUILDER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PORTAGE_LIB = os.path.dirname(os.path.dirname(portage.__file__))
 
 
-@pytest.fixture
-def system(mutable_playground, tmp_path):
-    playground = mutable_playground("reference")
+def scenario_system(mutable_playground, tmp_path, name):
+    playground = mutable_playground(name)
     age(playground.eroot)
     log = tmp_path / "builds"
     builder = tmp_path / "egraph-build"
@@ -37,6 +37,16 @@ def system(mutable_playground, tmp_path):
     )
     builder.chmod(0o755)
     return playground, tmp_path / "installed.egraph", builder, log
+
+
+@pytest.fixture
+def system(mutable_playground, tmp_path):
+    return scenario_system(mutable_playground, tmp_path, "reference")
+
+
+@pytest.fixture
+def updates_system(mutable_playground, tmp_path):
+    return scenario_system(mutable_playground, tmp_path, "updates")
 
 
 def egraph(system, *args):
@@ -166,9 +176,8 @@ def test_refresh_brings_the_store_up_to_date_and_prints_nothing(system):
     assert query(system, "--no-refresh").stdout == expected(playground)
 
 
-def test_watch_refreshes_once_a_change_settles_and_stops_on_sigterm(system):
-    """egraph watch builds the stores, refreshes them after a merge lands, and ends cleanly on
-    SIGTERM."""
+def start_watch(system):
+    """egraph watch on the system's store, and a queue of its log lines."""
     playground, store, builder, _ = system
     process = subprocess.Popen(
         [
@@ -192,6 +201,20 @@ def test_watch_refreshes_once_a_change_settles_and_stops_on_sigterm(system):
     threading.Thread(
         target=lambda: [lines.put(line) for line in process.stderr], daemon=True
     ).start()
+    return process, lines
+
+
+def stop(process):
+    if process.poll() is None:
+        process.kill()
+        process.wait()
+
+
+def test_watch_refreshes_once_a_change_settles_and_stops_on_sigterm(system):
+    """egraph watch builds the stores, refreshes them after a merge lands, and ends cleanly on
+    SIGTERM."""
+    playground = system[0]
+    process, lines = start_watch(system)
     try:
         assert "egraph: watch: watching " in lines.get(timeout=120)
         assert len(builds(system)) == 1
@@ -204,9 +227,77 @@ def test_watch_refreshes_once_a_change_settles_and_stops_on_sigterm(system):
         process.send_signal(signal.SIGTERM)
         assert process.wait(timeout=30) == 0
     finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait()
+        stop(process)
+
+
+def status(system):
+    path = system[1].parent / "status.json"
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def settings(system, text):
+    path = os.path.join(system[0].eroot, "etc/egraph/egraph.conf")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(text)
+
+
+def test_watch_writes_the_plan_to_the_status_file_after_each_refresh(updates_system):
+    system = updates_system
+    playground = system[0]
+    repository, other = sorted(playground.settings.repositories, key=lambda r: r.name)
+    os.makedirs(os.path.join(repository.location, "metadata"), exist_ok=True)
+    with open(os.path.join(repository.location, "metadata/timestamp.chk"), "w") as f:
+        f.write("Tue, 06 Oct 2026 18:46:01 +0000\n")
+    process, lines = start_watch(system)
+    try:
+        assert "egraph: watch: watching " in lines.get(timeout=120)
+        first = status(system)
+        assert first["command"] == "updates --world -D -N --held"
+        updates = egraph(system, *first["command"].split())
+        assert first["lines"] == updates.stdout.splitlines() != []
+        assert sorted(first["repositories"], key=lambda r: r["name"]) == [
+            {"name": repository.name, "synced": 1791312361},
+            {"name": other.name},
+        ]
+        assert first["counts"]["upgrades"] == sum(
+            line.split("\t")[1] == "upgrade" for line in first["lines"]
+        )
+        add_package(playground, "dev-libs/alt-b-1")
+        assert "egraph: watch: refreshed in " in lines.get(timeout=120)
+        second = status(system)
+        assert second["stores"]["installed"] > first["stores"]["installed"]
+        assert (
+            second["lines"]
+            == egraph(system, *first["command"].split()).stdout.splitlines()
+        )
+        process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=30) == 0
+    finally:
+        stop(process)
+
+
+def test_watch_plans_after_merges_only_as_the_settings_say(system):
+    """plan = sync leaves the plan of before a merge; plan = never makes none."""
+    settings(system, "plan = sync\n")
+    process, lines = start_watch(system)
+    try:
+        assert "egraph: watch: watching " in lines.get(timeout=120)
+        before = status(system)
+        assert before is not None
+        add_package(system[0], "dev-libs/alt-b-1")
+        assert "egraph: watch: refreshed in " in lines.get(timeout=120)
+        assert status(system) == before
+    finally:
+        stop(process)
+    os.remove(system[1].parent / "status.json")
+    settings(system, "plan = never\n")
+    process, lines = start_watch(system)
+    try:
+        assert "egraph: watch: watching " in lines.get(timeout=120)
+        assert status(system) is None
+    finally:
+        stop(process)
 
 
 def test_a_refresh_right_after_a_change_writes_a_store_that_stays_current(system):
@@ -225,17 +316,7 @@ def test_a_refresh_right_after_a_change_writes_a_store_that_stays_current(system
 @pytest.fixture
 def repository_system(mutable_playground, tmp_path):
     """The repository scenario, whose www-apps cps are in no store until asked for."""
-    playground = mutable_playground("repository")
-    age(playground.eroot)
-    log = tmp_path / "builds"
-    builder = tmp_path / "egraph-build"
-    builder.write_text(
-        "#!/bin/sh\n"
-        f'echo "$@" >> "{log}"\n'
-        f'PYTHONPATH="{BUILDER_DIR}:{PORTAGE_LIB}" exec "{sys.executable}" -m egraph_build "$@"\n'
-    )
-    builder.chmod(0o755)
-    return playground, tmp_path / "installed.egraph", builder, log
+    return scenario_system(mutable_playground, tmp_path, "repository")
 
 
 def in_repository(system, *args):

@@ -1076,7 +1076,14 @@ Keep the stores and the repository index fresh until stopped (SIGTERM, SIGINT or
 directories holding what they were built from are watched, and once changes to them have
 settled (3 seconds without another, or a minute after the first), they are refreshed as
 .B refresh
-does. A refresh that fails is logged and tried again on the next change. The
+does. A refresh that fails is logged and tried again on the next change. After a refresh, as
+the
+.B plan
+setting says, the updates are planned as
+.B "updates \-\-world \-D \-N \-\-held"
+plans them and written to
+.I status.json
+beside the store. The
 .B egraphd
 service runs it as the
 .B egraph
@@ -1137,6 +1144,14 @@ starts a comment):
 .TP
 .BI history_days " days"
 How long generations of the system store are kept (default 90); 0 keeps none.
+.TP
+.BR plan " " refresh | sync | never
+After which refreshes
+.B watch
+plans the updates for
+.IR status.json :
+each (the default), only those after a sync or a configuration edit (the repository index
+rebuilt), or none.
 .RE
 .TP
 .I ${ROOT}${EPREFIX}/var/lib/egraph
@@ -1168,6 +1183,34 @@ beside it; written by root, or by the
 user the
 .B egraphd
 service runs as.
+.TP
+.I ${ROOT}${EPREFIX}/var/cache/egraph/status.json
+The updates
+.B watch
+last planned, beside the store it refreshed: a JSON object with the
+.B command
+planned
+.RB ( "updates \-\-world \-D \-N \-\-held" ),
+its output's
+.BR lines ,
+the
+.B counts
+of
+.BR upgrades ", " downgrades ", " rebuilds ", " new ", " held ", " uninstalls " and " masked
+packages and whether emerge
+.BR refused
+the plan, each repository's
+.B name
+and the time its snapshot was
+.B synced
+(from its
+.IR metadata/timestamp.chk ,
+none without one), the build times of the
+.B stores
+it was planned from (in nanoseconds), when it was
+.BR written ,
+and its
+.BR format .
 .TP
 .I ${XDG_CACHE_HOME}/egraph/installed.egraph
 The store of a user who cannot write the system store, used while the system store is not

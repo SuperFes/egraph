@@ -927,7 +927,20 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     system just after), else as kept now. As lines, the log's JSON objects as it holds them.
 - 17d: the precomputed plan: after each refresh, `-uDN @world` planned once and a small status
   file written (updates, rebuilds, held, security, the last sync's age), which the living app
-  opens on and a status bar reads without running anything.
+  opens on and a status bar reads without running anything. Decided with the user
+  (2026-10-06): when is a setting, `plan = refresh | sync | never`, every refresh by default
+  (1.3 s and 36 MB for the dev box's 152 updates).
+  - 17d1 (done): `watch` writes `status.json` beside the store it refreshed: the output of
+    `updates --world -D -N --held` as lines, the counts (upgrades, downgrades, rebuilds, new,
+    held, uninstalls, masked, refused), each repository's snapshot time (`metadata/timestamp.chk`,
+    as `emerge --info` shows it; none for a plain git checkout) and the build times of the three
+    stores it was planned from, so a reader can tell it from a current one. Planned again when
+    those differ from the file's (`sync`: only the repository index's, rebuilt by a sync or a
+    configuration edit, not by a merge). Skipped where the user cannot write; never fails a
+    refresh. Security waits for 17e's GLSA matching.
+  - 17d2: `egraph status`, reading it without planning: a summary on a terminal, `key\tvalue`
+    lines piped, `--json`; `--update` plans and writes it now, for systems without the service.
+  - 17d3: the interface opens on the stored plan while it is current.
 - 17e: notifications, moved here from step 20: GLSAs matched against the store, a stale sync,
   broken soname dependencies after a merge, unread news, masked installed packages; in the
   status file and the log, and on the desktop through a user-side `egraph notify` (the service

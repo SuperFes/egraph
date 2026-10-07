@@ -35,6 +35,7 @@
 #include "schedule.hpp"
 #include "selection.hpp"
 #include "session.hpp"
+#include "status.hpp"
 #include "steve.hpp"
 #include "store.hpp"
 #include "tui.hpp"
@@ -311,6 +312,8 @@ watch_all(std::span<const std::filesystem::path> directories, std::size_t& unrea
     return std::move(*watcher);
 }
 
+std::optional<std::string> refresh_status(Session& session, const Invocation& invocation);
+
 Exit execute(const Watch&, Session& session, const Invocation& invocation, std::ostream&,
              std::ostream& err) {
     if (const auto caught = os::catch_stop_signals(); !caught) {
@@ -335,6 +338,9 @@ Exit execute(const Watch&, Session& session, const Invocation& invocation, std::
         const std::array<std::span<const Input>, 3> layers{
             stores->get().installed.inputs, stores->get().evaluated.inputs, index->get().inputs};
         auto directories = watch_directories(layers);
+        if (const auto error = refresh_status(session, invocation)) {
+            err << "egraph: watch: " << *error << '\n';
+        }
         // Nothing reads them until the next refresh.
         session.reload();
         const auto took = std::chrono::duration<double>(Clock::now() - started).count();
@@ -1430,6 +1436,82 @@ Exit execute(const Updates& command, Session& session, const Invocation& invocat
     return offer_use_changes(
         status, plan, store, evaluated, session, invocation, out, err,
         [&](const Invocation& again) { return execute(command, session, again, out, err); });
+}
+
+// With the session's stores just refreshed, the updates planned and written to the status file
+// beside them when the settings ask for it then; why not, when that failed. Skipped where this
+// user cannot write.
+std::optional<std::string> refresh_status(Session& session, const Invocation& invocation) {
+    const auto path = status_path(session.used());
+    if (!os::can_create(path)) {
+        return std::nullopt;
+    }
+    const auto settings = read_settings(settings_path(config_root(invocation)));
+    if (!settings) {
+        return settings.error() + ", so no plan is made";
+    }
+    const auto stores = session.stores();
+    if (!stores) {
+        return stores.error();
+    }
+    const auto index = session.repository();
+    if (!index) {
+        return index.error();
+    }
+    const StatusStores now{.installed = stores->get().installed.meta.build_time_ns,
+                           .evaluated = stores->get().evaluated.meta.build_time_ns,
+                           .repository = index->get().meta.build_time_ns};
+    std::optional<StatusStores> recorded;
+    if (const auto bytes = read_file(path)) {
+        std::string text(bytes->size(), '\0');
+        std::ranges::transform(*bytes, text.begin(),
+                               [](std::byte b) { return static_cast<char>(b); });
+        if (const auto old = parse_status(text)) {
+            recorded = old->stores;
+        }
+    }
+    if (!status_due(settings->plan, recorded, now)) {
+        return std::nullopt;
+    }
+    auto lines_invocation = invocation;
+    lines_invocation.layout = Layout::lines;
+    Updates command;
+    command.rebuilds = UseRebuilds::all;
+    command.held = true;
+    command.world = true;
+    command.deep = true;
+    std::ostringstream out;
+    std::ostringstream err;
+    const auto shown = show_updates(command, session, lines_invocation, out, err);
+    if (!shown) {
+        auto message = std::move(err).str();
+        while (message.ends_with('\n')) {
+            message.pop_back();
+        }
+        return std::format("no plan for the status file: {}", message);
+    }
+    Status status{.written =
+                      std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()),
+                  .stores = now,
+                  .counts = plan_counts(shown->plan),
+                  .repositories = {},
+                  .lines = {}};
+    const auto& repository_index = index->get();
+    for (const auto& repository : repository_index.repositories) {
+        const auto location = repository_index.string(repository.location);
+        status.repositories.push_back(
+            {.name = std::string{repository_index.string(repository.name)},
+             .synced = repository_synced(std::string{location})});
+    }
+    for (const auto line : std::views::split(std::move(out).str(), '\n')) {
+        if (!line.empty()) {
+            status.lines.emplace_back(line.begin(), line.end());
+        }
+    }
+    if (const auto written = os::replace_with_text(path, status_json(status)); !written) {
+        return std::format("cannot write {}: {}", path.string(), written.error().message());
+    }
+    return std::nullopt;
 }
 
 // The request the targets name, the cps only the repositories know evaluated first.

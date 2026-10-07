@@ -17,10 +17,15 @@
 
 namespace egraph {
 
+// After which refreshes egraph watch plans the updates for the status file: each, those that
+// rebuilt the repository index (a sync or a configuration edit), or none.
+enum class PlanWhen : std::uint8_t { refresh, sync, never };
+
 // egraph's settings, from ${PORTAGE_CONFIGROOT}/etc/egraph/egraph.conf.
 struct Settings {
     // How many days of generations to keep; 0 keeps none.
     int history_days = 90;
+    PlanWhen plan = PlanWhen::refresh;
 };
 
 // "key = value" lines, blank lines and "#" comments skipped. An error names the line of an
