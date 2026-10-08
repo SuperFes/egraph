@@ -7,6 +7,7 @@ import subprocess
 
 import pytest
 from portage.dep import Atom
+from portage.versions import cpv_getkey
 
 from conftest import portdb, write_index, write_stores
 
@@ -297,8 +298,9 @@ def test_candidates_use_is_emerges(scenario):
     not EGRAPH, reason="set EGRAPH to the egraph binary (meson test does)"
 )
 def test_use_shows_what_emerge_would_build_and_what_is_installed(scenario, tmp_path):
-    """Without --all: per cp and slot the best visible version, of one version the repository
-    portage puts first, and every installed version's own ebuild."""
+    """Without --all: the installed versions' own ebuilds, the best visible version of each
+    installed slot (what an update builds) and of each cp (what emerge <cp> picks), of one
+    version the one of the repository portage puts first."""
     from portage.versions import vercmp
 
     path = tmp_path / "installed.egraph"
@@ -312,18 +314,33 @@ def test_use_shows_what_emerge_would_build_and_what_is_installed(scenario, tmp_p
         (cpv, scenario.vardb.aux_get(cpv, ["repository"])[0])
         for cpv in scenario.vardb.cpv_all()
     }
-    best = {}
-    for c in layer.candidates():
-        if c.reasons:
-            continue
-        version, key = c.cpv[len(c.cp) + 1 :], f"{c.cpv}::{c.repo}"
-        held = best.get((c.cp, c.slot))
-        newer = 1 if held is None else vercmp(version, held[0])
-        if newer > 0 or (newer == 0 and order.index(c.repo) < order.index(held[1])):
-            best[(c.cp, c.slot)] = (version, c.repo, key)
-    expected = {key for _, _, key in best.values()} | {
-        f"{c.cpv}::{c.repo}" for c in layer.candidates() if (c.cpv, c.repo) in installed
+    installed_slots = {
+        (cpv_getkey(cpv), scenario.vardb.aux_get(cpv, ["SLOT"])[0].split("/")[0])
+        for cpv in scenario.vardb.cpv_all()
     }
+
+    def best_of(group):
+        best = {}
+        for c in layer.candidates():
+            if c.reasons:
+                continue
+            version, key = c.cpv[len(c.cp) + 1 :], f"{c.cpv}::{c.repo}"
+            held = best.get(group(c))
+            newer = 1 if held is None else vercmp(version, held[0])
+            if newer > 0 or (newer == 0 and order.index(c.repo) < order.index(held[1])):
+                best[group(c)] = (version, c.repo, key)
+        return best
+
+    by_slot = best_of(lambda c: (c.cp, c.slot))
+    expected = (
+        {key for slot, (_, _, key) in by_slot.items() if slot in installed_slots}
+        | {key for _, _, key in best_of(lambda c: c.cp).values()}
+        | {
+            f"{c.cpv}::{c.repo}"
+            for c in layer.candidates()
+            if (c.cpv, c.repo) in installed
+        }
+    )
     result = subprocess.run(
         [EGRAPH, "--store", str(path), "--no-refresh", "use", "*/*"],
         capture_output=True,
@@ -334,6 +351,23 @@ def test_use_shows_what_emerge_would_build_and_what_is_installed(scenario, tmp_p
     # An ebuild without flags lists none.
     with_flags = {f"{c.cpv}::{c.repo}" for c in layer.candidates() if c.iuse or c.use}
     assert shown == expected & with_flags
+
+
+@pytest.mark.skipif(
+    not EGRAPH, reason="set EGRAPH to the egraph binary (meson test does)"
+)
+def test_use_leaves_out_slots_nothing_is_installed_in(playgrounds, tmp_path):
+    """sources-1 and -2 are installed and -3 is what emerge picks; slot 0 has neither."""
+    path = tmp_path / "installed.egraph"
+    write_stores(playgrounds("world-slots"), path)
+    result = subprocess.run(
+        [EGRAPH, "--store", str(path), "--no-refresh", "use", "sys-kernel/sources"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    shown = sorted({line.split("\t")[0] for line in result.stdout.splitlines()})
+    assert shown == [f"sys-kernel/sources-{v}::test_repo" for v in (1, 2, 3)]
 
 
 @pytest.mark.skipif(

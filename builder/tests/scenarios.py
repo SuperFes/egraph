@@ -1258,6 +1258,7 @@ SCENARIOS = {
             "app-misc/needs",
         ],
         "ebuilds": {
+            "sys-kernel/sources-0": {"EAPI": "8", "SLOT": "0", "IUSE": "symlink"},
             "sys-kernel/sources-1": {"EAPI": "8", "SLOT": "1", "IUSE": "symlink"},
             "sys-kernel/sources-2": {"EAPI": "8", "SLOT": "2", "IUSE": "symlink"},
             "sys-kernel/sources-3": {"EAPI": "8", "SLOT": "3", "IUSE": "symlink"},

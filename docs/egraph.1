@@ -229,8 +229,8 @@ matches, an atom as configuration files take it, wildcards and all
 .RI ( */* " for every ebuild), and where it was last set:"
 .IR file : line ,
 or the layer of a package's own (its IUSE default, RESTRICT=test, FEATURES=test, ARCH).
-The ebuilds are what emerge would build, the best visible version of each slot, and the
-installed versions' own.
+The ebuilds are the installed versions' own and what emerge would build: the best visible
+version of each installed slot, as an update does, and of the package, as naming it does.
 Flags are shown as emerge shows them: off with a
 .BR \- ,
 masked or forced in parentheses; USE_EXPAND flags under their variable.

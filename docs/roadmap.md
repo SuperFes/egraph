@@ -1052,8 +1052,9 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
   repository's own `use.force` and `use.mask` (`docs/upstream-notes.md`), fixed first.
 - 18d (done): `egraph use <pkg> [flag]`: each flag's state and its stack, `file:line` per step.
   Decided with the user (2026-10-07): a table per ebuild, USE_EXPAND flags grouped; what emerge
-  would build (the best visible version of each slot) and the installed versions' own, `--all`
-  for every one; a flag named, every step that set it in the order applied.
+  would build (the best visible version of each installed slot and of the package) and the
+  installed versions' own, `--all` for every one; a flag named, every step that set it in the
+  order applied.
 - 18e: `egraph config check`: entries matching nothing (dead) or nothing installed, flags outside
   the IUSE of all they match, keywords accepted without the entry, masks and unmasks that change
   nothing, entries contradicting each other; the other `package.*` files join the ledger.

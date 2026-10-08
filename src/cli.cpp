@@ -1116,9 +1116,10 @@ std::string step_place(const Evaluated& evaluated, const UseStep& step) {
     return std::format("{}:{}", file, entry.line);
 }
 
-// The candidates `use` shows: what emerge would build (the best visible version of each slot,
-// of one version the one of the repository priority puts first) and the installed versions' own
-// ebuilds; with all, every one the atom matches. priority(repo) ranks a repository, lower first.
+// The candidates `use` shows: the installed versions' own ebuilds and the best visible version
+// of each installed slot (what an update builds) and of each cp (what emerge <cp> picks), of one
+// version the one of the repository priority puts first; with all, every one the atom matches.
+// priority(repo) ranks a repository, lower first.
 template <class Priority>
 std::vector<std::size_t> use_candidates(const Store& installed, const Evaluated& evaluated,
                                         const Atom& atom, bool all, const Priority& priority) {
@@ -1142,30 +1143,46 @@ std::vector<std::size_t> use_candidates(const Store& installed, const Evaluated&
         const auto cpv = evaluated.string(candidate.cpv);
         return parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1))).value_or(Version{});
     };
+    // The first of the best visible versions among those same_group(other) admits.
+    const auto best_in = [&](std::size_t i, const auto& same_group) {
+        const auto& candidate = evaluated.candidates.at(i);
+        return candidate.visible() && std::ranges::none_of(matched, [&](std::size_t j) {
+                   const auto& other = evaluated.candidates.at(j);
+                   if (j == i || !other.visible() || other.cp != candidate.cp ||
+                       !same_group(other)) {
+                       return false;
+                   }
+                   const auto order = vercmp(version_of(other), version_of(candidate));
+                   if (order != 0) {
+                       return order > 0;
+                   }
+                   const auto ranks = std::pair{priority(evaluated.string(other.repo)),
+                                                priority(evaluated.string(candidate.repo))};
+                   return ranks.first < ranks.second || (ranks.first == ranks.second && j < i);
+               });
+    };
     std::vector<std::size_t> shown;
     for (const auto i : matched) {
         const auto& candidate = evaluated.candidates.at(i);
-        const bool is_installed = std::ranges::any_of(installed.packages, [&](const Package& pkg) {
-            return installed.string(pkg.cpv) == evaluated.string(candidate.cpv) &&
-                   installed.string(pkg.repo) == evaluated.string(candidate.repo);
-        });
-        // The first of the best visible versions in its cp and slot.
-        const bool best =
-            candidate.visible() && std::ranges::none_of(matched, [&](std::size_t j) {
-                const auto& other = evaluated.candidates.at(j);
-                if (j == i || !other.visible() || other.cp != candidate.cp ||
-                    evaluated.string(other.slot) != evaluated.string(candidate.slot)) {
-                    return false;
-                }
-                const auto order = vercmp(version_of(other), version_of(candidate));
-                if (order != 0) {
-                    return order > 0;
-                }
-                const auto ranks = std::pair{priority(evaluated.string(other.repo)),
-                                             priority(evaluated.string(candidate.repo))};
-                return ranks.first < ranks.second || (ranks.first == ranks.second && j < i);
-            });
-        if (best || is_installed) {
+        const auto cpv = evaluated.string(candidate.cpv);
+        const auto cp = evaluated.string(candidate.cp);
+        const auto slot = evaluated.string(candidate.slot);
+        bool is_installed = false;
+        bool slot_installed = false;
+        for (const auto& pkg : installed.packages) {
+            if (installed.string(pkg.cp) != cp) {
+                continue;
+            }
+            slot_installed = slot_installed || installed.string(pkg.slot) == slot;
+            is_installed =
+                is_installed || (installed.string(pkg.cpv) == cpv &&
+                                 installed.string(pkg.repo) == evaluated.string(candidate.repo));
+        }
+        const auto any = [](const Candidate&) { return true; };
+        const auto same_slot = [&](const Candidate& other) {
+            return evaluated.string(other.slot) == slot;
+        };
+        if (is_installed || best_in(i, any) || (slot_installed && best_in(i, same_slot))) {
             shown.push_back(i);
         }
     }
