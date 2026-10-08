@@ -219,7 +219,9 @@ def _setcpv(settings, cpv, metadata, portdb):
     """
     from portage.versions import _pkg_str
 
-    settings.setcpv(cpv, mydb=metadata)
+    from egraph_build import ebuild
+
+    ebuild.set_ebuild(settings, cpv, metadata)
     settings.mycpv = _pkg_str(cpv, metadata=metadata, settings=settings, db=portdb)
 
 

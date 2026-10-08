@@ -3,7 +3,6 @@ to what portage loaded."""
 
 import os
 import re
-
 from portage.dep import Atom
 
 from conftest import portdb
@@ -192,7 +191,7 @@ def test_candidates_carry_their_own_layers(playgrounds):
     by_cpv = {c.cpv: c for c in layer.candidates()}
     assert by_cpv["app-misc/a-1"].stable
     assert not by_cpv["app-misc/a-2"].stable
-    assert by_cpv["app-misc/a-1"].internal == ("idefault",)
+    assert by_cpv["app-misc/a-1"].internal == ("idefault", "repomasked")
     assert by_cpv["app-misc/b-1"].features == ("test",)
     assert by_cpv["app-misc/c-1"].internal == ("idefault", "-test")
     assert by_cpv["app-misc/c-1"].features == ("test",)
@@ -207,3 +206,37 @@ def test_make_conf_linked_from_etc_is_read_once(tmp_path):
     (tmp_path / "etc" / "make.conf").symlink_to("portage/make.conf")
     files = ledger._make_conf_files({"PORTAGE_CONFIGROOT": str(tmp_path)})
     assert files == [str(tmp_path / "etc" / "make.conf")]
+
+
+def test_candidates_use_is_emerges(scenario):
+    """Each candidate's USE and forced flags as emerge's Package has them, its repository's own
+    profile files included (setcpv given a cpv string leaves those out)."""
+    from _emerge.Package import Package
+
+    db = portdb(scenario)
+    root_config = scenario.trees[scenario.eroot]["root_config"]
+    layer, _ = evaluated.rebuild(scenario.vardb, db, None, None)
+    wrong = []
+    for c in layer.candidates():
+        if c.reasons:
+            continue
+        keys = list(Package.metadata_keys)
+        metadata = dict(zip(keys, db.aux_get(c.cpv, keys, myrepo=c.repo)))
+        metadata["repository"] = c.repo
+        pkg = Package(
+            built=False,
+            cpv=c.cpv,
+            installed=False,
+            metadata=metadata,
+            root_config=root_config,
+            type_name="ebuild",
+        )
+        iuse = set(c.iuse)
+        use = sorted(pkg.use.enabled)
+        forced = sorted(iuse & (pkg.use.force | pkg.use.mask))
+        if use != sorted(c.use) or forced != sorted(c.forced):
+            wrong.append(
+                f"{c.cpv}::{c.repo}: emerge {use} {forced}, "
+                f"builder {sorted(c.use)} {sorted(c.forced)}"
+            )
+    assert not wrong, "\n".join(wrong)

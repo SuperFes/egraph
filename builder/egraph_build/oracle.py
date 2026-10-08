@@ -239,8 +239,11 @@ def effective_use(portdb, cpv):
     """The flags cpv's ebuild would be built with now, within its IUSE."""
     from portage.package.ebuild.config import config
 
+    from egraph_build import ebuild, evaluated
+
     settings = config(clone=portdb.settings)
-    settings.setcpv(cpv, mydb=portdb)
+    keys = list(evaluated._CANDIDATE_KEYS)
+    ebuild.set_ebuild(settings, cpv, dict(zip(keys, portdb.aux_get(cpv, keys))))
     return tuple(sorted(settings["PORTAGE_USE"].split()))
 
 
@@ -276,11 +279,13 @@ def use_toggles(vardb, portdb, cpv):
     masks (for a flag that is off) or forces (for a flag that is on)."""
     from portage.package.ebuild.config import config
 
+    from egraph_build import ebuild, evaluated
+
     use, repo = vardb.aux_get(cpv, ["USE", "repository"])
-    keys = ["EAPI", "IUSE", "KEYWORDS", "SLOT", "repository"]
+    keys = list(evaluated._CANDIDATE_KEYS)
     metadata = dict(zip(keys, portdb.aux_get(cpv, keys, myrepo=repo or None)))
     settings = config(clone=portdb.settings)
-    settings.setcpv(cpv, mydb=metadata)
+    ebuild.set_ebuild(settings, cpv, metadata)
     enabled = frozenset(use.split())
     toggles = []
     for flag in sorted({flag.lstrip("+-") for flag in metadata["IUSE"].split()}):

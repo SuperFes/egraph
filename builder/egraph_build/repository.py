@@ -10,7 +10,7 @@ import json
 import os
 from typing import NamedTuple
 
-from egraph_build import evaluated, masks
+from egraph_build import ebuild, evaluated, masks
 
 # What a version record holds of the ebuild's metadata, and what its validity is checked on.
 KEYS = tuple(
@@ -132,6 +132,8 @@ class UseReader:
     def __init__(self, portdb):
         self._portdb = portdb
         self._settings = None
+        # The package setcpv last saw, kept alive (see ebuild.set_ebuild).
+        self._current = None
 
     def use(self, cpv, repo):
         """The USE the ebuild would be built with now, as portdbapi's _visible takes it."""
@@ -146,7 +148,7 @@ class UseReader:
             )
         except KeyError:
             return set()
-        self._settings.setcpv(cpv, mydb=metadata)
+        self._current = ebuild.set_ebuild(self._settings, cpv, metadata)
         return set(self._settings["PORTAGE_USE"].split())
 
 

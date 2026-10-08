@@ -16,7 +16,7 @@ from portage.eapi import _get_eapi_attrs
 from portage.exception import InvalidAtom, InvalidDependString
 from portage.versions import cpv_getkey
 
-from egraph_build import dynamic, installed, ledger, masks
+from egraph_build import dynamic, ebuild, installed, ledger, masks
 from egraph_build.model import DEP_KINDS
 from egraph_build.profile import has_iuse_effective
 
@@ -237,8 +237,7 @@ class EbuildUse:
     def __init__(self, portdb):
         self._portdb = portdb
         self._settings = None
-        # setcpv skips a call whose cpv and metadata id() match its previous call's, so the dict
-        # it last saw stays alive until the next call rather than lend its id to another.
+        # The package setcpv last saw, kept alive (see ebuild.set_ebuild).
         self._current = None
         # (cpv, repo): (IUSE, masked, forced)
         self._states = {}
@@ -262,8 +261,7 @@ class EbuildUse:
                 self._portdb.aux_get(cpv, list(_CANDIDATE_KEYS), myrepo=repo or None),
             )
         )
-        self._settings.setcpv(cpv, mydb=metadata)
-        self._current = metadata
+        self._current = ebuild.set_ebuild(self._settings, cpv, metadata)
         self.record(cpv, repo, _iuse(metadata), self._settings)
         return self._settings
 
@@ -519,8 +517,7 @@ def read_candidates(portdb, settings, cp, installed_cpvs, match, ebuild_use=None
     from portage.package.ebuild.getmaskingstatus import getmaskingstatus
 
     found = []
-    # setcpv skips a call whose cpv and metadata id() match its previous call's, so the dict
-    # it last saw stays alive until the next call rather than lend its id to another.
+    # The package setcpv last saw, kept alive (see ebuild.set_ebuild).
     current = None
     for repo in portdb.getRepositories():
         listed = portdb.cp_list(cp, mytree=portdb.getRepositoryPath(repo))
@@ -552,8 +549,7 @@ def read_candidates(portdb, settings, cp, installed_cpvs, match, ebuild_use=None
                     reasons += tuple(found_reasons) or ("not visible",)
             except KeyError:
                 continue
-            settings.setcpv(cpv, mydb=metadata)
-            current = metadata
+            current = ebuild.set_ebuild(settings, cpv, metadata)
             layers = ledger.package_layers(settings)
             iuse = _iuse(metadata)
             if ebuild_use is not None and cpv in installed_cpvs:

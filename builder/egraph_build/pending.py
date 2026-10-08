@@ -54,7 +54,13 @@ def _metadata(entry, portdb, bindb):
 def _use(entry, metadata, settings, portdb):
     if entry.kind == "binary":
         return frozenset(metadata["USE"].split())
-    settings.setcpv(entry.cpv, mydb=portdb)
+    from egraph_build import ebuild, evaluated
+
+    keys = list(evaluated._CANDIDATE_KEYS)
+    # The ebuild portdb picks, as setcpv given portdb would: the same for the same cpv.
+    ebuild.set_ebuild(
+        settings, entry.cpv, dict(zip(keys, portdb.aux_get(entry.cpv, keys)))
+    )
     return frozenset(settings["PORTAGE_USE"].split())
 
 

@@ -198,6 +198,7 @@ python.install_sources(
     'builder/egraph_build/build.py',
     'builder/egraph_build/cli.py',
     'builder/egraph_build/dynamic.py',
+    'builder/egraph_build/ebuild.py',
     'builder/egraph_build/evaluated.py',
     'builder/egraph_build/installed.py',
     'builder/egraph_build/kernel.py',

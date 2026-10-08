@@ -36,7 +36,7 @@ TOP_1 = "dev-libs/b dev-libs/d dev-libs/i dev-libs/r dev-libs/post app-misc/via"
 LEDGER_IUSE = " ".join(
     (
         "+idefault pdefault pminus pmask umask pforce pkgflag masked conf glob user slotflag",
-        "exact more ranged stableflag stablemasked stableforced",
+        "exact more ranged stableflag stablemasked stableforced repoforced +repomasked",
         "video_cards_vesa video_cards_intel video_cards_radeon video_cards_nvidia",
         "linguas_en linguas_de",
     )
@@ -1453,7 +1453,8 @@ SCENARIOS = {
     # Every source of a flag's state, for the USE ledger and its stacking: a profile of its own
     # (make.defaults with USE_EXPAND, stable files, specificity between package.use atoms), the
     # user's profile, make.conf replacing a USE_EXPAND variable, package.use in a directory with
-    # `*/*`, `VAR: -* x` and ties, package.env (`*/*` too) with FEATURES=test, and RESTRICT=test.
+    # `*/*`, `VAR: -* x` and ties, package.env (`*/*` too) with FEATURES=test, RESTRICT=test, and
+    # the repository's own profile files.
     "ledger": {
         "profile": {
             "eapi": ("9",),
@@ -1499,6 +1500,12 @@ SCENARIOS = {
             "etc/portage/env/everywhere.conf": ('USE="globalenv"',),
             "etc/portage/env/withenv.conf": ('USE="fromenv"', 'FEATURES="test"'),
             "etc/portage/env/withtest.conf": ('FEATURES="test"',),
+        },
+        "repo_configs": {
+            "test_repo": {
+                "use.mask": ("repomasked",),
+                "package.use.force": ("app-misc/a repoforced",),
+            }
         },
         "user_config": {
             "make.conf": ('USE="${USE} -pdefault linguas_*"', 'VIDEO_CARDS="radeon"'),

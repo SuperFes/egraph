@@ -36,6 +36,13 @@ Each commit passes the resolver suite on its own.
   so build-time dependencies stop weighing and a rebuild bound through DEPEND alone is dropped
   (`slotops`: `app-misc/ddep` under `-uDN`). `--verify` leaves the option out;
   `test_verified_updates_agree_with_emerge` runs the real emerge on every scenario.
+- `config.setcpv` given a cpv string and a metadata dict stacks the repository's USE layer
+  (`make.defaults`, `package.use`) but builds the cpv it matches `use.force`, `use.mask` and
+  their package and stable files against without its repository (`repository` is popped from
+  the metadata first), so an overlay's own masks and forces never apply; emerge passes a
+  `Package`, which has them (steam-overlay's `package.use.force` on `games-util/steam-launcher`).
+  The builder hands `setcpv` a stand-in for the Package (`ebuild.set_ebuild`);
+  `test_candidates_use_is_emerges` holds every candidate's USE to emerge's `Package`.
 
 ## Divergences from portage
 
