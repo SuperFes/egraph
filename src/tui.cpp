@@ -1314,6 +1314,7 @@ void App::handle(const Key& key) {
         // Back at the emerge view, whatever it shows is stale.
         if (pages_.empty() && !output_ && watched_) {
             watched_->due = true;
+            watched_->urgent = true;
         }
     } else if (listing_) {
         handle_listing(key);
@@ -1390,6 +1391,7 @@ void App::handle_dialog(const Key& key) {
         checked_.reset();
         if (watched_) {
             watched_->due = true;
+            watched_->urgent = true;
         } else {
             watched_.emplace();
         }
@@ -1584,6 +1586,7 @@ void App::handle_output(Output& output, const Key& key) {
         output_.reset();
         if (watched_) {
             watched_->due = true;
+            watched_->urgent = true;
         }
     } else if (key.kind == KeyKind::enter || key.kind == KeyKind::right || is(key, U'l')) {
         if (output.cursor.at < output.links.size()) {
@@ -1658,6 +1661,7 @@ void App::finish_watch(std::vector<emerge::Snapshot> snapshots, const pressure::
         watched.history.add(sample);
     }
     watched.due = false;
+    watched.urgent = false;
     ++watched.frame;
     const auto count = watch_rows(watched).size();
     watched.cursor.at = std::min(watched.cursor.at, count == 0 ? 0 : count - 1);
@@ -1722,6 +1726,7 @@ void App::finish_steve_change(const std::expected<void, std::string>& result) {
     watched_->change.reset();
     // Whatever steve made of it, show it.
     watched_->due = true;
+    watched_->urgent = true;
     if (!result) {
         show(
             {.error = true, .title = "stevie could not change it", .lines = lines(result.error())});

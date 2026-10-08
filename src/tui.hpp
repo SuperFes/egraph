@@ -375,7 +375,10 @@ inline constexpr std::chrono::milliseconds watch_interval{1000};
 // The emerge view: the running emerges as last read, and whether a read is due.
 struct Watched {
     std::vector<emerge::Snapshot> snapshots;
+    // A tick makes it due, read once watch_interval has passed since the last read; what shows
+    // it out of date makes it urgent, read at once.
     bool due = true;
+    bool urgent = true;
     // Reads so far, which turn the spinners.
     std::size_t frame = 0;
     pressure::History history;
@@ -2187,6 +2190,7 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
     };
     const bool watches = services.stale && services.refresh && app.shared();
     auto next_check = now() + stale_interval;
+    std::optional<std::chrono::steady_clock::time_point> next_watch;
     std::optional<Job<CheckResult>> check;
     std::optional<Job<RebuildResult>> rebuild;
     std::optional<Job<RefreshResult>> refresh;
@@ -2292,7 +2296,9 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
                 app.finish_dispatch_conf(exited);
                 read_status();
             }
-        } else if (app.watch_requested()) {
+        } else if (app.watch_requested() &&
+                   (app.watched()->urgent || !next_watch || now() >= *next_watch)) {
+            next_watch = now() + watch_interval;
             app.finish_watch(services.watch ? services.watch() : std::vector<emerge::Snapshot>{},
                              services.sample ? services.sample() : pressure::Sample{},
                              services.steve ? services.steve() : std::nullopt,
@@ -2317,6 +2323,12 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
             if (watches && !app.stale()) {
                 const auto due =
                     std::max(std::chrono::ceil<std::chrono::milliseconds>(next_check - now()),
+                             std::chrono::milliseconds{0});
+                timeout = timeout ? std::min(*timeout, due) : due;
+            }
+            if (app.watch_requested() && next_watch) {
+                const auto due =
+                    std::max(std::chrono::ceil<std::chrono::milliseconds>(*next_watch - now()),
                              std::chrono::milliseconds{0});
                 timeout = timeout ? std::min(*timeout, due) : due;
             }

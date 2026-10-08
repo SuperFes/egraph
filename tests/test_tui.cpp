@@ -959,6 +959,52 @@ TEST_CASE("durations, sizes, bars and spinners read at a glance") {
     CHECK(egraph::tui::spinner_frame(2, ascii) == "-");
 }
 
+namespace {
+
+// A clock a second on at each wait, as the emerge view's own wakes are.
+egraph::tui::Clock by_the_second(const FakeScreen& screen) {
+    return [&screen] {
+        return std::chrono::steady_clock::time_point{} +
+               egraph::tui::watch_interval * static_cast<int>(screen.timeouts.size());
+    };
+}
+
+} // namespace
+
+TEST_CASE("the emerge view reads once a second, however often the loop wakes") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    // Woken every 250 ms, as while a refresh runs.
+    std::deque keys{character(U'e')};
+    keys.insert(keys.end(), 7, key(KeyKind::tick));
+    FakeScreen screen{12, 140, keys};
+    int reads = 0;
+    int samples = 0;
+    egraph::tui::run(screen, app, ascii,
+                     {.watch =
+                          [&] {
+                              ++reads;
+                              return running_emerges();
+                          },
+                      .sample =
+                          [&] {
+                              ++samples;
+                              return egraph::pressure::Sample{.load = 1.0};
+                          },
+                      .now =
+                          [&screen] {
+                              return std::chrono::steady_clock::time_point{} +
+                                     std::chrono::milliseconds{250} *
+                                         static_cast<int>(screen.timeouts.size());
+                          }});
+    // At once on opening, then a second later; not on the ticks between.
+    CHECK(reads == 2);
+    CHECK(samples == 2);
+    REQUIRE(app.watched().has_value());
+    CHECK(app.watched()->history.readings().size() == 2);
+}
+
 TEST_CASE("e watches the running emerges, reading them again each second") {
     const auto store = sample();
     const auto graph = egraph::build_graph(store);
@@ -969,7 +1015,7 @@ TEST_CASE("e watches the running emerges, reading them again each second") {
         ++reads;
         return running_emerges();
     };
-    egraph::tui::run(screen, app, ascii, {.watch = watch});
+    egraph::tui::run(screen, app, ascii, {.watch = watch, .now = by_the_second(screen)});
     CHECK(reads == 3);
     REQUIRE(app.watched().has_value());
     CHECK(app.watched()->frame == 3);
@@ -1027,7 +1073,14 @@ TEST_CASE("a task opens the page of its installed version, and esc comes back") 
     CHECK_FALSE(app.watch_requested());
     app.handle(key(KeyKind::escape));
     CHECK(app.pages().empty());
+    // Out of date: read at once, not at the next second.
     CHECK(app.watch_requested());
+    CHECK(app.watched()->urgent);
+    app.finish_watch(running_emerges());
+    CHECK_FALSE(app.watched()->urgent);
+    app.handle(key(KeyKind::tick));
+    CHECK(app.watch_requested());
+    CHECK_FALSE(app.watched()->urgent);
     app.finish_watch(running_emerges());
 
     app.handle(key(KeyKind::down));
@@ -1437,7 +1490,8 @@ TEST_CASE("run reads the merge list each second and plans it once") {
                           ++plans;
                           CHECK(list.size() == 4);
                           return lib_waits;
-                      }});
+                      },
+                      .now = by_the_second(screen)});
     CHECK(reads == 3);
     CHECK(plans == 1);
     CHECK(contains(screen.text(), "waits for 1"));
