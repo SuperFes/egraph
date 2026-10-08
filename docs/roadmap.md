@@ -22,7 +22,7 @@ Update the status column as steps land.
 | 14 | Plans | done |
 | 15 | A system package | done |
 | 16 | Daily use in place of emerge | done |
-| 17 | `egraphd`, the service | planned |
+| 17 | `egraphd`, the service | done |
 | 18 | Explaining and checking the configuration | planned |
 | 19 | What-if | planned |
 | 20 | Build knowledge | planned |
