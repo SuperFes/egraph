@@ -262,6 +262,13 @@ Loaded<Stores> Session::stores() {
         [](const std::shared_ptr<const Stores>& stores) { return std::cref(*stores); });
 }
 
+Loaded<Stores> Session::untried_stores() {
+    if (auto both = shared_stores(); !both) {
+        return std::unexpected(std::move(both.error()));
+    }
+    return std::cref(*stores_);
+}
+
 std::expected<std::shared_ptr<const Stores>, std::string> Session::shared_stores() {
     if (!stores_) {
         auto loaded = open_current<Stores>(invocation_, warnings_.get(), used_, load_stores);

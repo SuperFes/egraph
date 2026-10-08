@@ -6,6 +6,7 @@
 #include "version.hpp"
 
 #include <algorithm>
+#include <array>
 #include <format>
 #include <fstream>
 #include <iterator>
@@ -494,6 +495,60 @@ std::vector<std::string> newly_reached(const Evaluated& before, const Evaluated&
         }
     }
     return {found.begin(), found.end()};
+}
+
+std::vector<std::string> tried_lines(std::span<const std::string> before,
+                                     std::span<const std::string> after) {
+    // A plan's merges by first field: kind, target, repo and flags, in its order.
+    struct Merge {
+        std::string first;
+        std::array<std::string, 4> fields;
+    };
+    const auto merges = [](std::span<const std::string> records) {
+        std::vector<Merge> found;
+        for (const auto& record : records) {
+            std::vector<std::string> fields;
+            std::size_t at = 0;
+            while (at <= record.size()) {
+                const auto end = std::min(record.find('\t', at), record.size());
+                fields.push_back(record.substr(at, end - at));
+                at = end + 1;
+            }
+            constexpr std::array<std::string_view, 5> kinds{"upgrade", "downgrade", "rebuild",
+                                                            "new", "new-slot"};
+            if (fields.size() < 4 || !std::ranges::contains(kinds, fields.at(1))) {
+                continue;
+            }
+            found.push_back({.first = fields.at(0),
+                             .fields = {fields.at(1), fields.at(2), fields.at(3),
+                                        fields.size() > 4 ? fields.at(4) : ""}});
+        }
+        return found;
+    };
+    const auto row = [](const Merge& merge, std::string_view change) {
+        const auto& [kind, target, repo, flags] = merge.fields;
+        return std::format("{}\ttried\t{}\t{}\t{}\t{}\t{}", merge.first, change, kind, target, repo,
+                           flags);
+    };
+    const auto was = merges(before);
+    const auto now = merges(after);
+    const auto find = [](const std::vector<Merge>& in, const std::string& first) {
+        return std::ranges::find(in, first, &Merge::first);
+    };
+    std::vector<std::string> found;
+    for (const auto& merge : now) {
+        if (const auto old = find(was, merge.first); old == was.end()) {
+            found.push_back(row(merge, "added"));
+        } else if (old->fields != merge.fields) {
+            found.push_back(row(merge, "changed"));
+        }
+    }
+    for (const auto& merge : was) {
+        if (find(now, merge.first) == now.end()) {
+            found.push_back(row(merge, "dropped"));
+        }
+    }
+    return found;
 }
 
 } // namespace egraph

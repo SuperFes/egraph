@@ -352,6 +352,31 @@ TEST_CASE("updates line up versions and repositories, and count each kind") {
     CHECK(none.str() == "+ Nothing to update.\n");
 }
 
+TEST_CASE("updates with lines tried mark what they add and change, then list what they drop") {
+    std::ostringstream out;
+    egraph::human_updates(
+        out,
+        std::vector<std::string>{
+            "app-misc/up-1\tupgrade\tapp-misc/up-10\ttest_repo",
+            "sys-devel/gcc-16\trebuild\tsys-devel/gcc-16\ttest_repo\t-nls*",
+            "app-misc/use-1\trebuild\tapp-misc/use-1\ttest_repo\ta*",
+            "app-misc/gone-1\ttried\tdropped\tupgrade\tapp-misc/gone-2\ttest_repo\t",
+            "sys-devel/gcc-16\ttried\tadded\trebuild\tsys-devel/gcc-16\ttest_repo\t-nls*",
+            "app-misc/use-1\ttried\tchanged\trebuild\tapp-misc/use-1\ttest_repo\ta*",
+        },
+        plain);
+    CHECK(out.str() == "  U app-misc/up    1  > 10  ::test_repo\n"
+                       "+ R sys-devel/gcc  16       ::test_repo  -nls*\n"
+                       "~ R app-misc/use   1        ::test_repo  a*\n"
+                       "- U app-misc/gone  1  > 2   ::test_repo  (dropped)\n"
+                       "\n1 upgrade, 2 rebuilds\n"
+                       "Tried: 1 more merge, 1 fewer, 1 changed, 2 rebuilt for USE\n"
+                       "\nflag* changed  flag% new in IUSE  (-flag%) gone from it\n");
+    std::ostringstream same;
+    egraph::human_updates(same, std::vector<std::string>{"\ttried\tnone"}, plain);
+    CHECK(same.str() == "+ Nothing to update.\n\nTried: the plan is the same\n");
+}
+
 TEST_CASE("held updates come once each, their holders under them") {
     std::ostringstream out;
     egraph::human_updates(

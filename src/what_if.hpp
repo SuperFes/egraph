@@ -49,4 +49,14 @@ with_what_if(Evaluated evaluated, const Store& installed, std::span<const WhatIf
 [[nodiscard]] std::vector<std::string> newly_reached(const Evaluated& before,
                                                      const Evaluated& tried);
 
+// What lines tried change in a plan, from update_lines' records (without a table) of the plan
+// made without them (before) and with them (after): per merge, by its first field (the installed
+// cpv it replaces, or a new package's cpv),
+// "first<TAB>tried<TAB>change<TAB>kind<TAB>target cpv<TAB>repo<TAB>flags", change added (only
+// after), dropped (only before, with before's fields) or changed (another kind, target, repo or
+// flags: a rebuild's flags, a new package's USE). The added and changed in after's order, then the
+// dropped in before's.
+[[nodiscard]] std::vector<std::string> tried_lines(std::span<const std::string> before,
+                                                   std::span<const std::string> after);
+
 } // namespace egraph

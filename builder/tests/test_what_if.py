@@ -141,6 +141,7 @@ def test_plans_with_flags_tried_are_emerges(name, mutable_playground, tmp_path):
     for file, text in lines:
         options += [f"--{file}", text]
     result = egraph(path, *options, "updates", "-D", check=False)
+    before = update.updates(trees, playground.eroot, changed_use=True, deep=True)
     save(playground, lines)
     _, changed = playground._load_config()
     expected = update.updates(changed, playground.eroot, changed_use=True, deep=True)
@@ -153,6 +154,37 @@ def test_plans_with_flags_tried_are_emerges(name, mutable_playground, tmp_path):
         return
     assert merged(result.stdout) == (expected.replaced, expected.rebuilt, expected.new)
     assert new_use(result.stdout) == expected.use
+    if not before.success or refuses(before):
+        return
+    assert tried_rows(result.stdout) == differences(before, expected)
+
+
+def tried_rows(text):
+    """{first field: change} from the tried rows of updates output."""
+    rows = [line.split("\t") for line in text.splitlines()]
+    return {
+        fields[0]: fields[2]
+        for fields in rows
+        if fields[1] == "tried" and fields[2] != "none"
+    }
+
+
+def differences(before, after):
+    """{installed or new cpv: change} between two of emerge's plans, as tried rows name them."""
+
+    def merges(plan):
+        found = dict(plan.replaced)
+        found.update((cpv, "rebuild") for cpv in plan.rebuilt)
+        found.update((cpv, ("new", plan.use.get(cpv, ""))) for cpv in plan.new)
+        return found
+
+    was, now = merges(before), merges(after)
+    found = {cpv: "added" for cpv in now.keys() - was.keys()}
+    found.update((cpv, "dropped") for cpv in was.keys() - now.keys())
+    found.update(
+        (cpv, "changed") for cpv in now.keys() & was.keys() if now[cpv] != was[cpv]
+    )
+    return found
 
 
 def site_updates(system, *options):
@@ -172,7 +204,8 @@ def test_what_a_tried_flag_reaches_is_evaluated_on_request(
     assert site_updates(system).stdout == ""
     result = site_updates(system, "--use", "app-misc/site web")
     assert result.returncode == 0, result.stderr
-    merges = {tuple(line.split("\t")[:3]) for line in result.stdout.splitlines()}
+    rows = [line.split("\t") for line in result.stdout.splitlines()]
+    merges = {tuple(fields[:3]) for fields in rows if fields[1] != "tried"}
     assert merges == {
         ("app-misc/site-1", "rebuild", "app-misc/site-1"),
         ("www-apps/server-1", "new", "www-apps/server-1"),

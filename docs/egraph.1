@@ -485,6 +485,18 @@ an unaccepted license, invalid metadata or an unsupported EAPI) and that its gra
 that a license masks, each with the reasons emerge gives and, for
 .IR package.mask ,
 the file and the comment above the entry, as emerge shows them (a comment once).
+With lines tried
+.RB ( \-\-use ", " \-\-env ),
+it ends with what they change against the same plan made without them: each merge they add,
+drop or change (another version, a rebuild's flags, a new package's USE), as the line
+.IB "cpv " tried " change kind target repo flags" ,
+or
+.B tried none
+when they change nothing. For people, the merges they add are marked
+.BR + ,
+those they change
+.BR ~ ,
+those they drop listed dimmed after the merges, and a line counts them.
 A merge whose dependency nothing satisfies, or an ebuild with invalid metadata, is passed over for
 another version, as emerge backtracks; when what emerge must merge has none left, the plan ends
 with the dependencies no visible version matches, and emerge refuses it too.

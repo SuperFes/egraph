@@ -279,3 +279,27 @@ TEST_CASE("a tried flag rebuilds an installed version as --newuse would, from it
     REQUIRE(pkg.own == 0U);
     CHECK(at(tried_newer, pkg.own_rebuild) == Strings{"x*"});
 }
+
+TEST_CASE("what lines tried change in a plan is each merge added, dropped or changed") {
+    const std::vector<std::string> before{
+        "cat/up-1\tupgrade\tcat/up-2\tgentoo",
+        "cat/gone-1\tupgrade\tcat/gone-2\tgentoo",
+        "cat/flags-1\trebuild\tcat/flags-1\tgentoo\tx*",
+        "cat/new-1\tnew\tcat/new-1\tgentoo\tUSE=\"a\"\tcat/up-2 cat/new",
+        "cat/held-1\theld\tcat/held-2\tgentoo\t\tcat/x-1 <cat/held-2",
+        "cat/x-1\tmasked\tgentoo\tpackage.mask"};
+    const std::vector<std::string> after{
+        "cat/up-1\tupgrade\tcat/up-2\tgentoo",
+        "cat/flags-1\trebuild\tcat/flags-1\tgentoo\tx* -y*",
+        "cat/gcc-1\trebuild\tcat/gcc-1\tgentoo\t-nls*",
+        "cat/new-1\tnew\tcat/new-1\tgentoo\tUSE=\"a b\"\tcat/up-2 cat/new",
+        "cat/server-1\tnew\tcat/server-1\tgentoo\t\tcat/gcc-1 cat/server",
+        "cat/held-1\theld\tcat/held-2\tgentoo\t\tcat/x-1 <cat/held-2"};
+    CHECK(egraph::tried_lines(before, after) ==
+          Strings{"cat/flags-1\ttried\tchanged\trebuild\tcat/flags-1\tgentoo\tx* -y*",
+                  "cat/gcc-1\ttried\tadded\trebuild\tcat/gcc-1\tgentoo\t-nls*",
+                  "cat/new-1\ttried\tchanged\tnew\tcat/new-1\tgentoo\tUSE=\"a b\"",
+                  "cat/server-1\ttried\tadded\tnew\tcat/server-1\tgentoo\t",
+                  "cat/gone-1\ttried\tdropped\tupgrade\tcat/gone-2\tgentoo\t"});
+    CHECK(egraph::tried_lines(before, before).empty());
+}

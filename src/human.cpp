@@ -1110,6 +1110,34 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
         places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
     }
+    // What lines tried change, taken off: the marks of the merges by first field, and the merges
+    // they drop, as merge rows.
+    std::map<std::string_view, std::string_view, std::less<>> tried;
+    std::vector<Fields> dropped;
+    bool trying = false;
+    // Merges added, changed, and of those rebuilds for USE.
+    std::size_t more = 0;
+    std::size_t changed = 0;
+    std::size_t for_use = 0;
+    for (std::size_t i = rows.size(); i-- > 0;) {
+        const auto& row = rows.at(i);
+        if (row.size() < 3 || row.at(1) != "tried") {
+            continue;
+        }
+        trying = true;
+        if (row.at(2) == "dropped" && row.size() > 6) {
+            dropped.push_back({row.at(0), row.at(3), row.at(4), row.at(5)});
+        } else if (row.at(2) != "none" && row.size() > 6) {
+            tried.emplace(row.at(0), row.at(2));
+            ++(row.at(2) == "added" ? more : changed);
+            if (row.at(3) == "rebuild" && !row.at(6).empty()) {
+                ++for_use;
+            }
+        }
+        rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
+        places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
+    }
+    std::ranges::reverse(dropped);
     // Uninstalls, blocks, unsatisfied dependencies and unmet REQUIRED_USE, taken off: they share
     // no columns with the merges.
     std::vector<Fields> uninstalls;
@@ -1155,14 +1183,16 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     std::size_t version_width = 0;
     // " > version" when any row moves to another version, so every repo lines up.
     std::size_t move_width = 0;
-    for (const auto& row : rows) {
+    const auto widen = [&](const Fields& row) {
         const auto parts = split_cpv(row.at(0));
         cp_width = std::max(cp_width, parts.category.size() + 1 + parts.name.size());
         version_width = std::max(version_width, parts.version.size());
         if (row.at(0) != row.at(2)) {
             move_width = std::max(move_width, 3 + split_cpv(row.at(2)).version.size());
         }
-    }
+    };
+    std::ranges::for_each(rows, widen);
+    std::ranges::for_each(dropped, widen);
     bool flags = false;
     bool fixed = false;
     // The package, its version and where it goes, its repository, and any flags.
@@ -1175,6 +1205,12 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         const auto old = split_cpv(row.at(0));
         const auto target = split_cpv(row.at(2));
         const auto cp = row.at(0).substr(0, old.category.size() + 1 + old.name.size());
+        if (trying) {
+            const auto change = is_held(row) ? tried.end() : tried.find(row.at(0));
+            out << (change == tried.end()       ? std::string{"  "}
+                    : change->second == "added" ? paint("+", Tone::good) + ' '
+                                                : paint("~", Tone::use) + ' ');
+        }
         out << paint(mark, tone) << ' ' << paint_cpv(cp, paint) << spaces(cp.size(), cp_width)
             << "  " << paint(old.version, Tone::version)
             << spaces(old.version.size(), version_width);
@@ -1282,7 +1318,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                 << '\n';
         }
         // emerge warns of masked installed packages with nothing to merge too.
-        if (counts.at(5) + unlisted == 0 && !refusals && masked.empty()) {
+        if (counts.at(5) + unlisted == 0 && !refusals && masked.empty() && !trying) {
             return;
         }
     }
@@ -1293,6 +1329,30 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                 put_row(index, glyph.added, Tone::good);
             }
         }
+    }
+    // The merges lines tried drop, dimmed.
+    for (const auto& row : dropped) {
+        if (table) {
+            out << std::string(place_width + 1, ' ');
+        }
+        const auto old = split_cpv(row.at(0));
+        const auto cp = row.at(0).substr(0, old.category.size() + 1 + old.name.size());
+        const auto kind = row.at(1);
+        const auto mark = kind == "upgrade"     ? glyph.upgrade
+                          : kind == "downgrade" ? glyph.downgrade
+                          : kind == "rebuild"   ? glyph.rebuild
+                                                : glyph.added;
+        std::string text = std::format("{} {}{}  {}{}", mark, cp, spaces(cp.size(), cp_width),
+                                       old.version, spaces(old.version.size(), version_width));
+        if (row.at(0) != row.at(2)) {
+            const auto target = split_cpv(row.at(2)).version;
+            text += std::format(" {} {}{}", glyph.instead, target,
+                                spaces(3 + target.size(), move_width));
+        } else {
+            text += spaces(0, move_width);
+        }
+        out << paint("-", Tone::bad) << ' '
+            << paint(std::format("{}  ::{}  (dropped)", text, row.at(3)), Tone::note) << '\n';
     }
     if (counts.at(5) != 0) {
         out << '\n' << paint("Held back", Tone::heading) << '\n';
@@ -1457,7 +1517,10 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     all.at(9) = unmet.size();
     all.at(10) = use_changes.size();
     all.at(11) = masked.size();
-    out << '\n';
+    const bool counted = std::ranges::any_of(all, [](std::size_t count) { return count != 0; });
+    if (counted) {
+        out << '\n';
+    }
     bool first = true;
     for (std::size_t i = 0; i < all.size(); ++i) {
         if (all.at(i) == 0) {
@@ -1474,7 +1537,25 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         }
         first = false;
     }
-    out << '\n';
+    out << (counted ? "\n" : "");
+    if (trying) {
+        if (!counted) {
+            out << '\n';
+        }
+        std::string summary;
+        const auto add = [&](std::size_t count, std::string_view one, std::string_view many) {
+            if (count != 0) {
+                summary += std::format("{}{} {}", summary.empty() ? "" : ", ", count,
+                                       count == 1 ? one : many);
+            }
+        };
+        add(more, "more merge", "more merges");
+        add(dropped.size(), "fewer", "fewer");
+        add(changed, "changed", "changed");
+        add(for_use, "rebuilt for USE", "rebuilt for USE");
+        out << paint("Tried:", Tone::heading) << ' '
+            << paint(summary.empty() ? "the plan is the same" : summary, Tone::note) << '\n';
+    }
     if (flags || fixed) {
         std::string legend = flags ? "flag* changed  flag% new in IUSE  (-flag%) gone from it" : "";
         if (fixed) {

@@ -1613,6 +1613,40 @@ std::size_t unlisted_held(const Plan& plan, bool held) {
 }
 
 // The updates, shown; the exit status instead when there are none to show.
+// What the invocation's lines tried change in plan (tried_lines), against the same plan made
+// without them, or "<TAB>tried<TAB>none"; in update_lines' table, led by two empty fields. None
+// without lines tried.
+std::vector<std::string> tried_changes(Session& session, const Invocation& invocation,
+                                       const Store& store, const Evaluated& evaluated,
+                                       const Plan& plan, UseRebuilds rebuilds,
+                                       const Targets& targets, std::string_view name, bool table) {
+    if (invocation.what_if.empty()) {
+        return {};
+    }
+    const auto untried = session.untried_stores();
+    if (!untried) {
+        return {};
+    }
+    const auto& before_evaluated = untried->get().evaluated;
+    // Its warnings are the plan's own.
+    std::ostringstream ignored;
+    auto again = targets;
+    const auto before =
+        plan_keeping_kernel(invocation, store, before_evaluated, rebuilds, again, name, ignored);
+    auto found = tried_lines(
+        update_lines(store, before_evaluated, before, rebuilds, HeldLines::none, false, targets),
+        update_lines(store, evaluated, plan, rebuilds, HeldLines::none, false, targets));
+    if (found.empty()) {
+        found.emplace_back("\ttried\tnone");
+    }
+    if (table) {
+        for (auto& line : found) {
+            line.insert(0, "\t\t");
+        }
+    }
+    return found;
+}
+
 std::expected<Shown, Exit> show_updates(const Updates& command, Session& session,
                                         const Invocation& invocation, std::ostream& out,
                                         std::ostream& err) {
@@ -1694,8 +1728,11 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
             };
         }
     }
-    const auto lines = update_lines(*store, evaluated, plan, command.rebuilds,
-                                    held_lines(command.held), command.table, targets, remedies);
+    auto lines = update_lines(*store, evaluated, plan, command.rebuilds, held_lines(command.held),
+                              command.table, targets, remedies);
+    std::ranges::move(tried_changes(session, invocation, *store, evaluated, plan, command.rebuilds,
+                                    targets, "updates", command.table),
+                      std::back_inserter(lines));
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme, command.table, unlisted_held(plan, command.held));
     } else {
@@ -2060,8 +2097,11 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
         }
         remedies = RemedyInputs{.graph = *graph, .rescope = {}};
     }
-    const auto lines = update_lines(*store, evaluated, shown.plan, command.rebuilds,
-                                    held_lines(command.held), command.table, targets, remedies);
+    auto lines = update_lines(*store, evaluated, shown.plan, command.rebuilds,
+                              held_lines(command.held), command.table, targets, remedies);
+    std::ranges::move(tried_changes(session, invocation, *store, evaluated, shown.plan,
+                                    command.rebuilds, targets, name, command.table),
+                      std::back_inserter(lines));
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme, command.table,
                       unlisted_held(shown.plan, command.held));

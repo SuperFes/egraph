@@ -122,6 +122,7 @@ TRAILING_KINDS = (
     "required-use",
     "use-change",
     "masked",
+    "tried",
 )
 
 
