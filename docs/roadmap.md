@@ -1147,9 +1147,13 @@ changes (undo, save) and takes typed lines.
   to portage's USE with the lines saved, on every scenario. The stacker now looks only at
   entries of the candidate's cp: a global flag tried costs 0.2 to 0.5 s here, `use --all`
   3.2 s rather than 5.2.
-- 19b: `--use` and `--env` on the plan commands: the plan with the changes, the toggled
-  packages rebuilt as with `-U`, the cps newly reached evaluated on request; held to emerge's
-  plan with the files edited, on every scenario.
+- 19b (done): plans with lines tried: what they change rebuilt as with `-U` (unless `-N`), the
+  installed packages' `--newuse` flags worked out anew against the changed candidates, the cps
+  their new dependencies reach evaluated on request (warned of under `--no-refresh`);
+  `--verify`, `--resume-list` and `--requests` refuse them. Held to `emerge -puDU` with the lines
+  saved, on every scenario; 0.8 s here for a package's flag, against 0.6 s without. It found
+  `-uDN` and `-uDU` never falling back to rebuilding a held-back package's own version, which
+  emerge does; fixed first (evaluated store format 12).
 - 19c: the plan marked with what the change does: merges added, dropped, rebuilt, USE changed,
   and a summary.
 - 19d: an env switch's installed packages, built differently from then on, offered for a

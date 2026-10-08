@@ -425,6 +425,13 @@ inline System make_system(const std::vector<Installed>& installed, std::vector<A
                 best = i;
             }
         }
+        for (std::uint32_t i = 0; i < available.size(); ++i) {
+            const auto& ebuild = available.at(i);
+            if (ebuild.visible && ebuild.cpv == pkg.cpv && ebuild.slot == pkg.slot) {
+                record.own = i;
+                break;
+            }
+        }
         if (best) {
             const int order = vercmp(detail::version_of(available.at(*best).cpv), own);
             if (order > 0 || (!record.visible && available.at(*best).cpv != pkg.cpv)) {

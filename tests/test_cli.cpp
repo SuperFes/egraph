@@ -659,6 +659,19 @@ TEST_CASE("actions, the interface and the services refuse what is only tried") {
     }
 }
 
+TEST_CASE("a plan with lines tried is never handed to emerge") {
+    for (const auto* line :
+         {"updates --verify", "updates --resume-list /x", "plan --requests /x a/b"}) {
+        std::ostringstream out;
+        std::ostringstream err;
+        CHECK(egraph::run(parse(std::string{"--use 'a/b x' "} + line), out, err) ==
+              egraph::Exit::usage);
+        CHECK(err.str().ends_with(": --verify, --resume-list and --requests hand the plan to "
+                                  "emerge, which reads what is saved rather than --use and "
+                                  "--env\n"));
+    }
+}
+
 TEST_CASE("tui --notices opens on the notices page") {
     CHECK_FALSE(std::get<egraph::Tui>(parse("tui").command).notices);
     CHECK(std::get<egraph::Tui>(parse("tui --notices").command).notices);

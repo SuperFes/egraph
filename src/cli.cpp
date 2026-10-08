@@ -1745,8 +1745,37 @@ Exit write_requests(Exit status, const std::optional<std::filesystem::path>& pat
     return status;
 }
 
-Exit execute(const Updates& command, Session& session, const Invocation& invocation,
+// The command as planned with lines tried: rebuilding what they change, as -U, unless -N; never
+// handed to emerge, which reads only what is saved.
+template <class Command>
+std::expected<Command, Exit> trying(Command command, const Invocation& invocation,
+                                    std::ostream& err) {
+    if (invocation.what_if.empty()) {
+        return command;
+    }
+    if (command.verify || command.resume_list || command.requests) {
+        err << "egraph: " << Command::name
+            << ": --verify, --resume-list and --requests hand the plan to emerge, which reads "
+               "what is saved rather than --use and --env\n";
+        return std::unexpected(Exit::usage);
+    }
+    bool update = true;
+    if constexpr (requires { command.update; }) {
+        update = command.update;
+    }
+    if (update && command.rebuilds == UseRebuilds::none) {
+        command.rebuilds = UseRebuilds::changed;
+    }
+    return command;
+}
+
+Exit execute(const Updates& given, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
+    const auto tried = trying(given, invocation, err);
+    if (!tried) {
+        return tried.error();
+    }
+    const auto& command = *tried;
     const auto shown = show_updates(command, session, invocation, out, err);
     if (!shown) {
         return shown.error();
@@ -2042,8 +2071,13 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
     return shown;
 }
 
-Exit execute(const PlanCommand& command, Session& session, const Invocation& invocation,
+Exit execute(const PlanCommand& given, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
+    const auto tried = trying(given, invocation, err);
+    if (!tried) {
+        return tried.error();
+    }
+    const auto& command = *tried;
     const auto shown = show_plan(command, PlanCommand::name, session, invocation, out, err);
     if (!shown) {
         return shown.error();

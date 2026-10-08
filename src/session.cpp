@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <format>
 #include <ostream>
+#include <set>
+#include <string>
 #include <thread>
 #include <utility>
 
@@ -271,11 +273,31 @@ std::expected<std::shared_ptr<const Stores>, std::string> Session::shared_stores
     if (invocation_.what_if.empty()) {
         return stores_;
     }
-    if (!tried_) {
+    // What the lines newly reach is evaluated on request, until they reach nothing more.
+    std::set<std::string> asked;
+    while (!tried_) {
         auto evaluated = with_what_if(stores_->evaluated, stores_->installed, invocation_.what_if,
                                       config_root(invocation_) / "etc/portage");
         if (!evaluated) {
             return std::unexpected(std::move(evaluated.error()));
+        }
+        auto reached = newly_reached(stores_->evaluated, *evaluated);
+        std::erase_if(reached, [&asked](const std::string& cp) { return asked.contains(cp); });
+        if (!reached.empty() && !invocation_.no_refresh) {
+            asked.insert(reached.begin(), reached.end());
+            if (auto error = evaluate(reached)) {
+                return std::unexpected(std::move(*error));
+            }
+            continue;
+        }
+        if (!reached.empty()) {
+            std::string cps;
+            for (const auto& cp : reached) {
+                cps += std::format("{}{}", cps.empty() ? "" : ", ", cp);
+            }
+            warnings_.get() << std::format("egraph: warning: {}: reached by what is tried, but "
+                                           "not evaluated (--no-refresh)\n",
+                                           cps);
         }
         tried_ = std::make_shared<const Stores>(
             Stores{.installed = stores_->installed, .evaluated = std::move(*evaluated)});

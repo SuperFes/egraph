@@ -2,11 +2,14 @@
 the lines saved where egraph would save them."""
 
 import os
+import subprocess
 
 import pytest
 from conftest import System, portdb, write_stores
 from scenarios import SCENARIOS
 from test_ledger import EGRAPH, egraph_use
+from test_queries import EXIT_REFUSED, egraph, merged, new_use, refuses
+from test_refresh import evaluations, scenario_system
 
 from egraph_build import evaluated
 
@@ -118,3 +121,75 @@ def test_the_ledger_scenarios_lines_tried_are_portages(mutable_playground, tmp_p
     assert tried == saved
     changed = {pkg for pkg in tried if tried[pkg] != before[pkg]}
     assert {pkg.split("::")[0] for pkg in changed} >= {"app-misc/a-1", "app-misc/c-1"}
+
+
+@pytest.mark.parametrize("name", sorted(SCENARIOS))
+def test_plans_with_flags_tried_are_emerges(name, mutable_playground, tmp_path):
+    """egraph updates -D with each toggle tried plans what emerge -puDU @installed does once
+    they are saved: what the toggles change is rebuilt, and pulls in what it needs."""
+    import update
+
+    playground = mutable_playground(name)
+    trees = playground.trees
+    system = System(playground.eroot, trees[playground.eroot]["vartree"].dbapi, trees)
+    lines = toggles(system)
+    if not lines:
+        pytest.skip("no installed package has a flag to toggle")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path, request_all=True)
+    options = ["--config-root", playground.eroot]
+    for file, text in lines:
+        options += [f"--{file}", text]
+    result = egraph(path, *options, "updates", "-D", check=False)
+    save(playground, lines)
+    _, changed = playground._load_config()
+    expected = update.updates(changed, playground.eroot, changed_use=True, deep=True)
+    if not expected.success and not refuses(expected):
+        pytest.skip("emerge cannot resolve @installed here")
+    assert result.returncode == (
+        EXIT_REFUSED if refuses(expected) else 0
+    ), result.stderr
+    if expected.unsatisfied or expected.unmet or expected.use_changes:
+        return
+    assert merged(result.stdout) == (expected.replaced, expected.rebuilt, expected.new)
+    assert new_use(result.stdout) == expected.use
+
+
+def site_updates(system, *options):
+    playground, store, builder, _ = system
+    return subprocess.run(
+        [EGRAPH, "--store", str(store), "--builder", str(builder), *options, "updates"],
+        capture_output=True,
+        text=True,
+        env=dict(playground.settings.environ(), EGRAPH_STRICT="1"),
+    )
+
+
+def test_what_a_tried_flag_reaches_is_evaluated_on_request(
+    mutable_playground, tmp_path
+):
+    system = scenario_system(mutable_playground, tmp_path, "what-if")
+    assert site_updates(system).stdout == ""
+    result = site_updates(system, "--use", "app-misc/site web")
+    assert result.returncode == 0, result.stderr
+    merges = {tuple(line.split("\t")[:3]) for line in result.stdout.splitlines()}
+    assert merges == {
+        ("app-misc/site-1", "rebuild", "app-misc/site-1"),
+        ("www-apps/server-1", "new", "www-apps/server-1"),
+        ("www-apps/lib-1", "new", "www-apps/lib-1"),
+    }
+    (evaluation,) = evaluations(system)
+    assert "www-apps/server" in evaluation.split()
+
+
+def test_without_refresh_what_a_tried_flag_reaches_is_missing(
+    mutable_playground, tmp_path
+):
+    system = scenario_system(mutable_playground, tmp_path, "what-if")
+    assert site_updates(system).returncode == 0
+    result = site_updates(system, "--no-refresh", "--use", "app-misc/site web")
+    assert result.stderr.startswith(
+        "egraph: warning: www-apps/server: reached by what is tried, but not evaluated "
+        "(--no-refresh)\n"
+    )
+    assert evaluations(system) == []

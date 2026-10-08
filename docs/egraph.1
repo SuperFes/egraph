@@ -144,8 +144,15 @@ prefixes included, or flags alone (or after
 .BR */* )
 for every package, as portage folds those into
 .IR make.conf 's
-USE. Repeated, the lines are tried in order. Actions, the interface and the services refuse it:
-they run with what is saved.
+USE. Repeated, the lines are tried in order. Packages their changed dependencies newly reach are
+evaluated on request, as a plan's targets are. Plans rebuild what the lines change, as with
+.BR \-U ,
+unless
+.B \-N
+is given;
+.BR \-\-verify ", " \-\-resume\-list " and " \-\-requests
+refuse them, as emerge reads only what is saved. Actions, the interface and the services refuse
+it: they run with what is saved.
 .TP
 .BI \-\-env " line"
 Likewise a

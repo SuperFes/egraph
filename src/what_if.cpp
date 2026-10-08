@@ -3,11 +3,13 @@
 #include "atom.hpp"
 #include "use_changes.hpp"
 #include "use_stack.hpp"
+#include "version.hpp"
 
 #include <algorithm>
 #include <format>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <set>
 #include <system_error>
 
@@ -165,6 +167,131 @@ bool may_change(const Store& installed, const Evaluated& evaluated, const Candid
 
 std::set<std::string, std::less<>> use_set(const StackedUse& stacked) {
     return {stacked.use.begin(), stacked.use.end()};
+}
+
+std::set<std::string, std::less<>> names(const Tables& tables, Range range) {
+    std::set<std::string, std::less<>> found;
+    for (const auto id : tables.ids_in(range)) {
+        auto flag = tables.string(id);
+        if (flag.starts_with('+') || flag.starts_with('-')) {
+            flag.remove_prefix(1);
+        }
+        found.emplace(flag);
+    }
+    return found;
+}
+
+// The flag a --newuse entry ("flag*", "-flag%", "(-flag%*)") names.
+std::string_view rebuild_flag(std::string_view entry) {
+    while (!entry.empty() && (entry.front() == '(' || entry.front() == '-')) {
+        entry.remove_prefix(1);
+    }
+    while (!entry.empty() && (entry.back() == ')' || entry.back() == '*' || entry.back() == '%')) {
+        entry.remove_suffix(1);
+    }
+    return entry;
+}
+
+// --newuse's flags for an installed package against a candidate, as the builder's rebuild_flags
+// gives them: those whose state changed, and those its IUSE gained or lost but the profile
+// fixes, which no line tried changes and so are kept from previous.
+std::vector<std::string> rebuild_entries(const Store& installed, const Package& pkg,
+                                         const Evaluated& evaluated, const Candidate& candidate,
+                                         Range previous) {
+    const auto old_iuse = names(installed, pkg.iuse);
+    const auto iuse = names(evaluated, candidate.iuse);
+    const auto old_use = names(installed, pkg.use);
+    const auto use = names(evaluated, candidate.use);
+    std::set<std::string, std::less<>> was_on;
+    std::set<std::string, std::less<>> now_on;
+    std::ranges::set_intersection(old_iuse, old_use, std::inserter(was_on, was_on.end()));
+    std::ranges::set_intersection(iuse, use, std::inserter(now_on, now_on.end()));
+    std::set<std::string, std::less<>> state;
+    std::ranges::set_symmetric_difference(was_on, now_on, std::inserter(state, state.end()));
+    auto flags = state;
+    for (const auto entry : evaluated.ids_in(previous)) {
+        if (const auto text = evaluated.string(entry); text.contains('%')) {
+            flags.emplace(rebuild_flag(text));
+        }
+    }
+    std::vector<std::string> entries;
+    for (const auto& flag : flags) {
+        const auto star = state.contains(flag) ? "*" : "";
+        if (iuse.contains(flag)) {
+            entries.push_back(std::format("{}{}{}{}", use.contains(flag) ? "" : "-", flag,
+                                          old_iuse.contains(flag) ? "" : "%", star));
+        } else {
+            entries.push_back(std::format("(-{}%{})", flag, star));
+        }
+    }
+    return entries;
+}
+
+// The installed packages' --newuse flags against candidates whose USE changed, anew: from their
+// own version's ebuild, and from the best visible version in their slot where that is their own
+// version, which becomes their target where any flags are left and stops being one where none
+// are.
+void rebuild_installed(Evaluated& evaluated, const Store& installed,
+                       const std::set<std::uint32_t>& changed) {
+    std::map<std::string, std::vector<std::uint32_t>, std::less<>> by_cp;
+    for (std::uint32_t i = 0; i < evaluated.candidates.size(); ++i) {
+        by_cp[std::string{evaluated.string(evaluated.candidates.at(i).cp)}].push_back(i);
+    }
+    Interner intern(evaluated);
+    const auto ids_of = [&](const std::vector<std::string>& entries) {
+        const Range range{.first = static_cast<std::uint32_t>(evaluated.ids.size()),
+                          .count = static_cast<std::uint32_t>(entries.size())};
+        for (const auto& entry : entries) {
+            const auto interned = intern(entry);
+            evaluated.ids.push_back(interned);
+        }
+        return range;
+    };
+    for (std::uint32_t id = 0; id < installed.packages.size(); ++id) {
+        const auto& pkg = installed.packages.at(id);
+        if (const auto own = evaluated.packages.at(id).own; own && changed.contains(*own)) {
+            const auto entries =
+                rebuild_entries(installed, pkg, evaluated, evaluated.candidates.at(*own),
+                                evaluated.packages.at(id).own_rebuild);
+            evaluated.packages.at(id).own_rebuild = ids_of(entries);
+        }
+        const auto cp = installed.string(pkg.cp);
+        const auto found = by_cp.find(cp);
+        if (found == by_cp.end()) {
+            continue;
+        }
+        const auto slot = installed.string(pkg.slot);
+        std::optional<std::uint32_t> best;
+        std::optional<Version> best_version;
+        for (const auto index : found->second) {
+            const auto& candidate = evaluated.candidates.at(index);
+            if (!candidate.visible() || evaluated.string(candidate.slot) != slot) {
+                continue;
+            }
+            const auto cpv = evaluated.string(candidate.cpv);
+            auto version = parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
+            if (version && (!best_version || vercmp(*version, *best_version) > 0)) {
+                best = index;
+                best_version = std::move(version);
+            }
+        }
+        const auto cpv = installed.string(pkg.cpv);
+        const auto version = parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
+        if (!best || !best_version || !changed.contains(*best) || !version ||
+            vercmp(*version, *best_version) != 0) {
+            continue;
+        }
+        auto& dependencies = evaluated.packages.at(id);
+        const auto entries =
+            rebuild_entries(installed, pkg, evaluated, evaluated.candidates.at(*best),
+                            dependencies.target == best ? dependencies.rebuild : Range{});
+        dependencies.rebuild = ids_of(entries);
+        if (entries.empty()) {
+            dependencies.target.reset();
+        } else {
+            dependencies.target = best;
+        }
+    }
 }
 
 } // namespace
@@ -329,7 +456,44 @@ std::expected<Evaluated, std::string> with_what_if(Evaluated evaluated, const St
             }
         }
     }
-    return with_use_changes(std::move(evaluated), installed, changes);
+    std::set<std::uint32_t> changed;
+    for (const auto& change : changes) {
+        changed.insert(change.candidate);
+    }
+    auto tried = with_use_changes(std::move(evaluated), installed, changes);
+    rebuild_installed(tried, installed, changed);
+    return tried;
+}
+
+std::vector<std::string> newly_reached(const Evaluated& before, const Evaluated& tried) {
+    std::set<std::string_view> evaluated;
+    for (const auto& candidate : tried.candidates) {
+        evaluated.insert(tried.string(candidate.cp));
+    }
+    std::set<std::string_view> repository;
+    for (const auto id : tried.ids_in(tried.repository_cps)) {
+        repository.insert(tried.string(id));
+    }
+    std::set<std::string> found;
+    for (std::size_t i = 0; i < tried.candidates.size() && i < before.candidates.size(); ++i) {
+        const auto& candidate = tried.candidates.at(i);
+        const auto& was = before.candidates.at(i);
+        if (candidate.use.first == was.use.first && candidate.use.count == was.use.count) {
+            continue;
+        }
+        for (const auto range : candidate.deps) {
+            for (const auto& node : tried.nodes_in(range)) {
+                if (node.type != NodeType::atom) {
+                    continue;
+                }
+                const auto atom = parse_atom(tried.string(node.atom));
+                if (atom && repository.contains(atom->cp) && !evaluated.contains(atom->cp)) {
+                    found.insert(atom->cp);
+                }
+            }
+        }
+    }
+    return {found.begin(), found.end()};
 }
 
 } // namespace egraph

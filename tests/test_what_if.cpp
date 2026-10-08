@@ -231,3 +231,51 @@ TEST_CASE("wildcards tried reach every flag they name, in whatever IUSE has them
     CHECK(use_of(cards, "cat/a-1") == Strings{"y"});
     CHECK(use_of(cards, "cat/v-1") == Strings{"video_cards_intel"});
 }
+
+TEST_CASE("what a tried flag pulls in that was never evaluated is named, for evaluating") {
+    auto system = system_with({{.cpv = "cat/a-1",
+                                .deps = {{"RDEPEND", "x? ( cat/new cat/dep cat/gone !cat/old )"}},
+                                .iuse = "x"},
+                               {.cpv = "cat/dep-1"}},
+                              {});
+    egraph::test::add_repository_cps(system, {"cat/a", "cat/dep", "cat/new", "cat/old"});
+    CHECK(egraph::newly_reached(system.evaluated, tried(system, {use("cat/a", {"-x"})})).empty());
+    // cat/gone has no ebuild, cat/old is only blocked.
+    CHECK(egraph::newly_reached(system.evaluated, tried(system, {use("cat/a", {"x"})})) ==
+          Strings{"cat/new"});
+}
+
+TEST_CASE("a tried flag rebuilds an installed version as --newuse would, from its own ebuild too") {
+    const auto at = [](const egraph::Evaluated& evaluated, egraph::Range range) {
+        Strings found;
+        for (const auto id : evaluated.ids_in(range)) {
+            found.emplace_back(evaluated.string(id));
+        }
+        return found;
+    };
+    // Its own version is the best: tried, it becomes the target, rebuilt for the flag.
+    auto same = egraph::test::make_system({{.cpv = "cat/a-1", .iuse = "x y", .use = "y"}},
+                                          {{.cpv = "cat/a-1", .iuse = "x y", .use = "y"}});
+    egraph::test::set_ledger(same.evaluated, {.conf = {{.file = "/c/make.conf", .tokens = "y"}}});
+    REQUIRE_FALSE(same.evaluated.packages.front().target.has_value());
+    const auto on = tried(same, {use("cat/a", {"x", "-y"})});
+    REQUIRE(on.packages.front().target == 0U);
+    CHECK(at(on, on.packages.front().rebuild) == Strings{"x*", "-y*"});
+    CHECK(at(on, on.packages.front().own_rebuild) == Strings{"x*", "-y*"});
+    // Set back as it was built, it is no target again.
+    const auto back = tried(same, {use("cat/a", {"x", "-y"}), use("cat/a", {"-x", "y"})});
+    CHECK_FALSE(back.packages.front().target.has_value());
+    CHECK(at(back, back.packages.front().rebuild).empty());
+
+    // A newer version stays the target; its own version's flags are what -uU falls back to.
+    auto newer = egraph::test::make_system(
+        {{.cpv = "cat/a-1", .iuse = "x"}},
+        {{.cpv = "cat/a-1", .iuse = "x"}, {.cpv = "cat/a-2", .iuse = "x"}});
+    egraph::test::set_ledger(newer.evaluated, {});
+    const auto tried_newer = tried(newer, {use("cat/a", {"x"})});
+    const auto& pkg = tried_newer.packages.front();
+    REQUIRE(pkg.target == 1U);
+    CHECK(at(tried_newer, pkg.rebuild).empty());
+    REQUIRE(pkg.own == 0U);
+    CHECK(at(tried_newer, pkg.own_rebuild) == Strings{"x*"});
+}

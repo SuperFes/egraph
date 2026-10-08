@@ -43,4 +43,10 @@ struct WhatIfLine {
 with_what_if(Evaluated evaluated, const Store& installed, std::span<const WhatIfLine> lines,
              const std::filesystem::path& user_config);
 
+// The cps that dependencies of the candidates whose USE tried changes (blockers aside) name,
+// which have ebuilds in the repositories but were never evaluated; tried is what with_what_if
+// made of before.
+[[nodiscard]] std::vector<std::string> newly_reached(const Evaluated& before,
+                                                     const Evaluated& tried);
+
 } // namespace egraph

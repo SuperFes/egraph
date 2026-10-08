@@ -356,6 +356,25 @@ SCENARIOS = {
             "app-misc/keeper-1": {"EAPI": "8", "RDEPEND": "<app-misc/kept-2"},
         },
     },
+    # A flag that, tried, pulls in cps no store evaluated: the what-if evaluates them on request.
+    "what-if": {
+        "world": ["app-misc/site"],
+        "ebuilds": {
+            "app-misc/site-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "IUSE": "web",
+                "RDEPEND": "web? ( www-apps/server )",
+            },
+            "www-apps/server-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "RDEPEND": "www-apps/lib",
+            },
+            "www-apps/lib-1": {"EAPI": "8", "KEYWORDS": "x86"},
+        },
+        "installed": {"app-misc/site-1": {"EAPI": "8", "IUSE": "web"}},
+    },
     # Installed dependents whose atoms reject an update's target: a version bound with a lower
     # version to fall back to, one without, a glob, a sub-slot pinned and one under a slot
     # operator, a USE dependency against a --newuse rebuild, a bound inside ||, a bound only the
