@@ -240,6 +240,15 @@ class EntryList {
     // specific last.
     [[nodiscard]] std::vector<std::span<const std::string_view>>
     ordered(const Subject& pkg) const EGRAPH_LIFETIMEBOUND {
+        std::vector<std::span<const std::string_view>> found;
+        for (const auto key : ordered_keys(pkg)) {
+            found.emplace_back(tokens_.at(key));
+        }
+        return found;
+    }
+
+    // The same as indices of the keys it was made from.
+    [[nodiscard]] std::vector<std::size_t> ordered_keys(const Subject& pkg) const {
         std::vector<std::size_t> keys;
         if (const auto found = by_cp_.find(pkg.cp); found != by_cp_.end()) {
             keys = found->second;
@@ -249,7 +258,7 @@ class EntryList {
                 keys.push_back(i);
             }
         }
-        std::vector<std::span<const std::string_view>> found;
+        std::vector<std::size_t> found;
         while (!keys.empty()) {
             std::vector<const ConfigAtom*> candidates;
             candidates.reserve(keys.size());
@@ -260,7 +269,7 @@ class EntryList {
             if (!best) {
                 break;
             }
-            found.emplace_back(tokens_.at(keys.at(*best)));
+            found.push_back(keys.at(*best));
             keys.erase(keys.begin() + static_cast<std::ptrdiff_t>(*best));
         }
         std::ranges::reverse(found);
@@ -279,22 +288,34 @@ class AtomList {
   public:
     explicit AtomList(const std::vector<StackedMask>& masks) {
         for (const auto& mask : masks) {
-            ConfigAtom atom{mask.atom};
-            if (atom.plain) {
-                const auto cp = atom.cp();
-                by_cp_[std::string{cp}].push_back(std::move(atom));
+            Listed listed{.atom = ConfigAtom{mask.atom}, .entry = mask.entry};
+            if (listed.atom.plain) {
+                const auto cp = listed.atom.cp();
+                by_cp_[std::string{cp}].push_back(std::move(listed));
             } else {
-                wildcards_.push_back(std::move(atom));
+                wildcards_.push_back(std::move(listed));
             }
         }
     }
 
     // Whether any atom filed under pkg's cp, or any wildcard one, matches it.
     [[nodiscard]] bool any_matches(const Subject& pkg) const {
-        const auto matches = [&](const ConfigAtom& atom) { return atom.matches(pkg); };
-        const auto found = by_cp_.find(pkg.cp);
-        return (found != by_cp_.end() && std::ranges::any_of(found->second, matches)) ||
-               std::ranges::any_of(wildcards_, matches);
+        return first_match(pkg).has_value();
+    }
+
+    // The entry of the first that does, as getMaskAtom picks it.
+    [[nodiscard]] std::optional<std::uint32_t> first_match(const Subject& pkg) const {
+        const auto matches = [&](const Listed& listed) { return listed.atom.matches(pkg); };
+        if (const auto found = by_cp_.find(pkg.cp); found != by_cp_.end()) {
+            if (const auto hit = std::ranges::find_if(found->second, matches);
+                hit != found->second.end()) {
+                return hit->entry;
+            }
+        }
+        if (const auto hit = std::ranges::find_if(wildcards_, matches); hit != wildcards_.end()) {
+            return hit->entry;
+        }
+        return std::nullopt;
     }
 
     // Whether no atom could match a version of cp.
@@ -303,8 +324,13 @@ class AtomList {
     }
 
   private:
-    std::map<std::string, std::vector<ConfigAtom>, std::less<>> by_cp_;
-    std::vector<ConfigAtom> wildcards_;
+    struct Listed {
+        ConfigAtom atom;
+        std::uint32_t entry = 0;
+    };
+
+    std::map<std::string, std::vector<Listed>, std::less<>> by_cp_;
+    std::vector<Listed> wildcards_;
 };
 
 // stack_lists(incremental=True) over token lists: -* clears, -x removes x, x adds it once, in
@@ -704,6 +730,44 @@ struct VersionMasks::Rules {
         return found;
     }
 
+    // The entry that last refused name: in the global list the -* it was pruned after (cleared),
+    // a later -* or * or the name's own token, then in pkg's matching keys the same.
+    [[nodiscard]] static std::optional<std::uint32_t>
+    refusal(std::string_view name, std::span<const SourcedToken> global,
+            std::optional<std::uint32_t> cleared, const EntryList& entries,
+            std::span<const StackedKey> keys, const Subject& pkg) {
+        auto decided = cleared;
+        const auto weigh = [&](std::span<const SourcedToken> tokens) {
+            for (const auto& token : tokens) {
+                const std::string_view text = token.token;
+                if (text == "*" || text == "-*" || text == name ||
+                    (text.starts_with('-') && text.substr(1) == name)) {
+                    decided = token.entry;
+                }
+            }
+        };
+        weigh(global);
+        for (const auto key : entries.ordered_keys(pkg)) {
+            weigh(element(keys, key).tokens);
+        }
+        return decided;
+    }
+
+    // The distinct refusals of names, in order.
+    [[nodiscard]] static std::vector<std::uint32_t>
+    refusals(std::span<const std::string_view> names, std::span<const SourcedToken> global,
+             std::optional<std::uint32_t> cleared, const EntryList& entries,
+             std::span<const StackedKey> keys, const Subject& pkg) {
+        std::vector<std::uint32_t> found;
+        for (const auto name : names) {
+            const auto entry = refusal(name, global, cleared, entries, keys, pkg);
+            if (entry && !std::ranges::contains(found, *entry)) {
+                found.push_back(*entry);
+            }
+        }
+        return found;
+    }
+
     [[nodiscard]] std::set<std::string_view> use_of(const IndexVersion& version) const {
         const auto flags = strings_of(index.get(), version.use);
         return {flags.begin(), flags.end()};
@@ -755,28 +819,37 @@ bool VersionMasks::portdb_visible(std::uint32_t id) const {
 }
 
 std::vector<std::string> VersionMasks::reasons(std::uint32_t id) const {
-    const auto& index = rules_->index.get();
-    auto found = portdb_visible(id) ? std::vector<std::string>{} : masking_status(id);
-    for (const auto message : index.ids_in(index.versions.at(id).invalid)) {
-        found.push_back(std::format("invalid: {}", index.string(message)));
-    }
-    if (index.string(index.versions.at(id).slot).empty()) {
-        found.emplace_back("SLOT: undefined");
+    std::vector<std::string> found;
+    for (auto& reason : sourced_reasons(id)) {
+        found.push_back(std::move(reason.text));
     }
     return found;
 }
 
-std::vector<std::string> VersionMasks::masking_status(std::uint32_t id) const {
+std::vector<MaskReason> VersionMasks::sourced_reasons(std::uint32_t id) const {
+    const auto& index = rules_->index.get();
+    auto found = portdb_visible(id) ? std::vector<MaskReason>{} : masking_status(id);
+    for (const auto message : index.ids_in(index.versions.at(id).invalid)) {
+        found.push_back({.text = std::format("invalid: {}", index.string(message)), .entries = {}});
+    }
+    if (index.string(index.versions.at(id).slot).empty()) {
+        found.push_back({.text = "SLOT: undefined", .entries = {}});
+    }
+    return found;
+}
+
+std::vector<MaskReason> VersionMasks::masking_status(std::uint32_t id) const {
     const auto& rules = *rules_;
     const auto& index = rules.index.get();
     const auto& version = index.versions.at(id);
+    const auto& stacked = rules.visibility;
     const auto pkg = rules.subject(version);
-    std::vector<std::string> found;
-    if (rules.mask_matches(pkg)) {
-        found.emplace_back("package.mask");
+    std::vector<MaskReason> found;
+    if (const auto mask = rules.masks.first_match(pkg); mask && !rules.unmasks.any_matches(pkg)) {
+        found.push_back({.text = "package.mask", .entries = {*mask}});
     }
     if (rules.eapi_masks(version)) {
-        return {std::format("EAPI {}", index.string(version.eapi))};
+        return {{.text = std::format("EAPI {}", index.string(version.eapi)), .entries = {}}};
     }
 
     const auto keywords = rules.keywords(version, pkg);
@@ -823,21 +896,28 @@ std::vector<std::string> VersionMasks::masking_status(std::uint32_t id) const {
         return text + std::string{last};
     };
     if (const auto missing = rules.missing_licenses(version, pkg, use); !missing) {
-        found.push_back(std::format("LICENSE: {}", missing.error()));
+        found.push_back({.text = std::format("LICENSE: {}", missing.error()), .entries = {}});
     } else if (!missing->empty()) {
         std::vector<std::string_view> shown;
+        std::vector<std::string_view> names;
         for (const auto token : license_tokens) {
             if (token == "||" || token == "(" || token == ")" || missing->contains(token)) {
                 shown.push_back(token);
             }
+            if (missing->contains(token)) {
+                names.push_back(token);
+            }
         }
-        found.push_back(words(shown, "license(s)"));
+        found.push_back(
+            {.text = words(shown, "license(s)"),
+             .entries = Rules::refusals(names, stacked.accept_license, stacked.license_cleared,
+                                        rules.licenses, stacked.licenses, pkg)});
     }
     const auto property_tokens = strings_of(index, version.properties);
     if (const auto missing = Rules::missing_tokens(property_tokens, rules.accept_properties,
                                                    rules.properties, pkg, use);
         !missing) {
-        found.push_back(std::format("PROPERTIES: {}", missing.error()));
+        found.push_back({.text = std::format("PROPERTIES: {}", missing.error()), .entries = {}});
     } else if (!missing->empty()) {
         const std::set<std::string_view> missed{missing->begin(), missing->end()};
         std::vector<std::string_view> shown;
@@ -846,19 +926,58 @@ std::vector<std::string> VersionMasks::masking_status(std::uint32_t id) const {
                 shown.push_back(token);
             }
         }
-        found.push_back(words(shown, "properties"));
+        found.push_back({.text = words(shown, "properties"),
+                         .entries = Rules::refusals(*missing, stacked.accept_properties,
+                                                    stacked.properties_cleared, rules.properties,
+                                                    stacked.properties, pkg)});
     }
     if (const auto missing = Rules::missing_tokens(strings_of(index, version.restrict),
                                                    rules.accept_restrict, rules.restrict, pkg, use);
         !missing) {
-        found.push_back(std::format("RESTRICT: {}", missing.error()));
+        found.push_back({.text = std::format("RESTRICT: {}", missing.error()), .entries = {}});
     } else if (!missing->empty()) {
-        found.push_back(words(*missing, "in RESTRICT"));
+        found.push_back(
+            {.text = words(*missing, "in RESTRICT"),
+             .entries = Rules::refusals(*missing, stacked.accept_restrict, stacked.restrict_cleared,
+                                        rules.restrict, stacked.restrict, pkg)});
     }
     if (kmask) {
-        found.push_back(*kmask + " keyword");
+        // A testing keyword is refused by what accepts only arch's stable one.
+        std::vector<std::uint32_t> entries;
+        const auto accepting = [&](std::span<const SourcedToken> tokens) {
+            for (const auto& token : tokens) {
+                if (token.token == arch && token.entry) {
+                    entries = {*token.entry};
+                }
+            }
+        };
+        if (kmask->starts_with('~')) {
+            accepting(stacked.accept_keywords);
+            accepting(stacked.environment_keywords);
+        }
+        found.push_back({.text = *kmask + " keyword", .entries = std::move(entries)});
     }
     return found;
+}
+
+std::string shown_reason(const RepositoryIndex& index, const MaskReason& reason) {
+    std::vector<std::string> places;
+    for (const auto id : reason.entries) {
+        const auto& entry = index.ledger_entries.at(id);
+        const auto file = index.string(entry.file);
+        auto place = entry.line == 0 ? std::string{file} : std::format("{}:{}", file, entry.line);
+        if (!file.empty() && !std::ranges::contains(places, place)) {
+            places.push_back(std::move(place));
+        }
+    }
+    if (places.empty()) {
+        return reason.text;
+    }
+    std::string joined;
+    for (const auto& place : places) {
+        joined += std::format("{}{}", joined.empty() ? "" : ", ", place);
+    }
+    return std::format("{} ({})", reason.text, joined);
 }
 
 } // namespace egraph
@@ -952,8 +1071,8 @@ version_lines(const RepositoryIndex& index, const VersionMasks& masking,
             line += "\tvisible";
         } else {
             line += "\tmasked";
-            for (const auto& reason : masking.reasons(id)) {
-                line += "\t" + reason;
+            for (const auto& reason : masking.sourced_reasons(id)) {
+                line += "\t" + shown_reason(index, reason);
             }
         }
         lines.push_back(std::move(line));

@@ -1087,7 +1087,10 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
     - 18e2b (done): `VersionMasks` reads the stack; the net lists dropped (format 6), but EAPIs
       and ARCH, and kept only in the tests (`builder/tests/managers.py`) as what the stack is held
       to. Output unchanged on the live system's 38,837 versions, at 6% more instructions.
-    - 18e2c: each mask reason with the entry deciding it, shown after it as `use` shows sources.
+    - 18e2c (done): each mask reason with the entries deciding it, `file:line` in parentheses
+      after it (`versions`, the package page): package.mask the line getmaskingreason finds,
+      ~arch keyword the ACCEPT_KEYWORDS line, a license, property or restriction the line that
+      last refused it (the `-*` a list was pruned after, for one nothing names).
   - 18e3: the check: an entry's effect found by stacking without it; dead, contradicted
     (overridden for everything it matches), redundant (changes nothing on its own), outside
     IUSE, not installed; `egraph config check`, its layout and exit status.

@@ -88,6 +88,15 @@ std::optional<Version> version_of(std::string_view cp, std::string_view cpv) {
 }
 
 // portage's getVersion: the version with its revision, but for -r0.
+std::vector<std::string> shown_reasons(const RepositoryIndex& index, const VersionMasks& masks,
+                                       std::uint32_t id) {
+    std::vector<std::string> found;
+    for (const auto& reason : masks.sourced_reasons(id)) {
+        found.push_back(shown_reason(index, reason));
+    }
+    return found;
+}
+
 std::string shown(const Version& version) {
     if (version.revision == "0") {
         return version.base;
@@ -357,7 +366,7 @@ std::vector<PackageVersion> Catalogue::versions(std::string_view cp) const {
                                            index.repositories.at(ebuild.repository).name)},
                                        .ebuild = true,
                                        .visible = masks.visible(id),
-                                       .reasons = masks.reasons(id),
+                                       .reasons = shown_reasons(index, masks, id),
                                        .installed = std::nullopt}});
     }
     const auto ebuilds = entries.size();

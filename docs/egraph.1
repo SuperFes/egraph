@@ -337,7 +337,14 @@ any, with its slot, its repository and, for a masked one, why, as
 words it
 .RB ( package.mask ,
 .BR "~amd64 keyword" ,
-.BR "EULA license(s)" ).
+.BR "EULA license(s)" ),
+each followed by the lines deciding it in parentheses, as
+.I file\fR:\fIline
+.RB ( package.mask
+the line masking the version,
+.B ~amd64 keyword
+the one accepting only stable keywords, a license, a property or a restriction the one that last
+refused it).
 egraph decides visibility itself, from the repository index; portage's decisions are the tests'
 reference.
 In lines,

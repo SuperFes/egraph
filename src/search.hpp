@@ -72,7 +72,7 @@ struct PackageVersion {
     // Whether a repository holds it.
     bool ebuild = true;
     bool visible = false;
-    // As VersionMasks::reasons, for an ebuild.
+    // As VersionMasks::reasons, for an ebuild, each as shown_reason shows it.
     std::vector<std::string> reasons;
     // Into the installed store, for the installed package of this cpv from this repository.
     std::optional<std::uint32_t> installed;

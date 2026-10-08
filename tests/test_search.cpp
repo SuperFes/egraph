@@ -128,7 +128,7 @@ TEST_CASE("Catalogue::versions: every ebuild and installed package of a cp, lowe
     CHECK(versions.at(4).version == "4.0");
     CHECK(versions.at(4).sub_slot == "4");
     CHECK_FALSE(versions.at(4).visible);
-    CHECK(versions.at(4).reasons == Strings{"~x86 keyword"});
+    CHECK(versions.at(4).reasons == Strings{"~x86 keyword (file:1)"});
 }
 
 TEST_CASE("Catalogue::versions marks the ebuild an installed package came from") {

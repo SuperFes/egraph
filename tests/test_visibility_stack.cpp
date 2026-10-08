@@ -112,7 +112,11 @@ TEST_CASE("visibility stack: ACCEPT_ variables over their layers, license groups
     CHECK(tokens_of(stacked.accept_license) == Strings{"MIT", "BSD", "GPL", "-EULA"});
     CHECK(line_of(b, stacked.accept_license.at(0).entry) == 5);
     CHECK(line_of(b, stacked.accept_license.at(3).entry) == 7);
+    // What refuses a license nothing names.
+    CHECK(line_of(b, stacked.license_cleared) == 5);
     CHECK(tokens_of(stacked.accept_properties) == Strings{"live", "interactive"});
+    CHECK(line_of(b, stacked.properties_cleared) == 4);
+    CHECK_FALSE(stacked.restrict_cleared);
     CHECK(stacked.accept_restrict.empty());
 }
 

@@ -16,6 +16,13 @@
 
 namespace egraph {
 
+struct MaskReason {
+    std::string text;
+    // Indices into RepositoryIndex::ledger_entries: the lines that decide it; none where the
+    // ebuild alone does (missing keyword, EAPI, invalid metadata).
+    std::vector<std::uint32_t> entries;
+};
+
 class VersionMasks {
   public:
     explicit VersionMasks(const RepositoryIndex& index EGRAPH_LIFETIMEBOUND);
@@ -35,13 +42,21 @@ class VersionMasks {
     // getmaskingstatus reads a PROPERTIES conditional under no USE, so a version masked by one
     // alone has none.
     [[nodiscard]] std::vector<std::string> reasons(std::uint32_t version) const;
+    // The same, each with what decides it: package.mask the first atom getMaskAtom matches;
+    // ~arch keyword the ACCEPT_KEYWORDS line accepting only arch; licenses, properties and
+    // restrictions the line that last refused each missing one.
+    [[nodiscard]] std::vector<MaskReason> sourced_reasons(std::uint32_t version) const;
 
   private:
-    [[nodiscard]] std::vector<std::string> masking_status(std::uint32_t version) const;
+    [[nodiscard]] std::vector<MaskReason> masking_status(std::uint32_t version) const;
 
     struct Rules;
     std::unique_ptr<const Rules> rules_;
 };
+
+// The reason, then its entries' "file:line" in parentheses, comma-separated, as `use` places a
+// flag's source; an entry from the environment or portage's defaults has none.
+[[nodiscard]] std::string shown_reason(const RepositoryIndex& index, const MaskReason& reason);
 
 // Each version of the packages arguments name (atoms, or names without a category for every
 // category's), every version without any: "cpv::repo<TAB>slot<TAB>visible", or

@@ -58,6 +58,10 @@ struct StackedVisibility {
     std::vector<StackedKey> properties;
     std::vector<SourcedToken> accept_restrict;
     std::vector<StackedKey> restrict;
+    // The entry of the -* each ACCEPT_ list was pruned after; none when it was not.
+    std::optional<std::uint32_t> license_cleared;
+    std::optional<std::uint32_t> properties_cleared;
+    std::optional<std::uint32_t> restrict_cleared;
 };
 
 [[nodiscard]] StackedVisibility stack_visibility(const RepositoryIndex& index);

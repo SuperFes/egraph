@@ -178,8 +178,9 @@ class Stacker {
         found.accept_keywords_entries = user_keywords();
         found.masks = masks(false);
         found.unmasks = masks(true);
-        auto accept_license = pruned(accept_license_var);
+        auto accept_license = pruned(accept_license_var, found.license_cleared);
         if (accept_license.empty()) {
+            found.license_cleared.reset();
             accept_license = {{.token = "*", .entry = std::nullopt},
                               {.token = "-@EULA", .entry = std::nullopt}};
         }
@@ -197,9 +198,9 @@ class Stacker {
             }
         }
         found.licenses = std::move(licenses).ordered();
-        found.accept_properties = pruned(accept_properties_var);
+        found.accept_properties = pruned(accept_properties_var, found.properties_cleared);
         found.properties = source(ledger.package_properties).ordered();
-        found.accept_restrict = pruned(accept_restrict_var);
+        found.accept_restrict = pruned(accept_restrict_var, found.restrict_cleared);
         found.restrict = source(ledger.package_accept_restrict).ordered();
         return found;
     }
@@ -268,16 +269,19 @@ class Stacker {
         return found;
     }
 
-    // prune_incremental of every layer's tokens: from the last * on, or after the last -*.
-    [[nodiscard]] std::vector<SourcedToken> pruned(std::string_view var) const {
+    // prune_incremental of every layer's tokens: from the last * on, or after the last -*, whose
+    // entry goes to cleared.
+    [[nodiscard]] std::vector<SourcedToken> pruned(std::string_view var,
+                                                   std::optional<std::uint32_t>& cleared) const {
         auto found = tokens(accept_layers(), var);
         for (auto at = found.size(); at > 0; --at) {
-            const auto& token = found.at(at - 1).token;
-            if (token == "*") {
+            const auto& token = found.at(at - 1);
+            if (token.token == "*") {
                 found.erase(found.begin(), found.begin() + static_cast<std::ptrdiff_t>(at - 1));
                 break;
             }
-            if (token == "-*") {
+            if (token.token == "-*") {
+                cleared = token.entry;
                 found.erase(found.begin(), found.begin() + static_cast<std::ptrdiff_t>(at));
                 break;
             }

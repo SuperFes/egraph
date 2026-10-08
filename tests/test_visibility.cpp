@@ -244,6 +244,63 @@ TEST_CASE("reasons come in getmaskingstatus's order") {
                                                           "fetch in RESTRICT", "~x86 keyword"});
 }
 
+TEST_CASE("each reason shows the lines that decide it") {
+    IndexBuilder b;
+    const auto all = b.version({.cpv = "app-misc/a-1",
+                                .keywords = "~x86",
+                                .license = "EULA",
+                                .properties = "interactive",
+                                .restrict = "fetch"});
+    const auto either = b.version({.cpv = "app-misc/b-1", .license = "|| ( EULA TEST )"});
+    const auto per_package = b.version({.cpv = "app-misc/c-1", .license = "MIT"});
+    const auto missing = b.version({.cpv = "app-misc/d-1", .keywords = ""});
+    const auto environment = b.version({.cpv = "app-misc/e-1", .license = "GPL-2"});
+    const auto unnumbered = b.version({.cpv = "app-misc/f-1", .license = "BSD"});
+    auto& ledger = b.ledger();
+    const std::string defaults = "/profile/make.defaults";
+    const std::string conf = "/etc/portage/make.conf";
+    ledger.globals =
+        b.lines({{.var = "ACCEPT_KEYWORDS", .tokens = "x86", .file = defaults, .line = 3},
+                 {.var = "ACCEPT_LICENSE", .tokens = "*", .file = defaults, .line = 4},
+                 {.var = "ACCEPT_PROPERTIES", .tokens = "*", .file = defaults, .line = 5},
+                 {.var = "ACCEPT_RESTRICT", .tokens = "*", .file = defaults, .line = 6}});
+    ledger.conf =
+        b.lines({{.var = "ACCEPT_LICENSE", .tokens = "-* MIT GPL-2", .file = conf, .line = 4},
+                 {.var = "ACCEPT_PROPERTIES", .tokens = "-interactive", .file = conf, .line = 5},
+                 {.var = "ACCEPT_RESTRICT", .tokens = "-fetch", .file = conf, .line = 6},
+                 {.var = "ACCEPT_LICENSE", .tokens = "BSD -BSD", .file = conf, .line = 0}});
+    ledger.env = b.lines({{.var = "ACCEPT_LICENSE", .tokens = "-GPL-2", .file = ""}});
+    const auto profile_mask =
+        b.lines({{.atom = "app-misc/a", .file = "/profile/package.mask", .line = 9}});
+    b.profile().package_mask = profile_mask;
+    ledger.package_mask =
+        b.lines({{.atom = "app-misc/a", .file = "/etc/portage/package.mask", .line = 2}});
+    ledger.package_license = b.lines({{.atom = "app-misc/c",
+                                       .tokens = "-MIT",
+                                       .file = "/etc/portage/package.license",
+                                       .line = 7}});
+    const VersionMasks masking{b.index()};
+    const auto shown = [&](std::uint32_t id) {
+        Strings found;
+        for (const auto& reason : masking.sourced_reasons(id)) {
+            found.push_back(egraph::shown_reason(b.index(), reason));
+        }
+        return found;
+    };
+    // package.mask names the last line listing the atom, as getmaskingreason finds it.
+    CHECK(shown(all) == Strings{"package.mask (/etc/portage/package.mask:2)",
+                                "EULA license(s) (/etc/portage/make.conf:4)",
+                                "interactive properties (/etc/portage/make.conf:5)",
+                                "fetch in RESTRICT (/etc/portage/make.conf:6)",
+                                "~x86 keyword (/profile/make.defaults:3)"});
+    CHECK(shown(either) == Strings{"|| ( EULA TEST ) license(s) (/etc/portage/make.conf:4)"});
+    CHECK(shown(per_package) == Strings{"MIT license(s) (/etc/portage/package.license:7)"});
+    CHECK(shown(missing) == Strings{"missing keyword"});
+    CHECK(shown(environment) == Strings{"GPL-2 license(s)"});
+    CHECK(shown(unnumbered) == Strings{"BSD license(s) (/etc/portage/make.conf)"});
+    CHECK(masking.reasons(all).front() == "package.mask");
+}
+
 TEST_CASE("an unbalanced LICENSE masks") {
     IndexBuilder b;
     const auto broken = b.version({.cpv = "app-misc/a-1", .license = "|| ( GPL-2"});
@@ -264,13 +321,13 @@ TEST_CASE("version_lines: by cp, version and repository, each named package's or
     const auto all = egraph::version_lines(b.index(), masking, {});
     REQUIRE(all);
     CHECK(*all == Strings{"dev-libs/a-2::gentoo\t0\tvisible", "dev-libs/a-2::overlay\t0\tvisible",
-                          "dev-libs/a-10::gentoo\t0/2\tmasked\t~x86 keyword",
+                          "dev-libs/a-10::gentoo\t0/2\tmasked\t~x86 keyword (file:1)",
                           "net-misc/a-1::gentoo\t0\tvisible", "net-misc/b-1::gentoo\t0\tvisible"});
     const Strings by_name{"a"};
     CHECK(egraph::version_lines(b.index(), masking, by_name)->size() == 4);
     const Strings by_atom{">=dev-libs/a-3"};
     CHECK(*egraph::version_lines(b.index(), masking, by_atom) ==
-          Strings{"dev-libs/a-10::gentoo\t0/2\tmasked\t~x86 keyword"});
+          Strings{"dev-libs/a-10::gentoo\t0/2\tmasked\t~x86 keyword (file:1)"});
     const Strings unknown{"dev-libs/c"};
     CHECK(egraph::version_lines(b.index(), masking, unknown).error() ==
           "dev-libs/c: no version in the repositories");

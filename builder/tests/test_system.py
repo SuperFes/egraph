@@ -628,7 +628,7 @@ def test_every_repository_dependency_string_reduces_as_portage_does(live_databas
 def test_every_repository_version_is_visible_or_masked_as_portage_has_it(
     live_databases, live_layer, tmp_path
 ):
-    from test_visibility import portage_view
+    from test_visibility import portage_view, versions_view
 
     from egraph_build import repository
 
@@ -645,8 +645,8 @@ def test_every_repository_version_is_visible_or_masked_as_portage_has_it(
         check=True,
     ).stdout.splitlines()
     ours = {
-        fields[0]: (fields[2] == "visible", tuple(fields[3:]))
-        for fields in (line.split("\t") for line in lines)
+        key: (visible, reasons)
+        for key, (visible, reasons, _) in versions_view(lines).items()
     }
     assert ours == portage_view(db)
 
