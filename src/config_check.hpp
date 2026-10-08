@@ -73,6 +73,14 @@ struct UserEntry {
 // a later step for some (contradicted) or set so already (no_effect).
 [[nodiscard]] std::vector<Finding> use_findings(const Store& installed, const Evaluated& evaluated);
 
+// Each token of the user's package.accept_keywords, package.keywords, package.license,
+// package.properties and package.accept_restrict lines (their `*/*` lines and the user
+// profile's too), and each of its package.mask and package.unmask lines, over the versions of
+// installed cps it matches: changing nothing for any as evaluated without it (no_effect), or a
+// mask undone for all of them (contradicted).
+[[nodiscard]] std::vector<Finding> visibility_findings(const Store& installed,
+                                                       const RepositoryIndex& index);
+
 // The findings over the user's entries in both ledgers, ordered.
 [[nodiscard]] std::vector<Finding> check_config(const Store& installed, const Evaluated& evaluated,
                                                 const RepositoryIndex& index);

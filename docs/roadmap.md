@@ -1092,7 +1092,7 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
       after it (`versions`, the package page): package.mask the line getmaskingreason finds,
       ~arch keyword the ACCEPT_KEYWORDS line, a license, property or restriction the line that
       last refused it (the `-*` a list was pruned after, for one nothing names).
-  - 18e3: the check: an entry's effect found by stacking without it; dead, contradicted
+  - 18e3 (done): the check: an entry's effect found by stacking without it; dead, contradicted
     (overridden for everything it matches), redundant (changes nothing on its own), outside
     IUSE, not installed; `egraph config check`, its layout and exit status. Decided with the
     user (2026-10-08): only the user's files under `/etc/portage`; errors (dead, contradicted),
@@ -1113,8 +1113,13 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
       forces and masks) leaves it the other way for each, else already so (naming the step
       that set it) or set again later. Held to portage's USE with the token removed from the
       file on every scenario; 84 findings here in 0.8 s.
-    - 18e3d: visibility: keywords already accepted, masks and unmasks, licenses, properties
-      and restrictions changing nothing.
+    - 18e3d (done): visibility: each token of the user's keyword, license, property and
+      restriction lines, and each mask and unmask line as a whole, over the versions of
+      installed cps it matches, evaluated without it (`stack_visibility`'s `LeftOut`):
+      changing nothing for any (nothing matched needs it, already refused, already masked or
+      unmasked, naming the line that did) or a mask a `package.unmask` line undoes for each
+      (contradicted). Held to portage's visibility with the token or line removed from the
+      file on every scenario; one finding here, the whole check still 0.8 s.
 - 18f: the `config` notice from watch, its count of findings; enter opens the check.
 
 ## 19. What-if

@@ -278,3 +278,106 @@ def test_useless_flags_are_portages(name, mutable_playground, tmp_path):
                 "outside" if outside else "useless"
             )
     assert found == portage_useless_flags(playground)
+
+
+# The user's files naming packages that decide visibility, then its profile's.
+VISIBILITY_FILES = tuple(
+    name for name in USER_FILES if name not in ("package.use", "package.env")
+)
+PROFILE_VISIBILITY_FILES = (
+    "package.mask",
+    "package.unmask",
+    "package.keywords",
+    "package.accept_keywords",
+)
+
+
+def without_unit(file, number, position):
+    """The file without the token at position on line number, or without the line (blank, so
+    the others keep their numbers) for no position or for its only token."""
+    with open(file, encoding="utf-8") as text:
+        lines = text.read().splitlines(keepends=True)
+    words = lines[number - 1].split("#", 1)[0].split()
+    if position is None or len(words) == 2:
+        lines[number - 1] = "\n"
+    else:
+        del words[position + 1]
+        lines[number - 1] = " ".join(words) + "\n"
+    return "".join(lines)
+
+
+def portage_useless_visibility(playground):
+    """{(file, line, token): "useless"} for each token of the user's visibility lines (each
+    mask, unmask and token-less line as a whole, token "") matching versions of installed cps,
+    where portage's visibility and reasons of none of them change without it."""
+    from test_visibility import portage_view
+
+    trees = playground.trees
+    eroot = playground.eroot
+    db = trees[eroot]["porttree"].dbapi
+    vardb = trees[eroot]["vartree"].dbapi
+    installed_cps = set(vardb.cp_all())
+    versions = [
+        db._pkg_str(cpv, repo)
+        for cp in installed_cps
+        for repo in db.getRepositories()
+        for cpv in db.cp_list(cp, mytree=db.getRepositoryPath(repo))
+    ]
+    base = portage_view(db)
+    config = os.path.join(
+        vardb.settings["PORTAGE_CONFIGROOT"], portage.const.USER_CONFIG_PATH
+    )
+    paths = [os.path.join(config, name) for name in VISIBILITY_FILES]
+    paths += [
+        os.path.join(config, "profile", name) for name in PROFILE_VISIBILITY_FILES
+    ]
+    found = {}
+    for path in paths:
+        whole = os.path.basename(path) in ("package.mask", "package.unmask")
+        for file in files_under(path):
+            with open(file, encoding="utf-8") as text:
+                lines = text.read().splitlines()
+            for number, line in enumerate(lines, 1):
+                words = line.split("#", 1)[0].split()
+                if not words:
+                    continue
+                atom = Atom(words[0].lstrip("-"), allow_wildcard=True, allow_repo=True)
+                keys = [f"{pkg}::{pkg.repo}" for pkg in match_from_list(atom, versions)]
+                if not keys:
+                    continue
+                units = (
+                    [(None, "")]
+                    if whole or len(words) == 1
+                    else list(enumerate(words[1:]))
+                )
+                for position, token in units:
+                    with open(file, encoding="utf-8") as text_file:
+                        kept = text_file.read()
+                    edited = without_unit(file, number, position)
+                    try:
+                        with open(file, "w", encoding="utf-8") as out:
+                            out.write(edited)
+                        _, changed_trees = playground._load_config()
+                        changed = portage_view(changed_trees[eroot]["porttree"].dbapi)
+                    finally:
+                        with open(file, "w", encoding="utf-8") as out:
+                            out.write(kept)
+                    if all(base[key] == changed[key] for key in keys):
+                        found[(file, number, token)] = "useless"
+    return found
+
+
+@pytest.mark.parametrize("name", sorted(SCENARIOS))
+def test_useless_visibility_entries_are_portages(name, mutable_playground, tmp_path):
+    playground = mutable_playground(name)
+    trees = playground.trees
+    system = System(playground.eroot, trees[playground.eroot]["vartree"].dbapi, trees)
+    result = check(system, tmp_path, "--layout", "lines")
+    found = {
+        (fields[0], int(fields[1]), fields[5]): "useless"
+        for fields in (line.split("\t") for line in result.stdout.splitlines())
+        if fields[3] in ("contradicted", "no-effect")
+        and "package.use" not in fields[0]
+        and "package.env" not in fields[0]
+    }
+    assert found == portage_useless_visibility(playground)

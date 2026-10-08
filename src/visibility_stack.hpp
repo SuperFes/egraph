@@ -64,6 +64,15 @@ struct StackedVisibility {
     std::optional<std::uint32_t> restrict_cleared;
 };
 
-[[nodiscard]] StackedVisibility stack_visibility(const RepositoryIndex& index);
+// A ledger entry's token, or the whole entry, left out of the stacking: as if the line were
+// without it, or not there.
+struct LeftOut {
+    std::uint32_t entry = 0;
+    // Among the entry's tokens; none for the whole line.
+    std::optional<std::uint32_t> position = std::nullopt;
+};
+
+[[nodiscard]] StackedVisibility stack_visibility(const RepositoryIndex& index,
+                                                 std::optional<LeftOut> left_out = std::nullopt);
 
 } // namespace egraph

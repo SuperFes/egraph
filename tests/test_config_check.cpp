@@ -178,3 +178,82 @@ TEST_CASE("the user profile's package.use counts, other profiles' do not") {
           std::vector<std::string>{"/etc/portage/profile/package.use\t1\twarning\tno-effect\tcat/"
                                    "a\tnope\tnot in the IUSE of anything it matches"});
 }
+
+TEST_CASE("a visibility token or line changing nothing it matches, or a mask undone") {
+    egraph::test::IndexBuilder b;
+    std::ignore = b.version({.cpv = "app-misc/a-1", .keywords = "~x86"});
+    std::ignore = b.version({.cpv = "app-misc/b-1"});
+    std::ignore = b.version({.cpv = "app-misc/c-1", .license = "EULA"});
+    std::ignore = b.version({.cpv = "app-misc/d-1"});
+    std::ignore = b.version({.cpv = "app-misc/gone-1", .keywords = "~x86"});
+    auto& ledger = b.ledger();
+    ledger.package_mask = b.lines({{.atom = "app-misc/d", .file = "/m", .line = 1}});
+    ledger.package_unmask = b.lines({{.atom = "app-misc/d", .file = "/u", .line = 1},
+                                     {.atom = "app-misc/b", .file = "/u", .line = 2}});
+    ledger.package_accept_keywords =
+        b.lines({{.atom = "app-misc/a", .tokens = "~x86 ~arm", .file = "/ak", .line = 1},
+                 {.atom = "app-misc/b", .tokens = "~x86", .file = "/ak", .line = 2},
+                 {.atom = "=app-misc/b-1", .file = "/ak", .line = 3},
+                 {.atom = "app-misc/gone", .file = "/ak", .line = 4}});
+    ledger.package_license =
+        b.lines({{.atom = "app-misc/c", .tokens = "EULA", .file = "/l", .line = 1}});
+    const auto system = egraph::test::make_system({{.cpv = "app-misc/a-1"},
+                                                   {.cpv = "app-misc/b-1"},
+                                                   {.cpv = "app-misc/c-1"},
+                                                   {.cpv = "app-misc/d-1"}},
+                                                  {});
+    std::vector<std::string> records;
+    for (const auto& finding : egraph::visibility_findings(system.store, b.index())) {
+        records.push_back(egraph::finding_record(finding));
+    }
+    // Lines for packages not installed are left to the not-installed notes.
+    CHECK(records ==
+          std::vector<std::string>{
+              "/m\t1\terror\tcontradicted\tapp-misc/d\t\tunmasked again for everything it matches "
+              "(/u:1)",
+              "/u\t2\twarning\tno-effect\tapp-misc/b\t\tnothing it matches is masked",
+              "/ak\t1\twarning\tno-effect\tapp-misc/a\t~arm\tnothing it matches needs it",
+              "/ak\t2\twarning\tno-effect\tapp-misc/b\t~x86\tnothing it matches needs it",
+              "/ak\t3\twarning\tno-effect\t=app-misc/b-1\t\tnothing it matches needs it",
+              "/l\t1\twarning\tno-effect\tapp-misc/c\tEULA\tnothing it matches needs it",
+          });
+}
+
+TEST_CASE("a mask, unmask or refusal already so names the line that made it so") {
+    egraph::test::IndexBuilder b;
+    std::ignore = b.version({.cpv = "app-misc/b-1"});
+    std::ignore = b.version({.cpv = "app-misc/c-1", .license = "EULA"});
+    std::ignore = b.version({.cpv = "app-misc/e-1"});
+    std::ignore = b.version({.cpv = "app-misc/f-1"});
+    auto& ledger = b.ledger();
+    ledger.conf = b.lines({{.var = "ACCEPT_LICENSE", .tokens = "-EULA"}});
+    ledger.package_mask = b.lines({{.atom = "app-misc/e", .file = "/m", .line = 1},
+                                   {.atom = ">=app-misc/e-1", .file = "/m", .line = 2},
+                                   {.atom = "app-misc/f", .file = "/m", .line = 3}});
+    ledger.package_unmask = b.lines({{.atom = "app-misc/f", .file = "/u", .line = 1},
+                                     {.atom = "=app-misc/f-1", .file = "/u", .line = 2}});
+    ledger.package_license =
+        b.lines({{.atom = "app-misc/c", .tokens = "-EULA", .file = "/l", .line = 1},
+                 {.atom = "app-misc/b", .tokens = "-EULA", .file = "/l", .line = 2}});
+    const auto system = egraph::test::make_system({{.cpv = "app-misc/b-1"},
+                                                   {.cpv = "app-misc/c-1"},
+                                                   {.cpv = "app-misc/e-1"},
+                                                   {.cpv = "app-misc/f-1"}},
+                                                  {});
+    std::vector<std::string> records;
+    for (const auto& finding : egraph::visibility_findings(system.store, b.index())) {
+        records.push_back(egraph::finding_record(finding));
+    }
+    CHECK(records ==
+          std::vector<std::string>{
+              "/m\t1\twarning\tno-effect\tapp-misc/e\t\talready masked (line 2)",
+              "/m\t2\twarning\tno-effect\t>=app-misc/e-1\t\talready masked (line 1)",
+              "/m\t3\terror\tcontradicted\tapp-misc/f\t\tunmasked again for everything it matches "
+              "(/u:1)",
+              "/u\t1\twarning\tno-effect\tapp-misc/f\t\talready unmasked (line 2)",
+              "/u\t2\twarning\tno-effect\t=app-misc/f-1\t\talready unmasked (line 1)",
+              "/l\t1\twarning\tno-effect\tapp-misc/c\t-EULA\talready refused",
+              "/l\t2\twarning\tno-effect\tapp-misc/b\t-EULA\tchanges nothing for anything it "
+              "matches",
+          });
+}

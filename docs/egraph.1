@@ -376,14 +376,17 @@ the profiles' and the repositories' own entries aside.
 Errors first: entries matching nothing in any repository nor installed (or that are not atoms
 portage reads), then entries a later step overrides for everything they match (a
 .B package.use
-flag a later line or the profiles' forces and masks set the other way); then warnings, entries
-changing nothing for anything they match (a flag outside their IUSE or already so, a keyword
-already accepted, a mask or unmask with no effect); then notes, entries matching no installed
-package's versions.
+flag a later line or the profiles' forces and masks set the other way, a mask a
+.B package.unmask
+line undoes); then warnings, entries changing nothing for anything they match (a flag outside
+their IUSE or already so, a keyword or license nothing matched needs, a mask or unmask with no
+effect); then notes, entries matching no installed package's versions.
 A
 .B package.use
 flag is checked on its own, over the ebuilds of the installed packages its atom matches, by
 stacking USE without it; each finding names the line that decides it.
+A visibility token, or a mask or unmask line as a whole, is checked likewise, over the versions
+of installed packages its atom matches, by evaluating their visibility without it.
 Each kind's findings go by file, then line, followed by how many of each severity.
 Exits 1 when there is an error.
 In lines, the file, the line, the severity

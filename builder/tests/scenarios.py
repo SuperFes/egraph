@@ -1645,8 +1645,14 @@ SCENARIOS = {
                 "=app-misc/m-2",
                 "-app-misc/rm",
                 "app-misc/nothing",
+                "=app-misc/u-1",
             ),
-            "package.unmask": ("=app-misc/m-1", "app-misc/ru"),
+            "package.unmask": (
+                "=app-misc/m-1",
+                "app-misc/ru",
+                "app-misc/u",
+                "app-misc/k-stable",
+            ),
         },
         "ebuilds": {
             "app-misc/k-1": {"EAPI": "8", "KEYWORDS": "x86"},
@@ -1672,6 +1678,7 @@ SCENARIOS = {
         },
         "installed": {
             "app-misc/k-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/k-stable-1": {"EAPI": "8", "KEYWORDS": "x86"},
             "app-misc/m-1": {"EAPI": "8", "KEYWORDS": "x86"},
             "app-misc/u-1": {
                 "EAPI": "8",

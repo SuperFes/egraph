@@ -6,10 +6,12 @@
 // depgraph's get_masking_status words it.
 
 #include "repository.hpp"
+#include "visibility_stack.hpp"
 
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -26,6 +28,8 @@ struct MaskReason {
 class VersionMasks {
   public:
     explicit VersionMasks(const RepositoryIndex& index EGRAPH_LIFETIMEBOUND);
+    // As if a token or line of the ledger were not there.
+    VersionMasks(const RepositoryIndex& index EGRAPH_LIFETIMEBOUND, LeftOut left_out);
     VersionMasks(const VersionMasks&) = delete;
     VersionMasks& operator=(const VersionMasks&) = delete;
     VersionMasks(VersionMasks&&) noexcept;
@@ -46,6 +50,9 @@ class VersionMasks {
     // ~arch keyword the ACCEPT_KEYWORDS line accepting only arch; licenses, properties and
     // restrictions the line that last refused each missing one.
     [[nodiscard]] std::vector<MaskReason> sourced_reasons(std::uint32_t version) const;
+    // The package.unmask entry undoing a package.mask one for it, the first that matches; none
+    // where no mask matches.
+    [[nodiscard]] std::optional<std::uint32_t> unmasked_by(std::uint32_t version) const;
 
   private:
     [[nodiscard]] std::vector<MaskReason> masking_status(std::uint32_t version) const;

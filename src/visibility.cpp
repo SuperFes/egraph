@@ -543,8 +543,8 @@ struct VersionMasks::Rules {
     // names.
     std::set<std::string_view> global_keywords;
 
-    explicit Rules(const RepositoryIndex& from)
-        : index{from}, visibility{stack_visibility(from)},
+    Rules(const RepositoryIndex& from, std::optional<LeftOut> left_out)
+        : index{from}, visibility{stack_visibility(from, left_out)},
           accept_keywords{views_of(visibility.accept_keywords)},
           environment_keywords{views_of(visibility.environment_keywords)},
           arch{from.string(from.visibility.arch)},
@@ -775,7 +775,9 @@ struct VersionMasks::Rules {
 };
 
 VersionMasks::VersionMasks(const RepositoryIndex& index)
-    : rules_{std::make_unique<const Rules>(index)} {}
+    : rules_{std::make_unique<const Rules>(index, std::nullopt)} {}
+VersionMasks::VersionMasks(const RepositoryIndex& index, LeftOut left_out)
+    : rules_{std::make_unique<const Rules>(index, left_out)} {}
 VersionMasks::VersionMasks(VersionMasks&&) noexcept = default;
 VersionMasks& VersionMasks::operator=(VersionMasks&&) noexcept = default;
 VersionMasks::~VersionMasks() = default;
@@ -824,6 +826,15 @@ std::vector<std::string> VersionMasks::reasons(std::uint32_t id) const {
         found.push_back(std::move(reason.text));
     }
     return found;
+}
+
+std::optional<std::uint32_t> VersionMasks::unmasked_by(std::uint32_t id) const {
+    const auto& rules = *rules_;
+    const auto pkg = rules.subject(rules.index.get().versions.at(id));
+    if (!rules.masks.any_matches(pkg)) {
+        return std::nullopt;
+    }
+    return rules.unmasks.first_match(pkg);
 }
 
 std::vector<MaskReason> VersionMasks::sourced_reasons(std::uint32_t id) const {

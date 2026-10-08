@@ -329,8 +329,14 @@ def test_the_config_scenario(playgrounds):
         (f"{user}/package.mask", 1, "=app-misc/m-2", "", ()),
         (f"{user}/package.mask", 2, "-app-misc/rm", "", ()),
         (f"{user}/package.mask", 3, "app-misc/nothing", "", ()),
+        (f"{user}/package.mask", 4, "=app-misc/u-1", "", ()),
     ]
-    assert [e.atom for e in vis.package_unmask] == ["=app-misc/m-1", "app-misc/ru"]
+    assert [e.atom for e in vis.package_unmask] == [
+        "=app-misc/m-1",
+        "app-misc/ru",
+        "app-misc/u",
+        "app-misc/k-stable",
+    ]
     keywords = f"{user}/package.accept_keywords"
     assert local(vis.package_accept_keywords) == [
         (f"{keywords}/00-base", 2, "=app-misc/k-2", "", ()),

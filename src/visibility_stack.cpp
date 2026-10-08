@@ -156,7 +156,8 @@ class KeyDict {
 
 class Stacker {
   public:
-    explicit Stacker(const RepositoryIndex& index) : index_{&index} {
+    Stacker(const RepositoryIndex& index, std::optional<LeftOut> left_out)
+        : index_{&index}, left_out_{left_out} {
         for (const auto id : ids(index.ledger.license_groups)) {
             const auto& entry = this->entry(id);
             auto& members = groups_[std::string{index.string(entry.var)}];
@@ -210,6 +211,28 @@ class Stacker {
         return index_->ledger_entries.at(id);
     }
 
+    // Whether the line is left out: the whole of it, or its only token.
+    [[nodiscard]] bool whole_left_out(std::uint32_t id) const {
+        return left_out_ && left_out_->entry == id &&
+               (!left_out_->position || entry(id).tokens.count == 1);
+    }
+
+    // The entry's tokens, less any left out.
+    [[nodiscard]] std::vector<std::string> kept_tokens(std::uint32_t id) const {
+        std::vector<std::string> found;
+        if (whole_left_out(id)) {
+            return found;
+        }
+        std::uint32_t position = 0;
+        for (const auto token : index_->ids_in(entry(id).tokens)) {
+            if (!(left_out_ && left_out_->entry == id && left_out_->position == position)) {
+                found.emplace_back(index_->string(token));
+            }
+            ++position;
+        }
+        return found;
+    }
+
     [[nodiscard]] static std::vector<std::uint32_t> ids(Range range) {
         std::vector<std::uint32_t> found(range.count);
         std::ranges::iota(found, range.first);
@@ -243,8 +266,8 @@ class Stacker {
             if (index_->string(entry(id).var) != var) {
                 continue;
             }
-            for (const auto token : index_->ids_in(entry(id).tokens)) {
-                found.push_back({.token = std::string{index_->string(token)}, .entry = id});
+            for (const auto& token : kept_tokens(id)) {
+                found.push_back({.token = token, .entry = id});
             }
         }
         return found;
@@ -337,10 +360,13 @@ class Stacker {
     [[nodiscard]] KeyDict source(Range range) const {
         KeyDict found;
         for (const auto id : ids(range)) {
+            if (whole_left_out(id)) {
+                continue;
+            }
             StackedKey key{
                 .atom = std::string{index_->string(entry(id).atom)}, .tokens = {}, .entries = {id}};
-            for (const auto token : index_->ids_in(entry(id).tokens)) {
-                key.tokens.push_back({.token = std::string{index_->string(token)}, .entry = id});
+            for (const auto& token : kept_tokens(id)) {
+                key.tokens.push_back({.token = token, .entry = id});
             }
             found.extend(std::move(key));
         }
@@ -380,7 +406,9 @@ class Stacker {
     [[nodiscard]] std::vector<StackedMask> lines(Range range) const {
         std::vector<StackedMask> found;
         for (const auto id : ids(range)) {
-            found.push_back({.atom = std::string{index_->string(entry(id).atom)}, .entry = id});
+            if (!whole_left_out(id)) {
+                found.push_back({.atom = std::string{index_->string(entry(id).atom)}, .entry = id});
+            }
         }
         return found;
     }
@@ -446,13 +474,14 @@ class Stacker {
     }
 
     const RepositoryIndex* index_;
+    std::optional<LeftOut> left_out_;
     std::map<std::string, std::set<std::string>, std::less<>> groups_;
 };
 
 } // namespace
 
-StackedVisibility stack_visibility(const RepositoryIndex& index) {
-    return Stacker{index}.stack();
+StackedVisibility stack_visibility(const RepositoryIndex& index, std::optional<LeftOut> left_out) {
+    return Stacker{index, left_out}.stack();
 }
 
 } // namespace egraph
