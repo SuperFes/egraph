@@ -107,7 +107,8 @@ struct Orphans {
 struct Updates {
     static constexpr std::string_view name = "updates";
     UseRebuilds rebuilds = UseRebuilds::none;
-    // Also the updates installed dependents hold back, and which atoms do.
+    // Also the updates installed dependents hold back, and which atoms do; those nothing can
+    // satisfy are always listed.
     bool held = false;
     // In merge order, with what each waits for.
     bool table = false;
@@ -135,6 +136,8 @@ struct PlanCommand {
     bool update = false;
     bool deep = false;
     bool noreplace = false;
+    // Every held update, as updates --held lists them, rather than only those nothing can satisfy.
+    bool held = false;
     // In merge order, with what each waits for.
     bool table = false;
     // The plan held to emerge --pretend's.

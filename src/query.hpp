@@ -128,12 +128,20 @@ struct RemedyInputs {
     Rescope rescope;
 };
 
+// Which held updates update_lines lists.
+enum class HeldLines : std::uint8_t {
+    none,
+    // Those HeldBack::unsatisfiable.
+    unsatisfiable,
+    all,
+};
+
 // What emerge -u would merge (plan_updates), as "cpv<TAB>kind<TAB>target cpv<TAB>repo": kind
 // upgrade, downgrade, or rebuild when the installed package is masked and the target has its
 // version. With rebuilds, each USE rebuild too, kind rebuild with "<TAB>flags" appended, the flags
-// in emerge's notation, space-separated. With held, also each update held back or fallen back,
-// once: "cpv<TAB>held<TAB>target cpv<TAB>repo<TAB>flags", the flags a held USE rebuild is for
-// (else empty), then a field per package whose dependencies reject it (a dependent, or the
+// in emerge's notation, space-separated. Then each update held back or fallen back that held
+// lists, once: "cpv<TAB>held<TAB>target cpv<TAB>repo<TAB>flags", the flags a held USE rebuild is
+// for (else empty), then a field per package whose dependencies reject it (a dependent, or the
 // target or what it would pull in): its cpv, then each of its atoms that do, space-separated. In
 // the installed packages' order; then each package new in its slot,
 // "cpv<TAB>new<TAB>cpv<TAB>repo<TAB>USE<TAB>puller atom", by cpv, with its use_display and the
@@ -163,12 +171,12 @@ struct RemedyInputs {
 // package.mask the file and a field per line of the comment above the entry.
 [[nodiscard]] std::vector<std::string>
 update_lines(const Store& store, const Evaluated& evaluated, UseRebuilds rebuilds,
-             bool held = false, bool table = false, const Targets& targets = {},
+             HeldLines held = HeldLines::none, bool table = false, const Targets& targets = {},
              const std::optional<RemedyInputs>& remedies = std::nullopt);
 // As above, for plan, plan_updates' for rebuilds and targets.
 [[nodiscard]] std::vector<std::string>
 update_lines(const Store& store, const Evaluated& evaluated, const Plan& plan, UseRebuilds rebuilds,
-             bool held, bool table, const Targets& targets,
+             HeldLines held, bool table, const Targets& targets,
              const std::optional<RemedyInputs>& remedies = std::nullopt);
 
 // Where each merge of the plan comes from, in merge order: "place<TAB>@set<TAB>cpv<TAB>...", its

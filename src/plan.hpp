@@ -96,6 +96,8 @@ struct HeldBack {
     // What rejects it, sorted: dependents' atoms that the update would leave unsatisfied, and
     // the target's own dependencies (or those of what it pulls in) that nothing can satisfy.
     std::vector<Reason> reasons;
+    // Some of them nothing can satisfy: an error in a repository rather than a dependent's hold.
+    bool unsatisfiable = false;
 };
 
 // A blocker between two packages of what a plan leaves installed.

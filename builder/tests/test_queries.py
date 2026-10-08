@@ -130,9 +130,12 @@ NEW_KINDS = ("new", "new-slot")
 
 
 def merge_lines(text):
-    """updates or plan output without its uninstalls, blocks and refusals."""
+    """updates or plan output without its held updates (listed when nothing satisfies them),
+    uninstalls, blocks and refusals."""
     return [
-        line for line in text.splitlines() if line.split("\t")[1] not in TRAILING_KINDS
+        line
+        for line in text.splitlines()
+        if line.split("\t")[1] not in ("held", *TRAILING_KINDS)
     ]
 
 

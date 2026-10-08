@@ -339,22 +339,23 @@ TEST_CASE("-u's greedy slots, for an atom named alone, leave out an installed sl
 
 TEST_CASE("update lines end with the uninstalls, then the blocks") {
     const auto moved = renamed("!app-misc/old", {"app-misc/user"});
-    CHECK(egraph::update_lines(moved.store, moved.evaluated, egraph::UseRebuilds::none, false,
-                               false, world()) ==
+    CHECK(egraph::update_lines(moved.store, moved.evaluated, egraph::UseRebuilds::none,
+                               egraph::HeldLines::none, false, world()) ==
           std::vector<std::string>{
               "app-misc/user-1\tupgrade\tapp-misc/user-2\ttest_repo",
               "app-misc/new-1\tnew\tapp-misc/new-1\ttest_repo\t\tapp-misc/user-2 app-misc/new",
               "app-misc/old-1\tuninstall\tapp-misc/new-1\t!app-misc/old\tapp-misc/old-1"});
     // In the table, after the place of the merge it waits for.
-    const auto moved_table = egraph::update_lines(moved.store, moved.evaluated,
-                                                  egraph::UseRebuilds::none, false, true, world());
+    const auto moved_table =
+        egraph::update_lines(moved.store, moved.evaluated, egraph::UseRebuilds::none,
+                             egraph::HeldLines::none, true, world());
     REQUIRE(moved_table.size() == 3);
     CHECK(moved_table.at(0).starts_with("1\t\tapp-misc/new-1\t"));
     CHECK(moved_table.back() ==
           "\t1\tapp-misc/old-1\tuninstall\tapp-misc/new-1\t!app-misc/old\tapp-misc/old-1");
     const auto kept = renamed("!app-misc/old", {"app-misc/user", "app-misc/old"});
     const auto table = egraph::update_lines(kept.store, kept.evaluated, egraph::UseRebuilds::none,
-                                            false, true, world());
+                                            egraph::HeldLines::none, true, world());
     REQUIRE(table.size() == 3);
     CHECK(table.back() == "\t\tapp-misc/new-1\tblocks\t!app-misc/old\tapp-misc/old-1");
 }

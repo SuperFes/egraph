@@ -386,7 +386,7 @@ TEST_CASE("updates list what dependents hold back, and who") {
     REQUIRE(evaluated.has_value());
     const auto lines = [&](std::string_view atom, Beside beside = Beside::nothing) {
         return egraph::update_lines(depending_through(atom, beside), *evaluated,
-                                    egraph::UseRebuilds::none, true);
+                                    egraph::UseRebuilds::none, egraph::HeldLines::all);
     };
     const std::vector<std::string> upgrade{"dev-libs/b-1\tupgrade\tdev-libs/b-2\ttest_repo"};
     const std::vector<std::string> held{

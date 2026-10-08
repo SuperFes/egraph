@@ -106,7 +106,8 @@ TEST_CASE("a listed package's old slot goes once the root atom's new slot merges
     CHECK(replaced(system, plan) == std::vector<std::string>{"app-emulation/wine-vanilla-8.0 after "
                                                              "app-emulation/wine-vanilla-9.0"});
     CHECK(egraph::update_lines(system.store, system.evaluated, plan, egraph::UseRebuilds::none,
-                               false, false, world({"app-emulation/wine-vanilla"})) ==
+                               egraph::HeldLines::none, false,
+                               world({"app-emulation/wine-vanilla"})) ==
           std::vector<std::string>{
               "app-emulation/wine-vanilla-9.0\tnew-slot\tapp-emulation/wine-vanilla-9.0\ttest_repo"
               "\t\t@selected app-emulation/wine-vanilla\tapp-emulation/wine-vanilla-8.0:8.0",

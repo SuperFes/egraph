@@ -211,6 +211,10 @@ template <class C> void add_plan_options(CLI::App* sub, Invocation& invocation) 
         },
         "Also the rebuilds emerge --changed-use makes for changed USE (with -u)");
     sub->add_flag_callback(
+        "--held", [plan] { plan().held = true; },
+        "Also the updates installed dependents hold back, which of their atoms do, and the "
+        "remedies");
+    sub->add_flag_callback(
         "-t,--table", [plan] { plan().table = true; },
         "In merge order, each with the places and kinds of the merges it waits for");
     if constexpr (std::is_same_v<C, PlanCommand>) {
@@ -1307,6 +1311,18 @@ struct Shown {
     std::vector<Argument> arguments;
 };
 
+// Held updates nothing can satisfy are always listed; the rest with --held.
+HeldLines held_lines(bool held) {
+    return held ? HeldLines::all : HeldLines::unsatisfiable;
+}
+
+// The held updates held_lines leaves out.
+std::size_t unlisted_held(const Plan& plan, bool held) {
+    return held ? 0
+                : static_cast<std::size_t>(std::ranges::count_if(
+                      plan.held, [](const HeldBack& back) { return !back.unsatisfiable; }));
+}
+
 // The updates, shown; the exit status instead when there are none to show.
 std::expected<Shown, Exit> show_updates(const Updates& command, Session& session,
                                         const Invocation& invocation, std::ostream& out,
@@ -1364,9 +1380,10 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
     if (command.tree) {
         const auto tree = update_tree_lines(*store, evaluated, (*depclean)->get().kept, plan);
         if (const auto style = output(invocation); style.human) {
-            human_update_tree(
-                out, update_lines(*store, evaluated, plan, command.rebuilds, false, true, targets),
-                tree, style.theme);
+            human_update_tree(out,
+                              update_lines(*store, evaluated, plan, command.rebuilds,
+                                           HeldLines::none, true, targets),
+                              tree, style.theme);
         } else {
             write_lines(out, tree);
         }
@@ -1388,10 +1405,10 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
             };
         }
     }
-    const auto lines = update_lines(*store, evaluated, plan, command.rebuilds, command.held,
-                                    command.table, targets, remedies);
+    const auto lines = update_lines(*store, evaluated, plan, command.rebuilds,
+                                    held_lines(command.held), command.table, targets, remedies);
     if (const auto style = output(invocation); style.human) {
-        human_updates(out, lines, style.theme, command.table);
+        human_updates(out, lines, style.theme, command.table, unlisted_held(plan, command.held));
     } else {
         write_lines(out, lines);
     }
@@ -1717,10 +1734,19 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
                 .store = *store,
                 .evaluated = evaluated,
                 .arguments = request->arguments};
-    const auto lines = update_lines(*store, evaluated, shown.plan, command.rebuilds, false,
-                                    command.table, targets);
+    std::optional<RemedyInputs> remedies;
+    if (command.held) {
+        const auto graph = session.graph(invocation.dynamic_deps);
+        if (!graph) {
+            return std::unexpected(fail(err, graph.error()));
+        }
+        remedies = RemedyInputs{.graph = *graph, .rescope = {}};
+    }
+    const auto lines = update_lines(*store, evaluated, shown.plan, command.rebuilds,
+                                    held_lines(command.held), command.table, targets, remedies);
     if (const auto style = output(invocation); style.human) {
-        human_updates(out, lines, style.theme, command.table);
+        human_updates(out, lines, style.theme, command.table,
+                      unlisted_held(shown.plan, command.held));
     } else {
         write_lines(out, lines);
     }

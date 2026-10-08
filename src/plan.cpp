@@ -134,6 +134,8 @@ class Planner {
         std::size_t at = 0;
         // What rejected the target.
         std::vector<Reason> reasons;
+        // Some of them nothing can satisfy.
+        bool unsatisfiable = false;
         // Wanted only for a dependent's move to a newer slot, or for a merge that needs it, so
         // never held.
         bool induced = false;
@@ -1306,6 +1308,7 @@ class Planner {
             }
         }
         std::map<std::uint32_t, std::vector<Reason>> rejected;
+        std::set<std::uint32_t> unsatisfiable;
         bool masked = false;
         for (std::size_t w = 0; w < work.size(); ++w) {
             const auto item = work.at(w);
@@ -1460,7 +1463,14 @@ class Planner {
                         masked =
                             backtracked_.try_emplace(item.member.index, failed).second || masked;
                     } else if (item.root) {
-                        std::ranges::copy(leaves(failed), std::back_inserter(rejected[*item.root]));
+                        const auto found = leaves(failed);
+                        // Not where a version that would do is kept out, by a hold on its slot.
+                        if (std::ranges::any_of(found, [this](const Reason& leaf) {
+                                return !matched_without_use(leaf.atom);
+                            })) {
+                            unsatisfiable.insert(*item.root);
+                        }
+                        std::ranges::copy(found, std::back_inserter(rejected[*item.root]));
                     } else {
                         continue;
                     }
@@ -1482,6 +1492,7 @@ class Planner {
                 const auto [first, last] = std::ranges::unique(reasons);
                 reasons.erase(first, last);
                 choice.reasons = std::move(reasons);
+                choice.unsatisfiable = unsatisfiable.contains(id);
             }
             ++choice.at;
         }
@@ -1641,8 +1652,10 @@ class Planner {
                     add_unsatisfied(plan, reason);
                 }
             } else if (choice.at != 0 && !choice.induced) {
-                plan.held.push_back(
-                    {.package = id, .wanted = *choice.wanted, .reasons = choice.reasons});
+                plan.held.push_back({.package = id,
+                                     .wanted = *choice.wanted,
+                                     .reasons = choice.reasons,
+                                     .unsatisfiable = choice.unsatisfiable});
             }
         }
         auto pulled = pulled_;

@@ -358,6 +358,9 @@ some of them.
 .B \-\-held
 Also the updates that installed dependents hold back, which of their atoms do, and the commands
 that would get past them.
+Without it, only the updates held back by a dependency nothing satisfies are listed (the
+target's own, or one of what it would pull in: an error in a repository), each with that
+dependency; the summary counts the rest.
 .TP
 .BR \-t ", " \-\-table
 In merge order, each with the places of the merges it waits for, each followed by its kinds:
@@ -506,6 +509,10 @@ also the rebuilds
 .B emerge \-\-changed\-use
 makes.
 .TP
+.B \-\-held
+As for
+.BR updates .
+.TP
 .BR \-t ", " \-\-table
 In merge order, each with the places of the merges it waits for, each followed by its kinds:
 .B b
@@ -646,6 +653,8 @@ adds them, unless
 .TP
 .BR \-U ", " \-\-changed\-use
 .TP
+.B \-\-held
+.TP
 .BR \-t ", " \-\-table
 As for
 .BR plan .
@@ -726,6 +735,8 @@ Also run as
 .BR \-N ", " \-\-newuse
 .TP
 .BR \-U ", " \-\-changed\-use
+.TP
+.B \-\-held
 .TP
 .BR \-t ", " \-\-table
 As for

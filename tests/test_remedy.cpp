@@ -90,9 +90,9 @@ TEST_CASE("a holder a set world_sets names keeps is only named: deselecting cann
                                                        "[] [selected app-misc/pylint]; nodeps"});
     // Named by that set, not the @selected it is part of.
     const auto graph = egraph::build_graph(store);
-    const auto lines =
-        egraph::update_lines(store, system.evaluated, egraph::UseRebuilds::none, true, false, {},
-                             egraph::RemedyInputs{.graph = graph, .rescope = {}});
+    const auto lines = egraph::update_lines(store, system.evaluated, egraph::UseRebuilds::none,
+                                            egraph::HeldLines::all, false, {},
+                                            egraph::RemedyInputs{.graph = graph, .rescope = {}});
     CHECK(std::ranges::contains(
         lines, std::string{"dev-libs/astroid-4.0\tholder\tapp-misc/pylint-1\t\t@myset "
                            "app-misc/pylint"}));
@@ -231,8 +231,8 @@ TEST_CASE("updates --held lists each held update's remedies under it") {
     const auto& [store, evaluated] = system;
     const auto graph = egraph::build_graph(store);
     const auto lines =
-        egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, true, false, {},
-                             egraph::RemedyInputs{.graph = graph, .rescope = {}});
+        egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, egraph::HeldLines::all,
+                             false, {}, egraph::RemedyInputs{.graph = graph, .rescope = {}});
     CHECK(lines ==
           std::vector<std::string>{
               "dev-libs/astroid-4.0\theld\tdev-libs/astroid-4.3\ttest_repo\t\tapp-misc/pylint-1 "
@@ -246,8 +246,8 @@ TEST_CASE("updates --held lists each held update's remedies under it") {
               "llvm/libclc-22\tnodeps"});
     // In table form, led by two empty fields like the held line.
     const auto table =
-        egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, true, true, {},
-                             egraph::RemedyInputs{.graph = graph, .rescope = {}});
+        egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, egraph::HeldLines::all,
+                             true, {}, egraph::RemedyInputs{.graph = graph, .rescope = {}});
     CHECK(table.size() == lines.size());
     CHECK(table.at(1) == "\t\t" + lines.at(1));
 }

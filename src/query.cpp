@@ -321,7 +321,7 @@ std::vector<std::uint32_t> fallbacks(const Evaluated& evaluated, std::uint32_t p
 }
 
 std::vector<std::string> update_lines(const Store& store, const Evaluated& evaluated,
-                                      UseRebuilds rebuilds, bool held, bool table,
+                                      UseRebuilds rebuilds, HeldLines held, bool table,
                                       const Targets& targets,
                                       const std::optional<RemedyInputs>& remedies) {
     return update_lines(store, evaluated, plan_updates(store, evaluated, rebuilds, targets),
@@ -329,8 +329,8 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& evalu
 }
 
 std::vector<std::string> update_lines(const Store& store, const Evaluated& original,
-                                      const Plan& plan, UseRebuilds rebuilds, bool held, bool table,
-                                      const Targets& targets,
+                                      const Plan& plan, UseRebuilds rebuilds, HeldLines held,
+                                      bool table, const Targets& targets,
                                       const std::optional<RemedyInputs>& remedies) {
     const auto& evaluated = plan.evaluated_or(original);
     const auto target_fields = [&evaluated](std::uint32_t target) {
@@ -389,12 +389,15 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& origi
     };
     // Per package, its held line and any remedies.
     std::vector<std::vector<std::string>> held_lines(store.packages.size());
-    if (held) {
+    if (held != HeldLines::none) {
         const auto found = remedies ? egraph::remedies(store, evaluated, remedies->graph, plan,
                                                        rebuilds, targets, remedies->rescope)
                                     : std::vector<Remedy>{};
         for (std::size_t index = 0; index < plan.held.size(); ++index) {
             const auto& back = plan.held.at(index);
+            if (held == HeldLines::unsatisfiable && !back.unsatisfiable) {
+                continue;
+            }
             const auto cpv = package(back.package);
             auto line = std::format("{}\theld\t{}\t{}", cpv, target_fields(back.wanted.target),
                                     back.wanted.flags);

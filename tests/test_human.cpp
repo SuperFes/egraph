@@ -366,6 +366,28 @@ TEST_CASE("held updates come once each, their holders under them") {
                         "\n1 held\n");
 }
 
+TEST_CASE("held updates left out are counted, for --held to list") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{"a/up-1\tupgrade\ta/up-2\tr",
+                                                   "a/b-1\theld\ta/b-2\tr\t\ta/b-2 a/missing"},
+                          plain, false, 2);
+    CHECK(out.str() == "U a/up  1 > 2  ::r\n"
+                       "\nHeld back\n"
+                       "H a/b   1 > 2  ::r\n"
+                       "    a/b-2  a/missing\n"
+                       "\n1 upgrade, 3 held (--held lists the other 2)\n");
+    std::ostringstream none_listed;
+    egraph::human_updates(none_listed, std::vector<std::string>{}, plain, false, 1);
+    CHECK(none_listed.str() == "+ Nothing to update.\n"
+                               "\n1 held (--held lists it)\n");
+    std::ostringstream some;
+    egraph::human_updates(some, std::vector<std::string>{"a/up-1\tupgrade\ta/up-2\tr"}, plain,
+                          false, 2);
+    CHECK(some.str() == "U a/up  1 > 2  ::r\n"
+                        "\n1 upgrade, 2 held (--held lists them)\n");
+}
+
 TEST_CASE("a held update's holders say what keeps them, and its remedies follow as commands") {
     std::ostringstream out;
     egraph::human_updates(

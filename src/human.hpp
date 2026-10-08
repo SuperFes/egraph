@@ -222,9 +222,10 @@ remedy_lines(std::span<const std::string_view> holders, std::span<const std::str
 
 // updates records: one line per package, its versions or the flags it would be rebuilt for. With
 // table, records from update_lines' table: in merge order, each led by its place and followed by
-// the places it waits for, new packages among them.
+// the places it waits for, new packages among them. unlisted counts the held updates the records
+// leave out, for --held to list.
 void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme,
-                   bool table = false);
+                   bool table = false, std::size_t unlisted = 0);
 
 // merge_differences' records after a plan: that emerge --pretend agrees, or where it does not;
 // verb says what it does ("merges", "removes").

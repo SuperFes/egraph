@@ -742,8 +742,8 @@ TEST_CASE("the table lists merges in order, each with the places it waits for") 
                      {.cpv = "dev-cpp/mm-common-1", .deps = {{"RDEPEND", "dev-libs/chain"}}},
                      {.cpv = "dev-libs/chain-1"}});
     CHECK(
-        egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none, true,
-                             true) ==
+        egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none,
+                             egraph::HeldLines::all, true) ==
         std::vector<std::string>{
             "1\t\tdev-libs/chain-1\tnew\tdev-libs/chain-1\ttest_repo\t\tdev-cpp/mm-common-1 "
             "dev-libs/chain",
@@ -953,8 +953,8 @@ TEST_CASE("a root atom's best version in a slot nothing occupies is pulled in") 
     // @installed's slot atoms name only the installed slot.
     CHECK(plan(system, egraph::UseRebuilds::none, shallow).empty());
     // The line names the root atom.
-    CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none, false,
-                               false, {.scope = {}, .roots = true}) ==
+    CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none,
+                               egraph::HeldLines::none, false, {.scope = {}, .roots = true}) ==
           std::vector<std::string>{
               "dev-lang/lang-2\tnew-slot\tdev-lang/lang-2\ttest_repo\t\t@selected dev-lang/lang"
               "\tdev-lang/lang-1:1"});
@@ -1067,8 +1067,8 @@ TEST_CASE("--noreplace merges a requested atom only when nothing installed match
 
 TEST_CASE("a new package a request names is listed with its argument") {
     const auto system = make_system({}, {{.cpv = "app-misc/fresh-1"}});
-    CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none, false,
-                               false, request({"app-misc/fresh"})) ==
+    CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none,
+                               egraph::HeldLines::none, false, request({"app-misc/fresh"})) ==
           std::vector<std::string>{
               "app-misc/fresh-1\tnew\tapp-misc/fresh-1\ttest_repo\t\tapp-misc/fresh"});
 }
@@ -1109,8 +1109,8 @@ TEST_CASE("a group of hidden flags alone shows nothing") {
 
 TEST_CASE("a new package's line carries its USE before why it comes in") {
     const auto system = flagged_system();
-    CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none, false,
-                               false, request({"dev-libs/fresh"})) ==
+    CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none,
+                               egraph::HeldLines::none, false, request({"dev-libs/fresh"})) ==
           std::vector<std::string>{
               "dev-libs/fresh-1\tnew\tdev-libs/fresh-1\ttest_repo\t"
               R"x(USE="a9 a10 (fixed) on -off (-stuck)" PYTHON_TARGETS="(py3_12) py3_13 -py3_11")x"
@@ -1329,6 +1329,69 @@ TEST_CASE("an update whose dependency nothing satisfies is held, unless an argum
           std::vector<std::string>{"unsatisfied app-misc/lastupd-2 dev-libs/missing"});
 }
 
+TEST_CASE("a held update is unsatisfiable when nothing satisfies what it needs, not a dependent") {
+    const auto system =
+        make_system({{.cpv = "app-misc/upd-1"},
+                     {.cpv = "app-misc/deepupd-1"},
+                     {.cpv = "app-misc/rgb-1"},
+                     {.cpv = "app-misc/skin-1", .deps = {{"RDEPEND", "<app-misc/rgb-2"}}}},
+                    {{.cpv = "app-misc/upd-1"},
+                     {.cpv = "app-misc/upd-2", .deps = {{"RDEPEND", "dev-libs/missing"}}},
+                     {.cpv = "app-misc/deepupd-1"},
+                     {.cpv = "app-misc/deepupd-2", .deps = {{"RDEPEND", "dev-libs/end"}}},
+                     {.cpv = "dev-libs/end-1", .deps = {{"RDEPEND", "dev-libs/missing"}}},
+                     {.cpv = "app-misc/rgb-1"},
+                     {.cpv = "app-misc/rgb-2"},
+                     {.cpv = "app-misc/skin-1", .deps = {{"RDEPEND", "<app-misc/rgb-2"}}}},
+                    {"app-misc/upd", "app-misc/deepupd", "app-misc/rgb", "app-misc/skin"});
+    const egraph::Targets world{.scope = {}, .roots = true, .deep = true};
+    const auto& [store, evaluated] = system;
+    const auto found = egraph::plan_updates(store, evaluated, egraph::UseRebuilds::none, world);
+    std::vector<std::pair<std::string, bool>> held;
+    for (const auto& back : found.held) {
+        held.emplace_back(store.string(store.packages.at(back.package).cpv), back.unsatisfiable);
+    }
+    CHECK(held == std::vector<std::pair<std::string, bool>>{{"app-misc/upd-1", true},
+                                                            {"app-misc/deepupd-1", true},
+                                                            {"app-misc/rgb-1", false}});
+    // As plain emerge falls back from what it was asked for.
+    const auto asked = egraph::plan_updates(store, evaluated, egraph::UseRebuilds::none,
+                                            reinstall({"app-misc/upd"}));
+    REQUIRE(asked.held.size() == 1);
+    CHECK(asked.held.front().unsatisfiable);
+    CHECK(egraph::update_lines(store, evaluated, found, egraph::UseRebuilds::none,
+                               egraph::HeldLines::unsatisfiable, false, world) ==
+          std::vector<std::string>{
+              "app-misc/upd-1\theld\tapp-misc/upd-2\ttest_repo\t\tapp-misc/upd-2 dev-libs/missing",
+              "app-misc/deepupd-1\theld\tapp-misc/deepupd-2\ttest_repo\t\tdev-libs/end-1 "
+              "dev-libs/missing"});
+    CHECK(egraph::update_lines(store, evaluated, found, egraph::UseRebuilds::none,
+                               egraph::HeldLines::none, false, world)
+              .empty());
+    CHECK(egraph::update_lines(store, evaluated, found, egraph::UseRebuilds::none,
+                               egraph::HeldLines::all, false, world)
+              .size() == 3);
+}
+
+TEST_CASE("a held update needing a version a dependent holds back is not unsatisfiable") {
+    const auto system =
+        make_system({{.cpv = "app-misc/host-1"},
+                     {.cpv = "app-misc/holder-1", .deps = {{"RDEPEND", "<app-misc/host-2"}}},
+                     {.cpv = "app-misc/plugin-1", .deps = {{"RDEPEND", "app-misc/host"}}}},
+                    {{.cpv = "app-misc/host-1"},
+                     {.cpv = "app-misc/host-2"},
+                     {.cpv = "app-misc/holder-1", .deps = {{"RDEPEND", "<app-misc/host-2"}}},
+                     {.cpv = "app-misc/plugin-1", .deps = {{"RDEPEND", "app-misc/host"}}},
+                     {.cpv = "app-misc/plugin-2", .deps = {{"RDEPEND", ">=app-misc/host-2"}}}},
+                    {"app-misc/host", "app-misc/holder", "app-misc/plugin"});
+    const egraph::Targets world{.scope = {}, .roots = true, .deep = true};
+    const auto& [store, evaluated] = system;
+    const auto found = egraph::plan_updates(store, evaluated, egraph::UseRebuilds::none, world);
+    REQUIRE(found.held.size() == 2);
+    CHECK_FALSE(found.held.at(0).unsatisfiable);
+    CHECK_FALSE(found.held.at(1).unsatisfiable);
+}
+
 TEST_CASE("an installed package's own missing dependency is left missing") {
     const auto system =
         make_system({{.cpv = "app-misc/broken-1", .deps = {{"RDEPEND", "dev-libs/missing"}}}},
@@ -1347,10 +1410,11 @@ TEST_CASE("update_lines ends with the dependencies nothing satisfies") {
         make_system({}, {{.cpv = "app-misc/chain-1", .deps = {{"RDEPEND", "dev-libs/missing"}}}});
     const auto targets = reinstall({"app-misc/chain"});
     const auto& [store, evaluated] = system;
-    CHECK(
-        egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, false, false, targets) ==
-        std::vector<std::string>{"app-misc/chain-1\tunsatisfied\tdev-libs/missing"});
-    CHECK(egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, false, true, targets) ==
+    CHECK(egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, egraph::HeldLines::none,
+                               false, targets) ==
+          std::vector<std::string>{"app-misc/chain-1\tunsatisfied\tdev-libs/missing"});
+    CHECK(egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, egraph::HeldLines::none,
+                               true, targets) ==
           std::vector<std::string>{"\t\tapp-misc/chain-1\tunsatisfied\tdev-libs/missing"});
 }
 
@@ -1507,12 +1571,12 @@ TEST_CASE("update_lines ends with the REQUIRED_USE left unmet, and all of it whe
                                           .required_use = "x? ( || ( a b ) ) !x? ( b )"}});
     const auto targets = reinstall({"app-misc/cond"});
     const auto& [store, evaluated] = system;
-    CHECK(
-        egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, false, false, targets) ==
-        std::vector<std::string>{
-            "app-misc/cond-1\tnew\tapp-misc/cond-1\ttest_repo\tUSE=\"x -a -b\"\tapp-misc/cond",
-            "app-misc/cond-1\trequired-use\ttest_repo\tUSE=\"x -a -b\"\tx? ( || ( a b ) )"
-            "\tx? ( || ( a b ) ) !x? ( b )"});
+    CHECK(egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, egraph::HeldLines::none,
+                               false, targets) ==
+          std::vector<std::string>{
+              "app-misc/cond-1\tnew\tapp-misc/cond-1\ttest_repo\tUSE=\"x -a -b\"\tapp-misc/cond",
+              "app-misc/cond-1\trequired-use\ttest_repo\tUSE=\"x -a -b\"\tx? ( || ( a b ) )"
+              "\tx? ( || ( a b ) ) !x? ( b )"});
 }
 
 TEST_CASE("a USE dependency nothing meets as built takes a USE change, as autounmask asks") {
@@ -1589,8 +1653,8 @@ TEST_CASE("update_lines ends with the package.use lines a plan needs, and what n
              {.cpv = "app-misc/wantgtk-1", .deps = {{"RDEPEND", "dev-libs/lib[gtk,-qt]"}}}});
     const auto targets = reinstall({"app-misc/user"});
     const auto& [store, evaluated] = system;
-    const auto lines =
-        egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, false, false, targets);
+    const auto lines = egraph::update_lines(store, evaluated, egraph::UseRebuilds::none,
+                                            egraph::HeldLines::none, false, targets);
     // The profile fixes gtk on lib-3 and lib-4 is masked; lib-3 is newer, so "=".
     CHECK(lines.back() == "dev-libs/lib-2\tuse-change\ttest_repo\t=dev-libs/lib-2 gtk"
                           "\tapp-misc/wantgtk-1::test_repo\tapp-misc/user-1::test_repo"

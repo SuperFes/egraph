@@ -1031,7 +1031,7 @@ void put_beside(std::ostream& out, std::string_view beside, const Painter& paint
 } // namespace
 
 void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme,
-                   bool table) {
+                   bool table, std::size_t unlisted) {
     const auto& paint = theme.paint;
     const auto& glyph = theme.glyph();
     auto rows = split_all(records);
@@ -1254,7 +1254,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                 << '\n';
         }
         // emerge warns of masked installed packages with nothing to merge too.
-        if (counts.at(5) == 0 && !refusals && masked.empty()) {
+        if (counts.at(5) + unlisted == 0 && !refusals && masked.empty()) {
             return;
         }
     }
@@ -1422,6 +1422,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
          {" masked", " masked"}}};
     std::array<std::size_t, 12> all{};
     std::ranges::copy(counts, all.begin());
+    all.at(5) += unlisted;
     all.at(6) = uninstalls.size();
     all.at(7) = blocks.size();
     all.at(8) = unsatisfied.size();
@@ -1437,6 +1438,12 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         out << (first ? "" : paint(", ", Tone::note))
             << paint(std::to_string(all.at(i)), i >= 7 ? Tone::bad : Tone::count)
             << paint(nouns.at(i).at(all.at(i) == 1 ? 0 : 1), Tone::note);
+        if (i == 5 && unlisted != 0) {
+            const auto which = unlisted != all.at(i) ? std::format("the other {}", unlisted)
+                               : unlisted == 1       ? std::string{"it"}
+                                                     : std::string{"them"};
+            out << paint(std::format(" (--held lists {})", which), Tone::note);
+        }
         first = false;
     }
     out << '\n';

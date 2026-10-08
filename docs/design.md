@@ -389,6 +389,11 @@ package it would take away is rejected, or else the target that (through what it
 needs it, and the choice moves down a version; the plan repeats until nothing moves. A held
 rebuild for USE stays put. `--held` adds each held update once, with the members and atoms that
 hold it; the human layout lists them under a "Held back" heading and new packages under "New".
+Without it, a held update some dependency of which nothing satisfies (`HeldBack::unsatisfiable`)
+is listed anyway, in `updates` and in the plans `exec`, `install` and `plan` make: that is a
+repository's error, such as an ebuild needing a package the repository forgot, which emerge too
+passes over in silence by falling back. Dependents' holds can run to dozens on a system
+mid-transition, so the summary only counts them, pointing to `--held`.
 Each held update also gets its remedies (`remedy.cpp`, roadmap 12d). Its holders are the
 installed packages among what rejects it, a rebuild's ebuild standing for the installed package
 it rebuilds; each is listed with the installed packages depending on it and the root atoms
