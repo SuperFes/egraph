@@ -507,6 +507,33 @@ TEST_CASE("a merge in the bound sub-slot needs no rebuild") {
     CHECK(plan(system) == std::vector<std::string>{"dev-libs/lib-1 -> dev-libs/lib-1.1"});
 }
 
+TEST_CASE("-uD rebuilds a dependent bound to a sub-slot no longer installed") {
+    const auto system = make_system(
+        {{.cpv = "app-misc/stale-1", .deps = {{"RDEPEND", ">=dev-libs/utf-1:0/1="}}},
+         {.cpv = "app-misc/built-1", .deps = {{"DEPEND", "dev-libs/old:0/1="}}},
+         {.cpv = "app-misc/gone-1", .deps = {{"RDEPEND", "dev-libs/old:0/1="}}},
+         {.cpv = "dev-libs/utf-2", .sub_slot = "2"},
+         {.cpv = "dev-libs/old-2", .sub_slot = "2"}},
+        {{.cpv = "app-misc/stale-1", .deps = {{"RDEPEND", ">=dev-libs/utf-1:="}}},
+         {.cpv = "app-misc/built-1", .deps = {{"DEPEND", "dev-libs/old:="}}},
+         {.cpv = "app-misc/gone-1", .deps = {{"RDEPEND", "dev-libs/old:="}}, .visible = false},
+         {.cpv = "dev-libs/utf-1", .sub_slot = "1", .visible = false},
+         {.cpv = "dev-libs/utf-2", .sub_slot = "2"},
+         {.cpv = "dev-libs/old-1", .sub_slot = "1"},
+         {.cpv = "dev-libs/old-2", .sub_slot = "2"}});
+    // Against the installed package in the slot, for a build-time binding too. With no ebuild
+    // to rebuild from, the binding is unsatisfied, as for every argument of @installed.
+    CHECK(plan(system) ==
+          std::vector<std::string>{
+              "app-misc/stale-1 -> app-misc/stale-1 for dev-libs/utf-2 >=dev-libs/utf-1:0/1=",
+              "app-misc/built-1 -> app-misc/built-1 for dev-libs/old-2 dev-libs/old:0/1=",
+              "unsatisfied app-misc/gone-1 dev-libs/old:0/1="});
+    // Plain -u leaves them.
+    egraph::Targets shallow;
+    shallow.deep = false;
+    CHECK(plan(system, egraph::UseRebuilds::none, shallow).empty());
+}
+
 TEST_CASE("a dependent with no ebuild to rebuild from holds the update to its sub-slot") {
     const auto system = make_system(
         {{.cpv = "app-misc/gone-1", .deps = {{"RDEPEND", "dev-libs/lone:0/1="}}},

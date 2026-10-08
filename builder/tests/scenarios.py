@@ -712,10 +712,16 @@ SCENARIOS = {
     },
     # Slot-operator rebuilds: dependents bound to a sub-slot an update replaces, through RDEPEND,
     # DEPEND and PDEPEND, one updated itself, one with no visible ebuild to rebuild from, one
-    # whose ebuild gained a dependency, and one with :* that never rebuilds. Beside them, two
-    # updates in a cycle, one's run-time dependency against the other's build-time one.
+    # whose ebuild gained a dependency, and one with :* that never rebuilds. Four bound to a
+    # sub-slot no longer installed: one whose ebuild for it is not visible, one whose is, one
+    # bound at build time alone, and one with no ebuild to rebuild from. Asked for by name, emerge
+    # satisfies that last one's binding by downgrading what it is bound to, which egraph does
+    # not model: it refuses instead, so that request is left out.
+    # Beside them, two updates in a cycle, one's run-time dependency against the other's
+    # build-time one.
     "slotops": {
         "bounded": True,
+        "unrequested": ["app-misc/stale-gone"],
         "world": [
             "app-misc/rdep",
             "app-misc/ddep",
@@ -726,6 +732,10 @@ SCENARIOS = {
             "app-misc/star",
             "app-misc/ring",
             "app-misc/loop",
+            "app-misc/stale",
+            "app-misc/stale-visible",
+            "app-misc/stale-build",
+            "app-misc/stale-gone",
         ],
         "ebuilds": {
             "dev-libs/lib-1": {"EAPI": "8", "SLOT": "0/1"},
@@ -753,6 +763,17 @@ SCENARIOS = {
             "app-misc/ring-2": {"EAPI": "8", "RDEPEND": "app-misc/loop"},
             "app-misc/loop-1": {"EAPI": "8"},
             "app-misc/loop-2": {"EAPI": "8", "BDEPEND": "app-misc/ring"},
+            "dev-libs/utf-1": {"EAPI": "8", "KEYWORDS": "~x86", "SLOT": "0/1"},
+            "dev-libs/utf-2": {"EAPI": "8", "SLOT": "0/2"},
+            "app-misc/stale-1": {
+                "EAPI": "8",
+                "DEPEND": ">=dev-libs/utf-1:=",
+                "RDEPEND": ">=dev-libs/utf-1:=",
+            },
+            "dev-libs/old-1": {"EAPI": "8", "SLOT": "0/1"},
+            "dev-libs/old-2": {"EAPI": "8", "SLOT": "0/2"},
+            "app-misc/stale-visible-1": {"EAPI": "8", "RDEPEND": "dev-libs/old:="},
+            "app-misc/stale-build-1": {"EAPI": "8", "DEPEND": "dev-libs/old:="},
         },
         "installed": {
             "dev-libs/lib-1": {"EAPI": "8", "SLOT": "0/1"},
@@ -766,6 +787,16 @@ SCENARIOS = {
             "app-misc/star-1": {"EAPI": "8", "RDEPEND": "dev-libs/lib:*"},
             "app-misc/ring-1": {"EAPI": "8"},
             "app-misc/loop-1": {"EAPI": "8"},
+            "dev-libs/utf-2": {"EAPI": "8", "SLOT": "0/2"},
+            "app-misc/stale-1": {
+                "EAPI": "8",
+                "DEPEND": ">=dev-libs/utf-1:0/1=",
+                "RDEPEND": ">=dev-libs/utf-1:0/1=",
+            },
+            "dev-libs/old-2": {"EAPI": "8", "SLOT": "0/2"},
+            "app-misc/stale-visible-1": {"EAPI": "8", "RDEPEND": "dev-libs/old:0/1="},
+            "app-misc/stale-build-1": {"EAPI": "8", "DEPEND": "dev-libs/old:0/1="},
+            "app-misc/stale-gone-1": {"EAPI": "8", "RDEPEND": "dev-libs/old:0/1="},
         },
     },
     # What plain -u leaves to -D: a target needing a newer version of a dependency, a kept one

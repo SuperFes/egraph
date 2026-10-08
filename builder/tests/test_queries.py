@@ -361,7 +361,7 @@ def plan_requests(name):
         requests.add(f"={cpv}")
         if "SLOT" in metadata:
             requests.add(f"{cpv_getkey(cpv)}:{metadata['SLOT'].split('/')[0]}")
-    return sorted(requests)
+    return sorted(requests - set(scenario.get("unrequested", ())))
 
 
 def plan_merges(text):

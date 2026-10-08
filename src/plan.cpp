@@ -220,7 +220,8 @@ class Planner {
     // refuses rather than keep the installed one.
     std::vector<bool> named_;
     // Only the world sets are arguments: -uD skips what they reach and keep whose dependency
-    // nothing satisfies, rather than refuse.
+    // nothing satisfies, or only what is installed in a slot-operator binding's slot, rather
+    // than refuse.
     bool lenient_ = false;
     std::map<std::uint32_t, Forced> forced_;
     // Installed slots greedy slots leave out, blocked by the atom's best version or blocking
@@ -560,6 +561,51 @@ class Planner {
             }
         }
         return found;
+    }
+
+    // A slot-operator binding to a sub-slot, where a package kept installed is in the slot.
+    [[nodiscard]] bool stale_in_slot(std::string_view text) {
+        const auto& wanted = atom(text);
+        return binding(text) && wanted && kept_match(*wanted);
+    }
+
+    // Whether a package kept installed matches the atom.
+    [[nodiscard]] bool kept_match(const Atom& wanted) const {
+        for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
+            if (kept(id) && matches(store(), store().packages.at(id), wanted)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // The first slot-operator binding of the installed package to a sub-slot nothing installed
+    // is in any more, where something installed is in the slot: what emerge -uD's unsatisfied
+    // slot-operator probe rebuilds the package for, with that package (or what replaces it) as
+    // the reason.
+    std::optional<Reason> stale_binding(std::uint32_t id) {
+        for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+            for (const auto& node : nodes({.candidate = false, .index = id}, kind)) {
+                if (node.type != NodeType::atom || node.matches.count != 0) {
+                    continue;
+                }
+                const auto text = store().string(node.atom);
+                const auto& parsed = atom(text);
+                if (!binding(text) || !parsed) {
+                    continue;
+                }
+                for (std::uint32_t other = 0; other < store().packages.size(); ++other) {
+                    if (!matches(store(), store().packages.at(other), *parsed)) {
+                        continue;
+                    }
+                    const auto merged = choices_.at(other).merged();
+                    return Reason{.member = merged ? Member{.candidate = true, .index = *merged}
+                                                   : Member{.candidate = false, .index = other},
+                                  .atom = std::string(text)};
+                }
+            }
+        }
+        return std::nullopt;
     }
 
     // Whether -uD rebuilds the installed package for its broken bindings: within the reach, or
@@ -1347,6 +1393,18 @@ class Planner {
                     }
                     continue;
                 }
+                if (deep() && reached(item.member.index)) {
+                    if (const auto own = rebuild_of(item.member.index)) {
+                        if (auto why = stale_binding(item.member.index)) {
+                            rebuilt_.emplace(item.member.index,
+                                             Rebuilt{.candidate = *own, .why = std::move(*why)});
+                            selected_.insert(*own);
+                            work.push_back(
+                                {.member = {.candidate = true, .index = *own}, .root = {}});
+                            continue;
+                        }
+                    }
+                }
                 if (const auto moved = new_slots_.find(item.member.index);
                     moved != new_slots_.end()) {
                     if (const auto child = moved_to(item.member.index, moved->second, work)) {
@@ -1454,7 +1512,8 @@ class Planner {
                     }
                     if (!item.member.candidate && dep_kinds.at(kind) != "DEPEND" &&
                         dep_kinds.at(kind) != "BDEPEND" &&
-                        (!lenient_ || matched_without_use(failed.atom))) {
+                        (!lenient_ ||
+                         (matched_without_use(failed.atom) && !stale_in_slot(failed.atom)))) {
                         // -uD must satisfy what it reaches and keeps, but for what nothing
                         // matches at all, which it only skips for the world sets' packages.
                         missing_.push_back(failed);

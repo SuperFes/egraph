@@ -27,6 +27,7 @@ def playground_arguments(name):
     arguments = dict(SCENARIOS[name])
     arguments.pop("updates", None)
     arguments.pop("bounded", None)
+    arguments.pop("unrequested", None)
     arguments.pop("pulls", None)
     arguments.pop("held", None)
     arguments.pop("files", None)

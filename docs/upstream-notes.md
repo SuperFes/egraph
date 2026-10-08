@@ -69,6 +69,11 @@ is right.
   emerge before it uninstalls what they block (never the only installed match of a run-time
   dependency, never a @system package). egraph does not model them and weighs these as later
   EAPIs' weak blockers; no installed package on the dev box is older than EAPI 7.
+- An installed package bound (`:=`) to a sub-slot nothing installed has any more, with no
+  ebuild left to rebuild it from: under `-uD @world` both leave it, under `@installed` both
+  report the binding unsatisfied, but named on the command line emerge downgrades what it is
+  bound to back into that sub-slot. egraph does not model that downgrade and refuses the plan
+  (`slotops`: `app-misc/stale-gone`, left out of the plan requests as `unrequested`).
 - Flags that emerge's `_alnum_sort_key` counts equal (`a07` and `a7`) come out of a set in
   hash order when it shows a package's USE; egraph orders them as text (`test_plan.cpp`, "flags
   sort as emerge's alnum key does").
