@@ -35,7 +35,8 @@ class Session {
     // The installed store alone, which needs no evaluated store. Once loaded it stays what this
     // returns, even after stores() loads both.
     [[nodiscard]] Loaded<Store> installed() EGRAPH_LIFETIMEBOUND;
-    // The installed store and the evaluated store built with it, current together.
+    // The installed store and the evaluated store built with it, current together; the
+    // evaluated store as if the invocation's what-if lines were saved.
     [[nodiscard]] Loaded<Stores> stores() EGRAPH_LIFETIMEBOUND;
     // As stores(), shared with a caller that keeps them past the session's next adopt().
     [[nodiscard]] std::expected<std::shared_ptr<const Stores>, std::string> shared_stores();
@@ -89,7 +90,9 @@ class Session {
     std::reference_wrapper<std::ostream> warnings_;
     std::filesystem::path used_;
     std::optional<Store> installed_;
+    // As loaded, and with the invocation's what-if lines (stores_ itself without any).
     std::shared_ptr<const Stores> stores_;
+    std::shared_ptr<const Stores> tried_;
     std::shared_ptr<const RepositoryIndex> repository_;
     std::filesystem::path repository_used_;
     std::optional<Store> dynamic_;

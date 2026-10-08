@@ -500,6 +500,17 @@ def test_the_ledger_scenario(playgrounds):
     ]
     assert [(name, local(entries)) for name, entries in use_ledger.env_files] == [
         (
+            "everywhere.conf",
+            [("etc/portage/env/everywhere.conf", 1, "", "USE", ("globalenv",))],
+        ),
+        (
+            "tried/video.conf",
+            [
+                ("etc/portage/env/tried/video.conf", 1, "", "USE", ("tried",)),
+                ("etc/portage/env/tried/video.conf", 2, "", "VIDEO_CARDS", ("nvidia",)),
+            ],
+        ),
+        (
             "withenv.conf",
             [("etc/portage/env/withenv.conf", 1, "", "USE", ("fromenv",))],
         ),
@@ -555,10 +566,20 @@ def test_make_conf_linked_from_etc_is_read_once(tmp_path):
     assert files == [str(tmp_path / "etc" / "make.conf")]
 
 
-def egraph_use(path, package="*/*"):
-    """{cpv::repo: {flag: (enabled, forced, where)}} as egraph use --all lists them."""
+def egraph_use(path, package="*/*", options=()):
+    """{cpv::repo: {flag: (enabled, forced, where)}} as egraph use --all lists them, with
+    global options."""
     result = subprocess.run(
-        [EGRAPH, "--store", str(path), "--no-refresh", "use", "--all", package],
+        [
+            EGRAPH,
+            "--store",
+            str(path),
+            "--no-refresh",
+            *options,
+            "use",
+            "--all",
+            package,
+        ],
         capture_output=True,
         text=True,
     )

@@ -74,6 +74,12 @@ TEST_CASE("the stores stay the session's") {
     CHECK(ran.err.find("--root") != std::string::npos);
 }
 
+TEST_CASE("what a line tries is the session's too") {
+    const auto ran = shell("--use 'app-misc/a x' stats\n");
+    CHECK(ran.out.empty());
+    CHECK(ran.err.find("egraph: shell: --use chooses the stores") != std::string::npos);
+}
+
 TEST_CASE("watch, which runs until stopped, runs on its own rather than from the shell") {
     const auto ran = shell("match dev-libs/b\nwatch\n");
     CHECK(ran.out == "dev-libs/b\tdev-libs/b-1\n");

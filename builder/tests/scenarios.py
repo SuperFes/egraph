@@ -1485,8 +1485,8 @@ SCENARIOS = {
     # Every source of a flag's state, for the USE ledger and its stacking: a profile of its own
     # (make.defaults with USE_EXPAND, stable files, specificity between package.use atoms), the
     # user's profile, make.conf replacing a USE_EXPAND variable, package.use in a directory with
-    # `*/*`, `VAR: -* x` and ties, package.env (`*/*` too) with FEATURES=test, RESTRICT=test, and
-    # the repository's own profile files.
+    # `*/*`, `VAR: -* x` and ties, package.env (`*/*` too) with FEATURES=test, RESTRICT=test, an
+    # env file nothing names yet, and the repository's own profile files.
     "ledger": {
         "profile": {
             "eapi": ("9",),
@@ -1532,6 +1532,8 @@ SCENARIOS = {
             "etc/portage/env/everywhere.conf": ('USE="globalenv"',),
             "etc/portage/env/withenv.conf": ('USE="fromenv"', 'FEATURES="test"'),
             "etc/portage/env/withtest.conf": ('FEATURES="test"',),
+            # Named by no package.env line, for a what-if to try.
+            "etc/portage/env/tried/video.conf": ('USE="tried"', 'VIDEO_CARDS="nvidia"'),
         },
         "repo_configs": {
             "test_repo": {

@@ -216,3 +216,18 @@ TEST_CASE("an env file tried for a package brings its USE, the ledger's ranges k
     REQUIRE_FALSE(unknown.has_value());
     CHECK(unknown.error() == "env/gone.conf: no such env file");
 }
+
+TEST_CASE("wildcards tried reach every flag they name, in whatever IUSE has them") {
+    const Spec spec{.conf = {{.file = "/c/make.conf", .tokens = "y video_cards_vesa"}}};
+    const auto system = system_with({{.cpv = "cat/a-1", .iuse = "x y", .use = "y"},
+                                     {.cpv = "cat/v-1",
+                                      .iuse = "video_cards_vesa video_cards_intel",
+                                      .use = "video_cards_vesa"}},
+                                    spec);
+    const auto cleared = tried(system, {use("*/*", {"-*"})});
+    CHECK(use_of(cleared, "cat/a-1").empty());
+    CHECK(use_of(cleared, "cat/v-1").empty());
+    const auto cards = tried(system, {use("*/*", {"VIDEO_CARDS:", "-*", "intel"})});
+    CHECK(use_of(cards, "cat/a-1") == Strings{"y"});
+    CHECK(use_of(cards, "cat/v-1") == Strings{"video_cards_intel"});
+}

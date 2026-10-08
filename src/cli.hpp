@@ -8,6 +8,7 @@
 #include "query.hpp"
 #include "search.hpp"
 #include "verify.hpp"
+#include "what_if.hpp"
 
 #include <cstdint>
 #include <expected>
@@ -401,6 +402,9 @@ struct Invocation {
     bool use_offered = false;
     // The rebuild of what uses preserved libraries was offered already, by the action that runs.
     bool rebuild_offered = false;
+    // Configuration lines tried (--use, --env): queries and plans answer as if egraph's own
+    // files held them; actions refuse them.
+    std::vector<WhatIfLine> what_if;
     // Where the running egraph is, and the user's cache directory ($XDG_CACHE_HOME, or
     // ~/.cache), which main fills in.
     std::filesystem::path program_dir;

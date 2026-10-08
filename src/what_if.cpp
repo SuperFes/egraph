@@ -119,25 +119,48 @@ std::uint32_t position_in(const Evaluated& evaluated, Range source,
     return position;
 }
 
-// The candidates lines may change: those of the cps they name, or every one.
-std::vector<std::uint32_t> affected(const Evaluated& evaluated, std::span<const WhatIfLine> lines) {
-    std::set<std::string, std::less<>> cps;
-    bool all = false;
-    for (const auto& line : lines) {
-        const auto atom = parse_config_atom(line.atom);
-        if (!atom || atom->extended) {
-            all = true;
-        } else {
-            cps.insert(atom->cp);
-        }
+// Whether a flag starting with prefix may be in the candidate's IUSE, explicit or implicit.
+bool may_have_prefix(const Store& installed, const Evaluated& evaluated, const Candidate& candidate,
+                     std::string_view prefix) {
+    const auto starts = [prefix](std::string_view flag) { return flag.starts_with(prefix); };
+    if (std::ranges::any_of(evaluated.ids_in(candidate.iuse),
+                            [&](std::uint32_t id) { return starts(evaluated.string(id)); })) {
+        return true;
     }
-    std::vector<std::uint32_t> found;
-    for (std::uint32_t i = 0; i < evaluated.candidates.size(); ++i) {
-        if (all || cps.contains(evaluated.string(evaluated.candidates.at(i).cp))) {
-            found.push_back(i);
-        }
+    const auto& implicit = installed.implicit;
+    if (candidate.iuse_effective) {
+        return std::ranges::any_of(implicit.effective, starts);
     }
-    return found;
+    return std::ranges::any_of(implicit.literals, starts) ||
+           std::ranges::any_of(implicit.prefixes, [prefix](std::string_view other) {
+               return other.starts_with(prefix) || prefix.starts_with(other);
+           });
+}
+
+// Whether line may change the candidate's USE: an atom that could match it, and a flag in its
+// IUSE (a flag token changes no other flag; "-*", "prefix_*" and env files may change any).
+bool may_change(const Store& installed, const Evaluated& evaluated, const Candidate& candidate,
+                const WhatIfLine& line) {
+    if (const auto atom = parse_config_atom(line.atom);
+        atom && !atom->extended && atom->cp != evaluated.string(candidate.cp)) {
+        return false;
+    }
+    if (line.file == WhatIfLine::File::env) {
+        return true;
+    }
+    return std::ranges::any_of(expanded(line.tokens), [&](std::string_view token) {
+        if (token.starts_with('-')) {
+            token.remove_prefix(1);
+        }
+        if (token == "*") {
+            return true;
+        }
+        if (token.ends_with("_*")) {
+            return may_have_prefix(installed, evaluated, candidate,
+                                   token.substr(0, token.size() - 1));
+        }
+        return in_iuse(installed, evaluated, candidate, token);
+    });
 }
 
 std::set<std::string, std::less<>> use_set(const StackedUse& stacked) {
@@ -186,7 +209,14 @@ std::expected<Evaluated, std::string> with_what_if(Evaluated evaluated, const St
     if (lines.empty()) {
         return evaluated;
     }
-    const auto candidates = affected(evaluated, lines);
+    std::vector<std::uint32_t> candidates;
+    for (std::uint32_t i = 0; i < evaluated.candidates.size(); ++i) {
+        if (std::ranges::any_of(lines, [&](const WhatIfLine& line) {
+                return may_change(installed, evaluated, evaluated.candidates.at(i), line);
+            })) {
+            candidates.push_back(i);
+        }
+    }
     std::vector<std::set<std::string, std::less<>>> before;
     {
         const UseStacker stacker(installed, evaluated);

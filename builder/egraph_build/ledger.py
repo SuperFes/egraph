@@ -12,6 +12,7 @@ import os
 import re
 from typing import NamedTuple
 
+from portage.exception import ParseError
 from portage.util import getconfig
 
 # The twelve files of a profile node or a repository's profiles directory, in the order the
@@ -67,7 +68,7 @@ class Ledger(NamedTuple):
     conf: tuple = ()
     package_use: tuple = ()
     package_env: tuple = ()
-    # (name, entries) per file under env/ that package.env names.
+    # (name, entries) per file under env/, named by package.env or not.
     env_files: tuple = ()
     env: tuple = ()
     env_d: tuple = ()
@@ -288,6 +289,13 @@ def _env_file(settings, name, use_expand, unprefixed):
     return _assigned([path], values, use_expand, unprefixed)
 
 
+def _env_names(directory):
+    """The files under env/, as package.env names them."""
+    if not os.path.isdir(directory):
+        return []
+    return [os.path.relpath(path, directory) for path in _file_list(directory, True)]
+
+
 def _user_config(settings):
     from portage.const import USER_CONFIG_PATH
 
@@ -402,11 +410,18 @@ def read(settings):
     )
 
     package_env = _dict_source(penv_path, True, settings._penvdict)
-    names = sorted({name for entry in package_env for name in entry.tokens})
-    env_files = tuple(
-        (name, tuple(_env_file(settings, name, use_expand, unprefixed)))
-        for name in names
-    )
+    named = {name for entry in package_env for name in entry.tokens}
+    env_files = []
+    for name in sorted(named | set(_env_names(os.path.join(user, "env")))):
+        try:
+            entries = _env_file(settings, name, use_expand, unprefixed)
+        except (ParseError, OSError):
+            # One nothing names yet only stands ready to be tried.
+            if name in named:
+                raise
+            continue
+        env_files.append((name, tuple(entries)))
+    env_files = tuple(env_files)
 
     profile_env = os.path.join(settings["EROOT"], "etc", "profile.env")
     return Ledger(

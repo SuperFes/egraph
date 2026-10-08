@@ -56,6 +56,11 @@ struct StackedUse {
     std::map<std::string, std::vector<UseStep>> steps;
 };
 
+// Whether flag is in the candidate's IUSE, explicit or implicit, as setcpv filters USE into
+// PORTAGE_USE.
+[[nodiscard]] bool in_iuse(const Store& installed, const Evaluated& evaluated,
+                           const Candidate& candidate, std::string_view flag);
+
 // The ledger's atoms parsed once, for stacking many packages.
 class UseStacker {
   public:
@@ -79,6 +84,9 @@ class UseStacker {
     // Per ledger entry, its atom read as configuration files read it; none for a global entry
     // or one portage would have refused.
     std::vector<std::optional<Atom>> atoms_;
+    // The entries with a plain atom, by its cp, and those with an extended one; each ascending.
+    std::map<std::string, std::vector<std::uint32_t>, std::less<>> by_cp_;
+    std::vector<std::uint32_t> extended_;
 };
 
 } // namespace egraph

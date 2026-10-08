@@ -21,6 +21,8 @@ struct WhatIfLine {
     std::string atom;
     // As written: flags (USE_EXPAND's "VAR:" prefixes included) or env file names.
     std::vector<std::string> tokens;
+
+    bool operator==(const WhatIfLine&) const = default;
 };
 
 // text as a line of file: "atom tokens...", or for package.use, flags alone for every package.

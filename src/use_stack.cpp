@@ -139,6 +139,22 @@ std::string_view layer_name(UseLayer layer) {
     return "";
 }
 
+bool in_iuse(const Store& installed, const Evaluated& evaluated, const Candidate& candidate,
+             std::string_view flag) {
+    if (std::ranges::any_of(evaluated.ids_in(candidate.iuse),
+                            [&](std::uint32_t id) { return evaluated.string(id) == flag; })) {
+        return true;
+    }
+    const auto& implicit = installed.implicit;
+    if (candidate.iuse_effective) {
+        return std::ranges::contains(implicit.effective, flag);
+    }
+    return std::ranges::contains(implicit.literals, flag) ||
+           std::ranges::any_of(implicit.prefixes, [flag](const std::string& prefix) {
+               return flag.starts_with(prefix);
+           });
+}
+
 UseStacker::UseStacker(const Store& installed, const Evaluated& evaluated)
     : installed_(&installed), evaluated_(&evaluated) {
     atoms_.reserve(evaluated.ledger_entries.size());
@@ -150,6 +166,13 @@ UseStacker::UseStacker(const Store& installed, const Evaluated& evaluated)
             }
         }
         atoms_.push_back(std::move(parsed));
+    }
+    for (std::uint32_t i = 0; i < atoms_.size(); ++i) {
+        if (const auto& atom = atoms_.at(i); atom && atom->extended) {
+            extended_.push_back(i);
+        } else if (atom) {
+            by_cp_[atom->cp].push_back(i);
+        }
     }
 }
 
@@ -186,10 +209,25 @@ StackedUse UseStacker::stack(const Candidate& candidate,
     // A package.* source's tokens for the candidate, as ordered_by_atom_specificity applies
     // them: its keys (one per atom, its lines in order) as portage's dictionaries hold them for
     // the cp, plain atoms first, then the extended ones by their cp; least specific first.
+    // Only entries of the candidate's cp, and extended ones, can match it.
+    const auto* of_cp = [&]() -> const std::vector<std::uint32_t>* {
+        const auto found = by_cp_.find(cp);
+        return found == by_cp_.end() ? nullptr : &found->second;
+    }();
     const auto matched = [&](Range source, std::vector<Token>& into) {
+        std::vector<std::uint32_t> candidates;
+        const auto within = [&](const std::vector<std::uint32_t>& indices) {
+            const auto first = std::ranges::lower_bound(indices, source.first);
+            const auto last = std::ranges::lower_bound(indices, source.first + source.count);
+            candidates.insert(candidates.end(), first, last);
+        };
+        if (of_cp != nullptr) {
+            within(*of_cp);
+        }
+        within(extended_);
+        std::ranges::sort(candidates);
         std::vector<std::pair<std::string_view, std::vector<std::uint32_t>>> keys;
-        for (std::uint32_t i = 0; i < source.count; ++i) {
-            const auto index = source.first + i;
+        for (const auto index : candidates) {
             const auto atom = ev.string(ev.ledger_entries.at(index).atom);
             const auto key = std::ranges::find(keys, atom, &decltype(keys)::value_type::first);
             if (key == keys.end()) {
@@ -475,22 +513,8 @@ StackedUse UseStacker::stack(const Candidate& candidate,
         flags.set(flag, false, UseLayer::mask, token, true);
     }
 
-    // Within IUSE, explicit or implicit, as setcpv filters USE into PORTAGE_USE.
-    const auto& implicit = installed_->implicit;
-    const auto in_iuse = [&](std::string_view flag) {
-        if (std::ranges::contains(iuse, flag)) {
-            return true;
-        }
-        if (candidate.iuse_effective) {
-            return std::ranges::contains(implicit.effective, flag);
-        }
-        return std::ranges::contains(implicit.literals, flag) ||
-               std::ranges::any_of(implicit.prefixes, [flag](const std::string& prefix) {
-                   return flag.starts_with(prefix);
-               });
-    };
     for (const auto& flag : flags.enabled()) {
-        if (!flag.ends_with("_*") && in_iuse(flag)) {
+        if (!flag.ends_with("_*") && in_iuse(*installed_, ev, candidate, flag)) {
             out.use.push_back(flag);
         }
     }

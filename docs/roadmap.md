@@ -1139,9 +1139,14 @@ switch would build differently are offered for a rebuild apart, never planned un
 app, space toggles a flag on a package's USE table, and a what-if page lists the pending
 changes (undo, save) and takes typed lines.
 
-- 19a: what-if lines as ledger entries after the user's own (`atom flags`, `flags` as a `*/*`
-  line, `atom envfiles`), each candidate restacked and its dependencies reduced under its new
-  USE; held to portage's USE with the line written into the file, on every scenario.
+- 19a (done): what-if lines as ledger entries where egraph's file sorts among the user's
+  (`atom flags`, `flags` as a `*/*` line, `atom envfiles`), each candidate they may change (an
+  atom that could match it, a flag in its IUSE) restacked and its dependencies reduced under
+  its new USE (`with_what_if`); the global `--use` and `--env` options, which queries and plans
+  answer under and actions refuse; every file under `env/` in the ledger, named or not. Held
+  to portage's USE with the lines saved, on every scenario. The stacker now looks only at
+  entries of the candidate's cp: a global flag tried costs 0.2 to 0.5 s here, `use --all`
+  3.2 s rather than 5.2.
 - 19b: `--use` and `--env` on the plan commands: the plan with the changes, the toggled
   packages rebuilt as with `-U`, the cps newly reached evaluated on request; held to emerge's
   plan with the files edited, on every scenario.

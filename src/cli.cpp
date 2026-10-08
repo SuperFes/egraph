@@ -66,6 +66,7 @@
 #include <span>
 #include <sstream>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -4216,6 +4217,27 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->envname("EGRAPH_EMAINT");
     app.add_flag("--no-refresh", invocation.no_refresh,
                  "Answer from a stale store instead of rebuilding it");
+    for (const auto& [name, file, help] :
+         {std::tuple{"--use", WhatIfLine::File::use,
+                     "Answer as if package.use/egraph had this line (atom and flags, or flags "
+                     "for every package), without saving it"},
+          std::tuple{"--env", WhatIfLine::File::env,
+                     "Answer as if package.env/egraph had this line (atom and env files), "
+                     "without saving it"}}) {
+        app.add_option_function<std::vector<std::string>>(
+               name,
+               [&invocation, name, file](const std::vector<std::string>& lines) {
+                   for (const auto& text : lines) {
+                       auto line = parse_what_if(file, text);
+                       if (!line) {
+                           throw CLI::ValidationError(name, line.error());
+                       }
+                       invocation.what_if.push_back(std::move(*line));
+                   }
+               },
+               help)
+            ->type_name("LINE");
+    }
     app.add_option("--layout", invocation.layout,
                    "Results for people, or as tab-separated lines for scripts (default auto: "
                    "for people on a terminal)")
@@ -4941,7 +4963,18 @@ std::optional<std::string_view> changed_stores(const Invocation& session, const 
     if (line.no_refresh != session.no_refresh) {
         return "--no-refresh";
     }
+    if (line.what_if != session.what_if) {
+        return "--use";
+    }
     return std::nullopt;
+}
+
+// Commands that change the system.
+bool acts(const Command& command) {
+    return std::holds_alternative<Update>(command) || std::holds_alternative<Install>(command) ||
+           std::holds_alternative<Exec>(command) || std::holds_alternative<Remove>(command) ||
+           std::holds_alternative<Select>(command) || std::holds_alternative<Deselect>(command) ||
+           std::holds_alternative<Sync>(command);
 }
 
 std::string_view trimmed(std::string_view text) {
@@ -5009,13 +5042,10 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
         return usage("notify runs on its own until stopped, as the desktop session starts it");
     }
     // emerge would write over the interface's screen.
-    if (context == Context::interface && (std::holds_alternative<Update>(command.command) ||
-                                          std::holds_alternative<Install>(command.command) ||
-                                          std::holds_alternative<Exec>(command.command) ||
-                                          std::holds_alternative<Remove>(command.command) ||
-                                          std::holds_alternative<Select>(command.command) ||
-                                          std::holds_alternative<Deselect>(command.command) ||
-                                          std::holds_alternative<Sync>(command.command))) {
+    if (!command.what_if.empty() && acts(command.command)) {
+        return usage("--use and --env try configuration; actions run with what is saved");
+    }
+    if (context == Context::interface && acts(command.command)) {
         return usage("actions run from the command line or the shell");
     }
     if (context == Context::interface) {
@@ -5087,6 +5117,16 @@ std::vector<std::string> multicall_arguments(CLI::App& app, std::string_view pro
 }
 
 Exit run(const Invocation& invocation, std::ostream& out, std::ostream& err) {
+    // The interface and the services run actions, which never take what was only tried.
+    const auto& command = invocation.command;
+    if (!invocation.what_if.empty() &&
+        (acts(command) || std::holds_alternative<std::monostate>(command) ||
+         std::holds_alternative<Tui>(command) || std::holds_alternative<Watch>(command) ||
+         std::holds_alternative<Notify>(command))) {
+        err << "egraph: --use and --env try configuration on queries and plans; actions run "
+               "with what is saved\n";
+        return Exit::usage;
+    }
     Session session{invocation, err};
     auto asking = invocation;
     asking.ask = invocation.terminal && invocation.input_terminal;

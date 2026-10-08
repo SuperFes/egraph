@@ -3,6 +3,7 @@
 #include "freshness.hpp"
 #include "history.hpp"
 #include "os.hpp"
+#include "what_if.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -267,7 +268,19 @@ std::expected<std::shared_ptr<const Stores>, std::string> Session::shared_stores
         }
         stores_ = std::make_shared<const Stores>(std::move(*loaded));
     }
-    return stores_;
+    if (invocation_.what_if.empty()) {
+        return stores_;
+    }
+    if (!tried_) {
+        auto evaluated = with_what_if(stores_->evaluated, stores_->installed, invocation_.what_if,
+                                      config_root(invocation_) / "etc/portage");
+        if (!evaluated) {
+            return std::unexpected(std::move(evaluated.error()));
+        }
+        tried_ = std::make_shared<const Stores>(
+            Stores{.installed = stores_->installed, .evaluated = std::move(*evaluated)});
+    }
+    return tried_;
 }
 
 Loaded<RepositoryIndex> Session::repository() {
@@ -295,6 +308,7 @@ std::shared_ptr<const RepositoryIndex> Session::adopt_repository(RepositoryIndex
 void Session::reload() {
     repository_.reset();
     stores_.reset();
+    tried_.reset();
     installed_.reset();
     dynamic_.reset();
     graphs_ = {};
@@ -303,6 +317,7 @@ void Session::reload() {
 
 void Session::adopt(std::shared_ptr<const Stores> stores, std::filesystem::path used) {
     stores_ = std::move(stores);
+    tried_.reset();
     used_ = std::move(used);
     installed_.reset();
     dynamic_.reset();

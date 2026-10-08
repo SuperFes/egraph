@@ -130,6 +130,34 @@ with the roots in the environment as for
 .B \-\-no\-refresh
 Answer from a stale store instead of bringing it up to date.
 .TP
+.BI \-\-use " line"
+Try a
+.I package.use
+line without saving it: queries and plans answer as if
+.I package.use/egraph
+(or
+.I package.use
+itself, where that is a file) ended with it, read where that file sorts among the others. The
+line is an atom and its flags, USE_EXPAND's
+.B VAR:
+prefixes included, or flags alone (or after
+.BR */* )
+for every package, as portage folds those into
+.IR make.conf 's
+USE. Repeated, the lines are tried in order. Actions, the interface and the services refuse it:
+they run with what is saved.
+.TP
+.BI \-\-env " line"
+Likewise a
+.I package.env
+line, in
+.IR package.env/egraph :
+an atom, or
+.B */*
+for every package, and files under
+.IR env/ ;
+their USE is what changes what egraph answers.
+.TP
 .BR \-\-layout " auto|human|lines"
 Results for people, or as tab-separated lines for scripts (default
 .BR $EGRAPH_LAYOUT ,

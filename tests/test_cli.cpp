@@ -631,6 +631,34 @@ TEST_CASE("glyphs default to a Nerd Font's in a UTF-8 locale and ASCII otherwise
     CHECK(egraph::style(invocation).glyphs == GlyphSet::unicode);
 }
 
+TEST_CASE("--use and --env lines are tried in order, each parsed") {
+    using File = egraph::WhatIfLine::File;
+    const auto invocation =
+        parse("--use 'app-misc/a x -y' --env 'app-misc/a clang.conf' --use -z updates");
+    REQUIRE(invocation.what_if.size() == 3);
+    CHECK(invocation.what_if.at(0) ==
+          egraph::WhatIfLine{.file = File::use, .atom = "app-misc/a", .tokens = {"x", "-y"}});
+    CHECK(invocation.what_if.at(1) ==
+          egraph::WhatIfLine{.file = File::use, .atom = "*/*", .tokens = {"-z"}});
+    CHECK(invocation.what_if.at(2) ==
+          egraph::WhatIfLine{.file = File::env, .atom = "app-misc/a", .tokens = {"clang.conf"}});
+    CHECK(parse("updates").what_if.empty());
+    CHECK_THROWS(parse("--use app-misc/a updates"));
+    CHECK_THROWS(parse("--env clang.conf updates"));
+}
+
+TEST_CASE("actions, the interface and the services refuse what is only tried") {
+    for (const auto* line : {"exec app-misc/a", "install app-misc/a", "update", "remove a/b",
+                             "select a/b", "deselect a/b", "sync", "tui", "watch", "notify"}) {
+        std::ostringstream out;
+        std::ostringstream err;
+        CHECK(egraph::run(parse(std::string{"--use 'a/b x' "} + line), out, err) ==
+              egraph::Exit::usage);
+        CHECK(err.str() == "egraph: --use and --env try configuration on queries and plans; "
+                           "actions run with what is saved\n");
+    }
+}
+
 TEST_CASE("tui --notices opens on the notices page") {
     CHECK_FALSE(std::get<egraph::Tui>(parse("tui").command).notices);
     CHECK(std::get<egraph::Tui>(parse("tui --notices").command).notices);
