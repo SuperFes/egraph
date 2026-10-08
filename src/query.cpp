@@ -163,6 +163,27 @@ std::optional<PendingUpdate> pending_update(const Evaluated& evaluated, std::uin
     return PendingUpdate{.kind = UpdateKind::rebuild, .target = *pkg.target, .flags = flags};
 }
 
+std::optional<PendingUpdate> own_rebuild(const Evaluated& evaluated, std::uint32_t package,
+                                         UseRebuilds rebuilds, const PendingUpdate& wanted) {
+    const auto& pkg = evaluated.packages.at(package);
+    if (rebuilds == UseRebuilds::none || wanted.kind == UpdateKind::rebuild || !pkg.own ||
+        *pkg.own == wanted.target) {
+        return std::nullopt;
+    }
+    std::string flags;
+    for (const auto id : evaluated.ids_in(pkg.own_rebuild)) {
+        const auto flag = evaluated.string(id);
+        if (rebuilds == UseRebuilds::all || state_changed(flag)) {
+            flags += flags.empty() ? "" : " ";
+            flags += flag;
+        }
+    }
+    if (flags.empty()) {
+        return std::nullopt;
+    }
+    return PendingUpdate{.kind = UpdateKind::rebuild, .target = *pkg.own, .flags = flags};
+}
+
 namespace {
 
 bool is_digit(char c) {

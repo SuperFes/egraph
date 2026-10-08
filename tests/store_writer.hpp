@@ -228,7 +228,8 @@ inline std::vector<std::byte> fresh_sample() {
 //   a-1 from its ebuild, EAPI 8, RDEPEND dev-libs/b:= matching b-1, with an RDEPEND error;
 //   possibly RDEPEND dev-libs/b (matching b-1) with flag on, and BDEPEND dev-libs/gone, an
 //   alternative matching nothing, with flag on and minimal off.
-//   --newuse would rebuild it for flag* and -new%, --changed-use for flag*.
+//   --newuse would rebuild it for flag* and -new%, --changed-use for flag*, from a-1, which is
+//   its own version's candidate too.
 //   a-1 is masked only without dynamic deps.
 //   b-1 from the vdb, with no dependencies, masked and not visible, and replaced by b-2 under
 //   emerge -u.
@@ -295,14 +296,16 @@ inline std::vector<Section> evaluated_sections() {
     dependencies.varint(2);
     dependencies.varints({4, 13, 0}).list({1}).list({8});
     dependencies.varints({0, 14, 1}).list({}).list({8, 15});
-    // Visible, masked, masked without dynamic deps, target (candidate 0 plus 1), rebuild, the
-    // reasons with and without dynamic deps, the package.mask file and comment, how emerge sees
-    // it with and without dynamic deps.
-    dependencies.varints({1, 0, 1, 1}).list({16, 17}).list({}).list({}).varints({0, 0, 0, 1});
+    // Visible, masked, masked without dynamic deps, target (candidate 0 plus 1), rebuild, its
+    // own version's candidate and rebuild, the reasons with and without dynamic deps, the
+    // package.mask file and comment, how emerge sees it with and without dynamic deps.
+    dependencies.varints({1, 0, 1, 1}).list({16, 17}).varint(1).list({16, 17});
+    dependencies.list({}).list({}).varints({0, 0, 0, 1});
     // b-1.
     dependencies.varints({2, 1, 3}).varint(0);
     dependencies.varint(0).varint(0).varint(0).varint(0).varint(0).varint(0);
-    dependencies.varints({0, 1, 1, 3}).list({}).list({}).list({}).varints({0, 0, 0, 0});
+    dependencies.varints({0, 1, 1, 3}).list({}).varint(0).list({});
+    dependencies.list({}).list({}).varints({0, 0, 0, 0});
 
     Bytes candidates;
     candidates.varint(3);

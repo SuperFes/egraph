@@ -96,6 +96,13 @@ class Planner {
                             choice.options.push_back(fallback);
                         }
                     }
+                    // Then its own version, rebuilt where -N or -U would.
+                    if (auto own = own_rebuild(evaluated, id, rebuilds, *wanted);
+                        own && (!atom || matches(store, evaluated,
+                                                 evaluated.candidates.at(own->target), *atom))) {
+                        choice.options.push_back(own->target);
+                        owns_.emplace(id, std::move(*own));
+                    }
                 }
                 choice.wanted = std::move(wanted);
             }
@@ -224,6 +231,8 @@ class Planner {
     // than refuse.
     bool lenient_ = false;
     std::map<std::uint32_t, Forced> forced_;
+    // By installed package id: its own version rebuilt, the last of its options.
+    std::map<std::uint32_t, PendingUpdate> owns_;
     // Installed slots greedy slots leave out, blocked by the atom's best version or blocking
     // it: emerge neither updates them nor takes them as arguments.
     std::set<std::uint32_t> dropped_;
@@ -1697,6 +1706,10 @@ class Planner {
                 if (choice.at == 0) {
                     merge.kind = choice.wanted->kind;
                     merge.flags = choice.wanted->flags;
+                } else if (const auto own = owns_.find(id);
+                           own != owns_.end() && own->second.target == *merged) {
+                    merge.kind = own->second.kind;
+                    merge.flags = own->second.flags;
                 } else {
                     merge.kind =
                         update_kind(evaluated().string(evaluated().candidates.at(*merged).cp),

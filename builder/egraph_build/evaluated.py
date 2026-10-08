@@ -89,6 +89,11 @@ class Dependencies(NamedTuple):
     # them: "flag*" or "-flag*" changed, "flag%*" or "-flag%" new in IUSE, "(-flag%*)" or
     # "(-flag%)" gone from it (* when it was on). Those with a * are --changed-use's.
     rebuild: tuple = ()
+    # (cpv, repo) of the visible ebuild of its own version in its slot (its own repository's
+    # first, else the highest priority one), and the flags --newuse rebuilds it for from that
+    # one, as rebuild has them: what -uN falls back to when every newer version is rejected.
+    own: tuple = None
+    own_rebuild: tuple = ()
     # Why it is masked, where masked is computed and true, as emerge's warning about masked
     # installed packages words it (get_masking_status); the same under --dynamic-deps=n.
     mask_reasons: tuple = ()
@@ -488,21 +493,32 @@ def read_update(vardb, cpv, candidates, repositories, ebuild_use):
             > 0
         ):
             best = c
+    old_use, old_iuse = frozenset(use.split()), _iuse({"IUSE": iuse})
+
+    def flags_from(candidate):
+        new_use, new_iuse = frozenset(candidate.use), frozenset(candidate.iuse)
+        forced = ebuild_use.forced(candidate.cpv, candidate.repo, old_iuse ^ new_iuse)
+        return rebuild_flags(old_use, old_iuse, new_use, new_iuse, forced)
+
+    found = {"visible": visible}
+    own = sorted(
+        (c for c in same if not c.reasons and c.slot == slot),
+        key=lambda c: (c.repo != repo, -rank[c.repo]),
+    )
+    if own:
+        found.update(own=(own[0].cpv, own[0].repo), own_rebuild=flags_from(own[0]))
     if best is None:
-        return {"visible": visible}
+        return found
     order = vercmp(_version(best.cpv), _version(cpv))
     if order > 0 or not visible:
-        return {"visible": visible, "target": (best.cpv, best.repo)}
+        return {**found, "target": (best.cpv, best.repo)}
     if order < 0:
         # Its visible ebuild moved to another slot.
-        return {"visible": visible}
-    old_use, old_iuse = frozenset(use.split()), _iuse({"IUSE": iuse})
-    new_use, new_iuse = frozenset(best.use), frozenset(best.iuse)
-    forced = ebuild_use.forced(best.cpv, best.repo, old_iuse ^ new_iuse)
-    rebuild = rebuild_flags(old_use, old_iuse, new_use, new_iuse, forced)
+        return found
+    rebuild = flags_from(best)
     if not rebuild:
-        return {"visible": visible}
-    return {"visible": visible, "target": (best.cpv, best.repo), "rebuild": rebuild}
+        return found
+    return {**found, "target": (best.cpv, best.repo), "rebuild": rebuild}
 
 
 def read_candidates(portdb, settings, cp, installed_cpvs, match, ebuild_use=None):
@@ -869,6 +885,10 @@ def to_json(layer):
                 else {"cpv": pkg.target[0], "repo": pkg.target[1]}
             ),
             "rebuild": list(pkg.rebuild),
+            "own": (
+                None if pkg.own is None else {"cpv": pkg.own[0], "repo": pkg.own[1]}
+            ),
+            "own_rebuild": list(pkg.own_rebuild),
             "mask_reasons": list(pkg.mask_reasons),
             "vdb_mask_reasons": list(pkg.vdb_mask_reasons),
             "mask_file": pkg.mask_file,

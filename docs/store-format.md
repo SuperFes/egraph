@@ -116,7 +116,7 @@ The installed packages as emerge sees them against the repositories: their depen
 store it was built against, named after it (`installed.egraph` → `installed.evaluated.egraph`:
 the last extension replaced by `.evaluated.egraph`), and is written by the same builder run.
 
-It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 11.
+It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 12.
 Package ids are the installed store's, so an evaluated store is current only while the installed
 store beside it has the build start recorded in its meta, and its own inputs stat the same.
 
@@ -180,20 +180,26 @@ weighs the package against its repositories under `--update`:
     state, `flag%*` and `-flag%` new in IUSE, `(-flag%*)` and `(-flag%)` gone from IUSE, with a
     `*` when the flag's state changed. Those with a `*` are `--changed-use`'s. Flags new in or
     gone from IUSE count only when the profile neither masks nor forces them on the target.
-12. Mask reasons: list of string ids, why the package is masked where field 8 is 1, as emerge's
+12. Own: 0, or 1 plus the index of a candidate: the visible ebuild of the package's own version
+    in its slot, its own repository's when that has one, else the repository of highest
+    priority (format 12). `-uN` and `-uU` fall back to rebuilding from it when every newer
+    version is rejected.
+13. Own rebuild: list of string ids, the flags `--newuse` would rebuild the package for from
+    field 12's candidate, as field 11 has them; empty without one.
+14. Mask reasons: list of string ids, why the package is masked where field 8 is 1, as emerge's
     `get_masking_status` words them for an installed package (portage's `_getmaskingstatus`,
     then `invalid: KEY: error` for each string that does not parse, naming the vdb file for all
     but PROVIDES and REQUIRES, and `invalid: SLOT is undefined`); empty elsewhere.
-13. VDB mask reasons: the same where field 9 is 1.
-14. Mask file and comment: two string ids, the `package.mask` file and the comment above the
+15. VDB mask reasons: the same where field 9 is 1.
+16. Mask file and comment: two string ids, the `package.mask` file and the comment above the
     entry (each line ending in a newline) as `getmaskingreason` gives them, when `package.mask`
     is among either's reasons; both the empty string otherwise.
-15. Hidden: how emerge sees the installed package where field 8 is computed, as depgraph's
+17. Hidden: how emerge sees the installed package where field 8 is computed, as depgraph's
     `Package._eval_visibility` decides it for an installed one: 0 visible (no masks, or only
     keywords, CHOST, a deprecated EAPI, properties or restrictions), 1 not (`package.mask`, an
     invalid string, an unsupported EAPI), 2 not and its license among its masks, which emerge
     warns of whatever its graph holds.
-16. VDB hidden: the same where field 9 is computed.
+18. VDB hidden: the same where field 9 is computed.
 
 A candidate is one version of a cp in one repository: every visible one, and each masked one
 that is installed. The cps are the installed ones, and every cp that emerge could have to pull

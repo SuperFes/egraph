@@ -404,7 +404,20 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string(out, evaluated, pkg.mask_file);
         out << ",\"mask_reasons\":";
         write_string_list(out, evaluated, pkg.mask_reasons);
-        out << ",\"masked\":" << (pkg.masked ? "true" : "false") << ",\"possible\":[";
+        out << ",\"masked\":" << (pkg.masked ? "true" : "false") << ",\"own\":";
+        if (const auto index = pkg.own) {
+            const auto& own = evaluated.candidates.at(*index);
+            out << "{\"cpv\":";
+            write_string(out, evaluated, own.cpv);
+            out << ",\"repo\":";
+            write_string(out, evaluated, own.repo);
+            out << '}';
+        } else {
+            out << "null";
+        }
+        out << ",\"own_rebuild\":";
+        write_string_list(out, evaluated, pkg.own_rebuild);
+        out << ",\"possible\":[";
         bool first_possible = true;
         for (const auto& entry : evaluated.possible_in(pkg.possible)) {
             out << (first_possible ? "{\"atom\":" : ",{\"atom\":");

@@ -78,6 +78,10 @@ std::optional<StoreError> read_dependencies(std::span<const std::byte> section,
             pkg.target = target - 1;
         }
         pkg.rebuild = read_ids(r, evaluated.ids, strings, "string");
+        if (const auto own = r.index(candidates + 1, "candidate"); own != 0) {
+            pkg.own = own - 1;
+        }
+        pkg.own_rebuild = read_ids(r, evaluated.ids, strings, "string");
         pkg.mask_reasons = read_ids(r, evaluated.ids, strings, "string");
         pkg.vdb_mask_reasons = read_ids(r, evaluated.ids, strings, "string");
         pkg.mask_file = r.index(strings, "string");

@@ -43,7 +43,7 @@ INPUT_FILE, INPUT_DIRECTORY, INPUT_SYMLINK, INPUT_MISSING = range(4)
 DEFAULT_PATH = "var/cache/egraph/installed.egraph"
 
 EVALUATED_MAGIC = b"EGRAPHEV"
-EVALUATED_FORMAT_VERSION = 11
+EVALUATED_FORMAT_VERSION = 12
 (
     SECTION_DEPENDENCIES,
     SECTION_CANDIDATES,
@@ -478,6 +478,8 @@ def encode_evaluated(layer, meta, inputs=()):
         w.varint(int(pkg.vdb_masked))
         w.varint(0 if pkg.target is None else candidate_index[pkg.target] + 1)
         w.ids([strings(flag) for flag in pkg.rebuild])
+        w.varint(0 if pkg.own is None else candidate_index[pkg.own] + 1)
+        w.ids([strings(flag) for flag in pkg.own_rebuild])
         for reasons in (pkg.mask_reasons, pkg.vdb_mask_reasons):
             w.ids([strings(reason) for reason in reasons])
         w.varint(strings(pkg.mask_file))
@@ -834,11 +836,13 @@ def decode_evaluated(data):
             matches = r.ids(count)
             flags = tuple(strings[i] for i in r.ids(nstrings))
             possible.append((kind, atom, choice, matches, flags))
-        # visible, masked, vdb_masked, target, rebuild
+        # visible, masked, vdb_masked, target, rebuild, own, own_rebuild
         weighed = (
             bool(r.varint(2)),
             bool(r.varint(2)),
             bool(r.varint(2)),
+            r.varint(),
+            tuple(strings[i] for i in r.ids(nstrings)),
             r.varint(),
             tuple(strings[i] for i in r.ids(nstrings)),
             tuple(strings[i] for i in r.ids(nstrings)),
@@ -901,9 +905,12 @@ def decode_evaluated(data):
 
     packages = []
     for cpv, source, eapi, errors, deps, possible, weighed in raw:
-        visible, masked, vdb_masked, target, rebuild, *mask = weighed
-        if target > len(candidates):
-            raise StoreError(f"dependencies: {cpv}'s target {target} out of range")
+        visible, masked, vdb_masked, target, rebuild, own, own_rebuild, *mask = weighed
+        for index in (target, own):
+            if index > len(candidates):
+                raise StoreError(
+                    f"dependencies: {cpv}'s candidate {index} out of range"
+                )
         packages.append(
             Dependencies(
                 cpv,
@@ -924,6 +931,8 @@ def decode_evaluated(data):
                     else None
                 ),
                 rebuild,
+                (candidates[own - 1].cpv, candidates[own - 1].repo) if own else None,
+                own_rebuild,
                 *mask,
             )
         )

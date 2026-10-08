@@ -60,6 +60,12 @@ struct PendingUpdate {
 [[nodiscard]] std::optional<PendingUpdate>
 pending_update(const Evaluated& evaluated, std::uint32_t package, UseRebuilds rebuilds);
 
+// The package's own version rebuilt for USE, as rebuilds would rebuild it: what its wanted update
+// to another version falls back to last.
+[[nodiscard]] std::optional<PendingUpdate> own_rebuild(const Evaluated& evaluated,
+                                                       std::uint32_t package, UseRebuilds rebuilds,
+                                                       const PendingUpdate& wanted);
+
 // Whether flag a sorts before b under emerge's _alnum_sort_key: runs of digits compare as
 // numbers, the rest as text; flags equal under it compare as text.
 [[nodiscard]] bool alnum_less(std::string_view a, std::string_view b);
