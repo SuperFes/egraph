@@ -619,7 +619,7 @@ Subject candidate_subject(const Evaluated& evaluated, const Candidate& candidate
                     .repo = evaluated.string(candidate.repo),
                     .use = {},
                     .iuse = {},
-                    .iuse_effective = true,
+                    .iuse_effective = candidate.iuse_effective,
                     .built = false};
     for (const auto id : evaluated.ids_in(candidate.use)) {
         subject.use.push_back(evaluated.string(id));

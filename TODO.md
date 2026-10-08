@@ -81,10 +81,6 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
 
 ## Updates
 
-- [ ] Ebuilds match atoms as if their EAPI had IUSE_EFFECTIVE (5 and later): candidates do not
-      record their EAPI. EAPIs 0 to 4 are banned in ::gentoo, but an overlay may still carry
-      them; USE dependencies on implicit flags (arch, `prefix`, USE_EXPAND_HIDDEN) differ there.
-
 - [ ] A dependent's blocker that would match an update's target does not hold it; only its
       dependencies do.
 - [ ] Candidates count an ebuild visible when `match-visible` does, but depgraph also masks one

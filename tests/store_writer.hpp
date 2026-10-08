@@ -233,12 +233,12 @@ inline std::vector<std::byte> fresh_sample() {
 //   b-1 from the vdb, with no dependencies, masked and not visible, and replaced by b-2 under
 //   emerge -u.
 // Candidates of app-misc/a: a-1, visible, USE and IUSE "flag", which the profile forces; a-2,
-// masked by keyword; of dev-libs/b: b-2, visible, with DEPEND app-misc/a matching a-1. The
-// repositories hold app-misc/a and dev-libs/b; dev-libs/gone was evaluated on request. USE_EXPAND
-// is PYTHON_TARGETS and VIDEO_CARDS, the latter hidden. a-1 is stable with IUSE +flag; b-2 has
-// FEATURES=test. The USE ledger: USE_ORDER pkg:defaults, USE_EXPAND VIDEO_CARDS, ARCH x86, one
-// profile node whose make.defaults line 2 sets USE=flag, test_repo with nothing, package.use line
-// 3 "app-misc/a -minimal", the features layer test.
+// masked by keyword, EAPI 4 (no IUSE_EFFECTIVE); of dev-libs/b: b-2, visible, with DEPEND
+// app-misc/a matching a-1. The repositories hold app-misc/a and dev-libs/b; dev-libs/gone was
+// evaluated on request. USE_EXPAND is PYTHON_TARGETS and VIDEO_CARDS, the latter hidden. a-1 is
+// stable with IUSE +flag; b-2 has FEATURES=test. The USE ledger: USE_ORDER pkg:defaults, USE_EXPAND
+// VIDEO_CARDS, ARCH x86, one profile node whose make.defaults line 2 sets USE=flag, test_repo with
+// nothing, package.use line 3 "app-misc/a -minimal", the features layer test.
 inline constexpr std::initializer_list<std::string_view> evaluated_strings{
     "",
     "app-misc/a-1",
@@ -269,7 +269,8 @@ inline constexpr std::initializer_list<std::string_view> evaluated_strings{
     "/profile",
     "/profile/make.defaults",
     "/etc/portage/package.use",
-    "test"};
+    "test",
+    "4"};
 
 inline std::vector<Section> evaluated_sections() {
     Bytes meta;
@@ -314,11 +315,11 @@ inline std::vector<Section> evaluated_sections() {
     candidates.varints({5, 9, 7, 6, 6}).list({}).list({8}).list({}).list({10}).varint(0);
     candidates.varints({0, 0, 0, 0, 0}).list({}).varint(0);
     candidates.list({}).list({}).list({}).list({}).list({}).varint(0).list({}).list({});
-    candidates.varint(3).varint(1);
+    candidates.varint(30).varint(0);
     candidates.varints({13, 18, 7, 6, 6}).list({}).list({}).list({}).list({}).varint(0);
     candidates.varint(0).varint(1).varints({0, 0, 5}).list({0}).varints({0, 0, 0});
     candidates.list({}).varint(1).list({}).list({5}).list({}).list({}).list({});
-    candidates.varint(0).list({}).list({29}).varint(3).varint(0);
+    candidates.varint(0).list({}).list({29}).varint(3).varint(1);
 
     // Entries: file, line, atom, variable, tokens.
     Bytes ledger;

@@ -65,8 +65,8 @@ struct Atom {
 [[nodiscard]] bool matches(const Store& store, const Package& pkg, const Atom& atom);
 
 // Whether an ebuild, with the USE it would be built with now, satisfies atom, as depgraph matches
-// an ebuild against a dependency. Implicit IUSE is the installed store's profile's, and every
-// ebuild counts as having IUSE_EFFECTIVE (EAPI 5 and later).
+// an ebuild against a dependency. Implicit IUSE is the installed store's profile's: its
+// IUSE_EFFECTIVE where the ebuild's EAPI has it, its patterns before.
 [[nodiscard]] bool matches(const Store& installed, const Evaluated& evaluated,
                            const Candidate& candidate, const Atom& atom);
 

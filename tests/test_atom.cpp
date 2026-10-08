@@ -179,6 +179,9 @@ TEST_CASE("ebuilds match with the USE they would be built with") {
     CHECK(matched("dev-libs/b[amd64(+)]").empty());
     CHECK(matched("dev-libs/b[-amd64]") == Found{"dev-libs/b-2"});
     CHECK(matched("dev-libs/b[elibc_musl(-)]").empty());
+    // a-2's EAPI 4 implies the profile's patterns (elibc_*, build) instead of IUSE_EFFECTIVE.
+    CHECK(matched("app-misc/a[-elibc_musl]") == Found{"app-misc/a-2"});
+    CHECK(matched("app-misc/a[-amd64]") == Found{"app-misc/a-1"});
 }
 
 namespace {

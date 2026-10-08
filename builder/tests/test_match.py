@@ -159,24 +159,12 @@ def test_every_tree_atom_matches_as_portage_does(scenario, tmp_path):
 
 
 def assert_ebuilds_match(system, path, atoms, layer=None):
-    """As depgraph, except for ebuilds whose EAPI predates IUSE_EFFECTIVE, which egraph matches
-    as if it had it (see TODO.md). layer is the evaluated layer at path, built when omitted.
-    """
+    """As depgraph. layer is the evaluated layer at path, built when omitted."""
     import update
-    from egraph_build.profile import has_iuse_effective
 
-    db = portdb(system)
-    layer = layer or evaluated.build(system.vardb, db)
-    candidates = [
-        c
-        for c in layer.candidates()
-        if has_iuse_effective(db.aux_get(c.cpv, ["EAPI"], myrepo=c.repo)[0])
-    ]
-    kept = {f"{c.cpv}::{c.repo}" for c in candidates}
-    found = {
-        atom: cpvs & kept
-        for atom, cpvs in egraph_matches(path, atoms, "--candidates").items()
-    }
+    layer = layer or evaluated.build(system.vardb, portdb(system))
+    candidates = list(layer.candidates())
+    found = egraph_matches(path, atoms, "--candidates")
     wrong = [
         f"{atom}: depgraph {sorted(expected)}, egraph {sorted(found[atom])}"
         for atom in atoms

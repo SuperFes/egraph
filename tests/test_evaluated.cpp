@@ -157,7 +157,8 @@ TEST_CASE("the sample evaluated store decodes") {
     CHECK_FALSE(evaluated->candidates.at(1).stable);
     CHECK(evaluated->string(visible.eapi) == "8");
     CHECK(visible.iuse_effective);
-    CHECK_FALSE(evaluated->candidates.at(2).iuse_effective);
+    CHECK(evaluated->string(evaluated->candidates.at(1).eapi) == "4");
+    CHECK_FALSE(evaluated->candidates.at(1).iuse_effective);
 
     const auto& ledger = evaluated->ledger;
     CHECK(strings(ledger.use_order) == std::vector<std::string_view>{"pkg", "defaults"});
