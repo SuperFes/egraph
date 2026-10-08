@@ -1020,11 +1020,12 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     before, the lines gained and lost); the `plan` notice it makes, until the next plan.
   - 17f2 (done): watch records the change as it plans; the notice read beside the others (`notices`,
     `status`, the interface, where enter opens the updates, and `notify`).
-- 17g: `watch` and `notify` restart themselves when their binary is replaced. Decided with the
+- 17g (done): `watch` and `notify` restart themselves when their binary is replaced. Decided with the
   user (2026-10-08): the executable's directory is watched, and once the new file has gone a
   second unchanged, the process re-execs the same path and arguments between refreshes, keeping
   its PID (systemd, supervise-daemon and a terminal alike); a failed exec is logged and the old
-  binary keeps running. Scheduled after 18e2.
+  binary keeps running. notify gives up its bus name before the exec and takes its summary
+  down, forgetting it, so the new image posts it again.
 
 ## 18. Explaining and checking the configuration
 

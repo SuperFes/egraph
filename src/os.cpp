@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cerrno>
 #include <clocale>
 #include <csignal>
@@ -162,6 +163,19 @@ std::expected<FileStatus, std::error_code> lstat(const std::filesystem::path& pa
                                    st.st_mtim.tv_nsec);
     status.size = non_negative(st.st_size);
     return status;
+}
+
+std::expected<FileIdentity, std::error_code> identity(const std::filesystem::path& path) {
+    struct stat st{};
+    if (::stat(path.c_str(), &st) != 0) {
+        return std::unexpected(std::error_code(errno, std::generic_category()));
+    }
+    return FileIdentity{
+        .device = st.st_dev,
+        .inode = st.st_ino,
+        .mtime_ns = non_negative((static_cast<std::int64_t>(st.st_mtim.tv_sec) * 1'000'000'000) +
+                                 st.st_mtim.tv_nsec),
+        .size = non_negative(st.st_size)};
 }
 
 std::expected<int, SpawnError> run(const std::vector<std::string>& argv,
@@ -532,14 +546,46 @@ std::expected<Watcher, std::error_code> Watcher::open() {
     return Watcher{Descriptor{fd}};
 }
 
+namespace {
+
+// Written files count once closed, not at every write.
+constexpr std::uint32_t watched_events = IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO |
+                                         IN_CLOSE_WRITE | IN_ATTRIB | IN_DELETE_SELF |
+                                         IN_MOVE_SELF | IN_ONLYDIR;
+
+// The watch descriptor of each event in bytes read from inotify, -1 for an overflow.
+std::vector<int> event_watches(std::span<const std::byte> bytes) {
+    constexpr std::size_t header = sizeof(int) + (3 * sizeof(std::uint32_t));
+    const auto field = [&](std::size_t at) {
+        std::array<std::byte, 4> word{};
+        std::ranges::copy(bytes.subspan(at, word.size()), word.begin());
+        return word;
+    };
+    std::vector<int> found;
+    for (std::size_t at = 0; at + header <= bytes.size();) {
+        found.push_back(std::bit_cast<int>(field(at)));
+        at += header + std::bit_cast<std::uint32_t>(field(at + header - sizeof(std::uint32_t)));
+    }
+    return found;
+}
+
+} // namespace
+
 std::expected<void, std::error_code> Watcher::add(const std::filesystem::path& directory) {
-    // Written files count once closed, not at every write.
-    constexpr std::uint32_t events = IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO |
-                                     IN_CLOSE_WRITE | IN_ATTRIB | IN_DELETE_SELF | IN_MOVE_SELF |
-                                     IN_ONLYDIR;
-    if (::inotify_add_watch(fd_.get(), directory.c_str(), events) < 0) {
+    const int watch = ::inotify_add_watch(fd_.get(), directory.c_str(), watched_events);
+    if (watch < 0) {
         return std::unexpected(last_error());
     }
+    counted_.push_back(watch);
+    return {};
+}
+
+std::expected<void, std::error_code> Watcher::add_aside(const std::filesystem::path& directory) {
+    const int watch = ::inotify_add_watch(fd_.get(), directory.c_str(), watched_events);
+    if (watch < 0) {
+        return std::unexpected(last_error());
+    }
+    aside_.push_back(watch);
     return {};
 }
 
@@ -571,9 +617,16 @@ Watcher::wait(std::optional<std::chrono::milliseconds> timeout, Pollable also) {
     if (events > 0 && watched.at(0).revents != 0) {
         // What changed matters less than that something did: the refresh finds out.
         std::array<std::byte, 16384> events_read{};
-        while (::read(fd_.get(), events_read.data(), events_read.size()) > 0) {
+        for (ssize_t got = 0;
+             (got = ::read(fd_.get(), events_read.data(), events_read.size())) > 0;) {
+            for (const auto watch :
+                 event_watches(std::span{events_read}.first(static_cast<std::size_t>(got)))) {
+                const bool aside =
+                    std::ranges::contains(aside_, watch) && !std::ranges::contains(counted_, watch);
+                woken.changed = woken.changed || !aside;
+                woken.aside = woken.aside || aside;
+            }
         }
-        woken.changed = true;
     }
     return woken;
 }
@@ -613,6 +666,41 @@ std::filesystem::path executable() {
     std::error_code error;
     auto path = std::filesystem::read_symlink("/proc/self/exe", error);
     return error ? std::filesystem::path{} : path;
+}
+
+std::expected<FileIdentity, std::error_code> running_identity() {
+    return identity("/proc/self/exe");
+}
+
+std::expected<std::vector<std::string>, std::error_code> command_line() {
+    std::ifstream in{"/proc/self/cmdline", std::ios::binary};
+    if (!in) {
+        return std::unexpected(std::make_error_code(std::errc::no_such_file_or_directory));
+    }
+    std::vector<std::string> found;
+    for (std::string arg; std::getline(in, arg, '\0');) {
+        found.push_back(std::move(arg));
+    }
+    if (found.empty()) {
+        return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+    }
+    return found;
+}
+
+std::error_code exec(const std::filesystem::path& file, const std::vector<std::string>& argv) {
+    if (argv.empty()) {
+        return std::make_error_code(std::errc::invalid_argument);
+    }
+    // execv wants char* const[], as posix_spawnp does.
+    std::vector<std::string> args = argv;
+    std::vector<char*> pointers;
+    pointers.reserve(args.size() + 1);
+    for (auto& arg : args) {
+        pointers.push_back(arg.data());
+    }
+    pointers.push_back(nullptr);
+    ::execv(file.c_str(), pointers.data());
+    return {errno, std::generic_category()};
 }
 
 bool stdout_is_terminal() {

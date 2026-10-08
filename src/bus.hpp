@@ -46,6 +46,8 @@ class Session {
 
     // Takes the well-known name for this connection; false where another holds it.
     std::expected<bool, std::string> claim(const std::string& name);
+    // Gives it back, for a process about to run another image to claim it at once.
+    std::expected<void, std::string> release(const std::string& name);
 
     // The id the server gave the notification.
     std::expected<std::uint32_t, std::string> notify(const Notification& notification);

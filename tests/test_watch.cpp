@@ -47,6 +47,29 @@ struct World {
     std::vector<bool> stale;
     std::size_t stale_asked = 0;
     std::optional<std::string> watch_error;
+    // When the executable's replacement is due; each restart, and why it fails (none succeeds).
+    std::optional<Debounce::Clock::time_point> replaced;
+    std::vector<Debounce::Clock::time_point> restarts;
+    std::optional<std::string> restart_error;
+};
+
+struct FakeSelf {
+    World* world;
+
+    [[nodiscard]] std::optional<milliseconds> wait(Debounce::Clock::time_point now) const {
+        if (!world->replaced) {
+            return std::nullopt;
+        }
+        return std::max(milliseconds{0}, std::chrono::ceil<milliseconds>(*world->replaced - now));
+    }
+    [[nodiscard]] bool due(Debounce::Clock::time_point now) const {
+        return world->replaced && now >= *world->replaced;
+    }
+    std::string restart() {
+        world->restarts.push_back(world->clock);
+        world->replaced.reset();
+        return world->restart_error.value_or("");
+    }
 };
 
 struct FakeWatcher {
@@ -69,6 +92,7 @@ struct FakeWatcher {
 };
 
 std::expected<void, std::string> run(World& world, std::ostream& log) {
+    FakeSelf self{&world};
     return egraph::keep_fresh(
         [&world]() -> std::expected<Paths, std::string> {
             world.refreshed.push_back(world.clock);
@@ -86,7 +110,7 @@ std::expected<void, std::string> run(World& world, std::ostream& log) {
             const auto at = world.stale_asked++;
             return at < world.stale.size() && world.stale.at(at);
         },
-        [&world] { return world.clock; }, log);
+        [&world] { return world.clock; }, self, log);
 }
 
 Step change(milliseconds after) {
@@ -219,4 +243,29 @@ TEST_CASE("watching ends with the error when no watcher can be opened or waited 
     const auto waited = run(waiting, log);
     REQUIRE_FALSE(waited);
     CHECK(waited.error().find("Bad file descriptor") != std::string::npos);
+}
+
+TEST_CASE("a replaced executable restarts between refreshes, once its file settles") {
+    World world;
+    world.replaced = at(milliseconds{1000});
+    world.steps = {{.times_out = true}};
+    std::ostringstream log;
+    CHECK(run(world, log));
+    CHECK(world.refreshed.size() == 1);
+    CHECK(world.timeouts == std::vector<std::optional<milliseconds>>{milliseconds{1000}});
+    CHECK(world.restarts == std::vector{at(milliseconds{1000})});
+    CHECK(log.str().ends_with("egraph: watch: restarting, as its executable was replaced\n"));
+}
+
+TEST_CASE("a restart that fails is logged, and watching goes on") {
+    World world;
+    world.replaced = at(milliseconds{1000});
+    world.restart_error = "/usr/bin/egraph: Exec format error";
+    world.steps = {{.times_out = true}, change(milliseconds{100}), {.times_out = true}};
+    std::ostringstream log;
+    CHECK(run(world, log));
+    CHECK(world.restarts.size() == 1);
+    CHECK(world.refreshed == std::vector{at(milliseconds{0}), at(milliseconds{4100})});
+    CHECK(log.str().contains("egraph: watch: cannot restart, so keeps running: "
+                             "/usr/bin/egraph: Exec format error\n"));
 }

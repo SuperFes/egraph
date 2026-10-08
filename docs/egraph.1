@@ -1357,6 +1357,9 @@ writable:
 .B systemctl enable \-\-now egraphd
 or
 .BR "rc\-update add egraphd" .
+Once its executable is replaced (an upgrade) and the new file has gone a second unchanged, it
+runs that in its own process between refreshes, with the same arguments; if it cannot, that is
+logged and the old one keeps running.
 .SS notify
 Keep a desktop notification summing up the notices up, until stopped (SIGTERM, SIGINT or
 SIGHUP), through the session bus's notification server: posted when a notice comes that the last
@@ -1379,7 +1382,10 @@ puts what it carries off for a day and
 sets it aside, as the interface does. What the last summary carried is kept in
 .IR ${XDG_STATE_HOME:\-~/.local/state}/egraph/notified.json ,
 so a new session does not repeat it. One runs a session: a second exits at once. Installed with
-the notify feature, an XDG autostart entry starts it with each desktop session.
+the notify feature, an XDG autostart entry starts it with each desktop session. Its executable
+replaced, it restarts as
+.B watch
+does, taking its summary down for the new one to post.
 .SS check
 Compare the store with a fresh build, exiting 4 when they differ.
 .SS affected

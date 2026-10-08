@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import threading
+from pathlib import Path
 
 import portage
 import pytest
@@ -183,12 +184,12 @@ def test_refresh_brings_the_store_up_to_date_and_prints_nothing(system):
     assert query(system, "--no-refresh").stdout == expected(playground)
 
 
-def start_watch(system):
+def start_watch(system, binary=EGRAPH):
     """egraph watch on the system's store, and a queue of its log lines."""
     playground, store, builder, _ = system
     process = subprocess.Popen(
         [
-            EGRAPH,
+            str(binary),
             "--store",
             str(store),
             "--config-root",
@@ -232,6 +233,31 @@ def test_watch_refreshes_once_a_change_settles_and_stops_on_sigterm(system):
         # Current: a query has nothing to build.
         assert query(system).stdout == expected(playground)
         assert len(builds(system)) == 2
+        process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=30) == 0
+    finally:
+        stop(process)
+
+
+def test_watch_restarts_itself_when_its_executable_is_replaced(system, tmp_path):
+    """Once a new egraph is renamed over the one running, watch runs it in place, keeping its
+    pid, with the same arguments."""
+    binary = tmp_path / "bin" / "egraph"
+    binary.parent.mkdir()
+    shutil.copy2(EGRAPH, binary)
+    process, lines = start_watch(system, binary)
+    try:
+        assert "egraph: watch: watching " in lines.get(timeout=120)
+        arguments = Path(f"/proc/{process.pid}/cmdline").read_bytes()
+        shutil.copy2(EGRAPH, binary.with_name("egraph.new"))
+        os.rename(binary.with_name("egraph.new"), binary)
+        assert lines.get(timeout=60) == (
+            "egraph: watch: restarting, as its executable was replaced\n"
+        )
+        assert "egraph: watch: watching " in lines.get(timeout=120)
+        assert process.poll() is None
+        assert os.stat(f"/proc/{process.pid}/exe").st_ino == binary.stat().st_ino
+        assert Path(f"/proc/{process.pid}/cmdline").read_bytes() == arguments
         process.send_signal(signal.SIGTERM)
         assert process.wait(timeout=30) == 0
     finally:

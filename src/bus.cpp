@@ -129,6 +129,13 @@ std::expected<bool, std::string> Session::claim(const std::string& name) {
     return true;
 }
 
+std::expected<void, std::string> Session::release(const std::string& name) {
+    if (const int r = sd_bus_release_name(bus_.get(), name.c_str()); r < 0) {
+        return std::unexpected(std::format("cannot give up the name {}: {}", name, errno_text(r)));
+    }
+    return {};
+}
+
 std::expected<std::uint32_t, std::string> Session::notify(const Notification& notification) {
     auto message = method_call(bus_.get(), "Notify");
     const auto failed = [](const std::string& why) {

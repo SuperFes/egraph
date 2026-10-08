@@ -29,6 +29,19 @@ struct FileStatus {
 // lstat(2): a symlink is reported as itself, not its target.
 std::expected<FileStatus, std::error_code> lstat(const std::filesystem::path& path);
 
+// Which file a path names, and as it was written: replaced by a rename, it is another.
+struct FileIdentity {
+    std::uint64_t device = 0;
+    std::uint64_t inode = 0;
+    std::uint64_t mtime_ns = 0;
+    std::uint64_t size = 0;
+
+    bool operator==(const FileIdentity&) const = default;
+};
+
+// stat(2), following symlinks.
+std::expected<FileIdentity, std::error_code> identity(const std::filesystem::path& path);
+
 struct SpawnError {
     std::string message;
 };
@@ -178,6 +191,8 @@ struct Woken {
     bool stop = false;
     // The other descriptor it waited on is ready.
     bool ready = false;
+    // A directory watched aside changed.
+    bool aside = false;
 };
 
 // A descriptor to wait on beside a Watcher's, and for what, as poll(2) takes them.
@@ -193,6 +208,10 @@ class Watcher {
     [[nodiscard]] static std::expected<Watcher, std::error_code> open();
     // An error for a directory gone or unreadable, or beyond the watches the system allows.
     [[nodiscard]] std::expected<void, std::error_code> add(const std::filesystem::path& directory);
+    // Watched too, but its changes wake a wait without counting as changed, unless add() watches
+    // it as well.
+    [[nodiscard]] std::expected<void, std::error_code>
+    add_aside(const std::filesystem::path& directory);
     // Waits until a watched directory changes, a stop is asked, also is ready, or the timeout
     // passes; a stop asked before is found at once, every time.
     [[nodiscard]] std::expected<Woken, std::error_code>
@@ -202,6 +221,9 @@ class Watcher {
     explicit Watcher(Descriptor fd) : fd_{std::move(fd)} {}
 
     Descriptor fd_;
+    // Watch descriptors from add() and from add_aside().
+    std::vector<int> counted_;
+    std::vector<int> aside_;
 };
 
 // Hands the heap's free memory back to the system, for a process that stays up idle.
@@ -256,6 +278,16 @@ std::int64_t process_id();
 
 // The running executable, from /proc/self/exe; empty if that cannot be read.
 std::filesystem::path executable();
+
+// The running executable's file itself, though its path was since replaced or removed.
+std::expected<FileIdentity, std::error_code> running_identity();
+
+// This process's arguments, from /proc/self/cmdline, its argv[0] first.
+std::expected<std::vector<std::string>, std::error_code> command_line();
+
+// Replaces this process's image with file run as argv (not empty), keeping its pid and
+// environment; returns only why it could not.
+std::error_code exec(const std::filesystem::path& file, const std::vector<std::string>& argv);
 
 // Whether standard output is a terminal.
 bool stdout_is_terminal();

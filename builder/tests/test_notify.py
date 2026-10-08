@@ -3,6 +3,7 @@ with the notices written as egraph watch writes them."""
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -43,11 +44,11 @@ def write_notices(store, notices):
     new.rename(store.parent / "notices.json")
 
 
-def start(system, env):
+def start(system, env, binary=EGRAPH):
     playground, store, builder, _ = system
     return subprocess.Popen(
         [
-            EGRAPH,
+            str(binary),
             "--store",
             str(store),
             "--config-root",
@@ -178,3 +179,34 @@ def test_notify_sums_up_the_notices_and_does_what_its_buttons_say(
         stop(daemon)
     # Its summary goes with it.
     assert server.read() == {"call": "CloseNotification", "id": posted["id"]}
+
+
+def test_notify_restarts_itself_when_its_executable_is_replaced(
+    updates_system, bus, server, tmp_path
+):
+    """Its summary is taken down, and the new image, in the same process, posts it again."""
+    skip_without_bus()
+    store = updates_system[1]
+    assert run_egraph(updates_system, "status", "--update").returncode == 0
+    write_notices(store, [notice("glsa", "glsa:202601-01", "x: several flaws")])
+    binary = tmp_path / "bin" / "egraph"
+    binary.parent.mkdir()
+    shutil.copy2(EGRAPH, binary)
+    daemon = start(updates_system, bus, binary)
+    try:
+        posted = server.read()
+        assert posted["summary"] == "x: several flaws"
+        shutil.copy2(EGRAPH, binary.with_name("egraph.new"))
+        os.rename(binary.with_name("egraph.new"), binary)
+        assert server.read() == {"call": "CloseNotification", "id": posted["id"]}
+        again = server.read()
+        assert (again["call"], again["replaces"], again["summary"]) == (
+            "Notify",
+            0,
+            "x: several flaws",
+        )
+        assert daemon.poll() is None
+        assert os.stat(f"/proc/{daemon.pid}/exe").st_ino == binary.stat().st_ino
+    finally:
+        err = stop(daemon)
+    assert err == "egraph: notify: restarting, as its executable was replaced\n"

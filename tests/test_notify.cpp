@@ -218,6 +218,9 @@ struct FakeWorld {
     std::vector<std::optional<std::chrono::milliseconds>> timeouts{};
     std::vector<std::function<std::expected<NotifyWake, std::string>(FakeWorld&)>> steps{};
     std::size_t step = 0;
+    std::size_t restarts = 0;
+    // Why a restart fails; none succeeds.
+    std::optional<std::string> restart_error{};
 
     [[nodiscard]] egraph::Seconds now() const { return time; }
     [[nodiscard]] egraph::NotifyView view() const {
@@ -255,6 +258,10 @@ struct FakeWorld {
             }
         }
         return {};
+    }
+    std::string restart() {
+        ++restarts;
+        return restart_error.value_or("");
     }
     std::expected<NotifyWake, std::string> wait(std::optional<std::chrono::milliseconds> timeout) {
         timeouts.push_back(timeout);
@@ -437,4 +444,27 @@ TEST_CASE("notify ends with the error its wait ended with") {
     const auto kept = egraph::keep_notified(world, log);
     REQUIRE_FALSE(kept);
     CHECK(kept.error() == "the session bus failed: gone");
+}
+
+TEST_CASE("a replaced executable takes the summary down and forgets it, for the new one to post") {
+    FakeWorld world{.all = {notice("glsa:1", "a")}};
+    world.steps = {[](FakeWorld&) { return NotifyWake{.replaced = true}; }};
+    std::ostringstream log;
+    REQUIRE(egraph::keep_notified(world, log));
+    CHECK(world.restarts == 1);
+    CHECK(world.closes == std::vector<std::uint32_t>{1});
+    CHECK(world.notified.empty());
+    CHECK(log.str() == "egraph: notify: restarting, as its executable was replaced\n");
+}
+
+TEST_CASE("a restart that fails is logged, and the summary posted again") {
+    FakeWorld world{.all = {notice("glsa:1", "a")}, .restart_error = "egraph: Permission denied"};
+    world.steps = {[](FakeWorld&) { return NotifyWake{.replaced = true}; }};
+    std::ostringstream log;
+    REQUIRE(egraph::keep_notified(world, log));
+    CHECK(world.restarts == 1);
+    CHECK(world.posts.size() == 2);
+    CHECK(world.notified == egraph::notified_now(world.all, now));
+    CHECK(log.str().ends_with(
+        "egraph: notify: cannot restart, so keeps running: egraph: Permission denied\n"));
 }

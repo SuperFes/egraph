@@ -11,6 +11,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -176,6 +177,56 @@ TEST_CASE("a watcher wakes for an entry made, written or removed in a directory 
     CHECK(quiet());
     std::filesystem::remove(dir.path() / "watched/file");
     CHECK(changed());
+}
+
+TEST_CASE("a directory watched aside wakes a wait without counting as changed") {
+    const egraph::test::TempDir dir;
+    std::filesystem::create_directory(dir.path() / "watched");
+    std::filesystem::create_directory(dir.path() / "aside");
+    std::filesystem::create_directory(dir.path() / "both");
+    auto watcher = egraph::os::Watcher::open();
+    REQUIRE(watcher.has_value());
+    REQUIRE(watcher->add(dir.path() / "watched"));
+    REQUIRE(watcher->add_aside(dir.path() / "aside"));
+    REQUIRE(watcher->add_aside(dir.path() / "both"));
+    REQUIRE(watcher->add(dir.path() / "both"));
+    const auto woken = [&] {
+        const auto found = watcher->wait(std::chrono::milliseconds{5000});
+        REQUIRE(found.has_value());
+        return std::pair{found->changed, found->aside};
+    };
+    egraph::test::write_text(dir.path() / "aside/file", "x");
+    CHECK(woken() == std::pair{false, true});
+    egraph::test::write_text(dir.path() / "watched/file", "x");
+    CHECK(woken() == std::pair{true, false});
+    // Watched both ways, it counts.
+    egraph::test::write_text(dir.path() / "both/file", "x");
+    CHECK(woken() == std::pair{true, false});
+}
+
+TEST_CASE("a file's identity changes when it is replaced by a rename, not when it is read") {
+    namespace fs = std::filesystem;
+    const egraph::test::TempDir dir;
+    const auto path = dir.path() / "egraph";
+    egraph::test::write_text(path, "one");
+    const auto first = egraph::os::identity(path);
+    REQUIRE(first);
+    CHECK(egraph::os::identity(path) == first);
+    egraph::test::write_text(dir.path() / "new", "one");
+    fs::rename(dir.path() / "new", path);
+    const auto second = egraph::os::identity(path);
+    REQUIRE(second);
+    CHECK(second->inode != first->inode);
+    CHECK_FALSE(egraph::os::identity(dir.path() / "missing"));
+}
+
+TEST_CASE("this process's command line and executable, as /proc has them") {
+    const auto argv = egraph::os::command_line();
+    REQUIRE(argv);
+    CHECK(std::filesystem::path{argv->front()}.filename() == "unit-tests");
+    const auto running = egraph::os::running_identity();
+    REQUIRE(running);
+    CHECK(egraph::os::identity(egraph::os::executable()) == running);
 }
 
 TEST_CASE("appending under the file's lock adds to what is there, and makes it if need be") {

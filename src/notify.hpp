@@ -101,10 +101,12 @@ struct NotifyView {
     std::vector<Notified> notified;
 };
 
-// What a wait of the notify loop's ended with: a stop asked, or what happened on the bus.
+// What a wait of the notify loop's ended with: a stop asked, what happened on the bus, or the
+// executable replaced.
 struct NotifyWake {
     bool stop = false;
     std::vector<bus::Event> events{};
+    bool replaced = false;
 };
 
 // Keeps one summary notification of the notices up until a stop is asked: posted for notices new
@@ -118,6 +120,9 @@ struct NotifyWake {
 //   act(SummaryAction, std::span<const Notice>) -> std::expected<void, std::string>
 //   wait(std::optional<std::chrono::milliseconds>) -> std::expected<NotifyWake, std::string>,
 //     until something may have changed, the time passes, or a stop is asked.
+//   restart() -> std::string, why the executable could not be run again over this process
+//     (empty only from a fake that did, which ends the loop).
+// The summary is taken down and forgotten before a restart, so the new process posts it again.
 // What fails is logged and the loop goes on; the error when waiting does.
 template <class World>
 std::expected<void, std::string> keep_notified(World& world, std::ostream& log) {
@@ -162,6 +167,17 @@ std::expected<void, std::string> keep_notified(World& world, std::ostream& log) 
         if (woken->stop) {
             take_down();
             return {};
+        }
+        if (woken->replaced) {
+            take_down();
+            logged(world.remember({}));
+            log << "egraph: notify: restarting, as its executable was replaced\n";
+            const auto failed = world.restart();
+            if (failed.empty()) {
+                return {};
+            }
+            log << "egraph: notify: cannot restart, so keeps running: " << failed << '\n';
+            continue;
         }
         for (const auto& event : woken->events) {
             if (!posted || event.id != *posted) {

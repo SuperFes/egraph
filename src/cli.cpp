@@ -30,6 +30,7 @@
 #include "remove.hpp"
 #include "replace.hpp"
 #include "request.hpp"
+#include "restart.hpp"
 #include "resume.hpp"
 #include "run_log.hpp"
 #include "run_state.hpp"
@@ -302,11 +303,17 @@ Exit execute(const Refresh&, Session& session, const Invocation&, std::ostream&,
 
 // A watcher on each directory, or on the nearest one above that exists, for an input not made
 // yet; one that cannot be read goes unwatched, as its inputs cannot change for this user either.
+// The executable's directory, given, is watched aside.
 std::expected<os::Watcher, std::string>
-watch_all(std::span<const std::filesystem::path> directories, std::size_t& unreadable) {
+watch_all(std::span<const std::filesystem::path> directories, std::size_t& unreadable,
+          const std::optional<std::filesystem::path>& executable_directory = std::nullopt) {
     auto watcher = os::Watcher::open();
     if (!watcher) {
         return std::unexpected("inotify: " + watcher.error().message());
+    }
+    // Unwatched, a replacement is still found at the next wake.
+    if (executable_directory) {
+        std::ignore = watcher->add_aside(*executable_directory);
     }
     unreadable = 0;
     for (const auto& directory : directories) {
@@ -345,6 +352,7 @@ Exit execute(const Watch&, Session& session, const Invocation& invocation, std::
     bool first = true;
     std::size_t unreadable = 0;
     std::size_t reported = 0;
+    auto self = SelfRestart::open();
     const auto refresh = [&]() -> std::expected<std::vector<std::filesystem::path>, std::string> {
         const auto started = Clock::now();
         session.reload();
@@ -376,7 +384,7 @@ Exit execute(const Watch&, Session& session, const Invocation& invocation, std::
         return directories;
     };
     const auto watch = [&](const std::vector<std::filesystem::path>& directories) {
-        auto watcher = watch_all(directories, unreadable);
+        auto watcher = watch_all(directories, unreadable, self.directory());
         if (watcher && unreadable != reported) {
             err << std::format("egraph: watch: {} directories cannot be read, so go unwatched\n",
                                unreadable);
@@ -392,7 +400,7 @@ Exit execute(const Watch&, Session& session, const Invocation& invocation, std::
         os::release_memory();
         return went_stale;
     };
-    const auto kept = keep_fresh(refresh, watch, stale, [] { return Clock::now(); }, err);
+    const auto kept = keep_fresh(refresh, watch, stale, [] { return Clock::now(); }, self, err);
     if (!kept) {
         err << "egraph: watch: " << kept.error() << '\n';
         return Exit::failure;
@@ -3728,7 +3736,7 @@ class NotifyWorld {
     NotifyView view() {
         // Watched before reading, so a change while it reads wakes the next wait.
         std::size_t unreadable = 0;
-        watcher_ = watch_all(directories(), unreadable);
+        watcher_ = watch_all(directories(), unreadable, self_.directory());
         const auto at = now();
         NotifyView seen{.shown = {},
                         .set_aside = read_set_aside().value_or(std::vector<SetAside>{}),
@@ -3749,6 +3757,19 @@ class NotifyWorld {
     }
 
     std::expected<void, std::string> close(std::uint32_t id) { return bus_.close(id); }
+
+    std::string restart() {
+        const std::string name{notify_bus_name};
+        if (const auto released = bus_.release(name); !released) {
+            return released.error();
+        }
+        auto failed = self_.restart();
+        if (const auto claimed = bus_.claim(name); !claimed || !*claimed) {
+            failed += std::format("; and {}",
+                                  claimed ? std::format("another took {}", name) : claimed.error());
+        }
+        return failed;
+    }
 
     static std::expected<void, std::string> remember(std::span<const Notified> notified) {
         return write_state(user_notified_path(), notified_json(notified));
@@ -3796,12 +3817,18 @@ class NotifyWorld {
         if (!children_.empty()) {
             timeout = std::min(timeout.value_or(reaping), reaping);
         }
+        if (const auto settling = self_.wait(std::chrono::steady_clock::now())) {
+            timeout = std::min(timeout.value_or(*settling), *settling);
+        }
         const auto woken = watcher_->wait(timeout, bus_.pollable());
         if (!woken) {
             return std::unexpected(woken.error().message());
         }
         if (woken->stop) {
             return NotifyWake{.stop = true};
+        }
+        if (self_.due(std::chrono::steady_clock::now())) {
+            return NotifyWake{.replaced = true};
         }
         return bus_.events().transform(
             [](std::vector<bus::Event> found) { return NotifyWake{.events = std::move(found)}; });
@@ -3867,6 +3894,7 @@ class NotifyWorld {
     bus::Session& bus_;
     std::expected<os::Watcher, std::string> watcher_ = std::unexpected(std::string{});
     std::vector<os::Child> children_;
+    SelfRestart self_ = SelfRestart::open();
 };
 #endif
 

@@ -47,10 +47,12 @@ class Debounce {
 // or after a while, twice as long each time. watch(directories) returns a watcher on them, or why
 // not, as std::expected<W, std::string>; its wait(timeout) is os::Watcher::wait's. stale() tells
 // whether the stores went stale since the refresh, as a change during one leaves them, which
-// counts as a change. now() is the time. The error when no watcher could be opened or waited on.
-template <class RefreshFn, class WatchFn, class StaleFn, class NowFn>
+// counts as a change. now() is the time. self is a SelfRestart: between refreshes, once due, it
+// restarts, and what it returns, why it could not, is logged (empty only from a fake that did,
+// which ends the loop). The error when no watcher could be opened or waited on.
+template <class RefreshFn, class WatchFn, class StaleFn, class NowFn, class Self>
 std::expected<void, std::string> keep_fresh(RefreshFn refresh, WatchFn watch, StaleFn stale,
-                                            NowFn now, std::ostream& log) {
+                                            NowFn now, Self& self, std::ostream& log) {
     using std::chrono::milliseconds;
     constexpr milliseconds longest_retry{3'600'000};
     std::vector<std::filesystem::path> directories;
@@ -91,6 +93,9 @@ std::expected<void, std::string> keep_fresh(RefreshFn refresh, WatchFn watch, St
                     std::max(milliseconds{0}, std::chrono::ceil<milliseconds>(retry - now()));
                 timeout = timeout ? std::min(*timeout, left) : left;
             }
+            if (const auto settling = self.wait(now())) {
+                timeout = timeout ? std::min(*timeout, *settling) : *settling;
+            }
             const auto woken = watcher->wait(timeout);
             if (!woken) {
                 return std::unexpected("watch: " + woken.error().message());
@@ -100,6 +105,14 @@ std::expected<void, std::string> keep_fresh(RefreshFn refresh, WatchFn watch, St
             }
             if (woken->changed) {
                 debounce.changed(now());
+            }
+            if (self.due(now())) {
+                log << "egraph: watch: restarting, as its executable was replaced\n";
+                const auto failed = self.restart();
+                if (failed.empty()) {
+                    return {};
+                }
+                log << "egraph: watch: cannot restart, so keeps running: " << failed << '\n';
             }
             due = debounce.due(now()) || (retrying && now() >= retry);
         }
