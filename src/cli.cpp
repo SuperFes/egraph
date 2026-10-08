@@ -40,6 +40,7 @@
 #include "steve.hpp"
 #include "store.hpp"
 #include "tui.hpp"
+#include "use_stack.hpp"
 #include "visibility.hpp"
 #include "watch.hpp"
 
@@ -1099,6 +1100,75 @@ Exit execute(const Deps& command, Session& session, const Invocation& invocation
 Exit execute(const Rdeps& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     return edges(command.packages, true, command.possible, session, invocation, out, err);
+}
+
+// Where a step was set: the entry's file and line, or its layer where it has none.
+std::string step_place(const Evaluated& evaluated, const UseStep& step) {
+    if (!step.entry) {
+        return std::string{layer_name(step.layer)};
+    }
+    const auto& entry = evaluated.ledger_entries.at(*step.entry);
+    const auto file = evaluated.string(entry.file);
+    if (file.empty()) {
+        return std::format("{} (environment)", layer_name(step.layer));
+    }
+    return entry.line == 0 ? std::string{file} : std::format("{}:{}", file, entry.line);
+}
+
+Exit execute(const UseCommand& command, Session& session, const Invocation& /*invocation*/,
+             std::ostream& out, std::ostream& err) {
+    const auto atom = parse_config_atom(command.package);
+    if (!atom) {
+        err << "egraph: " << atom.error() << '\n';
+        return Exit::failure;
+    }
+    const auto stores = session.stores();
+    if (!stores) {
+        return fail(err, stores.error());
+    }
+    const auto& [installed, evaluated] = stores->get();
+    const UseStacker stacker(installed, evaluated);
+    std::vector<std::string> lines;
+    bool matched = false;
+    for (const auto& candidate : evaluated.candidates) {
+        const auto cp = evaluated.string(candidate.cp);
+        const auto cpv = evaluated.string(candidate.cpv);
+        const auto version = parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
+        const auto repo = evaluated.string(candidate.repo);
+        if (!version || !matches(*atom, cp, *version, evaluated.string(candidate.slot),
+                                 evaluated.string(candidate.sub_slot), repo)) {
+            continue;
+        }
+        matched = true;
+        const auto stacked = stacker.stack(candidate);
+        std::vector<std::string> flags(stacked.use);
+        for (const auto id : evaluated.ids_in(candidate.iuse)) {
+            flags.emplace_back(evaluated.string(id));
+        }
+        std::ranges::sort(flags);
+        const auto [first, last] = std::ranges::unique(flags);
+        flags.erase(first, last);
+        for (const auto& flag : flags) {
+            if (command.flag && *command.flag != flag) {
+                continue;
+            }
+            const bool on = std::ranges::binary_search(stacked.use, flag);
+            const bool fixed = std::ranges::binary_search(stacked.forced, flag);
+            const auto shown =
+                std::format("{}{}{}{}", fixed ? "(" : "", on ? "" : "-", flag, fixed ? ")" : "");
+            const auto steps = stacked.steps.find(flag);
+            const auto place = steps == stacked.steps.end() || steps->second.empty()
+                                   ? std::string{}
+                                   : step_place(evaluated, steps->second.back());
+            lines.push_back(std::format("{}::{}\t{}\t{}", cpv, repo, shown, place));
+        }
+    }
+    if (!matched) {
+        err << "egraph: " << command.package << ": no ebuild matches\n";
+        return Exit::failure;
+    }
+    write_lines(out, lines);
+    return Exit::ok;
 }
 
 Exit execute(const Match& command, Session& session, const Invocation& invocation,
@@ -4007,6 +4077,13 @@ void configure(CLI::App& app, Invocation& invocation) {
         "--config", [&invocation] { std::get<Match>(invocation.command).config = true; },
         "Read the atoms as configuration files do, wildcards and all, and match the ebuilds as "
         "--candidates does; each ebuild's in the order portage applies their entries");
+    CLI::App* use_cmd = add_command<UseCommand>(
+        app, invocation,
+        "Each USE flag's state for the ebuilds an atom matches, and where it was set");
+    add_field(use_cmd, invocation, "package", &UseCommand::package,
+              "Atom as configuration files take it, wildcards and all, such as dev-libs/openssl")
+        ->required();
+    add_field(use_cmd, invocation, "flag", &UseCommand::flag, "Only this flag");
     CLI::App* soname = add_command<Soname>(app, invocation, "Installed consumers of a soname");
     add_field(soname, invocation, "soname", &Soname::soname, "Soname, such as libssl.so.3")
         ->required();

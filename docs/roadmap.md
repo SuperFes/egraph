@@ -1046,8 +1046,10 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
   `features` layers, EAPI and IUSE_EFFECTIVE.
 - 18b (done): extended atoms in the C++ matcher (`*/*`, `cat/*`, `*/pkg`, `::repo`, `=cpv*`), held to
   portage's matching in `test_match`, and `best_match_to_list`'s order of specificity.
-- 18c: the stacking in C++: per candidate, each flag's final state and the entries that set it,
-  shadowed against every candidate's USE and forced flags, on every scenario and the live system.
+- 18c (done): the stacking in C++: per candidate, each flag's final state and the entries that set
+  it, shadowed against every candidate's USE and forced flags, on every scenario and the live
+  system (`use_stack.cpp`; `egraph use` lists it as lines). It found the builder missing a
+  repository's own `use.force` and `use.mask` (`docs/upstream-notes.md`), fixed first.
 - 18d: `egraph use <pkg> [flag]`: each flag's state and its stack, `file:line` per step.
 - 18e: `egraph config check`: entries matching nothing (dead) or nothing installed, flags outside
   the IUSE of all they match, keywords accepted without the entry, masks and unmasks that change

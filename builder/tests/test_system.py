@@ -669,3 +669,23 @@ def test_search_finds_and_shows_what_emerge_does_on_the_live_system(
         check=True,
     ).stdout.splitlines()
     assert ours == emerge_lines(system, keys, searchdesc)
+
+
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
+def test_stacked_use_is_portages_on_every_live_ebuild(live_evaluated, live_store):
+    from test_ledger import egraph_use
+
+    found = egraph_use(live_store)
+    wrong = []
+    for c in live_evaluated.candidates():
+        flags = found.get(f"{c.cpv}::{c.repo}", {})
+        use = sorted(flag for flag, (on, _, _) in flags.items() if on)
+        forced = sorted(flag for flag, (_, fixed, _) in flags.items() if fixed)
+        if use != sorted(c.use) or forced != sorted(c.forced):
+            wrong.append(
+                f"{c.cpv}::{c.repo}: portage {sorted(c.use)} {sorted(c.forced)}, "
+                f"egraph {use} {forced}"
+            )
+    assert not wrong, "\n".join(wrong[:20])

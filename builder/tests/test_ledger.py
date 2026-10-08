@@ -3,11 +3,16 @@ to what portage loaded."""
 
 import os
 import re
+import subprocess
+
+import pytest
 from portage.dep import Atom
 
-from conftest import portdb
+from conftest import portdb, write_stores
 
 from egraph_build import evaluated, ledger
+
+EGRAPH = os.environ.get("EGRAPH")
 
 
 def entries_of(use_ledger):
@@ -206,6 +211,52 @@ def test_make_conf_linked_from_etc_is_read_once(tmp_path):
     (tmp_path / "etc" / "make.conf").symlink_to("portage/make.conf")
     files = ledger._make_conf_files({"PORTAGE_CONFIGROOT": str(tmp_path)})
     assert files == [str(tmp_path / "etc" / "make.conf")]
+
+
+def egraph_use(path, package="*/*"):
+    """{cpv::repo: {flag: (enabled, forced, where)}} as egraph use lists them."""
+    result = subprocess.run(
+        [EGRAPH, "--store", str(path), "--no-refresh", "use", package],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    found = {}
+    for line in result.stdout.splitlines():
+        pkg, shown, where = line.split("\t")
+        forced = shown.startswith("(")
+        shown = shown.strip("()")
+        found.setdefault(pkg, {})[shown.lstrip("-")] = (
+            not shown.startswith("-"),
+            forced,
+            where,
+        )
+    return found
+
+
+@pytest.mark.skipif(
+    not EGRAPH, reason="set EGRAPH to the egraph binary (meson test does)"
+)
+def test_stacked_use_is_portages(scenario, tmp_path):
+    """egraph's stacking of the ledger gives every candidate the USE and forced flags portage
+    gives it."""
+    path = tmp_path / "installed.egraph"
+    write_stores(scenario, path)
+    layer, _ = evaluated.rebuild(scenario.vardb, portdb(scenario), None, None)
+    if not layer.candidates():
+        pytest.skip("no ebuilds in this scenario")
+    found = egraph_use(path)
+    wrong = []
+    for c in layer.candidates():
+        flags = found.get(f"{c.cpv}::{c.repo}", {})
+        use = sorted(flag for flag, (on, _, _) in flags.items() if on)
+        forced = sorted(flag for flag, (_, fixed, _) in flags.items() if fixed)
+        if use != sorted(c.use) or forced != sorted(c.forced):
+            wrong.append(
+                f"{c.cpv}::{c.repo}: portage {sorted(c.use)} {sorted(c.forced)}, "
+                f"egraph {use} {forced}"
+            )
+    assert not wrong, "\n".join(wrong)
 
 
 def test_candidates_use_is_emerges(scenario):

@@ -222,6 +222,21 @@ and match the ebuilds as
 does.
 Each ebuild's atoms are listed in the order portage applies their entries, least specific
 first, so the last one wins.
+.SS use \fIpackage\fR [\fIflag\fR]
+Each USE flag's state for the ebuilds that
+.I package
+matches, an atom as configuration files take it, wildcards and all
+.RI ( */* " for every ebuild the stores hold), and where it was last set:"
+.IR file : line ,
+or the layer of a package's own
+.RI ( pkginternal " for its IUSE defaults, " features " for FEATURES=test, " arch ).
+Flags are shown as emerge shows them: off with a
+.BR \- ,
+masked or forced in parentheses.
+The state is stacked from the configuration as portage stacks it, profile by profile, then
+.IR make.conf ,
+.I package.use
+and the environment, and holds to the USE each ebuild would be built with now.
 .SS soname \fIsoname\fR
 The installed packages that need a soname
 .RI ( libssl.so.3 ).
