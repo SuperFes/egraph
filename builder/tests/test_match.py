@@ -205,3 +205,61 @@ def test_every_tree_atom_matches_ebuilds_as_depgraph_does(scenario, tmp_path):
     if not atoms:
         pytest.skip("no dependency atoms in this scenario")
     assert_ebuilds_match(scenario, path, atoms)
+
+
+CONFIG_ATOMS = (
+    "*/*",
+    "dev-libs/*",
+    "*/v",
+    "dev-*/*",
+    "*-misc/*",
+    "*/*:3",
+    "*/*:1/1.5",
+    "*/*::test_repo",
+    "*/*::other",
+    "app-misc/*:1",
+    "=dev-libs/v-*1*",
+    "=dev-libs/v-*r1*",
+    "=dev-libs/v-*_p*",
+    "=*/*-*0*",
+)
+
+
+def egraph_config_matches(path, atoms):
+    """{cpv::repo: the atoms that match it, in the order egraph applies them}."""
+    result = subprocess.run(
+        [EGRAPH, "--store", str(path), "--no-refresh", "match", "--config", *atoms],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    found = {}
+    for line in result.stdout.splitlines():
+        atom, pkg = line.split("\t")
+        found.setdefault(pkg, []).append(atom)
+    return found
+
+
+def test_config_atoms_match_in_portages_order(playgrounds, tmp_path):
+    """Configuration atoms, plain and extended, against every ebuild: those match_from_list
+    matches, in the order ordered_by_atom_specificity applies them."""
+    from portage.package.ebuild._config.helper import ordered_by_atom_specificity
+    from portage.versions import _pkg_str
+
+    system = playgrounds("atoms")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path)
+    plain = [atom for atom in corpus() if valid(atom) and "[" not in atom]
+    atoms = sorted(set(plain) | set(CONFIG_ATOMS))
+    parsed = {Atom(atom, allow_wildcard=True, allow_repo=True): atom for atom in atoms}
+    found = egraph_config_matches(path, atoms)
+    assert max(len(matched) for matched in found.values()) > 50
+    layer = evaluated.build(system.vardb, portdb(system))
+    wrong = []
+    for c in layer.candidates():
+        pkg = _pkg_str(c.cpv, slot=f"{c.slot}/{c.sub_slot}", repo=c.repo)
+        expected = ordered_by_atom_specificity(parsed, pkg)
+        key = f"{c.cpv}::{c.repo}"
+        if found.get(key, []) != expected:
+            wrong.append(f"{key}: portage {expected}, egraph {found.get(key, [])}")
+    assert not wrong, "\n".join(wrong)

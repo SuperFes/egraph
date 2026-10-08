@@ -211,6 +211,17 @@ The installed packages each atom matches.
 Match the installed cps' ebuilds instead
 .RI ( cpv::repo ),
 with the USE each would be built with now, masked ones included.
+.TP
+.B \-\-config
+Read the atoms as configuration files such as
+.I package.use
+do, wildcards and all
+.RI ( */* ", " dev-lang/rust* ),
+and match the ebuilds as
+.B \-\-candidates
+does.
+Each ebuild's atoms are listed in the order portage applies their entries, least specific
+first, so the last one wins.
 .SS soname \fIsoname\fR
 The installed packages that need a soname
 .RI ( libssl.so.3 ).

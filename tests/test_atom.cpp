@@ -180,3 +180,99 @@ TEST_CASE("ebuilds match with the USE they would be built with") {
     CHECK(matched("dev-libs/b[-amd64]") == Found{"dev-libs/b-2"});
     CHECK(matched("dev-libs/b[elibc_musl(-)]").empty());
 }
+
+namespace {
+
+egraph::Atom config_parsed(std::string_view text) {
+    auto atom = egraph::parse_config_atom(text);
+    REQUIRE(atom.has_value());
+    if (!atom) {
+        return {};
+    }
+    return std::move(*atom);
+}
+
+bool config_matches(std::string_view text, std::string_view cp, std::string_view version,
+                    std::string_view slot = "0", std::string_view repo = "gentoo") {
+    const auto parsed_version = egraph::parse_version(version);
+    REQUIRE(parsed_version.has_value());
+    return egraph::matches(config_parsed(text), cp, parsed_version.value_or(egraph::Version{}),
+                           slot, slot, repo);
+}
+
+// The atoms by_specificity puts first to last for cat/pkg-2 in slot 0 of gentoo.
+std::vector<std::string_view> specificity(const std::vector<std::string_view>& texts) {
+    std::vector<egraph::Atom> atoms;
+    for (const auto text : texts) {
+        atoms.push_back(config_parsed(text));
+    }
+    const auto version = egraph::parse_version("2");
+    REQUIRE(version.has_value());
+    std::vector<std::string_view> order;
+    for (const auto index :
+         egraph::by_specificity(atoms, "cat/pkg", *version, "0", "0", "gentoo")) {
+        order.push_back(texts.at(index));
+    }
+    return order;
+}
+
+} // namespace
+
+TEST_CASE("configuration atoms read portage's extended syntax") {
+    CHECK_FALSE(config_parsed("cat/pkg").extended);
+    for (const auto* text : {"*/*", "dev-*/*", "*/foo", "dev-lang/rust*", "+*/x"}) {
+        INFO(text);
+        const auto atom = config_parsed(text);
+        CHECK(atom.extended);
+        CHECK(atom.cp == text);
+    }
+    const auto slotted = config_parsed("*/*:0::gentoo");
+    CHECK(slotted.cp == "*/*");
+    CHECK(slotted.slot == "0");
+    CHECK(slotted.repo == "gentoo");
+    const auto star = config_parsed("=cat/pkg-*2_rc*");
+    CHECK(star.extended);
+    CHECK(star.cp == "cat/pkg");
+    CHECK(star.contains == "2_rc");
+
+    // Each an InvalidAtom to portage as well, but cat/pkg[a], which its loaders refuse
+    // (allow_use=False).
+    for (const auto* text :
+         {"*/foo-1.0", "c**/p", "*/*[a]", "=*/*-**", "cat/pkg[a]", "*", ">=cat/*-1", "*/*:"}) {
+        INFO(text);
+        CHECK_FALSE(egraph::parse_config_atom(text).has_value());
+    }
+}
+
+TEST_CASE("configuration atoms match as match_from_list does") {
+    CHECK(config_matches("*/*", "cat/pkg", "1"));
+    CHECK(config_matches("cat/*", "cat/pkg", "1"));
+    CHECK_FALSE(config_matches("cat/*", "dog/pkg", "1"));
+    CHECK(config_matches("dev-*/*", "dev-libs/a", "1"));
+    CHECK(config_matches("*/p*g", "cat/pkg", "1"));
+    CHECK_FALSE(config_matches("*/p*g", "cat/pkgs", "1"));
+    CHECK(config_matches("*/*:0", "cat/pkg", "1"));
+    CHECK_FALSE(config_matches("*/*:1", "cat/pkg", "1"));
+    CHECK_FALSE(config_matches("*/*::other", "cat/pkg", "1"));
+    CHECK(config_matches("=cat/pkg-*2_r*", "cat/pkg", "1.2_rc1"));
+    CHECK(config_matches("=cat/pkg-*r1*", "cat/pkg", "1.0-r1"));
+    CHECK_FALSE(config_matches("=cat/pkg-*3*", "cat/pkg", "1.2"));
+}
+
+// Expectations are portage's ordered_by_atom_specificity for cat/pkg-2:0::gentoo.
+TEST_CASE("configuration atoms apply in portage's order of specificity") {
+    using V = std::vector<std::string_view>;
+    CHECK(specificity({"*/*", "cat/pkg", "cat/pkg:0", ">=cat/pkg-1", "<cat/pkg-3", "=cat/pkg-2",
+                       "~cat/pkg-2", "=cat/pkg-2*", "cat/*:0", "=cat/pkg-*2*", "cat/*",
+                       "*/*::gentoo"}) ==
+          V{"*/*::gentoo", "cat/*", "*/*", "cat/*:0", "=cat/pkg-*2*", "cat/pkg", "<cat/pkg-3",
+            ">=cat/pkg-1", "cat/pkg:0", "=cat/pkg-2*", "~cat/pkg-2", "=cat/pkg-2"});
+    CHECK(specificity({">=cat/pkg-1", "<cat/pkg-3"}) == V{"<cat/pkg-3", ">=cat/pkg-1"});
+    CHECK(specificity({"<cat/pkg-3", ">=cat/pkg-1"}) == V{">=cat/pkg-1", "<cat/pkg-3"});
+    CHECK(specificity({">=cat/pkg-1", ">=cat/pkg-2"}) == V{">=cat/pkg-1", ">=cat/pkg-2"});
+    CHECK(specificity({">=cat/pkg-1", "<=cat/pkg-5", ">cat/pkg-1.5"}) ==
+          V{"<=cat/pkg-5", ">=cat/pkg-1", ">cat/pkg-1.5"});
+    CHECK(specificity({"cat/*", "*/*", "*/pkg"}) == V{"*/pkg", "*/*", "cat/*"});
+    CHECK(specificity({">=cat/pkg-1:0", "cat/pkg"}) == V{"cat/pkg", ">=cat/pkg-1:0"});
+    CHECK(specificity({"dog/pkg", ">cat/pkg-2"}).empty());
+}

@@ -1044,7 +1044,7 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
   entries, read in 0.1 s). `*/*` in the user's `package.use` and `package.env` goes to the conf
   layer, as portage folds it there. Candidates gain their stable bit, `pkginternal` and
   `features` layers, EAPI and IUSE_EFFECTIVE.
-- 18b: extended atoms in the C++ matcher (`*/*`, `cat/*`, `*/pkg`, `::repo`, `=cpv*`), held to
+- 18b (done): extended atoms in the C++ matcher (`*/*`, `cat/*`, `*/pkg`, `::repo`, `=cpv*`), held to
   portage's matching in `test_match`, and `best_match_to_list`'s order of specificity.
 - 18c: the stacking in C++: per candidate, each flag's final state and the entries that set it,
   shadowed against every candidate's USE and forced flags, on every scenario and the live system.

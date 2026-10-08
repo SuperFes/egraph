@@ -4,9 +4,11 @@
 #include "store.hpp"
 #include "version.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -46,9 +48,18 @@ struct Atom {
     bool slot_operator = false;
     std::optional<std::string> repo;
     std::vector<UseDependency> use;
+    // Read with portage's extended syntax, as configuration files allow: '*' in cp stands for any
+    // run of characters but '/', and =cat/pkg-*text* (op glob, contains set) matches the versions
+    // whose text holds text.
+    bool extended = false;
+    std::optional<std::string> contains;
 };
 
 [[nodiscard]] std::expected<Atom, std::string> parse_atom(std::string_view text);
+
+// An atom of a configuration file (package.use and the like): extended syntax where the plain
+// one fails, as Atom(allow_wildcard=True, allow_repo=True) reads it; no USE dependencies.
+[[nodiscard]] std::expected<Atom, std::string> parse_config_atom(std::string_view text);
 
 // Whether an installed package satisfies atom, as portage's vardb.match decides it.
 [[nodiscard]] bool matches(const Store& store, const Package& pkg, const Atom& atom);
@@ -63,6 +74,12 @@ struct Atom {
 // configuration file's atom against a package: USE dependencies, which those never have, fail.
 [[nodiscard]] bool matches(const Atom& atom, std::string_view cp, const Version& version,
                            std::string_view slot, std::string_view sub_slot, std::string_view repo);
+
+// The indices of the atoms that match a version of cp, least specific first: the order
+// ordered_by_atom_specificity applies configuration entries in, so the most specific wins.
+[[nodiscard]] std::vector<std::size_t>
+by_specificity(std::span<const Atom> atoms, std::string_view cp, const Version& version,
+               std::string_view slot, std::string_view sub_slot, std::string_view repo);
 
 // Whether flag is in the ebuild's IUSE or implied, as Package.iuse.get_flag has it.
 [[nodiscard]] bool has_flag(const Store& installed, const Evaluated& evaluated,

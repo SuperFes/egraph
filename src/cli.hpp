@@ -68,6 +68,9 @@ struct Match {
     std::vector<std::string> atoms;
     // The installed cps' ebuilds instead, with the USE each would be built with now.
     bool candidates = false;
+    // Atoms of configuration files, wildcards and all, matched against the ebuilds, each
+    // ebuild's in the order portage applies their entries.
+    bool config = false;
 };
 
 struct Soname {

@@ -1105,7 +1105,7 @@ Exit execute(const Match& command, Session& session, const Invocation& invocatio
              std::ostream& out, std::ostream& err) {
     std::vector<Atom> atoms;
     for (const auto& text : command.atoms) {
-        auto atom = parse_atom(text);
+        auto atom = command.config ? parse_config_atom(text) : parse_atom(text);
         if (!atom) {
             err << "egraph: " << atom.error() << '\n';
             return Exit::failure;
@@ -1113,7 +1113,27 @@ Exit execute(const Match& command, Session& session, const Invocation& invocatio
         atoms.push_back(std::move(*atom));
     }
     std::vector<std::string> lines;
-    if (command.candidates) {
+    if (command.config) {
+        const auto stores = session.stores();
+        if (!stores) {
+            return fail(err, stores.error());
+        }
+        const auto& evaluated = stores->get().evaluated;
+        for (const auto& candidate : evaluated.candidates) {
+            const auto cp = evaluated.string(candidate.cp);
+            const auto cpv = evaluated.string(candidate.cpv);
+            const auto version = parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
+            if (!version) {
+                continue;
+            }
+            for (const auto index : by_specificity(
+                     atoms, cp, *version, evaluated.string(candidate.slot),
+                     evaluated.string(candidate.sub_slot), evaluated.string(candidate.repo))) {
+                lines.push_back(std::format("{}\t{}::{}", command.atoms.at(index), cpv,
+                                            evaluated.string(candidate.repo)));
+            }
+        }
+    } else if (command.candidates) {
         const auto stores = session.stores();
         if (!stores) {
             return fail(err, stores.error());
@@ -3983,6 +4003,10 @@ void configure(CLI::App& app, Invocation& invocation) {
         "--candidates", [&invocation] { std::get<Match>(invocation.command).candidates = true; },
         "Match the installed cps' ebuilds instead (cpv::repo), with the USE each would be built "
         "with now, masked ones included");
+    match_cmd->add_flag_callback(
+        "--config", [&invocation] { std::get<Match>(invocation.command).config = true; },
+        "Read the atoms as configuration files do, wildcards and all, and match the ebuilds as "
+        "--candidates does; each ebuild's in the order portage applies their entries");
     CLI::App* soname = add_command<Soname>(app, invocation, "Installed consumers of a soname");
     add_field(soname, invocation, "soname", &Soname::soname, "Soname, such as libssl.so.3")
         ->required();

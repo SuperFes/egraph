@@ -372,12 +372,233 @@ std::expected<Atom, std::string> parse_atom(std::string_view text) {
     return atom;
 }
 
+namespace {
+
+// [\w+*][\w<extra>*]*: an extended category or package name.
+bool is_extended_name(std::string_view text, std::string_view extra) {
+    const auto allowed = [](char c, std::string_view more) {
+        return is_word(c) || c == '*' || more.find(c) != std::string_view::npos;
+    };
+    return !text.empty() && allowed(text.front(), "+") &&
+           std::ranges::all_of(text, [&](char c) { return allowed(c, extra); });
+}
+
+// extended_cp_match: each '*' any run of characters but '/'.
+bool glob_cp(std::string_view pattern, std::string_view cp) {
+    if (pattern.empty()) {
+        return cp.empty();
+    }
+    if (pattern.front() == '*') {
+        for (std::size_t skip = 0; skip <= cp.size(); ++skip) {
+            if (glob_cp(pattern.substr(1), cp.substr(skip))) {
+                return true;
+            }
+            if (skip < cp.size() && cp.at(skip) == '/') {
+                return false;
+            }
+        }
+        return false;
+    }
+    return !cp.empty() && pattern.front() == cp.front() && glob_cp(pattern.substr(1), cp.substr(1));
+}
+
+// The slot and repository after the cp, as parse_atom reads them.
+std::expected<std::string_view, std::string> take_slot_and_repo(std::string_view text, Atom& atom) {
+    auto rest = text;
+    if (const auto colons = rest.find("::"); colons != std::string_view::npos) {
+        const auto repo = rest.substr(colons + 2);
+        if (!is_name(repo, "-")) {
+            return invalid(text, "bad repository name");
+        }
+        atom.repo = std::string{repo};
+        rest = rest.substr(0, colons);
+    }
+    if (const auto colon = rest.find(':'); colon != std::string_view::npos) {
+        const auto slot = rest.substr(colon + 1);
+        const auto slash = slot.find('/');
+        const auto main = slot.substr(0, slash);
+        if (!is_name(main, "+.-")) {
+            return invalid(text, "bad slot");
+        }
+        atom.slot = std::string{main};
+        if (slash != std::string_view::npos) {
+            const auto sub = slot.substr(slash + 1);
+            if (!is_name(sub, "+.-")) {
+                return invalid(text, "bad sub-slot");
+            }
+            atom.sub_slot = std::string{sub};
+        }
+        rest = rest.substr(0, colon);
+    }
+    return rest;
+}
+
+} // namespace
+
+std::expected<Atom, std::string> parse_config_atom(std::string_view text) {
+    auto plain = parse_atom(text);
+    if (plain) {
+        if (!plain->use.empty()) {
+            return invalid(text, "configuration files take no USE dependencies");
+        }
+        return plain;
+    }
+    if (text.find('*') == std::string_view::npos || text.find('[') != std::string_view::npos) {
+        return plain;
+    }
+    Atom atom;
+    atom.extended = true;
+    auto rest = take_slot_and_repo(text, atom);
+    if (!rest) {
+        return std::unexpected(std::move(rest.error()));
+    }
+    auto cpv = *rest;
+    if (cpv.starts_with('=')) {
+        // =cat/pkg-*text*: the version's text holds text.
+        cpv.remove_prefix(1);
+        const auto star = cpv.rfind("-*");
+        if (star == std::string_view::npos || !cpv.ends_with('*')) {
+            return invalid(text, "a wildcard version reads -*text*");
+        }
+        const auto contains = cpv.substr(star + 2, cpv.size() - star - 3);
+        if (contains.empty() || !std::ranges::all_of(contains, is_word)) {
+            return invalid(text, "a wildcard version reads -*text*");
+        }
+        atom.op = Operator::glob;
+        atom.contains = std::string{contains};
+        cpv = cpv.substr(0, star);
+    }
+    const auto slash = cpv.find('/');
+    if (slash == std::string_view::npos) {
+        return invalid(text, "no category");
+    }
+    const auto category = cpv.substr(0, slash);
+    const auto name = cpv.substr(slash + 1);
+    if (cpv.find("**") != std::string_view::npos || !is_extended_name(category, "+.-") ||
+        !is_extended_name(name, "+-")) {
+        return invalid(text, "bad category or package name");
+    }
+    if (ends_in_version(name)) {
+        return invalid(text, "a version needs an operator");
+    }
+    atom.cp = std::string{cpv};
+    return atom;
+}
+
 bool matches(const Atom& atom, std::string_view cp, const Version& version, std::string_view slot,
              std::string_view sub_slot, std::string_view repo) {
-    return atom.cp == cp && atom.use.empty() &&
-           (!atom.version || version_matches(atom.op, *atom.version, version)) &&
+    if (atom.extended) {
+        if (!glob_cp(atom.cp, cp) ||
+            (atom.contains && version.text.find(*atom.contains) == std::string::npos)) {
+            return false;
+        }
+    } else if (atom.cp != cp ||
+               (atom.version && !version_matches(atom.op, *atom.version, version))) {
+        return false;
+    }
+    return atom.use.empty() &&
            (!atom.slot || (slot == *atom.slot && (!atom.sub_slot || sub_slot == *atom.sub_slot))) &&
            (!atom.repo || repo == *atom.repo);
+}
+
+namespace {
+
+template <class T> const T& element(std::span<const T> items, std::size_t index) {
+    return items.subspan(index).front();
+}
+
+// best_match_to_list's value of an atom: =cpv 6, ~cpv 5, =cpv* 4, a slot 3, the other
+// operators 2, a cp 1; extended ones below: =cp-*text* 0, with a slot -1, else -2.
+int specificity_of(const Atom& atom) {
+    if (atom.extended) {
+        return atom.contains ? 0 : atom.slot ? -1 : -2;
+    }
+    int value = atom.slot ? 3 : -99;
+    switch (atom.op) {
+    case Operator::equal:
+        return 6;
+    case Operator::approximately:
+        return 5;
+    case Operator::glob:
+        return 4;
+    case Operator::none:
+        return std::max(value, 1);
+    case Operator::less:
+    case Operator::less_equal:
+    case Operator::greater:
+    case Operator::greater_equal:
+        return std::max(value, 2);
+    }
+    return value;
+}
+
+bool ranged(const Atom& atom) {
+    return !atom.extended && atom.version &&
+           (atom.op == Operator::less || atom.op == Operator::less_equal ||
+            atom.op == Operator::greater || atom.op == Operator::greater_equal);
+}
+
+// best_match_to_list: the first most specific of the candidates, where two ranged atoms tie
+// on the one whose version is next to the package's.
+std::size_t best_match(std::span<const Atom> atoms, const std::vector<std::size_t>& candidates,
+                       const Version& version) {
+    std::size_t best = candidates.front();
+    int value = -99;
+    for (const auto index : candidates) {
+        const auto& atom = element(atoms, index);
+        const auto own = specificity_of(atom);
+        if (own > value) {
+            value = own;
+            best = index;
+            continue;
+        }
+        const auto& best_version = element(atoms, best).version;
+        if (own != value || own != 2 || !ranged(atom) || !ranged(element(atoms, best)) ||
+            !best_version || !atom.version) {
+            continue;
+        }
+        // Compared as portage compares cpv strings, then sorted (stably) by version.
+        const auto& held = *best_version;
+        const auto& other = *atom.version;
+        if (held.text == version.text || held.text == other.text) {
+            continue;
+        }
+        if (other.text == version.text) {
+            best = index;
+            continue;
+        }
+        // 0 the best so far, 1 the package, 2 this one.
+        std::array<std::size_t, 3> order{0, 1, 2};
+        const std::array<const Version*, 3> versions{&held, &version, &other};
+        std::ranges::stable_sort(order, [&](std::size_t a, std::size_t b) {
+            return vercmp(*versions.at(a), *versions.at(b)) < 0;
+        });
+        if ((order.front() == 1 || order.back() == 1) && order.at(1) == 2) {
+            best = index;
+        }
+    }
+    return best;
+}
+
+} // namespace
+
+std::vector<std::size_t> by_specificity(std::span<const Atom> atoms, std::string_view cp,
+                                        const Version& version, std::string_view slot,
+                                        std::string_view sub_slot, std::string_view repo) {
+    std::vector<std::size_t> left;
+    for (std::size_t i = 0; i < atoms.size(); ++i) {
+        if (matches(element(atoms, i), cp, version, slot, sub_slot, repo)) {
+            left.push_back(i);
+        }
+    }
+    std::vector<std::size_t> order;
+    while (!left.empty()) {
+        const auto best = best_match(atoms, left, version);
+        order.push_back(best);
+        std::erase(left, best);
+    }
+    std::ranges::reverse(order);
+    return order;
 }
 
 bool matches(const Store& store, const Package& pkg, const Atom& atom) {
