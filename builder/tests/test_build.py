@@ -219,7 +219,10 @@ def test_another_version_forces_a_full_build(system, field):
 
 def test_racy_inputs_are_not_trusted(mutable_playground):
     playground = mutable_playground("reference")
-    # Not aged: every input was written within the racy window of the build.
+    # Its configuration written within the racy window of the build, however long setup took.
+    for directory, _, names in os.walk(os.path.join(playground.eroot, "etc/portage")):
+        for name in names:
+            os.utime(os.path.join(directory, name))
     first = build.full(fresh_vardb(playground))
     meta = meta_for(playground.eroot, first.started_ns)
     assert rebuild(playground, meta, first).full
