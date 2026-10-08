@@ -335,6 +335,9 @@ TEST_CASE("notices summed up in a line") {
           "package, 1 stale repository, configuration updates, 2 news items");
     CHECK(egraph::notices_summary(std::vector{notice(NoticeKind::plan)}) ==
           "1 notice: the plan changed by an edit");
+    CHECK(
+        egraph::notices_summary(std::vector{notice(NoticeKind::check), notice(NoticeKind::plan)}) ==
+        "2 notices: the plan changed by an edit, the configuration check");
     CHECK(egraph::notices_summary(std::vector{notice(NoticeKind::news)}) ==
           "1 notice: 1 news item");
 }

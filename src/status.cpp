@@ -738,6 +738,9 @@ std::optional<std::string> notices_summary(std::span<const Notice> notices) {
         if (kind == NoticeKind::stale && count(NoticeKind::plan) != 0) {
             add("the plan changed by an edit");
         }
+        if (kind == NoticeKind::stale && count(NoticeKind::check) != 0) {
+            add("the configuration check");
+        }
     }
     return std::format("{} {}: {}", notices.size(), notices.size() == 1 ? "notice" : "notices",
                        parts);

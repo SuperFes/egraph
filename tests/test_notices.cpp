@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <optional>
@@ -203,6 +204,28 @@ egraph::Notices every_kind() {
     notices.masked = {{.cpv = "app-misc/b-1", .reasons = {"package.mask", "~x86 keyword"}}};
     notices.missing = {{.cpv = "app-misc/a-1", .category = "x86_64", .soname = "libgone.so.2"},
                        {.cpv = "app-misc/a-1", .category = "x86_64", .soname = "libold.so.3"}};
+    using egraph::FindingKind;
+    notices.findings = {{.kind = FindingKind::dead,
+                         .file = "/etc/portage/package.use",
+                         .line = 2,
+                         .atom = "app-misc/gone",
+                         .message = "matches nothing"},
+                        {.kind = FindingKind::no_effect,
+                         .file = "/etc/portage/package.mask",
+                         .line = 1,
+                         .atom = "app-misc/a",
+                         .message = "already masked (line 2)"},
+                        {.kind = FindingKind::no_effect,
+                         .file = "/etc/portage/package.use",
+                         .line = 3,
+                         .atom = "app-misc/a",
+                         .token = "x",
+                         .message = "already set"},
+                        {.kind = FindingKind::not_installed,
+                         .file = "/etc/portage/package.use",
+                         .line = 4,
+                         .atom = "app-misc/z",
+                         .message = "nothing installed matches it"}};
     return notices;
 }
 
@@ -218,7 +241,7 @@ TEST_CASE("notices list as one, the most pressing first") {
         CHECK(notice.since == now);
     }
     CHECK(keys == std::vector<std::string>{"glsa:202601-01", "missing:app-misc/a-1", "preserved",
-                                           "masked:app-misc/b-1", "stale:gentoo", "config",
+                                           "masked:app-misc/b-1", "stale:gentoo", "config", "check",
                                            "news:gentoo/2026-09-01-x", "news:gentoo/2026-09-02-y"});
     const auto& glsa = list.at(0);
     CHECK(glsa.kind == egraph::NoticeKind::glsa);
@@ -248,10 +271,16 @@ TEST_CASE("notices list as one, the most pressing first") {
     const auto& config = list.at(5);
     CHECK(config.title == "2 configuration files have updates waiting");
     CHECK(config.detail == std::vector<std::string>{"/etc/a.conf", "/etc/b.conf"});
-    CHECK(list.at(6).title == "X happened");
-    CHECK(list.at(6).file == "/repo/metadata/news/2026-09-01-x/2026-09-01-x.en.txt");
+    const auto& check = list.at(6);
+    CHECK(check.kind == egraph::NoticeKind::check);
+    CHECK(check.title == "Configuration check: 1 error, 2 warnings, 1 note");
+    CHECK(check.detail == std::vector<std::string>{"/etc/portage/package.mask: 1 warning",
+                                                   "/etc/portage/package.use: 1 error, 1 warning, "
+                                                   "1 note"});
+    CHECK(list.at(7).title == "X happened");
+    CHECK(list.at(7).file == "/repo/metadata/news/2026-09-01-x/2026-09-01-x.en.txt");
     // An item without a title goes by its name.
-    CHECK(list.at(7).title == "2026-09-02-y");
+    CHECK(list.at(8).title == "2026-09-02-y");
 }
 
 TEST_CASE("the plan's change is a notice of its own, after the configuration updates") {
@@ -267,12 +296,13 @@ TEST_CASE("the plan's change is a notice of its own, after the configuration upd
                               .since = egraph::Seconds{seconds{5}}};
     notices.plan = plan;
     const auto list = egraph::notice_list(notices, now);
-    REQUIRE(list.size() == 9);
+    REQUIRE(list.size() == 10);
     CHECK(list.at(5).key == "config");
     // As the status file has it, since included.
     CHECK(list.at(6) == plan);
+    CHECK(list.at(7).key == "check");
     const auto lines = egraph::notice_lines(notices);
-    CHECK(std::vector(lines.end() - 3, lines.end()) ==
+    CHECK(std::vector(lines.end() - 5, lines.end() - 2) ==
           std::vector<std::string>{"title\tplan\tConfiguration edit: +1 rebuild",
                                    "detail\tplan\tedited /etc/portage/package.use",
                                    "detail\tplan\t+ dev-libs/d-1 rebuild dev-libs/d-1 gentoo y"});
@@ -288,6 +318,7 @@ TEST_CASE("a fingerprint changes with what the notice says") {
     notices.advisories.front().revision = 3;
     notices.masked.front().reasons = {"package.mask"};
     notices.config.pop_back();
+    notices.findings.back().line = 5;
     const auto after = egraph::notice_list(notices, now);
     REQUIRE(before.size() == after.size());
     std::vector<std::string> changed;
@@ -297,7 +328,26 @@ TEST_CASE("a fingerprint changes with what the notice says") {
             changed.push_back(after.at(i).key);
         }
     }
-    CHECK(changed == std::vector<std::string>{"glsa:202601-01", "masked:app-misc/b-1", "config"});
+    CHECK(changed ==
+          std::vector<std::string>{"glsa:202601-01", "masked:app-misc/b-1", "config", "check"});
+}
+
+TEST_CASE("the configuration check is counted by file, its lines last") {
+    using namespace std::chrono;
+    auto notices = every_kind();
+    const auto lines = egraph::notice_lines(notices);
+    CHECK(std::vector(lines.end() - 2, lines.end()) ==
+          std::vector<std::string>{"/etc/portage/package.mask\tcheck\t0\t1\t0",
+                                   "/etc/portage/package.use\tcheck\t1\t1\t1"});
+    notices.findings.erase(notices.findings.begin(), notices.findings.end() - 1);
+    const auto list = egraph::notice_list(notices, sys_days{2026y / October / 9});
+    const auto check = std::ranges::find(list, "check", &egraph::Notice::key);
+    REQUIRE(check != list.end());
+    CHECK(check->title == "Configuration check: 1 note");
+    CHECK(check->detail == std::vector<std::string>{"/etc/portage/package.use: 1 note"});
+    notices.findings.clear();
+    CHECK_FALSE(std::ranges::contains(egraph::notice_list(notices, sys_days{2026y / October / 9}),
+                                      "check", &egraph::Notice::key));
 }
 
 TEST_CASE("since carries over by key, and new notices are those with new keys") {
@@ -340,7 +390,7 @@ TEST_CASE("notice kinds have names") {
     for (const auto kind :
          {egraph::NoticeKind::glsa, egraph::NoticeKind::news, egraph::NoticeKind::config,
           egraph::NoticeKind::preserved, egraph::NoticeKind::stale, egraph::NoticeKind::masked,
-          egraph::NoticeKind::missing, egraph::NoticeKind::plan}) {
+          egraph::NoticeKind::missing, egraph::NoticeKind::plan, egraph::NoticeKind::check}) {
         CHECK(egraph::notice_kind(egraph::notice_kind_name(kind)) == kind);
     }
     CHECK(egraph::notice_kind_name(egraph::NoticeKind::glsa) == "glsa");
@@ -427,7 +477,7 @@ TEST_CASE("notices less what keys name, for showing") {
     auto notices = every_kind();
     egraph::drop_notices(notices, std::vector<std::string>{"glsa:202601-01", "missing:app-misc/a-1",
                                                            "preserved", "masked:app-misc/b-1",
-                                                           "stale:gentoo", "config",
+                                                           "stale:gentoo", "config", "check",
                                                            "news:gentoo/2026-09-01-x"});
     CHECK(notices.advisories.empty());
     CHECK(notices.missing.empty());
@@ -436,6 +486,7 @@ TEST_CASE("notices less what keys name, for showing") {
     CHECK(notices.masked.empty());
     CHECK(notices.stale.empty());
     CHECK(notices.config.empty());
+    CHECK(notices.findings.empty());
     REQUIRE(notices.news.size() == 1);
     CHECK(notices.news.front().item == "2026-09-02-y");
 }

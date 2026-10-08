@@ -1120,7 +1120,10 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
       unmasked, naming the line that did) or a mask a `package.unmask` line undoes for each
       (contradicted). Held to portage's visibility with the token or line removed from the
       file on every scenario; one finding here, the whole check still 0.8 s.
-- 18f: the `config` notice from watch, its count of findings; enter opens the check.
+- 18f (done): the configuration check's notice, `check` (`config` was the `._cfg` updates' already):
+  every finding counted, errors, warnings and notes by file, dismissed until any finding changes;
+  enter in the interface runs `:config check`. Decided with the user (2026-10-08): notes count
+  too.
 
 ## 19. What-if
 

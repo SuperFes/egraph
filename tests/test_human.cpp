@@ -217,6 +217,21 @@ TEST_CASE("notices list what a configuration edit did to the plan after its upda
                        "  edited /etc/portage/package.use\n  + dev-libs/d-1 rebuild\n");
 }
 
+TEST_CASE("notices list the configuration check's findings by file after the plan's change") {
+    std::ostringstream out;
+    egraph::human_notices(out,
+                          std::vector<std::string>{"title\tplan\tConfiguration edit: +1 rebuild",
+                                                   "/etc/portage/package.mask\tcheck\t0\t1\t0",
+                                                   "/etc/portage/package.use\tcheck\t1\t2\t1",
+                                                   "2026-09-01-x\tnews\tgentoo\tX happened"},
+                          plain, egraph::Seconds{});
+    CHECK(out.str() == "Configuration edit: +1 rebuild (egraph updates):\n"
+                       "\nConfiguration check (egraph config check):\n"
+                       "  /etc/portage/package.mask  1 warning\n"
+                       "  /etc/portage/package.use  1 error, 2 warnings, 1 note\n"
+                       "\nUnread news (eselect news read):\n  2026-09-01-x  X happened\n");
+}
+
 TEST_CASE("notices list preserved libraries with what they come from and what uses them") {
     std::ostringstream out;
     egraph::human_notices(

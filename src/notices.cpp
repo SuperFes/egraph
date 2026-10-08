@@ -8,6 +8,7 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <initializer_list>
@@ -33,6 +34,54 @@ bool all_have(const Json& list, std::initializer_list<std::string_view> fields) 
 
 bool strings(const Json& list) {
     return list.is_array() && std::ranges::all_of(list, &Json::is_string);
+}
+
+std::string joined(std::span<const std::string> words, std::string_view separator) {
+    std::string text;
+    for (const auto& word : words) {
+        text += std::format("{}{}", text.empty() ? "" : separator, word);
+    }
+    return text;
+}
+
+// A file's findings, or all of them, by severity.
+struct FindingCounts {
+    std::string file{};
+    std::size_t errors = 0;
+    std::size_t warnings = 0;
+    std::size_t notes = 0;
+
+    void add(FindingKind kind) {
+        const auto severity = severity_name(kind);
+        (severity == "error" ? errors : severity == "warning" ? warnings : notes) += 1;
+    }
+
+    // "1 error, 2 warnings", leaving out those with none.
+    [[nodiscard]] std::string text() const {
+        std::vector<std::string> parts;
+        for (const auto& [n, one] :
+             {std::pair{errors, "error"}, {warnings, "warning"}, {notes, "note"}}) {
+            if (n != 0) {
+                parts.push_back(std::format("{} {}{}", n, one, n == 1 ? "" : "s"));
+            }
+        }
+        return joined(parts, ", ");
+    }
+};
+
+// Each file with findings, in order.
+std::vector<FindingCounts> counts_by_file(std::span<const Finding> findings) {
+    std::vector<FindingCounts> files;
+    for (const auto& finding : findings) {
+        auto found = std::ranges::find(files, finding.file, &FindingCounts::file);
+        if (found == files.end()) {
+            files.push_back({.file = finding.file});
+            found = std::prev(files.end());
+        }
+        found->add(finding.kind);
+    }
+    std::ranges::sort(files, {}, &FindingCounts::file);
+    return files;
 }
 
 } // namespace
@@ -136,6 +185,10 @@ std::vector<std::string> notice_lines(const Notices& notices) {
             lines.push_back(std::format("detail\tplan\t{}", line));
         }
     }
+    for (const auto& counts : counts_by_file(notices.findings)) {
+        lines.push_back(std::format("{}\tcheck\t{}\t{}\t{}", counts.file, counts.errors,
+                                    counts.warnings, counts.notes));
+    }
     return lines;
 }
 
@@ -207,15 +260,8 @@ constexpr std::array notice_kinds{
     std::pair{NoticeKind::masked, std::string_view{"masked"}},
     std::pair{NoticeKind::missing, std::string_view{"missing"}},
     std::pair{NoticeKind::plan, std::string_view{"plan"}},
+    std::pair{NoticeKind::check, std::string_view{"check"}},
 };
-
-std::string joined(std::span<const std::string> words, std::string_view separator) {
-    std::string text;
-    for (const auto& word : words) {
-        text += std::format("{}{}", text.empty() ? "" : separator, word);
-    }
-    return text;
-}
 
 } // namespace
 
@@ -341,6 +387,23 @@ std::vector<Notice> notice_list(const Notices& notices, Seconds now) {
     }
     if (notices.plan) {
         list.push_back(*notices.plan);
+    }
+    if (!notices.findings.empty()) {
+        FindingCounts all;
+        // FNV-1a over the records: stable from one egraph to the next, as std::hash is not.
+        std::uint64_t digest = 0xcbf29ce484222325U;
+        for (const auto& finding : notices.findings) {
+            all.add(finding.kind);
+            for (const char c : finding_record(finding) + '\n') {
+                digest = (digest ^ static_cast<unsigned char>(c)) * 0x100000001b3U;
+            }
+        }
+        std::vector<std::string> detail;
+        for (const auto& counts : counts_by_file(notices.findings)) {
+            detail.push_back(std::format("{}: {}", counts.file, counts.text()));
+        }
+        add(NoticeKind::check, "check", std::format("Configuration check: {}", all.text()),
+            std::move(detail), std::format("{:016x}", digest));
     }
     for (const auto& [repo, item, title, path] : notices.news) {
         add(NoticeKind::news, std::format("news:{}/{}", repo, item), title.empty() ? item : title,
@@ -503,6 +566,9 @@ void drop_notices(Notices& notices, std::span<const std::string> keys) {
     }
     if (dropped("plan")) {
         notices.plan.reset();
+    }
+    if (dropped("check")) {
+        notices.findings.clear();
     }
     std::erase_if(notices.news, [&](const Notices::News& news) {
         return dropped(std::format("news:{}/{}", news.repo, news.item));

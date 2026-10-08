@@ -1,6 +1,7 @@
 """egraph-build --notices: configuration updates waiting and unread news, as emerge sees them."""
 
 import json
+import subprocess
 import os
 
 import pytest
@@ -263,3 +264,26 @@ def test_egraph_lists_the_sonames_nothing_installed_provides(scenario, tmp_path)
             # A string portage cannot parse, which the store records as an error instead.
             continue
     assert found == {r for r in required if r[1:] not in provided}
+
+
+@needs_egraph
+def test_egraph_counts_the_configuration_checks_findings_by_file(scenario, tmp_path):
+    path = tmp_path / "installed.egraph"
+    write_stores(scenario, path)
+    write_index(scenario, path)
+    found = {
+        row[0]: tuple(int(n) for n in row[2:])
+        for row in rows(notice_lines(scenario, path, tmp_path), "check")
+    }
+    checked = subprocess.run(
+        [EGRAPH, "--store", str(path), "--no-refresh", "--layout", "lines"]
+        + ["config", "check"],
+        capture_output=True,
+        text=True,
+    )
+    counts = {}
+    for line in checked.stdout.splitlines():
+        file, _, severity = line.split("\t")[:3]
+        n = counts.setdefault(file, [0, 0, 0])
+        n[("error", "warning", "note").index(severity)] += 1
+    assert found == {file: tuple(n) for file, n in counts.items()}

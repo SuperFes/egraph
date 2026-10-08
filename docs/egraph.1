@@ -389,6 +389,9 @@ A visibility token, or a mask or unmask line as a whole, is checked likewise, ov
 of installed packages its atom matches, by evaluating their visibility without it.
 Each kind's findings go by file, then line, followed by how many of each severity.
 Exits 1 when there is an error.
+.B watch
+counts the findings among the
+.BR notices .
 In lines, the file, the line, the severity
 .RB ( error ", " warning " or " note ),
 the kind
@@ -1046,7 +1049,9 @@ marked applied; the repositories synced longer ago than
 .B stale_days
 allows; the installed packages masked now, with why as emerge words it; and the sonames an
 installed package needs that nothing installed provides, less those a preserved library still
-does.
+does; and what
+.B config check
+finds, counted by file.
 As lines, an update is its file,
 .BR config
 and the update; a news item is the item,
@@ -1077,7 +1082,11 @@ and how the counts moved ("Configuration edit: +4 rebuilds, \-1 upgrade, now ref
 .BR detail ,
 .B plan
 and each file edited, each line of the plan it gained (+) and each it lost (\-), until the next
-plan.
+plan; and each file
+.B config check
+finds something in,
+.B check
+and how many errors, warnings and notes.
 After an action run from a terminal without
 .BR \-\-yes ,
 preserved libraries have
@@ -1091,9 +1100,10 @@ Each notice has a key: a GLSA's
 .BR preserved ,
 .BI stale: repository\fR,
 .BI masked: cpv\fR,
-.BI missing: cpv
+.BI missing: cpv\fR,
+.B plan
 and
-.BR plan .
+.BR check .
 A user can set one aside, by its key or what follows the colon; what is set aside is left out
 here, after an action (neither its rebuild nor
 .B dispatch\-conf
@@ -1104,7 +1114,7 @@ and kept in
 .TP
 .BI \-\-dismiss " name"
 Leave the notice out until what it says changes: a GLSA revised or affecting another version,
-a repository synced again, other reasons or libraries.
+a repository synced again, other reasons or libraries, any finding of the configuration check.
 .TP
 .BI \-\-later " name"
 Leave the notice out for a while, or until it changes.
@@ -1344,7 +1354,10 @@ each shown first as an action is; a stale repository is synced as
 once asked; a masked package's page opens; a news item is shown, and marked read as it closes,
 as
 .B eselect news read
-does (set aside for the user instead where portage's news lists cannot be written); and for
+does (set aside for the user instead where portage's news lists cannot be written); the
+configuration check's findings are listed as
+.B :config check
+lists them; and for
 configuration updates the interface steps aside while
 .B dispatch\-conf
 (or

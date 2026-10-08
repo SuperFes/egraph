@@ -2529,6 +2529,10 @@ TEST_CASE("enter on a notice updates, rebuilds or syncs what it is about") {
     const Notice config{.kind = NoticeKind::config, .key = "config"};
     CHECK_FALSE(notice_action(config).has_value());
     CHECK(notice_work(config) == "dispatch-conf");
+    // Run as :config check.
+    const Notice check{.kind = NoticeKind::check, .key = "check"};
+    CHECK_FALSE(notice_action(check).has_value());
+    CHECK(notice_work(check) == "check");
     // The plan a configuration edit changed, as watch plans it.
     const Notice plan{.kind = NoticeKind::plan, .key = "plan"};
     CHECK(notice_action(plan) ==
@@ -3263,6 +3267,35 @@ TEST_CASE("enter on the configuration notice asks for dispatch-conf, and says ho
     REQUIRE(app.dialog().has_value());
     CHECK(app.dialog()->title == "Cannot run dispatch-conf");
     CHECK(app.dialog()->lines == std::vector<std::string>{"cannot run dispatch-conf: not found"});
+}
+
+TEST_CASE("enter on the configuration check's notice runs the check, esc goes back") {
+    egraph::tui::App app{both(), true};
+    app.finish_notices(
+        egraph::tui::NoticesShown{.notices = {{.kind = egraph::NoticeKind::check,
+                                               .key = "check",
+                                               .title = "Configuration check: 1 warning",
+                                               .detail = {"/etc/portage/package.use: 1 warning"},
+                                               .fingerprint = "0123456789abcdef"}},
+                                  .set_aside = 0});
+    for (int turn = 0; turn < 3; ++turn) {
+        app.handle(key(KeyKind::right));
+    }
+    REQUIRE(app.on_notices());
+    FakeScreen screen{16, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(15), " enter check  x dismiss  "));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.command_requested() == std::optional<std::string>{"config check"});
+    app.finish_command({.exit = egraph::Exit::ok,
+                        .out = "/etc/portage/package.use\t3\twarning\tno-effect\tx/y\tz\t"
+                               "already set\n",
+                        .err = {}});
+    REQUIRE(app.output().has_value());
+    CHECK(app.output()->rows.size() == 1);
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.output().has_value());
+    CHECK(app.on_notices());
 }
 
 TEST_CASE("run steps aside for dispatch-conf, then reads the notices again") {

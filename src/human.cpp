@@ -803,6 +803,25 @@ void human_notices(std::ostream& out, std::span<const std::string> records, cons
     }
     bool first = true;
     for (const auto& row : rows) {
+        if (row.at(1) != "check") {
+            continue;
+        }
+        if (first) {
+            heading("Configuration check", " (egraph config check)");
+            first = false;
+        }
+        std::string counts;
+        for (const auto& [field, one] :
+             {std::pair{row.at(2), "error"}, {row.at(3), "warning"}, {row.at(4), "note"}}) {
+            if (field != "0") {
+                counts += std::format("{}{} {}{}", counts.empty() ? "" : ", ", field, one,
+                                      field == "1" ? "" : "s");
+            }
+        }
+        out << "  " << row.front() << "  " << paint(counts, Tone::count) << '\n';
+    }
+    first = true;
+    for (const auto& row : rows) {
         if (row.at(1) != "news") {
             continue;
         }

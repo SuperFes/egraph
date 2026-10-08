@@ -3,6 +3,7 @@
 // What needs the user once emerge has run, as egraph-build --notices writes it, and the GLSAs
 // affecting the installed packages.
 
+#include "config_check.hpp"
 #include "evaluated.hpp"
 #include "glsa.hpp"
 #include "history.hpp"
@@ -30,10 +31,11 @@ enum class NoticeKind : std::uint8_t {
     stale,
     masked,
     missing,
-    plan
+    plan,
+    check
 };
 
-// "glsa", "news", "config", "preserved", "stale", "masked", "missing", "plan".
+// "glsa", "news", "config", "preserved", "stale", "masked", "missing", "plan", "check".
 [[nodiscard]] std::string_view notice_kind_name(NoticeKind kind);
 [[nodiscard]] std::optional<NoticeKind> notice_kind(std::string_view name);
 
@@ -41,7 +43,7 @@ enum class NoticeKind : std::uint8_t {
 struct Notice {
     NoticeKind kind = NoticeKind::news;
     // Stable while it lasts: "glsa:202609-03", "news:gentoo/2026-09-01-x", "config",
-    // "preserved", "stale:gentoo", "masked:cat/pkg-1", "missing:cat/pkg-1", "plan".
+    // "preserved", "stale:gentoo", "masked:cat/pkg-1", "missing:cat/pkg-1", "plan", "check".
     std::string key{};
     std::string title{};
     std::vector<std::string> detail{};
@@ -110,6 +112,8 @@ struct Notices {
     std::vector<Missing> missing;
     // What the last configuration edit did to the plan, as the status file records it.
     std::optional<Notice> plan{};
+    // What egraph config check finds, ordered.
+    std::vector<Finding> findings{};
 };
 
 // The repositories whose timestamp.chk is older than days before now; none when days is 0, nor
@@ -125,8 +129,9 @@ masked_installed(const Store& store, const Evaluated& evaluated, bool dynamic_de
 [[nodiscard]] std::vector<Notices::Missing> missing_sonames(const Store& store);
 
 // The notices as one list: a GLSA, a news item, a stale repository, a masked package, and the
-// missing sonames of a package each one; the configuration updates and the preserved libraries
-// one each, a single command dealing with all. Ages count to now; each is since now.
+// missing sonames of a package each one; the configuration updates, the preserved libraries and
+// the configuration check's findings one each, a single command dealing with all. Ages count to
+// now; each is since now.
 [[nodiscard]] std::vector<Notice> notice_list(const Notices& notices, Seconds now);
 
 // since carried over from the notice of the same key in previous, where there is one.
@@ -233,7 +238,8 @@ void drop_preserved(Notices& notices);
 // "id<TAB>glsa<TAB>title<TAB>cpv<TAB>fixed" (space-separated) for each package a GLSA affects,
 // "repo<TAB>stale<TAB>synced" (seconds) for each stale repository,
 // "cpv<TAB>masked<TAB>reasons" (comma-separated) for each masked installed package, and
-// "cpv<TAB>missing<TAB>category<TAB>soname" for each soname nothing provides.
+// "cpv<TAB>missing<TAB>category<TAB>soname" for each soname nothing provides, then the plan's
+// change, and "file<TAB>check<TAB>errors<TAB>warnings<TAB>notes" for each file with findings.
 [[nodiscard]] std::vector<std::string> notice_lines(const Notices& notices);
 
 } // namespace egraph

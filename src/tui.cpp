@@ -1191,6 +1191,8 @@ void App::work_on(const Notice& notice) {
         news_wanted_ = notice;
     } else if (notice.kind == NoticeKind::config) {
         dispatching_ = true;
+    } else if (notice.kind == NoticeKind::check) {
+        command_ = "config check";
     } else if (auto action = notice_action(notice)) {
         act(std::move(*action));
     }
@@ -2428,6 +2430,7 @@ std::optional<Action> notice_action(const Notice& notice) {
     case NoticeKind::masked:
     case NoticeKind::news:
     case NoticeKind::config:
+    case NoticeKind::check:
         break;
     }
     return std::nullopt;
@@ -2442,6 +2445,9 @@ std::string_view notice_work(const Notice& notice) {
     }
     if (notice.kind == NoticeKind::config) {
         return "dispatch-conf";
+    }
+    if (notice.kind == NoticeKind::check) {
+        return "check";
     }
     const auto action = notice_action(notice);
     if (!action) {

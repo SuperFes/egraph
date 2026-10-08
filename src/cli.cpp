@@ -2206,7 +2206,8 @@ std::expected<Notices, std::string> read_notices(std::string_view name, Session&
     if (!settings) {
         err << "egraph: " << name << ": " << settings.error() << '\n';
     }
-    if (const auto index = session.repository(); index) {
+    const auto index = session.repository();
+    if (index) {
         notices->stale = stale_repositories(
             index->get(),
             std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now()),
@@ -2217,6 +2218,9 @@ std::expected<Notices, std::string> read_notices(std::string_view name, Session&
         notices->masked = masked_installed(installed, evaluated, invocation.dynamic_deps);
         notices->missing = missing_sonames(installed);
         drop_preserved(*notices);
+        if (index) {
+            notices->findings = check_config(installed, evaluated, index->get());
+        }
     } else {
         err << "egraph: " << name << ": " << stores.error() << '\n';
     }
