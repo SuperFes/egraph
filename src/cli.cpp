@@ -184,6 +184,9 @@ template <class C> void add_updates_options(CLI::App* sub, Invocation& invocatio
     if constexpr (std::is_same_v<C, Updates>) {
         add_resume_list(sub, [updates]() -> auto& { return updates().resume_list; });
         add_requests(sub, [updates]() -> auto& { return updates().requests; });
+        sub->add_flag_callback(
+            "--rebuild-env", [updates] { updates().rebuild_env = true; },
+            "With --env lines tried, also rebuild the installed packages they build otherwise");
     }
 }
 
@@ -228,6 +231,9 @@ template <class C> void add_plan_options(CLI::App* sub, Invocation& invocation) 
             "Also ask emerge --pretend, and show where its merge list differs");
         add_resume_list(sub, [plan]() -> auto& { return plan().resume_list; });
         add_requests(sub, [plan]() -> auto& { return plan().requests; });
+        sub->add_flag_callback(
+            "--rebuild-env", [plan] { plan().rebuild_env = true; },
+            "With --env lines tried, also rebuild the installed packages they build otherwise");
     }
 }
 
@@ -1613,13 +1619,25 @@ std::size_t unlisted_held(const Plan& plan, bool held) {
 }
 
 // The updates, shown; the exit status instead when there are none to show.
+// The installed packages the invocation's --env lines build otherwise (env_changes).
+std::vector<EnvChange> tried_envs(Session& session, const Invocation& invocation) {
+    const auto untried = session.untried_stores();
+    const auto tried = session.stores();
+    if (!untried || !tried) {
+        return {};
+    }
+    return env_changes(tried->get().installed, untried->get().evaluated, tried->get().evaluated,
+                       invocation.what_if);
+}
+
 // What the invocation's lines tried change in plan (tried_lines), against the same plan made
-// without them, or "<TAB>tried<TAB>none"; in update_lines' table, led by two empty fields. None
-// without lines tried.
+// without them (or its reinstalls), or "<TAB>tried<TAB>none"; then envs (env_lines). In
+// update_lines' table, led by two empty fields. None without lines tried.
 std::vector<std::string> tried_changes(Session& session, const Invocation& invocation,
                                        const Store& store, const Evaluated& evaluated,
                                        const Plan& plan, UseRebuilds rebuilds,
-                                       const Targets& targets, std::string_view name, bool table) {
+                                       const Targets& targets, std::span<const EnvChange> envs,
+                                       std::string_view name, bool table) {
     if (invocation.what_if.empty()) {
         return {};
     }
@@ -1631,6 +1649,7 @@ std::vector<std::string> tried_changes(Session& session, const Invocation& invoc
     // Its warnings are the plan's own.
     std::ostringstream ignored;
     auto again = targets;
+    again.reinstall.clear();
     const auto before =
         plan_keeping_kernel(invocation, store, before_evaluated, rebuilds, again, name, ignored);
     auto found = tried_lines(
@@ -1639,6 +1658,7 @@ std::vector<std::string> tried_changes(Session& session, const Invocation& invoc
     if (found.empty()) {
         found.emplace_back("\ttried\tnone");
     }
+    std::ranges::move(env_lines(untried->get().installed, envs), std::back_inserter(found));
     if (table) {
         for (auto& line : found) {
             line.insert(0, "\t\t");
@@ -1689,6 +1709,12 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
         return std::unexpected(replace.error());
     }
     targets.replace_slots = std::move(*replace);
+    const auto envs = tried_envs(session, invocation);
+    if (command.rebuild_env) {
+        for (const auto& change : envs) {
+            targets.reinstall.push_back(change.package);
+        }
+    }
     Shown shown{.plan = plan_keeping_kernel(invocation, *store, evaluated, command.rebuilds,
                                             targets, "updates", err),
                 .request = {.targets = {command.world ? "@world" : "@installed"},
@@ -1731,7 +1757,7 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
     auto lines = update_lines(*store, evaluated, plan, command.rebuilds, held_lines(command.held),
                               command.table, targets, remedies);
     std::ranges::move(tried_changes(session, invocation, *store, evaluated, plan, command.rebuilds,
-                                    targets, "updates", command.table),
+                                    targets, envs, "updates", command.table),
                       std::back_inserter(lines));
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme, command.table, unlisted_held(plan, command.held));
@@ -1787,6 +1813,13 @@ Exit write_requests(Exit status, const std::optional<std::filesystem::path>& pat
 template <class Command>
 std::expected<Command, Exit> trying(Command command, const Invocation& invocation,
                                     std::ostream& err) {
+    if (command.rebuild_env && std::ranges::none_of(invocation.what_if, [](const WhatIfLine& line) {
+            return line.file == WhatIfLine::File::env;
+        })) {
+        err << "egraph: " << Command::name
+            << ": --rebuild-env rebuilds what --env lines change, and none is tried\n";
+        return std::unexpected(Exit::usage);
+    }
     if (invocation.what_if.empty()) {
         return command;
     }
@@ -2078,6 +2111,12 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
         return std::unexpected(replace.error());
     }
     targets.replace_slots = std::move(*replace);
+    const auto envs = tried_envs(session, invocation);
+    if (command.rebuild_env) {
+        for (const auto& change : envs) {
+            targets.reinstall.push_back(change.package);
+        }
+    }
     Shown shown{.plan = plan_keeping_kernel(invocation, *store, evaluated, command.rebuilds,
                                             targets, name, err),
                 .request = {.targets = command.targets,
@@ -2100,7 +2139,7 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
     auto lines = update_lines(*store, evaluated, shown.plan, command.rebuilds,
                               held_lines(command.held), command.table, targets, remedies);
     std::ranges::move(tried_changes(session, invocation, *store, evaluated, shown.plan,
-                                    command.rebuilds, targets, name, command.table),
+                                    command.rebuilds, targets, envs, name, command.table),
                       std::back_inserter(lines));
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme, command.table,

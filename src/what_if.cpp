@@ -551,4 +551,56 @@ std::vector<std::string> tried_lines(std::span<const std::string> before,
     return found;
 }
 
+std::vector<EnvChange> env_changes(const Store& installed, const Evaluated& untried,
+                                   const Evaluated& tried, std::span<const WhatIfLine> lines) {
+    std::vector<std::string> everywhere;
+    bool any = false;
+    for (const auto& line : lines) {
+        if (line.file == WhatIfLine::File::env) {
+            any = true;
+            if (line.atom == "*/*") {
+                everywhere.insert(everywhere.end(), line.tokens.begin(), line.tokens.end());
+            }
+        }
+    }
+    std::vector<EnvChange> found;
+    if (!any) {
+        return found;
+    }
+    const UseStacker before(installed, untried);
+    const UseStacker after(installed, tried);
+    for (std::uint32_t id = 0; id < installed.packages.size() && id < untried.packages.size();
+         ++id) {
+        const auto own = untried.packages.at(id).own;
+        if (!own) {
+            continue;
+        }
+        EnvChange change{.package = id,
+                         .before = before.env_files(untried.candidates.at(*own)),
+                         .after = after.env_files(tried.candidates.at(*own))};
+        change.after.insert(change.after.end(), everywhere.begin(), everywhere.end());
+        if (change.before != change.after) {
+            found.push_back(std::move(change));
+        }
+    }
+    return found;
+}
+
+std::vector<std::string> env_lines(const Store& installed, std::span<const EnvChange> changes) {
+    const auto joined = [](const std::vector<std::string>& files) {
+        std::string text;
+        for (const auto& file : files) {
+            text += std::format("{}{}", text.empty() ? "" : " ", file);
+        }
+        return text;
+    };
+    std::vector<std::string> found;
+    for (const auto& change : changes) {
+        found.push_back(std::format("{}\tenv\t{}\t{}",
+                                    installed.string(installed.packages.at(change.package).cpv),
+                                    joined(change.before), joined(change.after)));
+    }
+    return found;
+}
+
 } // namespace egraph

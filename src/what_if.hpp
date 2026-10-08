@@ -49,6 +49,25 @@ with_what_if(Evaluated evaluated, const Store& installed, std::span<const WhatIf
 [[nodiscard]] std::vector<std::string> newly_reached(const Evaluated& before,
                                                      const Evaluated& tried);
 
+// An installed package whose own version's ebuild gets other env files with lines tried.
+struct EnvChange {
+    // Installed package id.
+    std::uint32_t package = 0;
+    std::vector<std::string> before;
+    std::vector<std::string> after;
+};
+
+// The installed packages lines tried build with other env files, by id: those package.env gives
+// their own version's ebuild without and with them (tried, what with_what_if made of untried),
+// and for every package the files of a */* line tried.
+[[nodiscard]] std::vector<EnvChange> env_changes(const Store& installed, const Evaluated& untried,
+                                                 const Evaluated& tried,
+                                                 std::span<const WhatIfLine> lines);
+
+// "cpv<TAB>env<TAB>before<TAB>after" per change, each list of files space-separated.
+[[nodiscard]] std::vector<std::string> env_lines(const Store& installed,
+                                                 std::span<const EnvChange> changes);
+
 // What lines tried change in a plan, from update_lines' records (without a table) of the plan
 // made without them (before) and with them (after): per merge, by its first field (the installed
 // cpv it replaces, or a new package's cpv),

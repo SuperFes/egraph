@@ -1752,3 +1752,34 @@ TEST_CASE("a USE dependency the installed version was built without rebuilds it 
           std::vector<std::string>{"dev-libs/jemalloc-6 -> dev-libs/jemalloc-5",
                                    "new dev-db/redis-8 <- "});
 }
+
+TEST_CASE(
+    "a package emerge is asked to reinstall is rebuilt from its own version, unless updated") {
+    const auto system =
+        make_system({{.cpv = "app-misc/a-1"}, {.cpv = "app-misc/b-1"}},
+                    {{.cpv = "app-misc/a-1"}, {.cpv = "app-misc/b-1"}, {.cpv = "app-misc/b-2"}});
+    CHECK(plan(system) == std::vector<std::string>{"app-misc/b-1 -> app-misc/b-2"});
+    egraph::Targets targets;
+    targets.reinstall = {0, 1};
+    CHECK(plan(system, egraph::UseRebuilds::none, targets) ==
+          std::vector<std::string>{"app-misc/a-1 -> app-misc/a-1", "app-misc/b-1 -> app-misc/b-2"});
+}
+
+TEST_CASE("an update held back falls back to rebuilding its own version for changed USE") {
+    auto system =
+        make_system({{.cpv = "app-misc/kept-1", .iuse = "a"},
+                     {.cpv = "app-misc/keeper-1", .deps = {{"RDEPEND", "<app-misc/kept-2"}}}},
+                    {{.cpv = "app-misc/keeper-1", .deps = {{"RDEPEND", "<app-misc/kept-2"}}},
+                     {.cpv = "app-misc/kept-1", .iuse = "a", .use = "a"},
+                     {.cpv = "app-misc/kept-2", .iuse = "a", .use = "a"}});
+    auto& evaluated = system.evaluated;
+    auto& kept = evaluated.packages.at(0);
+    REQUIRE(kept.own.has_value());
+    egraph::test::detail::Interner intern(evaluated);
+    kept.own_rebuild = {.first = static_cast<std::uint32_t>(evaluated.ids.size()), .count = 1};
+    evaluated.ids.push_back(intern("a*"));
+    CHECK(plan(system, egraph::UseRebuilds::none).size() == 1);
+    CHECK(plan(system, egraph::UseRebuilds::changed) ==
+          std::vector<std::string>{"app-misc/kept-1 -> app-misc/kept-1",
+                                   "app-misc/kept-1 held <- app-misc/keeper-1 <app-misc/kept-2"});
+}

@@ -123,6 +123,7 @@ TRAILING_KINDS = (
     "use-change",
     "masked",
     "tried",
+    "env",
 )
 
 

@@ -69,11 +69,15 @@ class Planner {
             }
         }
         for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
-            if (!in_scope(id) || (targets.deep ? !reached(id) : !argument(id)) ||
+            const bool reinstalled = std::ranges::binary_search(targets.reinstall, id);
+            if (!in_scope(id) || (!reinstalled && (targets.deep ? !reached(id) : !argument(id))) ||
                 dropped_.contains(id)) {
                 continue;
             }
             auto wanted = pending_update(evaluated, id, rebuilds);
+            if (const auto own = evaluated.packages.at(id).own; !wanted && reinstalled && own) {
+                wanted = PendingUpdate{.kind = UpdateKind::rebuild, .target = *own, .flags = {}};
+            }
             const auto forced = forced_.find(id);
             if (forced != forced_.end()) {
                 wanted = forced_update(id, forced->second, std::move(wanted));

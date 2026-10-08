@@ -672,6 +672,16 @@ TEST_CASE("a plan with lines tried is never handed to emerge") {
     }
 }
 
+TEST_CASE("--rebuild-env needs an --env line to rebuild for") {
+    for (const auto* line : {"updates --rebuild-env", "--use 'a/b x' plan --rebuild-env a/b"}) {
+        std::ostringstream out;
+        std::ostringstream err;
+        CHECK(egraph::run(parse(line), out, err) == egraph::Exit::usage);
+        CHECK(err.str().ends_with(": --rebuild-env rebuilds what --env lines change, and none is "
+                                  "tried\n"));
+    }
+}
+
 TEST_CASE("tui --notices opens on the notices page") {
     CHECK_FALSE(std::get<egraph::Tui>(parse("tui").command).notices);
     CHECK(std::get<egraph::Tui>(parse("tui --notices").command).notices);

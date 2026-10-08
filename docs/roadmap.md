@@ -1160,8 +1160,11 @@ changes (undo, save) and takes typed lines.
   dimmed after, and a `Tried:` count. Decided with the user (2026-10-08): the whole plan marked
   rather than the difference alone; trailing rows rather than a field per merge. Held to the
   difference between emerge's plans before and after saving the lines, on every scenario.
-- 19d: an env switch's installed packages, built differently from then on, offered for a
-  rebuild.
+- 19d (done): with `--env` lines tried, the installed packages whose own version's ebuild gets
+  other env files are listed after the merges (`cpv env before after`), and `--rebuild-env`
+  rebuilds them, as emerge `--reinstall-atoms` does (`Targets::reinstall`): emerge never
+  rebuilds for an environment alone. Decided with the user (2026-10-08): an option rather than a
+  printed command. Held to emerge with the atoms on the ledger and what-if scenarios.
 - 19e: the interface: toggles on the USE table, the what-if page, the plan page following.
 - 19f: saving to egraph's files.
 

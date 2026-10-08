@@ -119,6 +119,9 @@ struct Targets {
     std::vector<std::uint32_t> kept_slots = {};
     // emerge's --dynamic-deps, for which of the evaluated store's mask views counts.
     bool dynamic_deps = true;
+    // Installed packages, by id, sorted, that emerge --reinstall-atoms names: rebuilt from their
+    // own version's ebuild unless an update replaces them.
+    std::vector<std::uint32_t> reinstall = {};
 };
 
 // "@set atom", or the atom alone.

@@ -77,7 +77,18 @@ class UseStacker {
     [[nodiscard]] StackedUse stack(const Candidate& candidate,
                                    std::optional<Omitted> without = std::nullopt) const;
 
+    // The env files package.env applies to the candidate, in order: its lines matching it, as
+    // portage applies them (*/* lines aside, which fold into make.conf).
+    [[nodiscard]] std::vector<std::string> env_files(const Candidate& candidate) const;
+
   private:
+    // The entries of a package.* source matching the candidate, as ordered_by_atom_specificity
+    // applies them: its keys (one per atom, its lines in order) as portage's dictionaries hold
+    // them for the cp, plain atoms first, then the extended ones by their cp; least specific
+    // first.
+    [[nodiscard]] std::vector<std::uint32_t> matching(const Candidate& candidate,
+                                                      Range source) const;
+
     // Never null; the stores outlive the stacker.
     const Store* installed_;
     const Evaluated* evaluated_;

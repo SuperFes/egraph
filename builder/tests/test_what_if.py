@@ -226,3 +226,86 @@ def test_without_refresh_what_a_tried_flag_reaches_is_missing(
         "(--no-refresh)\n"
     )
     assert evaluations(system) == []
+
+
+def test_env_files_tried_list_and_rebuild_what_they_change(
+    mutable_playground, tmp_path
+):
+    """An env file tried for a package, and one for every package: the installed packages they
+    build otherwise are listed, and rebuilt with --rebuild-env as emerge --reinstall-atoms
+    rebuilds them once the lines are saved."""
+    import update
+
+    playground = mutable_playground("ledger")
+    trees = playground.trees
+    system = System(playground.eroot, trees[playground.eroot]["vartree"].dbapi, trees)
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path, request_all=True)
+    lines = [("env", "app-misc/c withenv.conf"), ("env", "app-misc/a tried/video.conf")]
+    options = ["--config-root", playground.eroot]
+    for file, text in lines:
+        options += [f"--{file}", text]
+    listed = egraph(path, *options, "updates", "-D", check=False)
+    rows = [line.split("\t") for line in listed.stdout.splitlines()]
+    assert [fields for fields in rows if fields[1] == "env"] == [
+        ["app-misc/a-1", "env", "", "tried/video.conf"],
+        ["app-misc/c-1", "env", "withtest.conf", "withtest.conf withenv.conf"],
+    ]
+    result = egraph(path, *options, "updates", "-D", "--rebuild-env", check=False)
+    save(playground, lines)
+    _, changed = playground._load_config()
+    expected = update.updates(
+        changed,
+        playground.eroot,
+        changed_use=True,
+        deep=True,
+        reinstall_atoms=("=app-misc/a-1", "=app-misc/c-1"),
+    )
+    assert expected.success
+    assert result.returncode == 0, result.stderr
+    assert merged(result.stdout) == (expected.replaced, expected.rebuilt, expected.new)
+
+
+def test_an_env_file_alone_rebuilds_only_when_asked(mutable_playground, tmp_path):
+    """An env file without USE (a compiler) changes no plan, but --rebuild-env adds the
+    rebuild, as emerge --reinstall-atoms does."""
+    import update
+
+    playground = mutable_playground("what-if")
+    env = os.path.join(playground.eroot, "etc", "portage", "env")
+    os.makedirs(env, exist_ok=True)
+    with open(os.path.join(env, "clang.conf"), "w", encoding="utf-8") as out:
+        out.write('CC="clang"\n')
+    _, trees = playground._load_config()
+    system = System(playground.eroot, trees[playground.eroot]["vartree"].dbapi, trees)
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path, request_all=True)
+    options = ["--config-root", playground.eroot, "--env", "app-misc/site clang.conf"]
+    listed = egraph(path, *options, "updates", "-D")
+    rows = [line.split("\t") for line in listed.stdout.splitlines()]
+    assert rows == [
+        ["", "tried", "none"],
+        ["app-misc/site-1", "env", "", "clang.conf"],
+    ]
+    result = egraph(path, *options, "updates", "-D", "--rebuild-env")
+    expected = update.updates(
+        trees,
+        playground.eroot,
+        changed_use=True,
+        deep=True,
+        reinstall_atoms=("=app-misc/site-1",),
+    )
+    replaced, rebuilt, new = merged(result.stdout)
+    # emerge's reinstall of the same version, for no flag, counts as a plain rebuild.
+    rebuilt |= {
+        cpv
+        for cpv, replacement in replaced.items()
+        if replacement.cpv == cpv and replacement.flags is None
+    }
+    replaced = {cpv: r for cpv, r in replaced.items() if cpv not in rebuilt}
+    assert (replaced, rebuilt, new) == (
+        expected.replaced,
+        expected.rebuilt,
+        expected.new,
+    )
+    assert tried_rows(result.stdout) == {"app-misc/site-1": "added"}

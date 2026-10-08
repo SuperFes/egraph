@@ -617,6 +617,18 @@ runs them. Nothing joins the world file, as with
 Written as
 .B \-\-resume\-list
 is.
+.TP
+.B \-\-rebuild\-env
+With
+.B \-\-env
+lines tried, also rebuild the installed packages they build with other env files, as
+.B emerge \-\-reinstall\-atoms
+would. Without it, the plan only lists them, after the merges, with the env files before and
+after (for scripts,
+.IB "cpv " env " before after"
+lines after the
+.B tried
+ones): emerge never rebuilds a package for its environment alone.
 .SS plan \fItarget\fR...
 What
 .B emerge \-\-pretend
@@ -722,6 +734,10 @@ As for
 .BR updates ,
 each merge an atom target matches recording the atom emerge would put in the world file, and
 each uninstall one matches dropping what then matches nothing.
+.TP
+.B \-\-rebuild\-env
+As for
+.BR updates .
 .SS update
 Shows the updates as
 .B updates

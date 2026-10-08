@@ -303,3 +303,24 @@ TEST_CASE("what lines tried change in a plan is each merge added, dropped or cha
                   "cat/gone-1\ttried\tdropped\tupgrade\tcat/gone-2\tgentoo\t"});
     CHECK(egraph::tried_lines(before, before).empty());
 }
+
+TEST_CASE("an env file tried changes how the installed packages it matches build") {
+    const Spec spec{
+        .package_env = {{.file = "/c/package.env", .atom = "cat/b", .tokens = "keep.conf"}},
+        .env_files = {{"clang.conf", {{.file = "/c/env/clang.conf", .tokens = "x"}}},
+                      {"keep.conf", {{.file = "/c/env/keep.conf", .tokens = "y"}}}}};
+    auto system = egraph::test::make_system({{.cpv = "cat/a-1"}, {.cpv = "cat/b-1"}},
+                                            {{.cpv = "cat/a-1"}, {.cpv = "cat/b-1"}});
+    egraph::test::set_ledger(system.evaluated, spec);
+    const auto changes_of = [&](const std::vector<WhatIfLine>& lines) {
+        return egraph::env_lines(system.store, egraph::env_changes(system.store, system.evaluated,
+                                                                   tried(system, lines), lines));
+    };
+    CHECK(changes_of({use("cat/a", {"x"})}).empty());
+    CHECK(changes_of({env("cat/a", {"clang.conf"})}) == Strings{"cat/a-1\tenv\t\tclang.conf"});
+    // b had keep.conf already.
+    CHECK(changes_of({env("cat/b", {"keep.conf"})}) ==
+          Strings{"cat/b-1\tenv\tkeep.conf\tkeep.conf keep.conf"});
+    CHECK(changes_of({env("*/*", {"clang.conf"})}) ==
+          Strings{"cat/a-1\tenv\t\tclang.conf", "cat/b-1\tenv\tkeep.conf\tkeep.conf clang.conf"});
+}

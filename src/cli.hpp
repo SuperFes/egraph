@@ -145,6 +145,9 @@ struct Updates {
     std::optional<std::filesystem::path> resume_list;
     // Where the plan goes as egraph-build --worker's requests.
     std::optional<std::filesystem::path> requests;
+    // With --env lines tried, the installed packages they build otherwise rebuilt, as emerge
+    // --reinstall-atoms rebuilds them.
+    bool rebuild_env = false;
 };
 
 // A request planned as emerge --pretend would merge it.
@@ -167,6 +170,9 @@ struct PlanCommand {
     std::optional<std::filesystem::path> resume_list;
     // Where the plan goes as egraph-build --worker's requests.
     std::optional<std::filesystem::path> requests;
+    // With --env lines tried, the installed packages they build otherwise rebuilt, as emerge
+    // --reinstall-atoms rebuilds them.
+    bool rebuild_env = false;
 };
 
 // emerge -u run on the updates once shown and confirmed, as emerge --oneshot: what it merges

@@ -176,16 +176,86 @@ UseStacker::UseStacker(const Store& installed, const Evaluated& evaluated)
     }
 }
 
-StackedUse UseStacker::stack(const Candidate& candidate,
-                             std::optional<UseStacker::Omitted> without) const {
+std::vector<std::uint32_t> UseStacker::matching(const Candidate& candidate, Range source) const {
     const auto& ev = *evaluated_;
-    const auto& ledger = ev.ledger;
     const auto cp = ev.string(candidate.cp);
     const auto cpv = ev.string(candidate.cpv);
     const auto version =
         parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1))).value_or(Version{});
-    const auto slot = ev.string(candidate.slot);
-    const auto sub_slot = ev.string(candidate.sub_slot);
+    // Only entries of the candidate's cp, and extended ones, can match it.
+    std::vector<std::uint32_t> candidates;
+    const auto within = [&](const std::vector<std::uint32_t>& indices) {
+        const auto first = std::ranges::lower_bound(indices, source.first);
+        const auto last = std::ranges::lower_bound(indices, source.first + source.count);
+        candidates.insert(candidates.end(), first, last);
+    };
+    if (const auto found = by_cp_.find(cp); found != by_cp_.end()) {
+        within(found->second);
+    }
+    within(extended_);
+    std::ranges::sort(candidates);
+    std::vector<std::pair<std::string_view, std::vector<std::uint32_t>>> keys;
+    for (const auto index : candidates) {
+        const auto atom = ev.string(ev.ledger_entries.at(index).atom);
+        const auto key = std::ranges::find(keys, atom, &decltype(keys)::value_type::first);
+        if (key == keys.end()) {
+            keys.push_back({atom, {index}});
+        } else {
+            key->second.push_back(index);
+        }
+    }
+    std::vector<const std::vector<std::uint32_t>*> ordered;
+    std::vector<Atom> atoms;
+    const auto take = [&](const auto& key) {
+        ordered.push_back(&key.second);
+        atoms.push_back(*atoms_.at(key.second.front()));
+    };
+    for (const auto& key : keys) {
+        const auto& atom = atoms_.at(key.second.front());
+        if (atom && !atom->extended) {
+            take(key);
+        }
+    }
+    std::vector<std::string_view> extended_cps;
+    for (const auto& key : keys) {
+        const auto& atom = atoms_.at(key.second.front());
+        if (atom && atom->extended &&
+            std::ranges::find(extended_cps, atom->cp) == extended_cps.end()) {
+            extended_cps.push_back(atom->cp);
+        }
+    }
+    for (const auto extended : extended_cps) {
+        for (const auto& key : keys) {
+            const auto& atom = atoms_.at(key.second.front());
+            if (atom && atom->extended && atom->cp == extended) {
+                take(key);
+            }
+        }
+    }
+    std::vector<std::uint32_t> found;
+    for (const auto index :
+         by_specificity(atoms, cp, version, ev.string(candidate.slot),
+                        ev.string(candidate.sub_slot), ev.string(candidate.repo))) {
+        found.insert(found.end(), ordered.at(index)->begin(), ordered.at(index)->end());
+    }
+    return found;
+}
+
+std::vector<std::string> UseStacker::env_files(const Candidate& candidate) const {
+    const auto& ev = *evaluated_;
+    std::vector<std::string> found;
+    for (const auto entry : matching(candidate, ev.ledger.package_env)) {
+        for (const auto id : ev.ids_in(ev.ledger_entries.at(entry).tokens)) {
+            found.emplace_back(ev.string(id));
+        }
+    }
+    return found;
+}
+
+StackedUse UseStacker::stack(const Candidate& candidate,
+                             std::optional<UseStacker::Omitted> without) const {
+    const auto& ev = *evaluated_;
+    const auto& ledger = ev.ledger;
     const auto repo = ev.string(candidate.repo);
     const bool stable = candidate.stable;
 
@@ -206,68 +276,9 @@ StackedUse UseStacker::stack(const Candidate& candidate,
             tokens_of(source.first + i, into);
         }
     };
-    // A package.* source's tokens for the candidate, as ordered_by_atom_specificity applies
-    // them: its keys (one per atom, its lines in order) as portage's dictionaries hold them for
-    // the cp, plain atoms first, then the extended ones by their cp; least specific first.
-    // Only entries of the candidate's cp, and extended ones, can match it.
-    const auto* of_cp = [&]() -> const std::vector<std::uint32_t>* {
-        const auto found = by_cp_.find(cp);
-        return found == by_cp_.end() ? nullptr : &found->second;
-    }();
     const auto matched = [&](Range source, std::vector<Token>& into) {
-        std::vector<std::uint32_t> candidates;
-        const auto within = [&](const std::vector<std::uint32_t>& indices) {
-            const auto first = std::ranges::lower_bound(indices, source.first);
-            const auto last = std::ranges::lower_bound(indices, source.first + source.count);
-            candidates.insert(candidates.end(), first, last);
-        };
-        if (of_cp != nullptr) {
-            within(*of_cp);
-        }
-        within(extended_);
-        std::ranges::sort(candidates);
-        std::vector<std::pair<std::string_view, std::vector<std::uint32_t>>> keys;
-        for (const auto index : candidates) {
-            const auto atom = ev.string(ev.ledger_entries.at(index).atom);
-            const auto key = std::ranges::find(keys, atom, &decltype(keys)::value_type::first);
-            if (key == keys.end()) {
-                keys.push_back({atom, {index}});
-            } else {
-                key->second.push_back(index);
-            }
-        }
-        std::vector<const std::vector<std::uint32_t>*> ordered;
-        std::vector<Atom> atoms;
-        const auto take = [&](const auto& key) {
-            ordered.push_back(&key.second);
-            atoms.push_back(*atoms_.at(key.second.front()));
-        };
-        for (const auto& key : keys) {
-            const auto& atom = atoms_.at(key.second.front());
-            if (atom && !atom->extended) {
-                take(key);
-            }
-        }
-        std::vector<std::string_view> extended_cps;
-        for (const auto& key : keys) {
-            const auto& atom = atoms_.at(key.second.front());
-            if (atom && atom->extended &&
-                std::ranges::find(extended_cps, atom->cp) == extended_cps.end()) {
-                extended_cps.push_back(atom->cp);
-            }
-        }
-        for (const auto extended : extended_cps) {
-            for (const auto& key : keys) {
-                const auto& atom = atoms_.at(key.second.front());
-                if (atom && atom->extended && atom->cp == extended) {
-                    take(key);
-                }
-            }
-        }
-        for (const auto index : by_specificity(atoms, cp, version, slot, sub_slot, repo)) {
-            for (const auto entry : *ordered.at(index)) {
-                tokens_of(entry, into);
-            }
+        for (const auto entry : matching(candidate, source)) {
+            tokens_of(entry, into);
         }
     };
     // An entry into a layer: USE is incremental, every other variable replaced.

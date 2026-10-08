@@ -60,9 +60,11 @@ def updates(
     dynamic_deps=True,
     update=True,
     noreplace=False,
+    reinstall_atoms=(),
 ):
     """What emerge -pu target (with -N or -U, and -D) replaces, rebuilds and adds. target may
-    be several arguments. Without update, plain emerge's, or emerge -n's with noreplace.
+    be several arguments. Without update, plain emerge's, or emerge -n's with noreplace; with
+    reinstall_atoms, as --reinstall-atoms names them.
     """
     import _emerge.emergelog
     from _emerge.actions import expand_set_arguments
@@ -85,6 +87,8 @@ def updates(
         options["--newuse"] = True
     if changed_use:
         options["--reinstall"] = "changed-use"
+    if reinstall_atoms:
+        options["--reinstall-atoms"] = list(reinstall_atoms)
     root_config = trees[eroot]["root_config"]
     settings = root_config.settings
     vardb = trees[eroot]["vartree"].dbapi

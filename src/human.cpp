@@ -1138,6 +1138,17 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
     }
     std::ranges::reverse(dropped);
+    // The installed packages lines tried build with other env files, taken off.
+    std::vector<Fields> envs;
+    for (std::size_t i = rows.size(); i-- > 0;) {
+        if (rows.at(i).size() < 4 || rows.at(i).at(1) != "env") {
+            continue;
+        }
+        envs.push_back(std::move(rows.at(i)));
+        rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
+        places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
+    }
+    std::ranges::reverse(envs);
     // Uninstalls, blocks, unsatisfied dependencies and unmet REQUIRED_USE, taken off: they share
     // no columns with the merges.
     std::vector<Fields> uninstalls;
@@ -1353,6 +1364,29 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         }
         out << paint("-", Tone::bad) << ' '
             << paint(std::format("{}  ::{}  (dropped)", text, row.at(3)), Tone::note) << '\n';
+    }
+    if (!envs.empty()) {
+        out << '\n'
+            << paint("Built differently from now on", Tone::heading) << ' '
+            << paint("(package.env)", Tone::note) << '\n';
+        std::size_t width = 0;
+        for (const auto& row : envs) {
+            width = std::max(width, row.at(0).size());
+        }
+        bool unmerged = false;
+        for (const auto& row : envs) {
+            out << "  " << paint_cpv(row.at(0), paint) << spaces(row.at(0).size(), width) << "  "
+                << paint(row.at(3).empty() ? "no env file" : row.at(3), Tone::use) << ' '
+                << paint(std::format("(was {})", row.at(2).empty() ? "none" : row.at(2)),
+                         Tone::note)
+                << '\n';
+            unmerged = unmerged || std::ranges::none_of(rows, [&](const Fields& merge) {
+                           return merge.at(0) == row.at(0) && merge.at(1) != "held";
+                       });
+        }
+        if (unmerged) {
+            out << paint("rebuild them: --rebuild-env", Tone::note) << '\n';
+        }
     }
     if (counts.at(5) != 0) {
         out << '\n' << paint("Held back", Tone::heading) << '\n';

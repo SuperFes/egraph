@@ -377,6 +377,29 @@ TEST_CASE("updates with lines tried mark what they add and change, then list wha
     CHECK(same.str() == "+ Nothing to update.\n\nTried: the plan is the same\n");
 }
 
+TEST_CASE("updates list what an env file tried builds otherwise, and how to rebuild it") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{"\ttried\tnone",
+                                                   "app-editors/ned-1\tenv\t\tclang.conf",
+                                                   "app-misc/b-2\tenv\tkeep.conf\t"},
+                          plain);
+    CHECK(out.str() == "+ Nothing to update.\n"
+                       "\nBuilt differently from now on (package.env)\n"
+                       "  app-editors/ned-1  clang.conf (was none)\n"
+                       "  app-misc/b-2       no env file (was keep.conf)\n"
+                       "rebuild them: --rebuild-env\n"
+                       "\nTried: the plan is the same\n");
+    std::ostringstream rebuilt;
+    egraph::human_updates(
+        rebuilt,
+        std::vector<std::string>{"app-editors/ned-1\trebuild\tapp-editors/ned-1\tr",
+                                 "app-editors/ned-1\ttried\tadded\trebuild\tapp-editors/ned-1\tr\t",
+                                 "app-editors/ned-1\tenv\t\tclang.conf"},
+        plain);
+    CHECK(rebuilt.str().find("--rebuild-env") == std::string::npos);
+}
+
 TEST_CASE("held updates come once each, their holders under them") {
     std::ostringstream out;
     egraph::human_updates(
