@@ -111,6 +111,9 @@ constexpr Glyphs nerd_glyphs{
     .pages = "←→",
     .trail = "\uE0B1",
     .cursor = "▌",
+    .installed = "●",
+    .pick = "★",
+    .superscripts = "⁰¹²³⁴⁵⁶⁷⁸⁹",
 };
 
 constexpr Glyphs unicode_glyphs{
@@ -159,6 +162,9 @@ constexpr Glyphs unicode_glyphs{
     .pages = "←→",
     .trail = "›",
     .cursor = "▌",
+    .installed = "●",
+    .pick = "★",
+    .superscripts = "⁰¹²³⁴⁵⁶⁷⁸⁹",
 };
 
 constexpr Glyphs ascii_glyphs{
@@ -207,6 +213,9 @@ constexpr Glyphs ascii_glyphs{
     .pages = "h/l",
     .trail = ">",
     .cursor = ">",
+    .installed = "+",
+    .pick = "*",
+    .superscripts = "",
 };
 
 using Fields = std::vector<std::string_view>;
@@ -2038,6 +2047,65 @@ std::string use_token_note(std::string_view flag, std::string_view token,
     return std::format("({})", token);
 }
 
+bool continues_code_point(char c) {
+    return (static_cast<unsigned char>(c) & 0xC0U) == 0x80U;
+}
+
+std::size_t columns_of(std::string_view text) {
+    return static_cast<std::size_t>(
+        std::ranges::count_if(text, [](char c) { return !continues_code_point(c); }));
+}
+
+// Footnote number's mark: its digits raised where the glyphs have them, otherwise [number].
+std::string footnote_mark(std::size_t number, const Glyphs& glyph) {
+    const auto digits = std::to_string(number);
+    if (glyph.superscripts.empty()) {
+        return std::format("[{}]", digits);
+    }
+    std::string mark;
+    for (const char digit : digits) {
+        // The digit's code point among the ten.
+        auto wanted = static_cast<std::size_t>(digit - '0');
+        std::size_t start = 0;
+        while (start < glyph.superscripts.size()) {
+            std::size_t end = start + 1;
+            while (end < glyph.superscripts.size() &&
+                   continues_code_point(glyph.superscripts.at(end))) {
+                ++end;
+            }
+            if (wanted == 0) {
+                mark += glyph.superscripts.substr(start, end - start);
+                break;
+            }
+            --wanted;
+            start = end;
+        }
+    }
+    return mark;
+}
+
+// Items after a two-space indent, separated by separator, wrapped before 100 columns. Each item
+// is its text, painted, and its width.
+void wrapped(std::ostream& out, std::span<const std::pair<std::string, std::size_t>> items,
+             std::string_view separator) {
+    std::size_t column = 2;
+    out << "  ";
+    bool first = true;
+    for (const auto& [text, width] : items) {
+        if (!first && column + separator.size() + width > 100) {
+            out << "\n  ";
+            column = 2;
+        } else if (!first) {
+            out << separator;
+            column += separator.size();
+        }
+        out << text;
+        column += width;
+        first = false;
+    }
+    out << '\n';
+}
+
 void use_header(std::ostream& out, std::string_view key, const Painter& paint) {
     const auto colons = std::min(key.find("::"), key.size());
     out << paint_cpv(key.substr(0, colons), paint) << paint(key.substr(colons), Tone::repo);
@@ -2046,67 +2114,233 @@ void use_header(std::ostream& out, std::string_view key, const Painter& paint) {
 } // namespace
 
 void human_use(std::ostream& out, std::span<const std::string> records,
-               std::span<const std::string> groups, const Theme& theme) {
+               std::span<const UseVersion> versions, std::span<const std::string> groups,
+               const Theme& theme) {
     const auto& paint = theme.paint;
+    const auto& glyph = theme.glyph();
     const auto rows = split_all(records);
-    std::vector<std::string_view> keys;
+    std::map<std::string_view, std::vector<const Fields*>> rows_of;
     for (const auto& row : rows) {
-        if (std::ranges::find(keys, row.at(0)) == keys.end()) {
-            keys.push_back(row.at(0));
+        rows_of[row.at(0)].push_back(&row);
+    }
+    const auto has_rows = [&](const UseVersion& version) { return rows_of.contains(version.key); };
+    // Packages in the order of their first version with flags.
+    std::vector<std::string_view> cps;
+    for (const auto& version : versions) {
+        if (!std::ranges::contains(cps, version.cp) && has_rows(version)) {
+            cps.push_back(version.cp);
         }
     }
     bool first = true;
-    for (const auto key : keys) {
+    for (const auto cp : cps) {
         out << (first ? "" : "\n");
         first = false;
-        use_header(out, key, paint);
-        out << '\n';
+        std::vector<const UseVersion*> shown;
+        for (const auto& version : versions) {
+            if (version.cp == cp && has_rows(version)) {
+                shown.push_back(&version);
+            }
+        }
+        const auto repo_of = [](const UseVersion& version) {
+            const std::string_view key = version.key;
+            return key.substr(std::min(key.find("::"), key.size()));
+        };
+        const bool one_repo = std::ranges::all_of(shown, [&](const UseVersion* version) {
+            return repo_of(*version) == repo_of(*shown.front());
+        });
+        const auto label = [&](const UseVersion& version) {
+            const std::string_view key = version.key;
+            const auto repo = repo_of(version);
+            auto text = std::string{key.substr(std::min(cp.size() + 1, key.size() - repo.size()))};
+            text = text.substr(0, text.size() - repo.size());
+            return one_repo ? text : text + std::string{repo};
+        };
+        if (shown.size() == 1) {
+            use_header(out, shown.front()->key, paint);
+            out << '\n';
+        } else {
+            out << paint_cpv(cp, paint)
+                << (one_repo ? paint(repo_of(*shown.front()), Tone::repo) : "") << '\n';
+            std::vector<std::pair<std::string, std::size_t>> items;
+            bool installed = false;
+            bool pick = false;
+            for (const auto* version : shown) {
+                const auto text = label(*version);
+                const auto mark = version->installed ? glyph.installed
+                                  : version->pick    ? glyph.pick
+                                                     : std::string_view{};
+                // A version both installed and picked shows both.
+                const auto also =
+                    version->installed && version->pick ? glyph.pick : std::string_view{};
+                installed = installed || version->installed;
+                pick = pick || version->pick;
+                items.emplace_back(paint(text, Tone::version) + paint(mark, Tone::good) +
+                                       paint(also, Tone::good),
+                                   columns_of(text) + columns_of(mark) + columns_of(also));
+            }
+            wrapped(out, items, "  ");
+            if (installed || pick) {
+                out << "  ";
+                if (installed) {
+                    out << paint(glyph.installed, Tone::good) << paint(" installed", Tone::note);
+                }
+                if (pick) {
+                    out << (installed ? "  " : "") << paint(glyph.pick, Tone::good)
+                        << paint(" emerge's pick", Tone::note);
+                }
+                out << '\n';
+            }
+            out << '\n';
+        }
+        // Each flag as one or more of the versions have it alike: spelled and set the same.
+        struct Merged {
+            const Fields* row = nullptr;
+            std::string bare;
+            std::vector<bool> in;
+        };
+        std::vector<Merged> merged;
+        // Each merged row's position, by its fields after the key.
+        std::map<std::vector<std::string_view>, std::size_t> merged_at;
+        for (std::size_t at = 0; at < shown.size(); ++at) {
+            for (const auto* row : rows_of.at(shown.at(at)->key)) {
+                if (row->at(2) != "iuse") {
+                    continue;
+                }
+                const std::vector<std::string_view> fields{row->at(1), row->at(3), row->at(4),
+                                                           row->at(5)};
+                const auto [position, added] = merged_at.try_emplace(fields, merged.size());
+                if (added) {
+                    std::string_view bare = row->at(1);
+                    if (bare.starts_with('(')) {
+                        bare = bare.substr(1, bare.size() - 2);
+                    }
+                    if (bare.starts_with('-')) {
+                        bare.remove_prefix(1);
+                    }
+                    merged.push_back({.row = row,
+                                      .bare = std::string{bare},
+                                      .in = std::vector<bool>(shown.size())});
+                }
+                merged.at(position->second).in.at(at) = true;
+            }
+        }
+        if (shown.size() > 1) {
+            std::ranges::stable_sort(merged, {}, &Merged::bare);
+        }
+        // The versions in a set, by whole slots where two or more versions fill one.
+        const auto items_of = [&](const std::vector<bool>& set) {
+            std::vector<std::string> items;
+            std::vector<bool> covered(shown.size());
+            for (std::size_t i = 0; i < shown.size(); ++i) {
+                if (!set.at(i) || covered.at(i)) {
+                    continue;
+                }
+                const auto& slot = shown.at(i)->slot;
+                std::size_t members = 0;
+                bool whole = true;
+                for (std::size_t j = 0; j < shown.size(); ++j) {
+                    if (shown.at(j)->slot == slot) {
+                        ++members;
+                        whole = whole && set.at(j);
+                    }
+                }
+                if (members >= 2 && whole) {
+                    items.push_back(":" + slot);
+                    for (std::size_t j = 0; j < shown.size(); ++j) {
+                        covered.at(j) = covered.at(j) || shown.at(j)->slot == slot;
+                    }
+                } else {
+                    items.push_back(label(*shown.at(i)));
+                    covered.at(i) = true;
+                }
+            }
+            return items;
+        };
+        const auto joined = [](const std::vector<std::string>& items) {
+            std::string text;
+            for (const auto& item : items) {
+                text += (text.empty() ? "" : ", ") + item;
+            }
+            return text;
+        };
+        // The fewer words of the versions that have a flag and of those that do not.
+        const auto describe = [&](const std::vector<bool>& set) {
+            std::vector<bool> others(set.size());
+            for (std::size_t i = 0; i < set.size(); ++i) {
+                others.at(i) = !set.at(i);
+            }
+            const auto having = items_of(set);
+            const auto lacking = items_of(others);
+            if (lacking.size() < having.size()) {
+                return "not " + joined(lacking);
+            }
+            return having.size() == 1 ? having.front() + " only" : joined(having);
+        };
         // Plain flags first, then each group's, named without its prefix.
         struct Shown {
             std::string name;
+            std::string mark;
             bool on = false;
             const Fields* row = nullptr;
+            const std::vector<bool>* in = nullptr;
         };
         std::vector<std::pair<std::string, std::vector<Shown>>> sections{{"", {}}};
         for (const auto& group : groups) {
             sections.emplace_back(group, std::vector<Shown>{});
         }
-        for (const auto& row : rows) {
-            if (row.at(0) != key || row.at(2) != "iuse") {
-                continue;
-            }
+        for (const auto& each : merged) {
+            const auto& row = *each.row;
             const auto spelled = row.at(1);
             const bool fixed = spelled.starts_with('(');
-            auto bare = fixed ? spelled.substr(1, spelled.size() - 2) : spelled;
-            const bool on = !bare.starts_with('-');
-            if (!on) {
-                bare.remove_prefix(1);
-            }
-            const auto group = group_of(bare, groups);
-            auto name = std::string{group ? bare.substr(group->size() + 1) : bare};
+            const bool on = !spelled.substr(fixed ? 1 : 0).starts_with('-');
+            const auto group = group_of(each.bare, groups);
+            auto name = std::string{group ? std::string_view{each.bare}.substr(group->size() + 1)
+                                          : std::string_view{each.bare}};
             name = std::format("{}{}{}{}", fixed ? "(" : "", on ? "" : "-", name, fixed ? ")" : "");
             const auto section = std::ranges::find_if(
                 sections, [&](const auto& s) { return s.first == group.value_or(""); });
-            section->second.push_back({.name = std::move(name), .on = on, .row = &row});
+            section->second.push_back(
+                {.name = std::move(name), .mark = {}, .on = on, .row = &row, .in = &each.in});
         }
-        std::size_t width = 0;
-        for (const auto& [group, shown] : sections) {
-            for (const auto& flag : shown) {
-                width = std::max(width, flag.name.size() + (group.empty() ? 0 : 2));
+        // Footnotes numbered in the order shown, one per set of versions.
+        std::vector<std::vector<bool>> notes;
+        for (auto& [group, flags] : sections) {
+            for (auto& flag : flags) {
+                const auto& in = *flag.in;
+                if (std::ranges::all_of(in, std::identity{})) {
+                    continue;
+                }
+                auto note = std::ranges::find(notes, in);
+                if (note == notes.end()) {
+                    notes.push_back(in);
+                    note = std::prev(notes.end());
+                }
+                flag.mark =
+                    footnote_mark(static_cast<std::size_t>(note - notes.begin()) + 1, glyph);
             }
         }
-        for (const auto& [group, shown] : sections) {
-            if (shown.empty()) {
+        const auto width_of = [](const Shown& flag) {
+            return flag.name.size() + (flag.mark.empty() ? 0 : 1 + columns_of(flag.mark));
+        };
+        std::size_t width = 0;
+        for (const auto& [group, flags] : sections) {
+            for (const auto& flag : flags) {
+                width = std::max(width, width_of(flag) + (group.empty() ? 0 : 2));
+            }
+        }
+        for (const auto& [group, flags] : sections) {
+            if (flags.empty()) {
                 continue;
             }
             const std::string indent = group.empty() ? "  " : "    ";
             if (!group.empty()) {
                 out << "  " << paint(group, Tone::heading) << '\n';
             }
-            for (const auto& flag : shown) {
+            for (const auto& flag : flags) {
                 const auto& row = *flag.row;
                 out << indent << paint(flag.name, flag.on ? Tone::use : Tone::note)
-                    << std::string(width + 2 - flag.name.size() - (indent.size() - 2), ' ')
+                    << (flag.mark.empty() ? "" : " " + paint(flag.mark, Tone::count))
+                    << std::string(width + 2 - width_of(flag) - (indent.size() - 2), ' ')
                     << use_place(row.at(3), row.at(4), row.at(5));
                 std::string_view spelled = row.at(1);
                 if (spelled.starts_with('(')) {
@@ -2120,6 +2354,17 @@ void human_use(std::ostream& out, std::span<const std::string> records,
                 }
                 out << '\n';
             }
+        }
+        if (!notes.empty()) {
+            out << '\n';
+            std::vector<std::pair<std::string, std::size_t>> items;
+            for (std::size_t i = 0; i < notes.size(); ++i) {
+                const auto mark = footnote_mark(i + 1, glyph);
+                const auto text = describe(notes.at(i));
+                items.emplace_back(paint(mark, Tone::count) + " " + paint(text, Tone::note),
+                                   columns_of(mark) + 1 + columns_of(text));
+            }
+            wrapped(out, items, "   ");
         }
     }
 }

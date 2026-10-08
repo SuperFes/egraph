@@ -153,6 +153,11 @@ struct Glyphs {
     // The terminal interface's trail separator and selection marker.
     std::string_view trail;
     std::string_view cursor;
+    // An installed version, and what emerge would pick when the package is named.
+    std::string_view installed;
+    std::string_view pick;
+    // The digits 0 to 9 raised, for footnote marks (none in ascii: [1]).
+    std::string_view superscripts;
 };
 
 [[nodiscard]] const Glyphs& glyphs(GlyphSet set);
@@ -269,10 +274,23 @@ void human_history(std::ostream& out, std::span<const std::string> records, cons
 void human_match(std::ostream& out, std::span<const std::string> records,
                  std::span<const std::string> atoms, const Theme& theme);
 
-// use's lines as a table per ebuild: each flag of its IUSE as emerge spells it and where it was
-// last set, the flags of each of groups (USE_EXPAND variables) under it.
+// An ebuild use shows, by its key (cpv::repo), in the order shown.
+struct UseVersion {
+    std::string key;
+    std::string cp;
+    std::string slot;
+    bool installed = false;
+    // What emerge would pick when the package is named.
+    bool pick = false;
+};
+
+// use's lines as a table per package: each flag of its IUSE as emerge spells it and where it was
+// last set, the flags of each of groups (USE_EXPAND variables) under it. The versions of a
+// package share its table; a flag not every one of them has, alike and set alike, gets a
+// footnote naming the versions that do.
 void human_use(std::ostream& out, std::span<const std::string> records,
-               std::span<const std::string> groups, const Theme& theme);
+               std::span<const UseVersion> versions, std::span<const std::string> groups,
+               const Theme& theme);
 
 // use's lines for one flag: each step that set it, in the order applied.
 void human_use_steps(std::ostream& out, std::span<const std::string> records,

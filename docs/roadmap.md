@@ -1054,7 +1054,8 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
   Decided with the user (2026-10-07): a table per ebuild, USE_EXPAND flags grouped; what emerge
   would build (the best visible version of each installed slot and of the package) and the
   installed versions' own, `--all` for every one; a flag named, every step that set it in the
-  order applied.
+  order applied. Then: a package's versions share one table, a flag not all of them have alike
+  footnoted with the versions (or whole slots) that do.
 - 18e: `egraph config check`: entries matching nothing (dead) or nothing installed, flags outside
   the IUSE of all they match, keywords accepted without the entry, masks and unmasks that change
   nothing, entries contradicting each other; the other `package.*` files join the ledger.

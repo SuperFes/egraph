@@ -234,6 +234,9 @@ version of each installed slot, as an update does, and of the package, as naming
 Flags are shown as emerge shows them: off with a
 .BR \- ,
 masked or forced in parentheses; USE_EXPAND flags under their variable.
+A package's versions share one table, the installed ones and what emerge would pick marked;
+a flag not all of them have alike, on or off and set by the same entry, carries a footnote
+naming the versions that do, by slot where a slot's versions all do.
 The state is stacked from the configuration as portage stacks it, profile by profile and
 repository by repository, then
 .IR make.conf ,

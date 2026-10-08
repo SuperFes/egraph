@@ -61,6 +61,7 @@
 #include <ostream>
 #include <random>
 #include <ranges>
+#include <span>
 #include <sstream>
 #include <string_view>
 #include <type_traits>
@@ -1119,73 +1120,93 @@ std::string step_place(const Evaluated& evaluated, const UseStep& step) {
 // The candidates `use` shows: the installed versions' own ebuilds and the best visible version
 // of each installed slot (what an update builds) and of each cp (what emerge <cp> picks), of one
 // version the one of the repository priority puts first; with all, every one the atom matches.
-// priority(repo) ranks a repository, lower first.
+// priority(repo) ranks a repository, lower first. By cp, then version.
+struct UseCandidate {
+    std::size_t index = 0;
+    bool installed = false;
+    // What emerge <cp> picks.
+    bool pick = false;
+};
+
 template <class Priority>
-std::vector<std::size_t> use_candidates(const Store& installed, const Evaluated& evaluated,
-                                        const Atom& atom, bool all, const Priority& priority) {
-    std::vector<std::size_t> matched;
+std::vector<UseCandidate> use_candidates(const Store& installed, const Evaluated& evaluated,
+                                         const Atom& atom, bool all, const Priority& priority) {
+    struct Matched {
+        std::size_t index = 0;
+        Version version;
+    };
+    // By cp id, in candidate order.
+    std::map<std::uint32_t, std::vector<Matched>> by_cp;
     for (std::size_t i = 0; i < evaluated.candidates.size(); ++i) {
         const auto& candidate = evaluated.candidates.at(i);
         const auto cp = evaluated.string(candidate.cp);
         const auto cpv = evaluated.string(candidate.cpv);
-        const auto version = parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
+        auto version = parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
         if (version &&
             matches(atom, cp, *version, evaluated.string(candidate.slot),
                     evaluated.string(candidate.sub_slot), evaluated.string(candidate.repo))) {
-            matched.push_back(i);
+            by_cp[candidate.cp].push_back({.index = i, .version = std::move(*version)});
         }
     }
-    if (all) {
-        return matched;
+    std::map<std::string_view, std::vector<const Package*>> installed_by_cp;
+    for (const auto& pkg : installed.packages) {
+        installed_by_cp[installed.string(pkg.cp)].push_back(&pkg);
     }
-    const auto version_of = [&](const Candidate& candidate) {
-        const auto cp = evaluated.string(candidate.cp);
-        const auto cpv = evaluated.string(candidate.cpv);
-        return parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1))).value_or(Version{});
-    };
-    // The first of the best visible versions among those same_group(other) admits.
-    const auto best_in = [&](std::size_t i, const auto& same_group) {
-        const auto& candidate = evaluated.candidates.at(i);
-        return candidate.visible() && std::ranges::none_of(matched, [&](std::size_t j) {
-                   const auto& other = evaluated.candidates.at(j);
-                   if (j == i || !other.visible() || other.cp != candidate.cp ||
-                       !same_group(other)) {
-                       return false;
-                   }
-                   const auto order = vercmp(version_of(other), version_of(candidate));
-                   if (order != 0) {
-                       return order > 0;
-                   }
-                   const auto ranks = std::pair{priority(evaluated.string(other.repo)),
-                                                priority(evaluated.string(candidate.repo))};
-                   return ranks.first < ranks.second || (ranks.first == ranks.second && j < i);
-               });
-    };
-    std::vector<std::size_t> shown;
-    for (const auto i : matched) {
-        const auto& candidate = evaluated.candidates.at(i);
-        const auto cpv = evaluated.string(candidate.cpv);
-        const auto cp = evaluated.string(candidate.cp);
-        const auto slot = evaluated.string(candidate.slot);
-        bool is_installed = false;
-        bool slot_installed = false;
-        for (const auto& pkg : installed.packages) {
-            if (installed.string(pkg.cp) != cp) {
-                continue;
-            }
-            slot_installed = slot_installed || installed.string(pkg.slot) == slot;
-            is_installed =
-                is_installed || (installed.string(pkg.cpv) == cpv &&
-                                 installed.string(pkg.repo) == evaluated.string(candidate.repo));
-        }
-        const auto any = [](const Candidate&) { return true; };
-        const auto same_slot = [&](const Candidate& other) {
-            return evaluated.string(other.slot) == slot;
+    std::vector<UseCandidate> shown;
+    for (const auto& [cp_id, matched] : by_cp) {
+        // Whether matched.at(at) is the first of the best visible versions same_group admits.
+        const auto best_in = [&](std::size_t at, const auto& same_group) {
+            const auto& [i, version] = matched.at(at);
+            const auto& candidate = evaluated.candidates.at(i);
+            return candidate.visible() && std::ranges::none_of(matched, [&](const Matched& each) {
+                       const auto& other = evaluated.candidates.at(each.index);
+                       if (each.index == i || !other.visible() || !same_group(other)) {
+                           return false;
+                       }
+                       const auto order = vercmp(each.version, version);
+                       if (order != 0) {
+                           return order > 0;
+                       }
+                       const auto ranks = std::pair{priority(evaluated.string(other.repo)),
+                                                    priority(evaluated.string(candidate.repo))};
+                       return ranks.first < ranks.second ||
+                              (ranks.first == ranks.second && each.index < i);
+                   });
         };
-        if (is_installed || best_in(i, any) || (slot_installed && best_in(i, same_slot))) {
-            shown.push_back(i);
+        const auto found = installed_by_cp.find(evaluated.string(cp_id));
+        const auto packages =
+            found == installed_by_cp.end() ? std::span<const Package* const>{} : found->second;
+        std::vector<UseCandidate> in_cp;
+        for (std::size_t at = 0; at < matched.size(); ++at) {
+            const auto& candidate = evaluated.candidates.at(matched.at(at).index);
+            const auto cpv = evaluated.string(candidate.cpv);
+            const auto slot = evaluated.string(candidate.slot);
+            const bool slot_installed = std::ranges::any_of(
+                packages, [&](const Package* pkg) { return installed.string(pkg->slot) == slot; });
+            const bool is_installed = std::ranges::any_of(packages, [&](const Package* pkg) {
+                return installed.string(pkg->cpv) == cpv &&
+                       installed.string(pkg->repo) == evaluated.string(candidate.repo);
+            });
+            const auto any = [](const Candidate&) { return true; };
+            const auto same_slot = [&](const Candidate& other) {
+                return evaluated.string(other.slot) == slot;
+            };
+            const bool pick = best_in(at, any);
+            if (all || is_installed || pick || (slot_installed && best_in(at, same_slot))) {
+                in_cp.push_back({.index = at, .installed = is_installed, .pick = pick});
+            }
+        }
+        std::ranges::stable_sort(in_cp, [&](const UseCandidate& a, const UseCandidate& b) {
+            return vercmp(matched.at(a.index).version, matched.at(b.index).version) < 0;
+        });
+        for (auto& each : in_cp) {
+            each.index = matched.at(each.index).index;
+            shown.push_back(each);
         }
     }
+    std::ranges::stable_sort(shown, {}, [&](const UseCandidate& each) {
+        return evaluated.string(evaluated.candidates.at(each.index).cp);
+    });
     return shown;
 }
 
@@ -1223,10 +1244,16 @@ Exit execute(const UseCommand& command, Session& session, const Invocation& invo
     }
     const UseStacker stacker(installed, evaluated);
     std::vector<std::string> lines;
-    for (const auto index : shown) {
+    std::vector<UseVersion> versions;
+    for (const auto& [index, is_installed, pick] : shown) {
         const auto& candidate = evaluated.candidates.at(index);
         const auto key = std::format("{}::{}", evaluated.string(candidate.cpv),
                                      evaluated.string(candidate.repo));
+        versions.push_back({.key = key,
+                            .cp = std::string{evaluated.string(candidate.cp)},
+                            .slot = std::string{evaluated.string(candidate.slot)},
+                            .installed = is_installed,
+                            .pick = pick});
         const auto stacked = stacker.stack(candidate);
         std::vector<std::string> iuse;
         for (const auto id : evaluated.ids_in(candidate.iuse)) {
@@ -1301,7 +1328,7 @@ Exit execute(const UseCommand& command, Session& session, const Invocation& invo
         if (command.flag) {
             human_use_steps(out, lines, groups, style.theme);
         } else {
-            human_use(out, lines, groups, style.theme);
+            human_use(out, lines, versions, groups, style.theme);
         }
     } else {
         write_lines(out, lines);

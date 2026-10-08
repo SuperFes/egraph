@@ -3,8 +3,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <format>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using egraph::ColorDepth;
@@ -819,8 +822,12 @@ TEST_CASE("use lists each ebuild's flags, USE_EXPAND ones grouped, and where eac
         "x/a-1::r\t-video_cards_vesa\tiuse\tconf\t/etc/portage/make.conf:15\tVIDEO_CARDS",
         "x/b-1::r\ttest\tiuse\tfeatures\t\ttest",
     };
+    const std::vector<egraph::UseVersion> versions{
+        {.key = "x/a-1::r", .cp = "x/a", .slot = "0", .installed = true, .pick = true},
+        {.key = "x/b-1::r", .cp = "x/b", .slot = "0", .installed = false, .pick = true},
+    };
     std::ostringstream out;
-    egraph::human_use(out, records, groups, plain);
+    egraph::human_use(out, records, versions, groups, plain);
     CHECK(out.str() == "x/a-1::r\n"
                        "  idefault  IUSE default\n"
                        "  -conf     /etc/portage/package.use:4\n"
@@ -833,6 +840,80 @@ TEST_CASE("use lists each ebuild's flags, USE_EXPAND ones grouped, and where eac
                        "\n"
                        "x/b-1::r\n"
                        "  test  FEATURES=test\n");
+}
+
+TEST_CASE("use shares a package's table among its versions, footnoting what differs") {
+    const std::vector<std::string> groups{"VIDEO_CARDS"};
+    std::vector<std::string> records;
+    const auto add = [&](std::string_view version, std::string_view row) {
+        records.push_back(std::format("x/p-{}::r\t{}", version, row));
+    };
+    for (const auto version : {"1.1", "1.2", "2.1", "2.2"}) {
+        add(version, "a\tiuse\tconf\t/etc/portage/make.conf:9\ta");
+        add(version, version < std::string_view{"2"}
+                         ? "b\tiuse\tconf\t/etc/portage/make.conf:9\tb"
+                         : "b\tiuse\tpkg\t/etc/portage/package.use:3\tb");
+    }
+    add("2.1", "-new\tiuse\t\t\t");
+    add("2.2", "-new\tiuse\t\t\t");
+    for (const auto version : {"1.1", "1.2", "2.1"}) {
+        add(version, "-old\tiuse\t\t\t");
+    }
+    add("2.2", "video_cards_nvidia\tiuse\tpkg\t/etc/portage/package.use:4\tvideo_cards_nvidia");
+    records.emplace_back("x/q-1::r\tc\tiuse\tconf\t/etc/portage/make.conf:9\tc");
+    records.emplace_back("x/q-1::s\tc\tiuse\tconf\t/etc/portage/make.conf:9\tc");
+    const std::vector<egraph::UseVersion> versions{
+        {.key = "x/p-1.1::r", .cp = "x/p", .slot = "1", .installed = true, .pick = false},
+        {.key = "x/p-1.2::r", .cp = "x/p", .slot = "1", .installed = false, .pick = false},
+        {.key = "x/p-2.1::r", .cp = "x/p", .slot = "2", .installed = true, .pick = false},
+        {.key = "x/p-2.2::r", .cp = "x/p", .slot = "2", .installed = false, .pick = true},
+        {.key = "x/q-1::r", .cp = "x/q", .slot = "0", .installed = false, .pick = false},
+        {.key = "x/q-1::s", .cp = "x/q", .slot = "0", .installed = false, .pick = false},
+    };
+    std::ostringstream out;
+    egraph::human_use(out, records, versions, groups, plain);
+    CHECK(out.str() == "x/p::r\n"
+                       "  1.1+  1.2  2.1+  2.2*\n"
+                       "  + installed  * emerge's pick\n"
+                       "\n"
+                       "  a             /etc/portage/make.conf:9\n"
+                       "  b [1]         /etc/portage/make.conf:9\n"
+                       "  b [2]         /etc/portage/package.use:3\n"
+                       "  -new [2]      not set\n"
+                       "  -old [3]      not set\n"
+                       "  VIDEO_CARDS\n"
+                       "    nvidia [4]  /etc/portage/package.use:4\n"
+                       "\n"
+                       "  [1] :1 only   [2] :2 only   [3] not 2.2   [4] 2.2 only\n"
+                       "\n"
+                       "x/q\n"
+                       "  1::r  1::s\n"
+                       "\n"
+                       "  c  /etc/portage/make.conf:9\n");
+}
+
+TEST_CASE("use's footnotes raise their numbers where the glyphs can") {
+    const std::vector<std::string> records{
+        "x/p-1::r\ta\tiuse\t\t\t",
+        "x/p-2::r\ta\tiuse\t\t\t",
+        "x/p-2::r\tb\tiuse\t\t\t",
+    };
+    const std::vector<egraph::UseVersion> versions{
+        {.key = "x/p-1::r", .cp = "x/p", .slot = "0", .installed = true, .pick = false},
+        {.key = "x/p-2::r", .cp = "x/p", .slot = "0", .installed = false, .pick = true},
+    };
+    std::ostringstream out;
+    egraph::human_use(
+        out, records, versions, {},
+        {.paint = egraph::Painter{ColorDepth::none}, .glyph_set = egraph::GlyphSet::unicode});
+    CHECK(out.str() == "x/p::r\n"
+                       "  1●  2★\n"
+                       "  ● installed  ★ emerge's pick\n"
+                       "\n"
+                       "  a    not set\n"
+                       "  b ¹  not set\n"
+                       "\n"
+                       "  ¹ 2 only\n");
 }
 
 TEST_CASE("use with a flag lists every step that set it, in the order applied") {
@@ -891,9 +972,16 @@ TEST_CASE("every glyph set fills every glyph") {
                                 glyph.spinner,
                                 glyph.bar_full,
                                 glyph.bar_empty,
-                                glyph.spark}) {
+                                glyph.spark,
+                                glyph.installed,
+                                glyph.pick}) {
             CHECK_FALSE(text.empty());
         }
+        // Ten digits, or none for [n].
+        const auto digits = std::ranges::count_if(glyph.superscripts, [](char c) {
+            return (static_cast<unsigned char>(c) & 0xC0U) != 0x80U;
+        });
+        CHECK((digits == 10 || digits == 0));
     }
 }
 
