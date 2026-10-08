@@ -1101,7 +1101,11 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
     - 18e3a (done): `egraph config check` with its findings' order, records, linter layout
       (`file:line: severity: atom token: message`, then the counts) and exit status, over no
       checks yet.
-    - 18e3b: dead and not-installed entries, in every `package.*` file of both ledgers.
+    - 18e3b (done): dead and not-installed entries, in every `package.*` file of both
+      ledgers and the user's profile: dead matching no ebuild and nothing installed (or not
+      parsing), not installed matching no installed package's cp. Held to portage's
+      `match_from_list` over every ebuild and installed package, line by line, on every
+      scenario and the live system (13 dead and 10 not installed here, in 0.5 s).
     - 18e3c: USE: flags outside IUSE, entries changing nothing (stacked without them),
       contradicted ones.
     - 18e3d: visibility: keywords already accepted, masks and unmasks, licenses, properties

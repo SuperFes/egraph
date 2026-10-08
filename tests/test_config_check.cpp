@@ -1,8 +1,13 @@
 #include "config_check.hpp"
 
+#include "index_builder.hpp"
+#include "system_builder.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 
+#include <format>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using egraph::Finding;
@@ -48,4 +53,42 @@ TEST_CASE("a finding's record names its place, severity, kind, atom, token and m
     CHECK(egraph::finding_record(finding) ==
           "/etc/portage/package.use\t5\twarning\tno-effect\tapp-misc/foo\t-bar\tnot in the IUSE of "
           "anything it matches");
+}
+
+TEST_CASE("an entry matching nothing is dead, one matching nothing installed a note") {
+    egraph::test::IndexBuilder b;
+    std::ignore = b.version({.cpv = "app-misc/a-1"});
+    std::ignore = b.version({.cpv = "app-misc/a-2"});
+    std::ignore = b.version({.cpv = "app-misc/b-1", .repo = "overlay"});
+    std::ignore = b.version({.cpv = "dev-libs/c-1"});
+    const auto system =
+        egraph::test::make_system({{.cpv = "app-misc/a-1"}, {.cpv = "x11-misc/gone-1"}}, {});
+    const std::vector<egraph::UserEntry> entries{
+        {.file = "/u", .line = 1, .atom = "app-misc/a"},
+        {.file = "/u", .line = 2, .atom = "=app-misc/a-2"},
+        {.file = "/u", .line = 3, .atom = "=app-misc/a-3"},
+        {.file = "/u", .line = 4, .atom = "app-misc/b"},
+        {.file = "/u", .line = 5, .atom = "app-misc/b::gentoo"},
+        {.file = "/u", .line = 6, .atom = "dev-libs/*"},
+        {.file = "/u", .line = 7, .atom = "app-*/*"},
+        {.file = "/u", .line = 8, .atom = "x11-misc/gone"},
+        {.file = "/u", .line = 9, .atom = "-dev-libs/nothing"},
+        {.file = "/u", .line = 10, .atom = "-app-misc/a"},
+        {.file = "/u", .line = 11, .atom = "not an atom"},
+    };
+    const auto found = egraph::unmatched_entries(entries, system.store, b.index());
+    std::vector<std::string> shown;
+    for (const auto& each : found) {
+        shown.push_back(
+            std::format("{} {} {}", each.line, egraph::kind_name(each.kind), each.message));
+    }
+    // A version of an installed package's cp is enough; a package only installed is matched.
+    CHECK(shown == std::vector<std::string>{
+                       "3 dead matches nothing in any repository",
+                       "4 not-installed matches only packages not installed",
+                       "5 dead matches nothing in any repository",
+                       "6 not-installed matches only packages not installed",
+                       "9 dead matches nothing in any repository",
+                       "11 dead is not an atom portage reads",
+                   });
 }

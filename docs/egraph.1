@@ -359,20 +359,24 @@ The entries of the user's configuration, the files under its
 .I /etc/portage
 that portage reads for a package
 .RB ( package.use ,
+.BR package.env ,
 .BR package.accept_keywords ,
+.BR package.keywords ,
 .BR package.mask ,
 .BR package.unmask ,
 .BR package.license ,
 .B package.properties
 and
-.BR package.accept_restrict ),
+.BR package.accept_restrict ,
+and those of its own
+.IR profile ),
 that do nothing or that later entries undo, as a linter lists them:
 .IR file : line ": " severity ": " "atom token" ": " message ,
 the profiles' and the repositories' own entries aside.
-Errors first: entries matching nothing in any repository, then entries later ones undo for
-everything they match; then warnings, entries changing nothing for anything they match (a flag
-outside its IUSE, a keyword already accepted, a mask or unmask with no effect); then notes,
-entries matching only packages not installed.
+Errors first: entries matching nothing in any repository nor installed (or that are not atoms
+portage reads), then entries later ones undo for everything they match; then warnings, entries
+changing nothing for anything they match (a flag outside its IUSE, a keyword already accepted, a
+mask or unmask with no effect); then notes, entries matching no installed package's versions.
 Each kind's findings go by file, then line, followed by how many of each severity.
 Exits 1 when there is an error.
 In lines, the file, the line, the severity

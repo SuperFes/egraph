@@ -49,6 +49,24 @@ void order_findings(std::vector<Finding>& findings);
 // "file<TAB>line<TAB>severity<TAB>kind<TAB>atom<TAB>token<TAB>message".
 [[nodiscard]] std::string finding_record(const Finding& finding);
 
+// A line of the user's package.* files, as a ledger holds it.
+struct UserEntry {
+    std::string file;
+    std::uint32_t line = 0;
+    // A mask file's with its `-`.
+    std::string atom;
+};
+
+// The user's entries naming a package in both ledgers, each line once, in neither order.
+[[nodiscard]] std::vector<UserEntry> user_entries(const Evaluated& evaluated,
+                                                  const RepositoryIndex& index);
+
+// Entries matching nothing in any repository nor installed (dead), or no installed package's cp
+// (not_installed); an atom that does not parse is dead.
+[[nodiscard]] std::vector<Finding> unmatched_entries(std::span<const UserEntry> entries,
+                                                     const Store& installed,
+                                                     const RepositoryIndex& index);
+
 // The findings over the user's entries in both ledgers, ordered.
 [[nodiscard]] std::vector<Finding> check_config(const Store& installed, const Evaluated& evaluated,
                                                 const RepositoryIndex& index);

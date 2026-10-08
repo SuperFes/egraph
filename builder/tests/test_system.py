@@ -654,6 +654,41 @@ def test_every_repository_version_is_visible_or_masked_as_portage_has_it(
 @pytest.mark.skipif(
     not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
 )
+def test_config_check_finds_what_portage_matches_nothing_on_the_live_system(
+    live_databases, live_store, tmp_path
+):
+    import shutil
+
+    from test_config_check import portage_unmatched, unmatched_view
+
+    from egraph_build import repository
+
+    vardb, db = live_databases
+    path = tmp_path / "installed.egraph"
+    shutil.copy(live_store, path)
+    shutil.copy(store.evaluated_path(live_store), store.evaluated_path(path))
+    index = repository.read(db)
+    meta = store.RepositoryMeta("0", "0", "/", 0)
+    store.write(store.repository_path(path), store.encode_repository(index, meta))
+    stdout = subprocess.run(
+        [
+            os.environ["EGRAPH"],
+            "--store",
+            str(path),
+            "--no-refresh",
+            "--layout",
+            "lines",
+        ]
+        + ["config", "check"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert unmatched_view(stdout) == portage_unmatched(vardb, db)
+
+
+@pytest.mark.skipif(
+    not os.environ.get("EGRAPH"), reason="set EGRAPH to the egraph binary"
+)
 @pytest.mark.parametrize("searchdesc", [False, True], ids=["names", "descriptions"])
 def test_search_finds_and_shows_what_emerge_does_on_the_live_system(
     live_databases, live_layer, tmp_path, searchdesc
