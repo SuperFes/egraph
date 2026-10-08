@@ -21,6 +21,7 @@
 #include "status.hpp"
 #include "steve.hpp"
 #include "store.hpp"
+#include "use_stack.hpp"
 #include "visibility.hpp"
 
 #include <algorithm>
@@ -77,7 +78,8 @@ struct Link {
 // to the page package, a held row the update the plan holds back; an unmatched row a dependency
 // the ebuild would add with flags toggled that nothing installed satisfies, its atom in
 // link.atom. A remedy row is a line of the commands past a held update. A version row is one of
-// the package's versions in the repositories, or installed.
+// the package's versions in the repositories, or installed. A flag row is one of its version's
+// USE flags, with where it was last set in text.
 enum class RowType : std::uint8_t {
     heading,
     note,
@@ -91,7 +93,8 @@ enum class RowType : std::uint8_t {
     held,
     unmatched,
     remedy,
-    version
+    version,
+    flag
 };
 
 // A page row. Links at depth 0 are the page package's own; unfolding a link puts its links,
@@ -121,6 +124,9 @@ struct Row {
     // For a remedy row, its label padded to the others'.
     std::optional<RemedyLine> remedy;
     std::optional<PackageVersion> version;
+    std::optional<FlagState> flag;
+    // For a flag row, the width its flag is padded to.
+    std::size_t column = 0;
 };
 
 // Sets each row's last and rails, walking up from the bottom: a level's line continues past a
@@ -1374,6 +1380,27 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
                           {{row.remedy->label, tone_pen(Tone::heading)},
                            {row.remedy->text, tone_pen(row.remedy->tone)}},
                           size.cols);
+            }
+            break;
+        case RowType::flag:
+            if (row.flag) {
+                const auto& flag = *row.flag;
+                const bool selected = index == page.cursor.at;
+                const auto bg = selected ? std::optional<Color>{palette::surface} : std::nullopt;
+                if (selected) {
+                    screen.fill_row(at, {.fg = std::nullopt, .bg = palette::surface});
+                }
+                const auto spelled =
+                    std::format("{}{}{}{}", flag.fixed ? "(" : "", flag.enabled ? "" : "-",
+                                flag.flag, flag.fixed ? ")" : "");
+                put_spans(screen, at, 0,
+                          {marker(selected, glyph),
+                           {spelled, tone_pen(flag.enabled ? Tone::use : Tone::note)},
+                           {std::string(
+                                row.column > spelled.size() ? row.column - spelled.size() : 2, ' '),
+                            {}},
+                           {row.text, tone_pen(Tone::note)}},
+                          size.cols, bg);
             }
             break;
         case RowType::version:

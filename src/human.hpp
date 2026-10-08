@@ -296,6 +296,11 @@ void human_use(std::ostream& out, std::span<const std::string> records,
                std::span<const UseVersion> versions, std::span<const std::string> groups,
                const Theme& theme);
 
+// Where a step of a flag was set, in words, from use's fields: its file and line (a
+// repository's from its name on), or the layer of a package's own; forced or masked so.
+[[nodiscard]] std::string use_place(std::string_view layer, std::string_view place,
+                                    std::string_view token);
+
 // use's lines for one flag: each step that set it, in the order applied.
 void human_use_steps(std::ostream& out, std::span<const std::string> records,
                      std::span<const std::string> groups, const Theme& theme);

@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <format>
 #include <map>
 #include <string>
 #include <string_view>
@@ -226,4 +227,24 @@ TEST_CASE("ARCH and implicit flags pass the IUSE filter, others do not") {
     const auto s = stack({{.cpv = "cat/a-1", .iuse = "x"}}, spec, {}, {"x86"});
     CHECK(s.of("cat/a-1").use == Flags{"x86"});
     CHECK(s.of("cat/a-1").steps.at("x86").back().layer == egraph::UseLayer::arch);
+}
+
+TEST_CASE("a USE table's flags: IUSE and the implicit ones enabled, each with its last setter") {
+    const Spec spec{.arch = "x86",
+                    .profiles = {{{"use.force", {{.file = "f", .tokens = "f"}}},
+                                  {"use.mask", {{.file = "m", .tokens = "g"}}}},
+                                 {{"use.mask", {{.file = "m2", .tokens = "-g"}}}}},
+                    .conf = {{.file = "mc", .line = 4, .tokens = "g"}},
+                    .package_use = {{.file = "pu", .line = 2, .atom = "cat/a", .tokens = "-x"}}};
+    const auto s = stack({{.cpv = "cat/a-1", .iuse = "x f g quiet"}}, spec, {}, {"x86"});
+    const auto& ev = s.system.evaluated;
+    const auto states = egraph::flag_states(ev, ev.candidates.front(), s.of("cat/a-1"));
+    std::vector<std::string> seen;
+    for (const auto& state : states) {
+        seen.push_back(std::format("{} {:d}{:d}{:d} {}", state.flag, state.enabled, state.fixed,
+                                   state.explicit_iuse,
+                                   state.last ? egraph::step_place(ev, *state.last) : "-"));
+    }
+    // g's mask taken back leaves make.conf as its setter; quiet was never set.
+    CHECK(seen == Flags{"f 111 f:1", "g 101 mc:4", "quiet 001 -", "x 001 pu:2", "x86 100 "});
 }

@@ -61,6 +61,26 @@ struct StackedUse {
 [[nodiscard]] bool in_iuse(const Store& installed, const Evaluated& evaluated,
                            const Candidate& candidate, std::string_view flag);
 
+// A flag of a candidate's explicit IUSE, or an implicit one it has enabled, as a USE table shows
+// it.
+struct FlagState {
+    std::string flag;
+    bool enabled = false;
+    // Masked or forced.
+    bool fixed = false;
+    bool explicit_iuse = false;
+    // The step that last set it; a force or mask taken back sets nothing.
+    std::optional<UseStep> last;
+};
+
+// The candidate's flags as stacked, by name.
+[[nodiscard]] std::vector<FlagState>
+flag_states(const Evaluated& evaluated, const Candidate& candidate, const StackedUse& stacked);
+
+// Where a step was set: its entry's file and line; empty for the environment and a package's own
+// layers.
+[[nodiscard]] std::string step_place(const Evaluated& evaluated, const UseStep& step);
+
 // The ledger's atoms parsed once, for stacking many packages.
 class UseStacker {
   public:

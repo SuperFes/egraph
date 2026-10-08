@@ -2168,34 +2168,6 @@ std::optional<std::string_view> group_of(std::string_view flag,
     return std::nullopt;
 }
 
-// Where a step was set, in words: its file and line, or the layer of a package's own.
-std::string use_place(std::string_view layer, std::string_view place, std::string_view token) {
-    std::string where;
-    if (!place.empty()) {
-        where = std::string{short_place(place)};
-    } else if (layer == "pkginternal") {
-        where = token == "-test" ? "RESTRICT=test" : "IUSE default";
-    } else if (layer == "features") {
-        where = "FEATURES=test";
-    } else if (layer == "arch") {
-        where = "ARCH";
-    } else if (layer == "env") {
-        where = "the environment";
-    } else if (layer.empty()) {
-        where = "not set";
-    } else {
-        where = std::string{layer};
-    }
-    const bool undone = token.starts_with('-');
-    if (layer == "force") {
-        return (undone ? "unforced  " : "forced  ") + where;
-    }
-    if (layer == "mask") {
-        return (undone ? "unmasked  " : "masked  ") + where;
-    }
-    return where;
-}
-
 // What a token did to flag where it does not name it: a wildcard, or a USE_EXPAND variable.
 std::string use_token_note(std::string_view flag, std::string_view token,
                            std::span<const std::string> groups) {
@@ -2287,6 +2259,33 @@ void use_header(std::ostream& out, std::string_view key, const Painter& paint) {
 }
 
 } // namespace
+
+std::string use_place(std::string_view layer, std::string_view place, std::string_view token) {
+    std::string where;
+    if (!place.empty()) {
+        where = std::string{short_place(place)};
+    } else if (layer == "pkginternal") {
+        where = token == "-test" ? "RESTRICT=test" : "IUSE default";
+    } else if (layer == "features") {
+        where = "FEATURES=test";
+    } else if (layer == "arch") {
+        where = "ARCH";
+    } else if (layer == "env") {
+        where = "the environment";
+    } else if (layer.empty()) {
+        where = "not set";
+    } else {
+        where = std::string{layer};
+    }
+    const bool undone = token.starts_with('-');
+    if (layer == "force") {
+        return (undone ? "unforced  " : "forced  ") + where;
+    }
+    if (layer == "mask") {
+        return (undone ? "unmasked  " : "masked  ") + where;
+    }
+    return where;
+}
 
 void human_use(std::ostream& out, std::span<const std::string> records,
                std::span<const UseVersion> versions, std::span<const std::string> groups,

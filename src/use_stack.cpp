@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <format>
 #include <set>
 #include <span>
 #include <utility>
@@ -137,6 +138,55 @@ std::string_view layer_name(UseLayer layer) {
         }
     }
     return "";
+}
+
+std::vector<FlagState> flag_states(const Evaluated& evaluated, const Candidate& candidate,
+                                   const StackedUse& stacked) {
+    std::vector<std::string> iuse;
+    for (const auto id : evaluated.ids_in(candidate.iuse)) {
+        iuse.emplace_back(evaluated.string(id));
+    }
+    std::ranges::sort(iuse);
+    std::vector<std::string> flags(iuse);
+    flags.insert(flags.end(), stacked.use.begin(), stacked.use.end());
+    std::ranges::sort(flags);
+    const auto [first, last] = std::ranges::unique(flags);
+    flags.erase(first, last);
+    std::vector<FlagState> states;
+    states.reserve(flags.size());
+    for (auto& flag : flags) {
+        FlagState state{.flag = {},
+                        .enabled = std::ranges::binary_search(stacked.use, flag),
+                        .fixed = std::ranges::binary_search(stacked.forced, flag),
+                        .explicit_iuse = std::ranges::binary_search(iuse, flag),
+                        .last = std::nullopt};
+        if (const auto found = stacked.steps.find(flag); found != stacked.steps.end()) {
+            const auto& steps = found->second;
+            const auto setting =
+                std::ranges::find_if(steps.rbegin(), steps.rend(), [](const UseStep& step) {
+                    return !((step.layer == UseLayer::force || step.layer == UseLayer::mask) &&
+                             step.token.starts_with('-'));
+                });
+            if (setting != steps.rend()) {
+                state.last = *setting;
+            }
+        }
+        state.flag = std::move(flag);
+        states.push_back(std::move(state));
+    }
+    return states;
+}
+
+std::string step_place(const Evaluated& evaluated, const UseStep& step) {
+    if (!step.entry) {
+        return {};
+    }
+    const auto& entry = evaluated.ledger_entries.at(*step.entry);
+    const auto file = evaluated.string(entry.file);
+    if (file.empty() || entry.line == 0) {
+        return std::string{file};
+    }
+    return std::format("{}:{}", file, entry.line);
 }
 
 bool in_iuse(const Store& installed, const Evaluated& evaluated, const Candidate& candidate,

@@ -154,11 +154,12 @@ void move_among(Cursor& cursor, const std::vector<std::size_t>& stops, const Key
     }
 }
 
-// Moves over a page, landing only on packages and versions.
+// Moves over a page, landing only on packages, versions and flags.
 void move_on_page(App::Page& page, const Key& key, std::size_t height) {
     std::vector<std::size_t> stops;
     for (std::size_t i = 0; i < page.rows.size(); ++i) {
-        if (selectable(page.rows.at(i)) || page.rows.at(i).type == RowType::version) {
+        if (const auto type = page.rows.at(i).type;
+            selectable(page.rows.at(i)) || type == RowType::version || type == RowType::flag) {
             stops.push_back(i);
         }
     }
@@ -366,6 +367,52 @@ std::string toggles(const Evaluated& evaluated, const Possible& entry) {
 // What package's ebuild would depend on with flags toggled (or, reverse, whose ebuilds would
 // depend on package): one link per package, atom, choice and toggles with the kinds combined,
 // sorted as links are, then forward what nothing installed satisfies.
+// The USE of the package's own version as its ebuild stacks: its explicit IUSE, each flag with
+// where it was last set, and the files package.env gives it; nothing without the ebuild.
+std::vector<Row> use_rows(const Store& installed, const Evaluated& evaluated,
+                          std::uint32_t package) {
+    const auto own = evaluated.packages.at(package).own;
+    if (!own) {
+        return {};
+    }
+    const auto& candidate = evaluated.candidates.at(*own);
+    const UseStacker stacker(installed, evaluated);
+    std::vector<FlagState> states;
+    for (auto& state : flag_states(evaluated, candidate, stacker.stack(candidate))) {
+        if (state.explicit_iuse) {
+            states.push_back(std::move(state));
+        }
+    }
+    const auto env = stacker.env_files(candidate);
+    if (states.empty() && env.empty()) {
+        return {};
+    }
+    std::vector<Row> rows{text_row(RowType::note, ""),
+                          text_row(RowType::heading, std::format("USE  {}", states.size()))};
+    if (!env.empty()) {
+        std::string files;
+        for (const auto& file : env) {
+            files += (files.empty() ? "" : " ") + file;
+        }
+        rows.push_back(text_row(RowType::note, "package.env  " + files));
+    }
+    std::size_t width = 0;
+    for (const auto& state : states) {
+        width =
+            std::max(width, state.flag.size() + (state.enabled ? 0 : 1) + (state.fixed ? 2 : 0));
+    }
+    for (auto& state : states) {
+        const auto& last = state.last;
+        auto row = text_row(RowType::flag, use_place(last ? layer_name(last->layer) : "",
+                                                     last ? step_place(evaluated, *last) : "",
+                                                     last ? std::string_view{last->token} : ""));
+        row.flag = std::move(state);
+        row.column = width + 2;
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
 std::vector<Row> possible_rows(const Store& store, const Evaluated& evaluated,
                                std::uint32_t package, bool reverse) {
     std::vector<Row> found;
@@ -1252,6 +1299,10 @@ void App::open(std::uint32_t package) {
             std::ranges::move(possible_rows(store(), evaluated(), package, reverse),
                               std::back_inserter(page.rows));
         }
+    }
+    if (has_evaluated()) {
+        std::ranges::move(use_rows(installed(), evaluated(), package),
+                          std::back_inserter(page.rows));
     }
     // Last, so that what keeps the package and its dependencies open in view.
     if (auto versions = version_rows(store().string(store().packages.at(package).cp));

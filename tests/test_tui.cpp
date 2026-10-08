@@ -4,6 +4,7 @@
 #include "index_builder.hpp"
 #include "store_writer.hpp"
 #include "system_builder.hpp"
+#include "use_ledger_builder.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -1580,8 +1581,14 @@ TEST_CASE("a page shows its pending update and what toggled flags would add") {
     CHECK(contains(text, "   ....B   dev-libs/gone |  +flag -minimal  not installed"));
     CHECK_FALSE(contains(text, "Would be needed by"));
 
-    // Only what is installed can be opened: b-1, from the dependencies.
+    // Only what is installed can be opened: b-1, from the dependencies, above the flags.
     app.handle(key(KeyKind::end));
+    for (int flags = 0;
+         flags < 10 &&
+         app.pages().back().rows.at(app.pages().back().cursor.at).type == RowType::flag;
+         ++flags) {
+        app.handle(key(KeyKind::up));
+    }
     CHECK(app.pages().back().rows.at(app.pages().back().cursor.at).flags == "+flag");
     app.handle(key(KeyKind::enter));
     REQUIRE(app.pages().size() == 2);
@@ -1591,6 +1598,44 @@ TEST_CASE("a page shows its pending update and what toggled flags would add") {
     CHECK(contains(text, "   U upgrade to dev-libs/b-2  ::test_repo"));
     CHECK(contains(text, "Would be needed by, with flags toggled  1"));
     CHECK(contains(text, "app-misc/a-1"));
+}
+
+TEST_CASE("a page lists its package's USE, each flag with where it was last set") {
+    auto system = egraph::test::make_system({{.cpv = "app-misc/a-1"}},
+                                            {{.cpv = "app-misc/a-1", .iuse = "x y z"}});
+    egraph::test::set_ledger(
+        system.evaluated,
+        {.conf = {{.file = "mc", .line = 3, .tokens = "x y"}},
+         .package_use = {{.file = "pu", .line = 2, .atom = "app-misc/a", .tokens = "-x"}},
+         .package_env = {{.file = "pe", .line = 1, .atom = "app-misc/a", .tokens = "e.conf"}},
+         .env_files = {{"e.conf", {{.file = "env/e.conf", .tokens = ""}}}}});
+    egraph::tui::App app{egraph::Stores{.installed = std::move(system.store),
+                                        .evaluated = std::move(system.evaluated)},
+                         true};
+    FakeScreen screen{20, 80, {}};
+    // Every package, not only those with updates.
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    egraph::tui::draw(screen, app, ascii);
+    const auto text = screen.text();
+    CHECK(contains(text, "USE  3"));
+    CHECK(contains(text, "   package.env  e.conf"));
+    CHECK(contains(text, "   -x  pu:2"));
+    CHECK(contains(text, "   y   mc:3"));
+    CHECK(contains(text, "   -z  not set"));
+
+    // The cursor stops on flags.
+    const auto& page = app.pages().back();
+    std::vector<std::string> flags;
+    for (const auto& row : page.rows) {
+        if (row.type == RowType::flag && row.flag) {
+            flags.push_back(row.flag->flag);
+        }
+    }
+    CHECK(flags == std::vector<std::string>{"x", "y", "z"});
+    app.handle(key(KeyKind::end));
+    CHECK(page.rows.at(page.cursor.at).type == RowType::flag);
 }
 
 TEST_CASE("the check compares installed stores, and a preview keeps the evaluated one") {

@@ -1165,7 +1165,18 @@ changes (undo, save) and takes typed lines.
   rebuilds them, as emerge `--reinstall-atoms` does (`Targets::reinstall`): emerge never
   rebuilds for an environment alone. Decided with the user (2026-10-08): an option rather than a
   printed command. Held to emerge with the atoms on the ledger and what-if scenarios.
-- 19e: the interface: toggles on the USE table, the what-if page, the plan page following.
+- 19e: the interface. Decided with the user (2026-10-08): the what-if page is a top-level page
+  after the notices, shown while lines are pending (the first toggle turns to it); space on a
+  flag of a package's USE table toggles it for the cp, `*` for every package (`*/*`); the
+  installed packages env lines build otherwise are listed there, `r` planning their rebuild.
+  - 19e1 (done): a USE section on the package page: each flag of the installed version's IUSE, its
+    state, and the ledger entry that last sets it; the env files its own version gets.
+  - 19e2: toggles: space and `*` add or drop what-if lines, the stores tried made in the
+    background (the cps newly reached evaluated there too), the USE section marking what they
+    change.
+  - 19e3: the set pages plan with the lines tried, marked as 19c's plan.
+  - 19e4: the what-if page: the lines pending, dropped with `x`, undone with `u`, typed with
+    `a`; the plan's `Tried:` count; the env rebuilds, `r` planning them.
 - 19f: saving to egraph's files.
 
 ## 20. Build knowledge

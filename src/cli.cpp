@@ -1119,20 +1119,6 @@ Exit execute(const Rdeps& command, Session& session, const Invocation& invocatio
     return edges(command.packages, true, command.possible, session, invocation, out, err);
 }
 
-// Where a step was set: the entry's file and line; empty for the environment and the layers of
-// a package's own.
-std::string step_place(const Evaluated& evaluated, const UseStep& step) {
-    if (!step.entry) {
-        return {};
-    }
-    const auto& entry = evaluated.ledger_entries.at(*step.entry);
-    const auto file = evaluated.string(entry.file);
-    if (file.empty() || entry.line == 0) {
-        return std::string{file};
-    }
-    return std::format("{}:{}", file, entry.line);
-}
-
 // The candidates `use` shows: the installed versions' own ebuilds and the best visible version
 // of each installed slot (what an update builds) and of each cp (what emerge <cp> picks), of one
 // version the one of the repository priority puts first; with all, every one the atom matches.
@@ -1271,55 +1257,39 @@ Exit execute(const UseCommand& command, Session& session, const Invocation& invo
                             .installed = is_installed,
                             .pick = pick});
         const auto stacked = stacker.stack(candidate);
-        std::vector<std::string> iuse;
-        for (const auto id : evaluated.ids_in(candidate.iuse)) {
-            iuse.emplace_back(evaluated.string(id));
-        }
-        std::ranges::sort(iuse);
-        std::vector<std::string> flags(iuse);
-        flags.insert(flags.end(), stacked.use.begin(), stacked.use.end());
-        std::ranges::sort(flags);
-        const auto [first, last] = std::ranges::unique(flags);
-        flags.erase(first, last);
-        for (const auto& flag : flags) {
-            if (command.flag && *command.flag != flag) {
+        const auto states = flag_states(evaluated, candidate, stacked);
+        if (command.flag) {
+            const auto& flag = *command.flag;
+            if (!std::ranges::contains(states, flag, &FlagState::flag)) {
                 continue;
             }
             const auto found = stacked.steps.find(flag);
             const std::vector<UseStep> none;
             const auto& steps = found == stacked.steps.end() ? none : found->second;
-            if (command.flag) {
-                if (steps.empty()) {
-                    lines.push_back(std::format("{}\t{}\toff\t\t\t\t\t", key, flag));
-                }
-                for (const auto& step : steps) {
-                    const auto entry_atom =
-                        step.entry ? evaluated.string(evaluated.ledger_entries.at(*step.entry).atom)
-                                   : std::string_view{};
-                    lines.push_back(std::format("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", key, flag,
-                                                step.enabled ? "on" : "off", layer_name(step.layer),
-                                                step_place(evaluated, step), entry_atom, step.token,
-                                                step.changed ? "changed" : "unchanged"));
-                }
-                continue;
+            if (steps.empty()) {
+                lines.push_back(std::format("{}\t{}\toff\t\t\t\t\t", key, flag));
             }
-            const bool on = std::ranges::binary_search(stacked.use, flag);
-            const bool fixed = std::ranges::binary_search(stacked.forced, flag);
+            for (const auto& step : steps) {
+                const auto entry_atom =
+                    step.entry ? evaluated.string(evaluated.ledger_entries.at(*step.entry).atom)
+                               : std::string_view{};
+                lines.push_back(std::format("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", key, flag,
+                                            step.enabled ? "on" : "off", layer_name(step.layer),
+                                            step_place(evaluated, step), entry_atom, step.token,
+                                            step.changed ? "changed" : "unchanged"));
+            }
+            continue;
+        }
+        for (const auto& state : states) {
             const auto spelled =
-                std::format("{}{}{}{}", fixed ? "(" : "", on ? "" : "-", flag, fixed ? ")" : "");
-            // A force or mask taken back sets nothing; the flag with <flag> shows it.
-            const auto setting =
-                std::ranges::find_if(steps.rbegin(), steps.rend(), [](const auto& step) {
-                    return !((step.layer == UseLayer::force || step.layer == UseLayer::mask) &&
-                             step.token.starts_with('-'));
-                });
-            const auto* last_step = setting == steps.rend() ? nullptr : &*setting;
-            lines.push_back(
-                std::format("{}\t{}\t{}\t{}\t{}\t{}", key, spelled,
-                            std::ranges::binary_search(iuse, flag) ? "iuse" : "implicit",
-                            last_step ? layer_name(last_step->layer) : "",
-                            last_step ? step_place(evaluated, *last_step) : "",
-                            last_step ? last_step->token : ""));
+                std::format("{}{}{}{}", state.fixed ? "(" : "", state.enabled ? "" : "-",
+                            state.flag, state.fixed ? ")" : "");
+            const auto& last_step = state.last;
+            lines.push_back(std::format("{}\t{}\t{}\t{}\t{}\t{}", key, spelled,
+                                        state.explicit_iuse ? "iuse" : "implicit",
+                                        last_step ? layer_name(last_step->layer) : "",
+                                        last_step ? step_place(evaluated, *last_step) : "",
+                                        last_step ? last_step->token : ""));
         }
     }
     if (command.flag && lines.empty()) {
