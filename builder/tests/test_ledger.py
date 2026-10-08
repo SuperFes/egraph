@@ -10,6 +10,7 @@ import pytest
 from portage.dep import Atom
 from portage.versions import cpv_getkey
 
+import managers
 from conftest import portdb, write_index, write_stores
 
 from egraph_build import evaluated, ledger
@@ -360,15 +361,15 @@ def test_the_config_scenario(playgrounds):
     ]
 
 
-def assert_visibility_stacks_in_cpp(index, tmp_path):
-    """egraph's stacking of the index's visibility ledger is the visibility the index holds."""
+def stacked_in_cpp(portdb, tmp_path):
+    """egraph's stacking of the visibility ledger of portdb's repository index."""
     from egraph_build import repository, store
 
     if not SHADOW:
         pytest.skip("set EGRAPH_SHADOW to the shadow binary (meson test does)")
     path = tmp_path / "index.egraph"
     meta = store.RepositoryMeta("0", "0", "/", 0)
-    store.write(path, store.encode_repository(index, meta))
+    store.write(path, store.encode_repository(repository.assemble(portdb, ()), meta))
     result = subprocess.run(
         [SHADOW],
         input=json.dumps({"check": "visibility", "index": str(path)}) + "\n",
@@ -376,15 +377,15 @@ def assert_visibility_stacks_in_cpp(index, tmp_path):
         text=True,
         check=True,
     )
-    held = json.loads(repository.to_json(index))["visibility"]
-    del held["eapis"], held["arch"]
-    assert json.loads(result.stdout) == held
+    return json.loads(result.stdout)
+
+
+def assert_visibility_stacks_in_cpp(portdb, tmp_path):
+    assert stacked_in_cpp(portdb, tmp_path) == managers.read(portdb.settings)
 
 
 def test_the_visibility_ledger_stacks_in_cpp_as_portage_stacks_it(scenario, tmp_path):
-    from egraph_build import repository
-
-    assert_visibility_stacks_in_cpp(repository.assemble(portdb(scenario), ()), tmp_path)
+    assert_visibility_stacks_in_cpp(portdb(scenario), tmp_path)
 
 
 def tuple_of(entries):

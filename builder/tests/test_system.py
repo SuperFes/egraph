@@ -8,7 +8,7 @@ import subprocess
 import pytest
 
 from compare import QUERIES, assert_agrees
-from egraph_build import cli, evaluated, installed, ledger, oracle, repository, store
+from egraph_build import cli, evaluated, installed, ledger, oracle, store
 
 pytestmark = [
     pytest.mark.system,
@@ -71,7 +71,7 @@ def test_the_live_visibility_ledger_stacks_in_cpp_as_portage_stacks_it(
     from test_ledger import assert_visibility_stacks_in_cpp
 
     _, portdb = live_databases
-    assert_visibility_stacks_in_cpp(repository.assemble(portdb, ()), tmp_path)
+    assert_visibility_stacks_in_cpp(portdb, tmp_path)
 
 
 def test_json_covers_every_package(live_vardb, live_layer):

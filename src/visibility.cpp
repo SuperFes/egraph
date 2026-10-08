@@ -2,6 +2,7 @@
 
 #include "atom.hpp"
 #include "version.hpp"
+#include "visibility_stack.hpp"
 
 #include <algorithm>
 #include <array>
@@ -205,18 +206,24 @@ std::optional<std::size_t> best_match(const Subject& pkg,
     return best;
 }
 
+std::vector<std::string_view>
+views_of(const std::vector<SourcedToken>& tokens EGRAPH_LIFETIMEBOUND) {
+    std::vector<std::string_view> found;
+    found.reserve(tokens.size());
+    for (const auto& token : tokens) {
+        found.emplace_back(token.token);
+    }
+    return found;
+}
+
 // A package.* file as portage's dicts hold it: entries filed by cp, then the wildcard ones,
-// which an ExtendedAtomDict lookup appends.
+// which an ExtendedAtomDict lookup appends. It views keys' tokens.
 class EntryList {
   public:
-    EntryList(const RepositoryIndex& index, Range range) {
-        for (const auto& entry : index.entries_in(range)) {
-            atoms_.emplace_back(index.string(entry.atom));
-            std::vector<std::string_view> tokens;
-            for (const auto id : index.ids_in(entry.tokens)) {
-                tokens.push_back(index.string(id));
-            }
-            tokens_.push_back(std::move(tokens));
+    explicit EntryList(const std::vector<StackedKey>& keys EGRAPH_LIFETIMEBOUND) {
+        for (const auto& key : keys) {
+            atoms_.emplace_back(key.atom);
+            tokens_.push_back(views_of(key.tokens));
         }
         for (std::size_t i = 0; i < atoms_.size(); ++i) {
             if (atoms_.at(i).plain) {
@@ -270,9 +277,9 @@ class EntryList {
 // package.mask or package.unmask, as an ExtendedAtomDict of lists.
 class AtomList {
   public:
-    AtomList(const RepositoryIndex& index, Range range) {
-        for (const auto id : index.ids_in(range)) {
-            ConfigAtom atom{index.string(id)};
+    explicit AtomList(const std::vector<StackedMask>& masks) {
+        for (const auto& mask : masks) {
+            ConfigAtom atom{mask.atom};
             if (atom.plain) {
                 const auto cp = atom.cp();
                 by_cp_[std::string{cp}].push_back(std::move(atom));
@@ -485,7 +492,10 @@ bool has_conditional(std::span<const std::string_view> tokens) {
 
 struct VersionMasks::Rules {
     std::reference_wrapper<const RepositoryIndex> index;
+    // What the lists below view; Rules is never moved.
+    StackedVisibility visibility;
     std::map<std::string_view, Eapi, std::less<>> eapis;
+    // Sorted, as settings["ACCEPT_KEYWORDS"] is.
     std::vector<std::string_view> accept_keywords;
     // What an empty package.accept_keywords line in a profile accepts: the ~ form of each
     // stable keyword ACCEPT_KEYWORDS accepts.
@@ -508,19 +518,19 @@ struct VersionMasks::Rules {
     std::set<std::string_view> global_keywords;
 
     explicit Rules(const RepositoryIndex& from)
-        : index{from}, accept_keywords{strings_of(from, from.visibility.accept_keywords)},
-          environment_keywords{strings_of(from, from.visibility.environment_keywords)},
+        : index{from}, visibility{stack_visibility(from)},
+          accept_keywords{views_of(visibility.accept_keywords)},
+          environment_keywords{views_of(visibility.environment_keywords)},
           arch{from.string(from.visibility.arch)},
-          accept_keywords_entries{from, from.visibility.accept_keywords_entries},
-          masks{from, from.visibility.masks}, unmasks{from, from.visibility.unmasks},
-          accept_license{strings_of(from, from.visibility.accept_license)},
-          licenses{from, from.visibility.licenses},
-          accept_properties{strings_of(from, from.visibility.accept_properties)},
-          properties{from, from.visibility.properties},
-          accept_restrict{strings_of(from, from.visibility.accept_restrict)}, restrict {
-        from, from.visibility.restrict
+          accept_keywords_entries{visibility.accept_keywords_entries}, masks{visibility.masks},
+          unmasks{visibility.unmasks}, accept_license{views_of(visibility.accept_license)},
+          licenses{visibility.licenses}, accept_properties{views_of(visibility.accept_properties)},
+          properties{visibility.properties}, accept_restrict{views_of(visibility.accept_restrict)},
+          restrict {
+        visibility.restrict
     }
     {
+        std::ranges::sort(accept_keywords);
         for (const auto& eapi : from.visibility.eapis) {
             eapis.emplace(from.string(eapi.eapi), eapi);
         }
@@ -536,11 +546,16 @@ struct VersionMasks::Rules {
             groups.insert(groups.end(), environment_keywords.begin(), environment_keywords.end());
             global_keywords = incremental_set(groups);
         }
-        for (const auto range : from.visibility.profile_keywords) {
-            profile_keywords.emplace_back(from, range);
+        // A layer per profile node, most of them empty.
+        for (const auto& layer : visibility.profile_keywords) {
+            if (!layer.empty()) {
+                profile_keywords.emplace_back(layer);
+            }
         }
-        for (const auto range : from.visibility.profile_accept_keywords) {
-            profile_accept_keywords.emplace_back(from, range);
+        for (const auto& layer : visibility.profile_accept_keywords) {
+            if (!layer.empty()) {
+                profile_accept_keywords.emplace_back(layer);
+            }
         }
     }
 

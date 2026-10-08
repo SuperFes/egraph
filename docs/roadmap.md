@@ -1084,7 +1084,9 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
     - 18e2a (done): the ledger stacked in C++ as the managers stack it (`stack_visibility`), every
       atom and token with its entry, held to the index's net lists by the shadow binary on every
       scenario and the live system.
-    - 18e2b: `VersionMasks` reads the stack; the net lists dropped (format 6), but EAPIs and ARCH.
+    - 18e2b (done): `VersionMasks` reads the stack; the net lists dropped (format 6), but EAPIs
+      and ARCH, and kept only in the tests (`builder/tests/managers.py`) as what the stack is held
+      to. Output unchanged on the live system's 38,837 versions, at 6% more instructions.
     - 18e2c: each mask reason with the entry deciding it, shown after it as `use` shows sources.
   - 18e3: the check: an entry's effect found by stacking without it; dead, contradicted
     (overridden for everything it matches), redundant (changes nothing on its own), outside

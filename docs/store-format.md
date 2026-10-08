@@ -289,13 +289,13 @@ and ebuilds of every such cp it carries.
 ## The repository index
 
 Every version of every cp in the repositories, with what visibility is decided from: the ebuilds'
-metadata and the configuration as portage parsed it, for egraph to evaluate (`design.md`); and
+metadata and every source of the configuration, for egraph to evaluate (`design.md`); and
 the main repository's GLSAs, for egraph to match against the installed packages. It lives
 beside the installed store, named after it (`installed.egraph` → `installed.repository.egraph`),
 and is written by its own builder run (`egraph-build --repository`), as it changes with the
 repositories and the configuration rather than with the installed packages.
 
-It uses the installed store's framing with magic `EGRAPHRI` and its own format version, now 5.
+It uses the installed store's framing with magic `EGRAPHRI` and its own format version, now 6.
 
 | Id | Section | Contents |
 |---|---|---|
@@ -304,7 +304,7 @@ It uses the installed store's framing with magic `EGRAPHRI` and its own format v
 | 3 | Strings | as in the installed store |
 | 4 | Repositories | count, then `(name, location, description index)`: string ids, and 1 when emerge --search finds a `metadata/pkg_desc_index` for it (in the repository or under the dependency cache), else 0; in portage's order (`getRepositories`, the highest priority first) |
 | 5 | Versions | count, then the records below, sorted by cp, then by repository in section 4's order, then by version as `cp_list` gives them |
-| 6 | Visibility | the configuration records below |
+| 6 | Visibility | what the ledger leaves to portage, below |
 | 7 | Advisories | count, then the GLSA records below, sorted by id |
 | 8 | Visibility ledger | where each source of visibility was read from, below |
 
@@ -326,24 +326,15 @@ A version record, for each ebuild whose metadata portage could read:
    as it words each after `invalid: `; empty for a valid one. depgraph masks an invalid ebuild
    that portdb counts as visible.
 
-The visibility section holds, in order, each as portage's config parsed it:
+The visibility section holds what portage itself decides, apart from its configuration files:
 
 1. EAPIs: count, then `(eapi, supported, deprecated)` for every EAPI the versions have: the
    string id, and 1 or 0 as `eapi_is_supported` and `_eapi_is_deprecated` answer.
-2. `ACCEPT_KEYWORDS`: list of string ids; then the environment's own (`backupenv`), which keyword
-   checks stack last; then `ARCH`'s string id, which the keyword mask reasons name.
-3. The profiles' `package.keywords`: count of layers in stacking order, each an entry list; then
-   their `package.accept_keywords`, likewise; then the user's `package.accept_keywords` (and
-   `package.keywords`) as one entry list, an empty token list already the `~` keywords portage
-   defaults it to.
-4. `package.mask` and `package.unmask`: lists of atom string ids, the profiles' and
-   repositories' stacked with the user's, repository masks carrying their `::repo`.
-5. `ACCEPT_LICENSE` with its groups expanded: list of string ids; then `package.license` as an
-   entry list, groups expanded. Each list is kept as its net effect, which portage's own
-   order (a group's members come from a set) would not keep stable: the last `*` or `-*` if
-   any, then the last word on each license after it, sorted.
-6. `ACCEPT_PROPERTIES`: list of string ids; then `package.properties` as an entry list.
-7. `ACCEPT_RESTRICT`: list of string ids; then `package.accept_restrict` as an entry list.
+2. `ARCH`'s string id, which the keyword mask reasons name.
+
+egraph stacks the visibility ledger as portage's managers stack their files (`MaskManager`,
+`KeywordsManager`, `LicenseManager`, config's `ACCEPT_` variables), so that each mask reason
+can name the entry that decides it.
 
 The visibility ledger holds every source of a version's visibility entry by entry, each as the
 evaluated store's USE ledger keeps one: `(file, line, atom, var, tokens)`, the file and line it
@@ -383,10 +374,6 @@ left out):
    the arch (`*` or keywords, space-separated), then two lists of string ids, the ranges as the
    module makes them atoms (`vul_atoms`, `unaff_atoms`), leading space stripped: plain atoms,
    or `>=~`, `>~`, `<=~` and `<~` for a range over the revisions of one version.
-
-An entry list is a count, then `(atom, tokens)`: the atom's string id (a wildcard atom such as
-`*/*` included) and a list of string ids. Entries of plain cps come first, then the wildcard
-ones, each group in portage's order (`ExtendedAtomDict`), as a lookup for a cp collects them.
 
 Inputs are the evaluated store's configuration inputs, and per repository its root, layout,
 repository-wide masks and unmasks, license groups, categories and eclass directory, every category

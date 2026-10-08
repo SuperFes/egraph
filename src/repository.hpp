@@ -14,7 +14,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t repository_format_version = 5;
+inline constexpr std::uint32_t repository_format_version = 6;
 
 struct RepositoryMeta {
     std::string egraph_version;
@@ -59,29 +59,11 @@ struct Eapi {
     bool deprecated = false;
 };
 
-// A package.* line: an atom, wildcards allowed, and its tokens.
-struct ConfigEntry {
-    std::uint32_t atom = 0;
-    Range tokens;
-};
-
-// String ids and ranges of RepositoryIndex::entries, as docs/store-format.md lists them.
+// What the visibility ledger leaves to portage itself.
 struct VisibilityConfig {
     std::vector<Eapi> eapis;
-    Range accept_keywords;
-    Range environment_keywords;
+    // String id.
     std::uint32_t arch = 0;
-    std::vector<Range> profile_keywords;
-    std::vector<Range> profile_accept_keywords;
-    Range accept_keywords_entries;
-    Range masks;
-    Range unmasks;
-    Range accept_license;
-    Range licenses;
-    Range accept_properties;
-    Range properties;
-    Range accept_restrict;
-    Range restrict;
 };
 
 // A profile node's sources of visibility, ranges of RepositoryIndex::ledger_entries.
@@ -153,7 +135,6 @@ struct RepositoryIndex : Tables {
     std::vector<Input> inputs;
     std::vector<Repository> repositories;
     std::vector<IndexVersion> versions;
-    std::vector<ConfigEntry> entries;
     VisibilityConfig visibility;
     // Sorted by id.
     std::vector<Advisory> advisories;
@@ -161,7 +142,6 @@ struct RepositoryIndex : Tables {
     std::vector<LedgerEntry> ledger_entries;
     VisibilityLedger ledger;
 
-    [[nodiscard]] std::span<const ConfigEntry> entries_in(Range range) const EGRAPH_LIFETIMEBOUND;
     [[nodiscard]] std::span<const LedgerEntry>
     ledger_entries_in(Range range) const EGRAPH_LIFETIMEBOUND;
     [[nodiscard]] std::span<const AdvisoryPackage>

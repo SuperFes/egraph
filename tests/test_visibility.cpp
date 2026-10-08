@@ -12,13 +12,9 @@
 #include <utility>
 #include <vector>
 
-using egraph::Range;
-using egraph::RepositoryIndex;
 using egraph::VersionMasks;
 using egraph::test::IndexBuilder;
 using Strings = std::vector<std::string>;
-
-namespace {} // namespace
 
 TEST_CASE("keywords: stable accepted, testing and missing ones masked as portage words them") {
     IndexBuilder b;
@@ -45,20 +41,21 @@ TEST_CASE("keywords: ACCEPT_KEYWORDS' wildcards") {
     const auto testing = b.version({.cpv = "app-misc/a-1", .keywords = "~amd64"});
     const auto stable = b.version({.cpv = "app-misc/b-1", .keywords = "amd64"});
     const auto none = b.version({.cpv = "app-misc/c-1", .keywords = ""});
-    b.config().accept_keywords = b.ids("x86 ~*");
+    auto& conf = b.ledger().conf;
+    conf = b.lines({{.var = "ACCEPT_KEYWORDS", .tokens = "~*"}});
     {
         const VersionMasks masking{b.index()};
         CHECK(masking.visible(testing));
         CHECK_FALSE(masking.visible(stable));
         CHECK_FALSE(masking.visible(none));
     }
-    b.config().accept_keywords = b.ids("x86 *");
+    conf = b.lines({{.var = "ACCEPT_KEYWORDS", .tokens = "*"}});
     {
         const VersionMasks masking{b.index()};
         CHECK_FALSE(masking.visible(testing));
         CHECK(masking.visible(stable));
     }
-    b.config().accept_keywords = b.ids("x86 **");
+    conf = b.lines({{.var = "ACCEPT_KEYWORDS", .tokens = "**"}});
     CHECK(VersionMasks{b.index()}.visible(none));
 }
 
@@ -73,14 +70,14 @@ TEST_CASE("keywords: package.accept_keywords, the most specific atom last") {
     const auto wild = b.version({.cpv = "app-misc/wildcard-1", .keywords = "~x86"});
     const auto over = b.version({.cpv = "app-misc/over-1", .keywords = "~x86", .repo = "overlay"});
     const auto gentoo = b.version({.cpv = "app-misc/under-1", .keywords = "~x86"});
-    b.config().accept_keywords_entries = b.entries({
-        {"<app-misc/ranged-3", "~x86"},
-        {">=app-misc/ranged-2", "-~x86"},
-        {"=app-misc/ranged-2", "~x86"},
-        {"app-misc/slotted:2", "~x86"},
-        {"app-misc/anything", "**"},
-        {"app-misc/wild*", "~x86"},
-        {"*/*::overlay", "~x86"},
+    b.ledger().package_accept_keywords = b.lines({
+        {.atom = "<app-misc/ranged-3", .tokens = "~x86"},
+        {.atom = ">=app-misc/ranged-2", .tokens = "-~x86"},
+        {.atom = "=app-misc/ranged-2", .tokens = "~x86"},
+        {.atom = "app-misc/slotted:2", .tokens = "~x86"},
+        {.atom = "app-misc/anything", .tokens = "**"},
+        {.atom = "app-misc/wild*", .tokens = "~x86"},
+        {.atom = "*/*::overlay", .tokens = "~x86"},
     });
     const VersionMasks masking{b.index()};
     CHECK(masking.visible(one));
@@ -100,10 +97,11 @@ TEST_CASE("keywords: the profiles' package.keywords and package.accept_keywords"
     const auto keyworded = b.version({.cpv = "app-misc/keyworded-1", .keywords = "amd64"});
     const auto profiled = b.version({.cpv = "app-misc/profiled-1", .keywords = "~x86"});
     const auto unkeyworded = b.version({.cpv = "app-misc/dropped-1", .keywords = "x86"});
-    b.config().profile_keywords = {b.entries({{"app-misc/keyworded", "x86"}}),
-                                   b.entries({{"app-misc/dropped", "-x86"}})};
+    b.profile().package_keywords = b.lines({{.atom = "app-misc/keyworded", .tokens = "x86"}});
     // No tokens: the ~ form of each stable ACCEPT_KEYWORDS keyword.
-    b.config().profile_accept_keywords = {b.entries({{"app-misc/profiled", ""}})};
+    b.ledger().profiles.back().package_accept_keywords =
+        b.lines({{.atom = "app-misc/profiled", .tokens = ""}});
+    b.profile().package_keywords = b.lines({{.atom = "app-misc/dropped", .tokens = "-x86"}});
     const VersionMasks masking{b.index()};
     CHECK(masking.visible(keyworded));
     CHECK(masking.visible(profiled));
@@ -113,9 +111,34 @@ TEST_CASE("keywords: the profiles' package.keywords and package.accept_keywords"
 TEST_CASE("keywords: the environment's ACCEPT_KEYWORDS stacks last") {
     IndexBuilder b;
     const auto testing = b.version({.cpv = "app-misc/a-1", .keywords = "~x86"});
-    b.config().accept_keywords = b.ids("x86 ~x86");
-    b.config().environment_keywords = b.ids("-~x86");
+    b.ledger().conf = b.lines({{.var = "ACCEPT_KEYWORDS", .tokens = "~x86"}});
+    b.ledger().env = b.lines({{.var = "ACCEPT_KEYWORDS", .tokens = "-~x86"}});
     CHECK_FALSE(VersionMasks{b.index()}.visible(testing));
+}
+
+TEST_CASE("keywords: a mask names ARCH's keyword, or else the first accepted one's, sorted") {
+    IndexBuilder b;
+    const auto testing = b.version({.cpv = "app-misc/a-1", .keywords = "~arm"});
+    // settings["ACCEPT_KEYWORDS"] is sorted: arm before ~sparc.
+    b.ledger().conf = b.lines({{.var = "ACCEPT_KEYWORDS", .tokens = "-x86 ~sparc arm"}});
+    CHECK(VersionMasks{b.index()}.reasons(testing) == Strings{"~arm keyword"});
+}
+
+TEST_CASE("package.mask: a repository's own carries its ::repo, and the user's -atom removes it") {
+    IndexBuilder b;
+    const auto gentoo = b.version({.cpv = "app-misc/a-1"});
+    const auto overlay = b.version({.cpv = "app-misc/a-1", .repo = "overlay"});
+    const auto kept = b.version({.cpv = "app-misc/b-1"});
+    b.ledger().repositories.push_back(
+        {.name = b.string("gentoo"),
+         .masters = {},
+         .package_mask = b.lines({{.atom = "app-misc/a"}, {.atom = "app-misc/b"}}),
+         .package_unmask = {}});
+    b.ledger().package_mask = b.lines({{.atom = "-app-misc/b"}});
+    const VersionMasks masking{b.index()};
+    CHECK(masking.reasons(gentoo) == Strings{"package.mask"});
+    CHECK(masking.visible(overlay));
+    CHECK(masking.visible(kept));
 }
 
 TEST_CASE("package.mask, unless package.unmask matches too") {
@@ -126,9 +149,11 @@ TEST_CASE("package.mask, unless package.unmask matches too") {
     const auto repo = b.version({.cpv = "app-misc/repo-1"});
     const auto elsewhere = b.version({.cpv = "app-misc/repo-1", .repo = "overlay"});
     const auto future = b.version({.cpv = "app-misc/future-1", .eapi = "99"});
-    b.config().masks = b.ids(">=app-misc/masked-2 app-misc/unmasked app-misc/repo::gentoo "
-                             "app-misc/future");
-    b.config().unmasks = b.ids("app-misc/unmasked");
+    b.ledger().package_mask = b.lines({{.atom = ">=app-misc/masked-2"},
+                                       {.atom = "app-misc/unmasked"},
+                                       {.atom = "app-misc/repo::gentoo"},
+                                       {.atom = "app-misc/future"}});
+    b.ledger().package_unmask = b.lines({{.atom = "app-misc/unmasked"}});
     const VersionMasks masking{b.index()};
     CHECK(masking.visible(masked));
     CHECK(masking.reasons(newer) == Strings{"package.mask"});
@@ -163,8 +188,8 @@ TEST_CASE("licenses: refused, accepted per package, in || and under conditionals
     const auto negated = b.version({.cpv = "app-misc/neg-1", .license = "!bin? ( EULA )"});
     const auto grouped =
         b.version({.cpv = "app-misc/grouped-1", .license = "|| ( ( EULA GPL-2 ) MIT )"});
-    b.config().accept_license = b.ids("* -EULA -TEST");
-    b.config().licenses = b.entries({{"app-misc/eula-ok", "EULA"}});
+    b.ledger().conf = b.lines({{.var = "ACCEPT_LICENSE", .tokens = "* -EULA -TEST"}});
+    b.ledger().package_license = b.lines({{.atom = "app-misc/eula-ok", .tokens = "EULA"}});
     const VersionMasks masking{b.index()};
     CHECK(masking.reasons(eula) == Strings{"EULA license(s)"});
     CHECK(masking.visible(eula_ok));
@@ -180,7 +205,7 @@ TEST_CASE("licenses: -* refuses all but what follows") {
     IndexBuilder b;
     const auto gpl = b.version({.cpv = "app-misc/a-1", .license = "GPL-2"});
     const auto mit = b.version({.cpv = "app-misc/b-1", .license = "MIT"});
-    b.config().accept_license = b.ids("-* GPL-2");
+    b.ledger().conf = b.lines({{.var = "ACCEPT_LICENSE", .tokens = "-* GPL-2"}});
     const VersionMasks masking{b.index()};
     CHECK(masking.visible(gpl));
     CHECK(masking.reasons(mit) == Strings{"MIT license(s)"});
@@ -192,9 +217,9 @@ TEST_CASE("properties and restrictions refused, and accepted per package") {
     const auto fetch = b.version({.cpv = "app-misc/b-1", .restrict = "fetch mirror"});
     const auto fetch_ok = b.version({.cpv = "app-misc/c-1", .restrict = "fetch"});
     const auto conditional = b.version({.cpv = "app-misc/d-1", .restrict = "test? ( fetch )"});
-    b.config().accept_properties = b.ids("* -interactive");
-    b.config().accept_restrict = b.ids("* -fetch");
-    b.config().restrict = b.entries({{"app-misc/c", "fetch"}});
+    b.ledger().conf = b.lines({{.var = "ACCEPT_PROPERTIES", .tokens = "-interactive"},
+                               {.var = "ACCEPT_RESTRICT", .tokens = "-fetch"}});
+    b.ledger().package_accept_restrict = b.lines({{.atom = "app-misc/c", .tokens = "fetch"}});
     const VersionMasks masking{b.index()};
     CHECK(masking.reasons(interactive) == Strings{"interactive properties"});
     CHECK(masking.reasons(fetch) == Strings{"fetch in RESTRICT"});
@@ -210,10 +235,10 @@ TEST_CASE("reasons come in getmaskingstatus's order") {
                                 .license = "EULA",
                                 .properties = "interactive",
                                 .restrict = "fetch"});
-    b.config().masks = b.ids("app-misc/a");
-    b.config().accept_license = b.ids("* -EULA");
-    b.config().accept_properties = b.ids("* -interactive");
-    b.config().accept_restrict = b.ids("* -fetch");
+    b.ledger().package_mask = b.lines({{.atom = "app-misc/a"}});
+    b.ledger().conf = b.lines({{.var = "ACCEPT_LICENSE", .tokens = "-EULA"},
+                               {.var = "ACCEPT_PROPERTIES", .tokens = "-interactive"},
+                               {.var = "ACCEPT_RESTRICT", .tokens = "-fetch"}});
     CHECK(VersionMasks{b.index()}.reasons(all) == Strings{"package.mask", "EULA license(s)",
                                                           "interactive properties",
                                                           "fetch in RESTRICT", "~x86 keyword"});

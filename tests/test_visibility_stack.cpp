@@ -118,6 +118,7 @@ TEST_CASE("visibility stack: ACCEPT_ variables over their layers, license groups
 
 TEST_CASE("visibility stack: without ACCEPT_LICENSE, portage's own, from no entry") {
     IndexBuilder b;
+    b.ledger().globals = {};
     b.ledger().license_groups = b.lines({{.var = "EULA", .tokens = "a b"}});
     const auto stacked = stack_visibility(b.index());
     CHECK(tokens_of(stacked.accept_license) == Strings{"*", "-a", "-b"});
@@ -127,6 +128,7 @@ TEST_CASE("visibility stack: without ACCEPT_LICENSE, portage's own, from no entr
 TEST_CASE("visibility stack: a group met again or undefined stays as it is") {
     IndexBuilder b;
     auto& ledger = b.ledger();
+    ledger.globals = {};
     ledger.conf = b.lines({{.var = "ACCEPT_LICENSE", .tokens = "@LOOP @NONE"}});
     ledger.license_groups = b.lines({{.var = "LOOP", .tokens = "A @LOOP -B"}});
     CHECK(tokens_of(stack_visibility(b.index()).accept_license) == Strings{"@LOOP", "A", "@NONE"});

@@ -48,8 +48,8 @@ struct LedgerLine {
     std::uint32_t line = 1;
 };
 
-// A repository index on x86, ACCEPT_KEYWORDS="x86" and everything else accepted unless a test
-// says otherwise.
+// A repository index on x86, make.globals' ACCEPT_KEYWORDS="x86" and everything else accepted
+// unless a test says otherwise.
 class IndexBuilder {
   public:
     // Repositories by priority, highest first.
@@ -60,16 +60,16 @@ class IndexBuilder {
             index_.repositories.push_back({.name = intern(name), .location = intern("/")});
         }
         auto& vis = index_.visibility;
-        vis.accept_keywords = ids("x86");
         vis.arch = intern("x86");
         for (const auto* eapi : {"7", "8"}) {
             vis.eapis.push_back({.eapi = intern(eapi), .supported = true, .deprecated = false});
         }
         vis.eapis.push_back({.eapi = intern("6"), .supported = true, .deprecated = true});
         vis.eapis.push_back({.eapi = intern("99"), .supported = false, .deprecated = false});
-        vis.accept_license = ids("*");
-        vis.accept_properties = ids("*");
-        vis.accept_restrict = ids("*");
+        index_.ledger.globals = lines({{.var = "ACCEPT_KEYWORDS", .tokens = "x86"},
+                                       {.var = "ACCEPT_LICENSE", .tokens = "*"},
+                                       {.var = "ACCEPT_PROPERTIES", .tokens = "*"},
+                                       {.var = "ACCEPT_RESTRICT", .tokens = "*"}});
     }
 
     std::uint32_t version(const VersionSpec& spec) {
@@ -93,14 +93,6 @@ class IndexBuilder {
         version.homepage = intern(spec.homepage);
         index_.versions.push_back(version);
         return static_cast<std::uint32_t>(index_.versions.size() - 1);
-    }
-
-    Range entries(const std::vector<std::pair<std::string, std::string>>& lines) {
-        const auto first = static_cast<std::uint32_t>(index_.entries.size());
-        for (const auto& [atom, tokens] : lines) {
-            index_.entries.push_back({.atom = intern(atom), .tokens = ids(tokens)});
-        }
-        return {.first = first, .count = static_cast<std::uint32_t>(index_.entries.size()) - first};
     }
 
     // Ledger entries, appended in order.
@@ -148,6 +140,18 @@ class IndexBuilder {
 
     egraph::VisibilityConfig& config() { return index_.visibility; }
     egraph::VisibilityLedger& ledger() { return index_.ledger; }
+    // A profile node, appended after the others.
+    egraph::VisibilityNode& profile() {
+        return index_.ledger.profiles.emplace_back(egraph::VisibilityNode{
+            .path = intern("/profile"),
+            .defaults = {},
+            .package_mask = {},
+            .package_unmask = {},
+            .package_keywords = {},
+            .package_accept_keywords = {},
+            .package_license = {},
+        });
+    }
     std::uint32_t string(std::string_view text) { return intern(text); }
     void locate(std::string_view repository, std::string_view location) {
         const auto at = std::ranges::find(names_, repository) - names_.begin();

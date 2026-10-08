@@ -74,17 +74,6 @@ std::optional<StoreError> read_versions(std::span<const std::byte> section,
     return r.error();
 }
 
-Range read_entries(Reader& r, RepositoryIndex& index, std::uint32_t strings) {
-    const auto count = r.count();
-    const auto first = size32(index.entries.size());
-    for (std::uint32_t i = 0; i < count && r.ok(); ++i) {
-        const auto atom = r.index(strings, "string");
-        index.entries.push_back(
-            {.atom = atom, .tokens = read_ids(r, index.ids, strings, "string")});
-    }
-    return {.first = first, .count = size32(index.entries.size()) - first};
-}
-
 std::optional<StoreError> read_visibility(std::span<const std::byte> section,
                                           RepositoryIndex& index) {
     Reader r(section, "visibility");
@@ -97,24 +86,7 @@ std::optional<StoreError> read_visibility(std::span<const std::byte> section,
         eapi.deprecated = r.index(2, "deprecated") == 1;
         vis.eapis.push_back(eapi);
     }
-    vis.accept_keywords = read_ids(r, index.ids, strings, "string");
-    vis.environment_keywords = read_ids(r, index.ids, strings, "string");
     vis.arch = r.index(strings, "string");
-    for (auto* layers : {&vis.profile_keywords, &vis.profile_accept_keywords}) {
-        const auto count = r.count();
-        for (std::uint32_t i = 0; i < count && r.ok(); ++i) {
-            layers->push_back(read_entries(r, index, strings));
-        }
-    }
-    vis.accept_keywords_entries = read_entries(r, index, strings);
-    vis.masks = read_ids(r, index.ids, strings, "string");
-    vis.unmasks = read_ids(r, index.ids, strings, "string");
-    for (auto [accepted, entries] : {std::pair{&vis.accept_license, &vis.licenses},
-                                     std::pair{&vis.accept_properties, &vis.properties},
-                                     std::pair{&vis.accept_restrict, &vis.restrict}}) {
-        *accepted = read_ids(r, index.ids, strings, "string");
-        *entries = read_entries(r, index, strings);
-    }
     r.finish();
     return r.error();
 }
@@ -204,10 +176,6 @@ std::optional<StoreError> read_visibility_ledger(std::span<const std::byte> sect
 
 std::span<const LedgerEntry> RepositoryIndex::ledger_entries_in(Range range) const {
     return std::span{ledger_entries}.subspan(range.first, range.count);
-}
-
-std::span<const ConfigEntry> RepositoryIndex::entries_in(Range range) const {
-    return std::span{entries}.subspan(range.first, range.count);
 }
 
 std::span<const AdvisoryPackage> RepositoryIndex::packages_in(Range range) const {

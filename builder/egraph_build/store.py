@@ -14,7 +14,6 @@ from egraph_build.repository import (
     Advisory,
     AdvisoryPackage,
     Eapi,
-    Entry,
     Repository,
     RepositoryIndex,
     Version,
@@ -66,7 +65,7 @@ EVALUATED_SECTIONS = (
 )
 
 REPOSITORY_MAGIC = b"EGRAPHRI"
-REPOSITORY_FORMAT_VERSION = 5
+REPOSITORY_FORMAT_VERSION = 6
 (
     SECTION_REPOSITORIES,
     SECTION_VERSIONS,
@@ -531,13 +530,6 @@ def encode_evaluated(layer, meta, inputs=()):
     )
 
 
-def _write_entries(w, entries, strings):
-    w.varint(len(entries))
-    for entry in entries:
-        w.varint(strings(entry.atom))
-        w.ids([strings(token) for token in entry.tokens])
-
-
 def encode_repository(index, meta, inputs=()):
     """The repository index bytes for a RepositoryIndex, its RepositoryMeta and its Inputs."""
     strings = _Strings()
@@ -580,23 +572,7 @@ def encode_repository(index, meta, inputs=()):
         w.varint(strings(eapi.eapi))
         w.varint(int(eapi.supported))
         w.varint(int(eapi.deprecated))
-    for values in (vis.accept_keywords, vis.environment_keywords):
-        w.ids([strings(value) for value in values])
     w.varint(strings(vis.arch))
-    for layers in (vis.profile_keywords, vis.profile_accept_keywords):
-        w.varint(len(layers))
-        for layer in layers:
-            _write_entries(w, layer, strings)
-    _write_entries(w, vis.accept_keywords_entries, strings)
-    for atoms in (vis.masks, vis.unmasks):
-        w.ids([strings(atom) for atom in atoms])
-    for accepted, entries in (
-        (vis.accept_license, vis.licenses),
-        (vis.accept_properties, vis.properties),
-        (vis.accept_restrict, vis.restrict),
-    ):
-        w.ids([strings(value) for value in accepted])
-        _write_entries(w, entries, strings)
     sections[SECTION_VISIBILITY] = w.out
 
     w = _Writer()
@@ -979,18 +955,15 @@ def decode_repository(data):
         def listed():
             return tuple(strings[i] for i in r.ids(nstrings))
 
-        def entries():
-            return tuple(Entry(s(), listed()) for _ in range(r.count()))
+        return r, s, listed
 
-        return r, s, listed, entries
-
-    r, s, _, _ = reader(SECTION_REPOSITORIES, "repositories")
+    r, s, _ = reader(SECTION_REPOSITORIES, "repositories")
     repositories = tuple(
         Repository(s(), s(), bool(r.varint(2))) for _ in range(r.count())
     )
     r.done()
 
-    r, s, listed, _ = reader(SECTION_VERSIONS, "versions")
+    r, s, listed = reader(SECTION_VERSIONS, "versions")
     versions = []
     for _ in range(r.count()):
         cp, cpv, slot, sub_slot, eapi = (s() for _ in range(5))
@@ -1018,35 +991,14 @@ def decode_repository(data):
         )
     r.done()
 
-    r, s, listed, entries = reader(SECTION_VISIBILITY, "visibility")
+    r, s, _ = reader(SECTION_VISIBILITY, "visibility")
     eapis = tuple(
         Eapi(s(), bool(r.varint(2)), bool(r.varint(2))) for _ in range(r.count())
     )
-    accept_keywords, environment_keywords, arch = listed(), listed(), s()
-    profile_keywords, profile_accept_keywords = (
-        tuple(entries() for _ in range(r.count())) for _ in range(2)
-    )
-    accept_keywords_entries = entries()
-    masks, unmasks = listed(), listed()
-    accepted = []
-    for _ in range(3):
-        accepted.append(listed())
-        accepted.append(entries())
+    visibility = Visibility(eapis, s())
     r.done()
-    visibility = Visibility(
-        eapis,
-        accept_keywords,
-        environment_keywords,
-        arch,
-        profile_keywords,
-        profile_accept_keywords,
-        accept_keywords_entries,
-        masks,
-        unmasks,
-        *accepted,
-    )
 
-    r, s, listed, _ = reader(SECTION_ADVISORIES, "advisories")
+    r, s, listed = reader(SECTION_ADVISORIES, "advisories")
     advisories = []
     for _ in range(r.count()):
         nr, title, synopsis = s(), s(), s()

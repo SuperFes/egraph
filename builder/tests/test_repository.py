@@ -1,12 +1,14 @@
-"""The repository index: every version as portage reads it, and its visibility configuration."""
+"""The repository index: every version as portage reads it, and what visibility is decided from."""
 
 import os
 import shutil
 
 import portage
+import managers
 import pytest
 from conftest import portdb
 from test_build import fresh_databases
+from test_ledger import stacked_in_cpp
 
 from egraph_build import __version__, build, repository, store
 
@@ -51,37 +53,36 @@ def test_the_index_round_trips(scenario):
     )
 
 
-def test_the_configuration_as_portage_parsed_it(playgrounds):
-    index = repository.read(portdb(playgrounds("visibility")))
-    vis = index.visibility
-    assert vis.accept_keywords == ("x86",)
-    assert vis.eapis == (
+def test_the_configuration_stacks_as_portage_parsed_it(playgrounds, tmp_path):
+    db = portdb(playgrounds("visibility"))
+    assert repository.read(db).visibility.eapis == (
         repository.Eapi("8", True, False),
         repository.Eapi("99", False, False),
     )
-    assert vis.profile_keywords == (
-        (repository.Entry("app-misc/keyworded", ("x86",)),),
-    )
-    assert vis.profile_accept_keywords == (
-        (repository.Entry("app-misc/profiled", ("~x86",)),),
-    )
-    # An empty token list is portage's ~arch default already; wildcards come last.
-    entries = vis.accept_keywords_entries
-    assert entries[0] == repository.Entry("app-misc/accepted", ("~x86",))
-    assert entries[-2:] == (
-        repository.Entry("app-misc/wild*", ("~x86",)),
-        repository.Entry("*/*::overlay", ("~x86",)),
-    )
-    assert "app-misc/masked" in vis.masks
-    assert "app-misc/profile-masked" in vis.masks
-    assert "app-misc/repo-masked::test_repo" in vis.masks
-    assert vis.unmasks == ("app-misc/unmasked",)
+    vis = stacked_in_cpp(db, tmp_path)
+    assert vis["accept_keywords"] == ["x86"]
+    assert vis["profile_keywords"] == [
+        [{"atom": "app-misc/keyworded", "tokens": ["x86"]}]
+    ]
+    assert vis["profile_accept_keywords"] == [
+        [{"atom": "app-misc/profiled", "tokens": ["~x86"]}]
+    ]
+    # An empty token list is portage's ~arch default; wildcards come last.
+    entries = vis["accept_keywords_entries"]
+    assert entries[0] == {"atom": "app-misc/accepted", "tokens": ["~x86"]}
+    assert entries[-2:] == [
+        {"atom": "app-misc/wild*", "tokens": ["~x86"]},
+        {"atom": "*/*::overlay", "tokens": ["~x86"]},
+    ]
+    assert "app-misc/masked" in vis["masks"]
+    assert "app-misc/profile-masked" in vis["masks"]
+    assert "app-misc/repo-masked::test_repo" in vis["masks"]
+    assert vis["unmasks"] == ["app-misc/unmasked"]
     # Groups expanded: @EULA holds TEST.
-    assert vis.accept_license == ("*", "-EULA", "-TEST")
-
-    assert vis.licenses == (repository.Entry("app-misc/eula-ok", ("EULA",)),)
-    assert vis.accept_properties == ("*", "-interactive")
-    assert vis.accept_restrict == ("*", "-fetch")
+    assert vis["accept_license"] == ["*", "-EULA", "-TEST"]
+    assert vis["licenses"] == [{"atom": "app-misc/eula-ok", "tokens": ["EULA"]}]
+    assert vis["accept_properties"] == ["*", "-interactive"]
+    assert vis["accept_restrict"] == ["*", "-fetch"]
 
 
 def test_use_only_where_license_or_properties_tests_it(playgrounds):
@@ -92,11 +93,11 @@ def test_use_only_where_license_or_properties_tests_it(playgrounds):
     assert use["app-misc/stable-1"] == ()
 
 
-def test_licenses_are_kept_as_their_net_effect():
-    net = repository._net
-    assert net(("A", "-B", "*", "-C", "D", "C")) == ("*", "C", "D")
-    assert net(("-*", "B", "-B", "A")) == ("-*", "-B", "A")
-    assert net(("B", "A", "-A")) == ("-A", "B")
+def test_licenses_are_compared_as_their_net_effect():
+    net = managers.net
+    assert net(("A", "-B", "*", "-C", "D", "C")) == ["*", "C", "D"]
+    assert net(("-*", "B", "-B", "A")) == ["-*", "-B", "A"]
+    assert net(("B", "A", "-A")) == ["-A", "B"]
 
 
 @pytest.fixture
@@ -162,10 +163,9 @@ def test_a_configuration_change_reads_no_metadata_again(repository_playground):
     result = rebuilt(repository_playground, previous)
     assert not result.full
     assert result.reread == frozenset()
-    assert (
-        repository.Entry("app-misc/testing", ("~x86",))
-        in result.index.visibility.accept_keywords_entries
-    )
+    assert ("app-misc/testing", ("~x86",)) in [
+        (e.atom, e.tokens) for e in result.index.ledger.package_accept_keywords
+    ]
 
 
 def test_a_user_license_group_change_is_read(repository_playground):

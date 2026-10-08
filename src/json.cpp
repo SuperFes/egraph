@@ -453,31 +453,6 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
 
 namespace {
 
-void write_entries(std::ostream& out, const RepositoryIndex& index, Range range) {
-    out << '[';
-    bool first = true;
-    for (const auto& entry : index.entries_in(range)) {
-        out << (first ? "{\"atom\":" : ",{\"atom\":");
-        first = false;
-        write_string(out, index, entry.atom);
-        out << ",\"tokens\":";
-        write_string_list(out, index, entry.tokens);
-        out << '}';
-    }
-    out << ']';
-}
-
-void write_layers(std::ostream& out, const RepositoryIndex& index, std::span<const Range> layers) {
-    out << '[';
-    bool first = true;
-    for (const auto layer : layers) {
-        out << (first ? "" : ",");
-        first = false;
-        write_entries(out, index, layer);
-    }
-    out << ']';
-}
-
 void write_visibility_ledger(std::ostream& out, const RepositoryIndex& index) {
     const auto& ledger = index.ledger;
     const auto entries = [&](std::string_view key, Range range, bool first = false) {
@@ -558,7 +533,7 @@ void write_repository_json(std::ostream& out, const RepositoryIndex& index) {
         write_string(out, index, advisory.title);
         out << '}';
     }
-    out << R"(],"format":5,"ledger":)";
+    out << R"(],"format":6,"ledger":)";
     write_visibility_ledger(out, index);
     out << R"(,"repositories":[)";
     first = true;
@@ -607,17 +582,7 @@ void write_repository_json(std::ostream& out, const RepositoryIndex& index) {
         out << '}';
     }
     const auto& vis = index.visibility;
-    out << R"(],"visibility":{"accept_keywords":)";
-    write_string_list(out, index, vis.accept_keywords);
-    out << ",\"accept_keywords_entries\":";
-    write_entries(out, index, vis.accept_keywords_entries);
-    out << ",\"accept_license\":";
-    write_string_list(out, index, vis.accept_license);
-    out << ",\"accept_properties\":";
-    write_string_list(out, index, vis.accept_properties);
-    out << ",\"accept_restrict\":";
-    write_string_list(out, index, vis.accept_restrict);
-    out << ",\"arch\":";
+    out << R"(],"visibility":{"arch":)";
     write_string(out, index, vis.arch);
     out << ",\"eapis\":[";
     first = true;
@@ -628,23 +593,7 @@ void write_repository_json(std::ostream& out, const RepositoryIndex& index) {
         write_string(out, index, eapi.eapi);
         out << ",\"supported\":" << (eapi.supported ? "true" : "false") << '}';
     }
-    out << "],\"environment_keywords\":";
-    write_string_list(out, index, vis.environment_keywords);
-    out << ",\"licenses\":";
-    write_entries(out, index, vis.licenses);
-    out << ",\"masks\":";
-    write_string_list(out, index, vis.masks);
-    out << ",\"profile_accept_keywords\":";
-    write_layers(out, index, vis.profile_accept_keywords);
-    out << ",\"profile_keywords\":";
-    write_layers(out, index, vis.profile_keywords);
-    out << ",\"properties\":";
-    write_entries(out, index, vis.properties);
-    out << ",\"restrict\":";
-    write_entries(out, index, vis.restrict);
-    out << ",\"unmasks\":";
-    write_string_list(out, index, vis.unmasks);
-    out << "}}\n";
+    out << "]}}\n";
 }
 
 std::string package_json(const Store& store, const Package& pkg) {

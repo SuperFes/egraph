@@ -471,6 +471,13 @@ process including load and the freshness check of 2,575 inputs.
   matched against every version. Filing the atoms by cp and keeping the global accept lists'
   net effect, copied only for a package a package.* line names: 72 ms, 0.75 G instructions,
   the load and the output included. All 38,544 agree with portage.
+- Evaluated from the visibility ledger, stacked in C++ at every load instead of read as
+  portage's net lists (repository index format 6), on 38,837 versions with output unchanged:
+  0.78 G instructions against 0.74 G, the stacking's 41 M (8 repositories, 344 repository and
+  33 profile masks) the whole difference, of which the mask stack's linear lookups are 12 M;
+  `egraph versions python` 0.26 G against 0.22 G. At first 0.95 G: the stack keeps a
+  package.keywords layer per profile node, and looking each empty one up for every version
+  cost 170 M until empty layers were dropped.
 - An incremental `egraph-build --repository` with nothing changed: 1.8 s (interpreter and
   portage start-up, 9,139 stats, the previous index decoded), against 15.7 s for a full one.
 - Depgraph's validity check (`masks.invalid_ebuild`) on every ebuild: 0 of 38,544 invalid on
