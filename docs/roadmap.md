@@ -1028,6 +1028,28 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
 - Configuration that does nothing: entries for packages not installed or flags outside IUSE,
   keywords already stable, masks matching nothing, entries that contradict each other.
 
+Decided with the user (2026-10-07): the configuration's entries are stored, with their file and
+line, and stacked in C++ (shadowed against the USE portage computes), so answers are instant and
+serve the interface and step 19 alike; `egraph use <pkg> [flag]` and `egraph config check`; an
+entry matching nothing in any repository is dead, one matching only packages not installed is
+listed apart, more quietly; watch keeps one `config` notice counting the findings.
+
+- 18a: the USE ledger in the evaluated store: every source of a flag's state as entries (layer,
+  file, line, atom or none, tokens), read with portage's own loaders: each profile node's
+  `make.defaults` (USE and its USE_EXPAND variables, expanded), `use.*` and `package.use.*` in
+  the profiles and the repositories, `make.conf`, the user's `package.use`, the environment;
+  per candidate its IUSE defaults; `USE_ORDER`, the incremental USE_EXPAND variables and ARCH.
+  Held entry for entry to UseManager's and config's own lists.
+- 18b: extended atoms in the C++ matcher (`*/*`, `cat/*`, `*/pkg`, `::repo`, `=cpv*`), held to
+  portage's matching in `test_match`, and `best_match_to_list`'s order of specificity.
+- 18c: the stacking in C++: per candidate, each flag's final state and the entries that set it,
+  shadowed against every candidate's USE and forced flags, on every scenario and the live system.
+- 18d: `egraph use <pkg> [flag]`: each flag's state and its stack, `file:line` per step.
+- 18e: `egraph config check`: entries matching nothing (dead) or nothing installed, flags outside
+  the IUSE of all they match, keywords accepted without the entry, masks and unmasks that change
+  nothing, entries contradicting each other; the other `package.*` files join the ledger.
+- 18f: the `config` notice from watch, its count of findings; enter opens the check.
+
 ## 19. What-if
 
 Flags and `package.env` toggled in the app, per package or globally, the plan shown changing.
