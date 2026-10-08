@@ -114,6 +114,24 @@ std::string_view Tables::string(std::uint32_t id) const {
     return std::string_view{pool}.substr(range.first, range.count);
 }
 
+Interner::Interner(Tables& tables) : tables_(&tables) {
+    for (std::uint32_t id = 0; id < tables.strings.size(); ++id) {
+        ids_.try_emplace(std::string{tables.string(id)}, id);
+    }
+}
+
+std::uint32_t Interner::operator()(const std::string& text) {
+    if (const auto found = ids_.find(text); found != ids_.end()) {
+        return found->second;
+    }
+    auto& tables = *tables_;
+    const auto id = size32(tables.strings.size());
+    tables.strings.push_back({.first = size32(tables.pool.size()), .count = size32(text.size())});
+    tables.pool += text;
+    ids_.emplace(text, id);
+    return id;
+}
+
 std::span<const std::uint32_t> Tables::ids_in(Range range) const {
     return std::span{ids}.subspan(range.first, range.count);
 }

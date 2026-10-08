@@ -136,6 +136,7 @@ egraph_lib = static_library(
   'src/version.cpp',
   'src/visibility.cpp',
   'src/watch.cpp',
+  'src/what_if.cpp',
   build_info_hpp,
   dependencies: [cli11, json, notcurses, libsystemd, sd_bus],
 )
@@ -358,6 +359,7 @@ unit_tests = executable(
   'tests/test_visibility.cpp',
   'tests/test_visibility_stack.cpp',
   'tests/test_watch.cpp',
+  'tests/test_what_if.cpp',
   dependencies: [egraph_dep, catch2],
   cpp_args: '-DEGRAPH_SOURCE_DIR="' + meson.project_source_root() + '"',
 )

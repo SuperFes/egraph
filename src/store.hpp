@@ -9,6 +9,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #if defined(__clang__)
@@ -156,6 +157,19 @@ struct Tables {
     [[nodiscard]] std::span<const std::uint32_t> ids_in(Range range) const EGRAPH_LIFETIMEBOUND;
     [[nodiscard]] std::span<const Node> nodes_in(Range range) const EGRAPH_LIFETIMEBOUND;
     [[nodiscard]] std::span<const StringPair> pairs_in(Range range) const EGRAPH_LIFETIMEBOUND;
+};
+
+// Appends strings to a table, each once; ids already in it stay as they are.
+class Interner {
+  public:
+    explicit Interner(Tables& tables EGRAPH_KEPT_BY_THIS);
+
+    std::uint32_t operator()(const std::string& text);
+
+  private:
+    // Never null; the table outlives the interner.
+    Tables* tables_;
+    std::unordered_map<std::string, std::uint32_t> ids_;
 };
 
 // A decoded store. Every id and Range in it was checked against its table by decode().

@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <set>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 namespace egraph {
@@ -17,33 +16,6 @@ namespace {
 std::uint32_t size32(std::size_t size) {
     return static_cast<std::uint32_t>(size);
 }
-
-// Appends strings to a table, each once.
-class Interner {
-  public:
-    explicit Interner(Tables& tables) : tables_(tables) {
-        for (std::uint32_t id = 0; id < tables.strings.size(); ++id) {
-            ids_.try_emplace(std::string{tables.string(id)}, id);
-        }
-    }
-
-    std::uint32_t operator()(const std::string& text) {
-        if (const auto found = ids_.find(text); found != ids_.end()) {
-            return found->second;
-        }
-        auto& tables = tables_.get();
-        const auto id = size32(tables.strings.size());
-        tables.strings.push_back(
-            {.first = size32(tables.pool.size()), .count = size32(text.size())});
-        tables.pool += text;
-        ids_.emplace(text, id);
-        return id;
-    }
-
-  private:
-    std::reference_wrapper<Tables> tables_;
-    std::unordered_map<std::string, std::uint32_t> ids_;
-};
 
 // The installed packages the node's atom matches, a blocker's without its "!"s.
 std::vector<std::uint32_t> installed_matches(const Store& installed, const ReducedNode& node) {
