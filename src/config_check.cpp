@@ -1,6 +1,7 @@
 #include "config_check.hpp"
 
 #include "atom.hpp"
+#include "use_stack.hpp"
 #include "version.hpp"
 
 #include <algorithm>
@@ -8,6 +9,7 @@
 #include <map>
 #include <optional>
 #include <tuple>
+#include <unordered_map>
 
 namespace egraph {
 
@@ -82,6 +84,54 @@ std::optional<Version> version_in(std::string_view cpv, std::string_view cp) {
 // The user's own profile node, as portage adds it after the profiles.
 bool user_profile(std::string_view path) {
     return path.ends_with("/etc/portage/profile") || path.ends_with("/etc/portage/profile/");
+}
+
+// The user's package.use entries, as indices into Evaluated::ledger_entries.
+std::vector<std::uint32_t> user_use_entries(const Evaluated& evaluated) {
+    std::vector<std::uint32_t> found;
+    const auto take = [&](Range range) {
+        for (std::uint32_t i = 0; i < range.count; ++i) {
+            const auto& entry = evaluated.ledger_entries.at(range.first + i);
+            if (entry.atom != 0 && evaluated.string(entry.var) == "USE") {
+                found.push_back(range.first + i);
+            }
+        }
+    };
+    take(evaluated.ledger.conf);
+    take(evaluated.ledger.package_use);
+    for (const auto& node : evaluated.ledger.profiles) {
+        if (user_profile(evaluated.string(node.path))) {
+            for (const auto range : node.sources) {
+                take(range);
+            }
+        }
+    }
+    return found;
+}
+
+// What set a step, for a finding on a line of file: "line N" within it, "file:line" in another,
+// else the layer.
+std::string step_source(const Evaluated& evaluated, const UseStep& step, std::string_view file) {
+    if (step.entry) {
+        const auto& entry = evaluated.ledger_entries.at(*step.entry);
+        const auto where = evaluated.string(entry.file);
+        if (where == file && entry.line != 0) {
+            return std::format("line {}", entry.line);
+        }
+        if (!where.empty()) {
+            return entry.line == 0 ? std::string{where} : std::format("{}:{}", where, entry.line);
+        }
+    }
+    switch (step.layer) {
+    case UseLayer::pkginternal:
+        return "its IUSE default";
+    case UseLayer::env:
+        return "the environment";
+    case UseLayer::arch:
+        return "ARCH";
+    default:
+        return std::string{layer_name(step.layer)};
+    }
 }
 
 } // namespace
@@ -197,10 +247,154 @@ std::vector<Finding> unmatched_entries(std::span<const UserEntry> entries, const
     return found;
 }
 
+std::vector<Finding> use_findings(const Store& installed, const Evaluated& evaluated) {
+    const UseStacker stacker(installed, evaluated);
+    std::unordered_map<std::string, std::vector<std::uint32_t>> by_cp;
+    for (std::uint32_t id = 0; id < evaluated.candidates.size(); ++id) {
+        by_cp[std::string{evaluated.string(evaluated.candidates.at(id).cp)}].push_back(id);
+    }
+    std::unordered_map<std::uint32_t, StackedUse> stacked;
+    const auto stack_of = [&](std::uint32_t id) -> const StackedUse& {
+        auto found = stacked.find(id);
+        if (found == stacked.end()) {
+            found = stacked.emplace(id, stacker.stack(evaluated.candidates.at(id))).first;
+        }
+        return found->second;
+    };
+    std::vector<Finding> found;
+    for (const auto index : user_use_entries(evaluated)) {
+        const auto& entry = evaluated.ledger_entries.at(index);
+        const auto text = evaluated.string(entry.atom);
+        const auto atom = parse_config_atom(text);
+        if (!atom) {
+            continue;
+        }
+        std::vector<std::uint32_t> matched;
+        const auto visit = [&](const std::vector<std::uint32_t>& ids) {
+            for (const auto id : ids) {
+                const auto& candidate = evaluated.candidates.at(id);
+                const auto cp = evaluated.string(candidate.cp);
+                const auto cpv = evaluated.string(candidate.cpv);
+                const auto version = version_in(cpv, cp);
+                if (version && matches(*atom, cp, *version, evaluated.string(candidate.slot),
+                                       evaluated.string(candidate.sub_slot),
+                                       evaluated.string(candidate.repo))) {
+                    matched.push_back(id);
+                }
+            }
+        };
+        if (atom->cp.contains('*')) {
+            for (const auto& [cp, ids] : by_cp) {
+                visit(ids);
+            }
+        } else if (const auto hit = by_cp.find(atom->cp); hit != by_cp.end()) {
+            visit(hit->second);
+        }
+        if (matched.empty()) {
+            continue;
+        }
+        const auto file = evaluated.string(entry.file);
+        std::uint32_t position = 0;
+        for (const auto id : evaluated.ids_in(entry.tokens)) {
+            const auto omitted = UseStacker::Omitted{.entry = index, .position = position++};
+            const std::string token{evaluated.string(id)};
+            if (token.contains('*')) {
+                continue;
+            }
+            const auto flag = token.starts_with('-') ? token.substr(1) : token;
+            // Over the ebuilds it matches whose IUSE has the flag: whether it changes anything for
+            // one, and else why not, overridden where it stands for each (contradicted) or not.
+            bool inside = false;
+            std::optional<std::string> already;
+            std::optional<std::string> overridden;
+            bool effective = false;
+            for (const auto candidate_id : matched) {
+                const auto& candidate = evaluated.candidates.at(candidate_id);
+                if (!has_flag(installed, evaluated, candidate, flag)) {
+                    continue;
+                }
+                const auto& with = stack_of(candidate_id);
+                const auto steps = with.steps.find(flag);
+                if (steps == with.steps.end()) {
+                    continue;
+                }
+                const auto& list = steps->second;
+                const auto own = std::ranges::find_last_if(list, [&](const UseStep& step) {
+                                     return step.entry == index;
+                                 }).begin();
+                if (own == list.end()) {
+                    continue;
+                }
+                inside = true;
+                if (own->changed) {
+                    const auto without = stacker.stack(candidate, omitted);
+                    const auto state = [&](const StackedUse& use) {
+                        return std::pair{std::ranges::binary_search(use.use, flag),
+                                         std::ranges::binary_search(use.forced, flag)};
+                    };
+                    if (state(with) != state(without)) {
+                        effective = true;
+                        break;
+                    }
+                }
+                if (list.back().enabled != own->enabled) {
+                    if (!overridden) {
+                        const auto later =
+                            std::find_if(own + 1, list.end(), [&](const UseStep& step) {
+                                return step.enabled != own->enabled;
+                            });
+                        overridden = std::format("{} overrides it for everything it matches",
+                                                 step_source(evaluated, *later, file));
+                    }
+                } else if (!already && !own->changed) {
+                    const auto before = std::ranges::find_last_if(
+                        list.begin(), own, [&](const UseStep& step) { return step.changed; });
+                    already = std::format(
+                        "already {}{}", own->enabled ? "on" : "off",
+                        before.begin() == own
+                            ? std::string{}
+                            : std::format(" ({})", step_source(evaluated, *before.begin(), file)));
+                } else if (!already) {
+                    const auto again = std::find_if(own + 1, list.end(), [&](const UseStep& step) {
+                        return step.enabled == own->enabled;
+                    });
+                    already =
+                        again == list.end()
+                            ? std::string{"changes nothing"}
+                            : std::format("{} sets it too", step_source(evaluated, *again, file));
+                }
+            }
+            if (effective) {
+                continue;
+            }
+            Finding finding{.kind = FindingKind::no_effect,
+                            .file = std::string{file},
+                            .line = entry.line,
+                            .atom = std::string{text},
+                            .token = token};
+            if (!inside) {
+                finding.message = "not in the IUSE of anything it matches";
+            } else if (already) {
+                finding.message = std::move(*already);
+            } else if (overridden) {
+                finding.kind = FindingKind::contradicted;
+                finding.message = std::move(*overridden);
+            } else {
+                continue;
+            }
+            found.push_back(std::move(finding));
+        }
+    }
+    return found;
+}
+
 std::vector<Finding> check_config(const Store& installed, const Evaluated& evaluated,
                                   const RepositoryIndex& index) {
     const auto entries = user_entries(evaluated, index);
     auto found = unmatched_entries(entries, installed, index);
+    auto use = use_findings(installed, evaluated);
+    found.insert(found.end(), std::make_move_iterator(use.begin()),
+                 std::make_move_iterator(use.end()));
     order_findings(found);
     return found;
 }

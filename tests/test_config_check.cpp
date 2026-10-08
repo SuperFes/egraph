@@ -2,6 +2,7 @@
 
 #include "index_builder.hpp"
 #include "system_builder.hpp"
+#include "use_ledger_builder.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -91,4 +92,89 @@ TEST_CASE("an entry matching nothing is dead, one matching nothing installed a n
                        "9 dead matches nothing in any repository",
                        "11 dead is not an atom portage reads",
                    });
+}
+
+namespace {
+
+// use_findings' records over candidates and a USE ledger, every package.use line in "/pu".
+std::vector<std::string> use_records(std::vector<egraph::test::Available> available,
+                                     const egraph::test::UseSpec& spec,
+                                     const std::vector<egraph::test::OwnLayers>& own = {}) {
+    auto system = egraph::test::make_system({}, std::move(available));
+    auto& ev = system.evaluated;
+    egraph::test::set_ledger(ev, spec);
+    egraph::test::Interner intern(ev);
+    for (const auto& layers : own) {
+        for (auto& candidate : ev.candidates) {
+            if (ev.string(candidate.cpv) == layers.cpv) {
+                candidate.internal =
+                    egraph::test::ids_of(ev, intern, egraph::test::detail::tokens(layers.internal));
+            }
+        }
+    }
+    std::vector<std::string> records;
+    for (const auto& finding : egraph::use_findings(system.store, ev)) {
+        records.push_back(egraph::finding_record(finding));
+    }
+    return records;
+}
+
+} // namespace
+
+TEST_CASE("a flag outside IUSE, already set so, or set back later does nothing") {
+    const egraph::test::UseSpec spec{
+        .profiles = {{{"use.force",
+                       {{.file = "/p/use.force", .line = 3, .tokens = "w"},
+                        {.file = "/p/use.force", .line = 4, .tokens = "v"}}}}},
+        .package_use = {{.file = "/pu", .line = 1, .atom = "cat/a", .tokens = "nope x -y z"},
+                        {.file = "/pu", .line = 2, .atom = "cat/a", .tokens = "y -w"},
+                        {.file = "/pu", .line = 3, .atom = "cat/a", .tokens = "z"},
+                        {.file = "/pu", .line = 4, .atom = "cat/gone", .tokens = "x"},
+                        {.file = "/pu", .line = 5, .atom = "cat/a", .tokens = "-v"}}};
+    const auto records = use_records({{.cpv = "cat/a-1", .iuse = "x y z w v"}}, spec,
+                                     {{.cpv = "cat/a-1", .internal = "x y w"}});
+    CHECK(records ==
+          std::vector<std::string>{
+              "/pu\t1\twarning\tno-effect\tcat/a\tnope\tnot in the IUSE of anything it matches",
+              "/pu\t1\twarning\tno-effect\tcat/a\tx\talready on (its IUSE default)",
+              "/pu\t1\terror\tcontradicted\tcat/a\t-y\tline 2 overrides it for everything it "
+              "matches",
+              "/pu\t1\twarning\tno-effect\tcat/a\tz\tline 3 sets it too",
+              "/pu\t2\terror\tcontradicted\tcat/a\t-w\t/p/use.force:3 overrides it for "
+              "everything it matches",
+              "/pu\t3\twarning\tno-effect\tcat/a\tz\talready on (line 1)",
+              // Off already where it stands, but forced on after.
+              "/pu\t5\terror\tcontradicted\tcat/a\t-v\t/p/use.force:4 overrides it for "
+              "everything it matches",
+          });
+}
+
+TEST_CASE("a flag that changes anything it matches is no finding, versions apart") {
+    const egraph::test::UseSpec spec{
+        .package_use = {{.file = "/pu", .line = 1, .atom = "cat/a", .tokens = "x"},
+                        {.file = "/pu", .line = 2, .atom = ">=cat/a-2", .tokens = "-x"}}};
+    // Line 1 is undone for 2 alone; it still sets x for 1.
+    CHECK(use_records({{.cpv = "cat/a-1", .iuse = "x"}, {.cpv = "cat/a-2", .iuse = "x"}}, spec)
+              .empty());
+}
+
+TEST_CASE("a token after -* in its own line counts on its own") {
+    const egraph::test::UseSpec spec{
+        .use_expand = {"TARGETS"},
+        .profiles = {{{"make.defaults", {{.file = "/md", .var = "TARGETS", .tokens = "x"}}}}},
+        .package_use = {
+            {.file = "/pu", .line = 1, .atom = "cat/a", .tokens = "-targets_* targets_x"}}};
+    CHECK(use_records({{.cpv = "cat/a-1", .iuse = "targets_x targets_y"}}, spec).empty());
+}
+
+TEST_CASE("the user profile's package.use counts, other profiles' do not") {
+    const egraph::test::UseSpec spec{
+        .profiles =
+            {{{"package.use", {{.file = "/p/package.use", .atom = "cat/a", .tokens = "no"}}}},
+             {{"package.use",
+               {{.file = "/etc/portage/profile/package.use", .atom = "cat/a", .tokens = "nope"}}}}},
+        .profile_paths = {"/var/db/repos/gentoo/profiles/default", "/etc/portage/profile"}};
+    CHECK(use_records({{.cpv = "cat/a-1", .iuse = "x"}}, spec) ==
+          std::vector<std::string>{"/etc/portage/profile/package.use\t1\twarning\tno-effect\tcat/"
+                                   "a\tnope\tnot in the IUSE of anything it matches"});
 }

@@ -1106,8 +1106,13 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
       parsing), not installed matching no installed package's cp. Held to portage's
       `match_from_list` over every ebuild and installed package, line by line, on every
       scenario and the live system (13 dead and 10 not installed here, in 0.5 s).
-    - 18e3c: USE: flags outside IUSE, entries changing nothing (stacked without them),
-      contradicted ones.
+    - 18e3c (done): USE: each flag of the user's `package.use` lines (their `*/*` lines and
+      the user profile's files too) over the ebuilds of installed cps it matches, stacked
+      without that one token (`UseStacker::stack`'s `Omitted`): outside the IUSE of them all,
+      or changing nothing for any: contradicted where a later step (a line, the profiles'
+      forces and masks) leaves it the other way for each, else already so (naming the step
+      that set it) or set again later. Held to portage's USE with the token removed from the
+      file on every scenario; 84 findings here in 0.8 s.
     - 18e3d: visibility: keywords already accepted, masks and unmasks, licenses, properties
       and restrictions changing nothing.
 - 18f: the `config` notice from watch, its count of findings; enter opens the check.

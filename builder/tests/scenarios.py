@@ -1578,7 +1578,8 @@ SCENARIOS = {
     # package.accept_keywords (in a directory, an empty one defaulting to ~x86), masks and
     # unmasks in the repositories, the profile, the user's profile and the user's files (a
     # removal among them), package.license, package.properties and package.accept_restrict with
-    # their `*/*` lines; and entries that match nothing or change nothing.
+    # their `*/*` lines; and entries that match nothing or change nothing: package.use flags
+    # outside IUSE, already set, undone by a later line or by the profile's package.use.force.
     "config": {
         "profile": {
             "package.mask": ("app-misc/m", "app-misc/pm"),
@@ -1605,6 +1606,13 @@ SCENARIOS = {
                 "app-misc/k-stable ~x86",
             ),
             "etc/portage/package.keywords": ("=app-misc/k-3 **",),
+            "profile/package.use.force": ("app-misc/u forced",),
+            "etc/portage/package.use": (
+                "app-misc/u nope on off",
+                "app-misc/u -off",
+                "app-misc/u -forced",
+                "app-misc/u on",
+            ),
             "etc/portage/package.properties": (
                 "*/* -interactive",
                 "app-misc/p interactive",
@@ -1660,10 +1668,17 @@ SCENARIOS = {
                 "PROPERTIES": "interactive",
             },
             "app-misc/r-1": {"EAPI": "8", "KEYWORDS": "x86", "RESTRICT": "fetch"},
+            "app-misc/u-1": {"EAPI": "8", "KEYWORDS": "x86", "IUSE": "+on off forced"},
         },
         "installed": {
             "app-misc/k-1": {"EAPI": "8", "KEYWORDS": "x86"},
             "app-misc/m-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/u-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "IUSE": "+on off forced",
+                "USE": "on forced",
+            },
         },
         "world": ("app-misc/k", "app-misc/m"),
     },

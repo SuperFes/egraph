@@ -62,7 +62,15 @@ class UseStacker {
     UseStacker(const Store& installed EGRAPH_LIFETIMEBOUND,
                const Evaluated& evaluated EGRAPH_LIFETIMEBOUND);
 
-    [[nodiscard]] StackedUse stack(const Candidate& candidate) const;
+    // A token of a ledger entry: its position among the entry's tokens.
+    struct Omitted {
+        std::uint32_t entry = 0;
+        std::uint32_t position = 0;
+    };
+
+    // Without, as if that token were not on its line.
+    [[nodiscard]] StackedUse stack(const Candidate& candidate,
+                                   std::optional<Omitted> without = std::nullopt) const;
 
   private:
     // Never null; the stores outlive the stacker.

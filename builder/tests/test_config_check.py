@@ -5,9 +5,11 @@ import subprocess
 
 import portage
 import pytest
-from conftest import portdb, write_index, write_stores
+from conftest import System, portdb, write_index, write_stores
 from portage.dep import Atom, match_from_list
+from portage.eapi import _get_eapi_attrs
 from portage.exception import InvalidAtom
+from scenarios import SCENARIOS
 
 EGRAPH = os.environ.get("EGRAPH")
 
@@ -153,3 +155,126 @@ def test_the_configuration_scenario_has_both_kinds(playgrounds):
     system = playgrounds("config")
     kinds = set(portage_unmatched(system.vardb, portdb(system)).values())
     assert kinds == {"dead", "not-installed"}
+
+
+def package_use_lines(settings):
+    """(file, line, atom, flags) for every line of the user's package.use files and its
+    profile's, `VAR:` prefixes put on as UseManager puts them."""
+    config = os.path.join(
+        settings["PORTAGE_CONFIGROOT"], portage.const.USER_CONFIG_PATH
+    )
+    names = ["package.use"] + [
+        os.path.join("profile", name) for name in PROFILE_FILES if ".use" in name
+    ]
+    found = []
+    for name in names:
+        for file in files_under(os.path.join(config, name)):
+            with open(file, encoding="utf-8") as text:
+                for number, line in enumerate(text, 1):
+                    words = line.split("#", 1)[0].split()
+                    if not words:
+                        continue
+                    flags, prefix = [], ""
+                    for word in words[1:]:
+                        if word.endswith(":"):
+                            prefix = word[:-1].lower() + "_"
+                        elif word.startswith("-"):
+                            flags.append("-" + prefix + word[1:])
+                        else:
+                            flags.append(prefix + word)
+                    found.append((file, number, words[0], flags))
+    return found
+
+
+def without_flag(file, number, position):
+    """The file's line number without the flag at position, as text."""
+    with open(file, encoding="utf-8") as text:
+        lines = text.read().splitlines(keepends=True)
+    words = lines[number - 1].split("#", 1)[0].split()
+    flag_words = [i for i, word in enumerate(words) if i > 0 and not word.endswith(":")]
+    del words[flag_words[position]]
+    lines[number - 1] = " ".join(words) + "\n"
+    return "".join(lines)
+
+
+def use_states(trees, eroot, packages):
+    """{pkg: (PORTAGE_USE, forced or masked of IUSE, whether a flag is in IUSE)}, as setcpv
+    decides them."""
+    db = trees[eroot]["porttree"].dbapi
+    settings = portage.config(clone=trees[eroot]["vartree"].settings)
+    found = {}
+    for pkg in packages:
+        settings.setcpv(pkg, mydb=db)
+        iuse_text, eapi = db.aux_get(pkg, ["IUSE", "EAPI"], myrepo=pkg.repo)
+        iuse = frozenset(flag.lstrip("+-") for flag in iuse_text.split())
+        implicit = (
+            settings._iuse_effective_match
+            if _get_eapi_attrs(eapi).iuse_effective
+            else settings._iuse_implicit_match
+        )
+        found[pkg] = (
+            frozenset(settings["PORTAGE_USE"].split()),
+            frozenset((settings.useforce | settings.usemask) & iuse),
+            lambda flag, iuse=iuse, implicit=implicit: flag in iuse or implicit(flag),
+        )
+    return found
+
+
+def portage_useless_flags(playground):
+    """{(file, line, flag): "outside" or "useless"} for each flag of the user's package.use
+    lines that matches ebuilds of installed cps: outside the IUSE of them all, or changing
+    nothing for any as portage stacks USE without it."""
+    trees = playground.trees
+    eroot = playground.eroot
+    db = trees[eroot]["porttree"].dbapi
+    vardb = trees[eroot]["vartree"].dbapi
+    candidates = [
+        db._pkg_str(cpv, repo)
+        for cp in vardb.cp_all()
+        for repo in db.getRepositories()
+        for cpv in db.cp_list(cp, mytree=db.getRepositoryPath(repo))
+    ]
+    base = use_states(trees, eroot, candidates)
+    found = {}
+    for file, number, text, flags in package_use_lines(vardb.settings):
+        atom = Atom(text, allow_wildcard=True, allow_repo=True)
+        matched = match_from_list(atom, candidates)
+        for position, token in enumerate(flags):
+            if not matched or "*" in token:
+                continue
+            flag = token.lstrip("-")
+            key = (file, number, token)
+            if not any(base[pkg][2](flag) for pkg in matched):
+                found[key] = "outside"
+                continue
+            with open(file, encoding="utf-8") as text_file:
+                kept = text_file.read()
+            edited = without_flag(file, number, position)
+            try:
+                with open(file, "w", encoding="utf-8") as out:
+                    out.write(edited)
+                _, changed_trees = playground._load_config()
+                changed = use_states(changed_trees, eroot, matched)
+            finally:
+                with open(file, "w", encoding="utf-8") as out:
+                    out.write(kept)
+            state = lambda states, pkg: (flag in states[pkg][0], flag in states[pkg][1])
+            if all(state(base, pkg) == state(changed, pkg) for pkg in matched):
+                found[key] = "useless"
+    return found
+
+
+@pytest.mark.parametrize("name", sorted(SCENARIOS))
+def test_useless_flags_are_portages(name, mutable_playground, tmp_path):
+    playground = mutable_playground(name)
+    trees = playground.trees
+    system = System(playground.eroot, trees[playground.eroot]["vartree"].dbapi, trees)
+    result = check(system, tmp_path, "--layout", "lines")
+    found = {}
+    for fields in (line.split("\t") for line in result.stdout.splitlines()):
+        if fields[3] in ("contradicted", "no-effect") and "package.use" in fields[0]:
+            outside = fields[6] == "not in the IUSE of anything it matches"
+            found[(fields[0], int(fields[1]), fields[5])] = (
+                "outside" if outside else "useless"
+            )
+    assert found == portage_useless_flags(playground)

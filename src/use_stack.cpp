@@ -153,7 +153,8 @@ UseStacker::UseStacker(const Store& installed, const Evaluated& evaluated)
     }
 }
 
-StackedUse UseStacker::stack(const Candidate& candidate) const {
+StackedUse UseStacker::stack(const Candidate& candidate,
+                             std::optional<UseStacker::Omitted> without) const {
     const auto& ev = *evaluated_;
     const auto& ledger = ev.ledger;
     const auto cp = ev.string(candidate.cp);
@@ -165,10 +166,16 @@ StackedUse UseStacker::stack(const Candidate& candidate) const {
     const auto repo = ev.string(candidate.repo);
     const bool stable = candidate.stable;
 
+    const auto left_out = [&](std::uint32_t index, std::uint32_t position) {
+        return without && without->entry == index && without->position == position;
+    };
     const auto tokens_of = [&](std::uint32_t index, std::vector<Token>& into) {
         const auto& entry = ev.ledger_entries.at(index);
+        std::uint32_t position = 0;
         for (const auto id : ev.ids_in(entry.tokens)) {
-            into.push_back({.text = ev.string(id), .entry = index});
+            if (!left_out(index, position++)) {
+                into.push_back({.text = ev.string(id), .entry = index});
+            }
         }
     };
     const auto all_of = [&](Range source, std::vector<Token>& into) {
@@ -304,8 +311,11 @@ StackedUse UseStacker::stack(const Candidate& candidate) const {
             if (var != "USE" && std::ranges::contains(unprefixed, var)) {
                 auto& value = defaults.vars[var];
                 value.clear();
+                std::uint32_t position = 0;
                 for (const auto id : ev.ids_in(entry.tokens)) {
-                    value.push_back({.text = ev.string(id), .entry = source.first + i});
+                    if (!left_out(source.first + i, position++)) {
+                        value.push_back({.text = ev.string(id), .entry = source.first + i});
+                    }
                 }
             }
         }

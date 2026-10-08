@@ -1,4 +1,5 @@
 #include "system_builder.hpp"
+#include "use_ledger_builder.hpp"
 #include "use_stack.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -12,108 +13,15 @@
 
 using egraph::test::Available;
 using egraph::test::detail::Interner;
+using Line = egraph::test::UseLine;
+using Files = egraph::test::UseFiles;
+using Repository = egraph::test::UseRepository;
+using Spec = egraph::test::UseSpec;
+using Own = egraph::test::OwnLayers;
+using egraph::test::ids_of;
+using egraph::test::set_ledger;
 
 namespace {
-
-// One ledger entry: tokens are space-separated.
-struct Line {
-    std::string file = {};
-    std::uint32_t line = 1;
-    std::string atom = {};
-    std::string var = "USE";
-    std::string tokens = {};
-};
-
-// Entries by the name of one of ledger_files.
-using Files = std::map<std::string, std::vector<Line>, std::less<>>;
-
-struct Repository {
-    std::string name = {};
-    std::vector<std::string> masters = {};
-    Files files = {};
-};
-
-struct Spec {
-    std::string use_order = "env pkg conf defaults pkginternal features repo env.d";
-    std::vector<std::string> use_expand = {};
-    std::vector<std::string> unprefixed = {};
-    std::string arch = {};
-    std::vector<Files> profiles = {};
-    std::vector<Repository> repositories = {};
-    std::vector<Line> conf = {};
-    std::vector<Line> package_use = {};
-    std::vector<Line> package_env = {};
-    std::vector<std::pair<std::string, std::vector<Line>>> env_files = {};
-};
-
-// The per-package layers of a candidate.
-struct Own {
-    std::string cpv = {};
-    bool stable = false;
-    std::string internal = {};
-    std::string features = {};
-};
-
-egraph::Range ids_of(egraph::Evaluated& ev, Interner& intern,
-                     const std::vector<std::string>& words) {
-    const egraph::Range range{.first = static_cast<std::uint32_t>(ev.ids.size()),
-                              .count = static_cast<std::uint32_t>(words.size())};
-    for (const auto& word : words) {
-        ev.ids.push_back(intern(word));
-    }
-    return range;
-}
-
-egraph::Range entries_of(egraph::Evaluated& ev, Interner& intern, const std::vector<Line>& lines) {
-    // Tokens first: ids and entries are separate tables, but each entry's range must be final.
-    std::vector<egraph::LedgerEntry> made;
-    for (const auto& line : lines) {
-        made.push_back({.file = intern(line.file),
-                        .line = line.line,
-                        .atom = intern(line.atom),
-                        .var = intern(line.var),
-                        .tokens = ids_of(ev, intern, egraph::test::detail::tokens(line.tokens))});
-    }
-    const egraph::Range range{.first = static_cast<std::uint32_t>(ev.ledger_entries.size()),
-                              .count = static_cast<std::uint32_t>(made.size())};
-    ev.ledger_entries.insert(ev.ledger_entries.end(), made.begin(), made.end());
-    return range;
-}
-
-egraph::LedgerSources sources_of(egraph::Evaluated& ev, Interner& intern, const Files& files) {
-    egraph::LedgerSources sources{};
-    for (std::size_t i = 0; i < egraph::ledger_files.size(); ++i) {
-        const auto found = files.find(egraph::ledger_files.at(i));
-        sources.at(i) =
-            entries_of(ev, intern, found == files.end() ? std::vector<Line>{} : found->second);
-    }
-    return sources;
-}
-
-void set_ledger(egraph::Evaluated& ev, const Spec& spec) {
-    Interner intern(ev);
-    auto& ledger = ev.ledger;
-    ledger.use_order = ids_of(ev, intern, egraph::test::detail::tokens(spec.use_order));
-    ledger.use_expand = ids_of(ev, intern, spec.use_expand);
-    ledger.use_expand_unprefixed = ids_of(ev, intern, spec.unprefixed);
-    ledger.arch = intern(spec.arch);
-    for (const auto& files : spec.profiles) {
-        ledger.profiles.push_back(
-            {.path = intern("/profile"), .sources = sources_of(ev, intern, files)});
-    }
-    for (const auto& repo : spec.repositories) {
-        ledger.repositories.push_back({.name = intern(repo.name),
-                                       .masters = ids_of(ev, intern, repo.masters),
-                                       .sources = sources_of(ev, intern, repo.files)});
-    }
-    ledger.conf = entries_of(ev, intern, spec.conf);
-    ledger.package_use = entries_of(ev, intern, spec.package_use);
-    ledger.package_env = entries_of(ev, intern, spec.package_env);
-    for (const auto& [name, lines] : spec.env_files) {
-        ledger.env_files.push_back(
-            {.name = intern(name), .entries = entries_of(ev, intern, lines)});
-    }
-}
 
 // Each candidate's stacked USE, from candidates with their IUSE, and their own layers.
 struct Stacked {
@@ -178,6 +86,33 @@ TEST_CASE("USE stacks layer by layer, -* clearing what came before") {
     REQUIRE(a.steps.at("d").size() == 1);
     CHECK_FALSE(a.steps.at("d").front().changed);
     CHECK(a.steps.at("d").front().entry.has_value());
+}
+
+TEST_CASE("a token left out stacks as if it were not on its line") {
+    const Spec spec{
+        .use_expand = {"TARGETS"},
+        .unprefixed = {"KERNEL"},
+        .profiles = {{{"make.defaults",
+                       {{.file = "md", .tokens = "a targets_x"},
+                        {.var = "KERNEL", .tokens = "u v"}}}}},
+        .package_use = {
+            {.file = "pu", .line = 1, .atom = "cat/a", .tokens = "-a b"},
+            {.file = "pu", .line = 2, .atom = "cat/a", .tokens = "-targets_* targets_x"}}};
+    auto s = stack({{.cpv = "cat/a-1", .iuse = "a b u v targets_x"}}, spec);
+    const auto& ev = s.system.evaluated;
+    const egraph::UseStacker stacker(s.system.store, ev);
+    const auto& candidate = ev.candidates.front();
+    const auto use = [&](std::uint32_t entry, std::uint32_t position) {
+        return stacker.stack(candidate, egraph::UseStacker::Omitted{entry, position}).use;
+    };
+    const auto pu = ev.ledger.package_use.first;
+    CHECK(stacker.stack(candidate).use == Flags{"b", "targets_x", "u", "v"});
+    CHECK(use(pu, 0) == Flags{"a", "b", "targets_x", "u", "v"});
+    CHECK(use(pu, 1) == Flags{"targets_x", "u", "v"});
+    // After -*, x alone sets it.
+    CHECK(use(pu + 1, 1) == Flags{"b", "u", "v"});
+    const auto profile = ev.ledger.profiles.front().sources.at(0);
+    CHECK(use(profile.first + 1, 0) == Flags{"b", "targets_x", "v"});
 }
 
 TEST_CASE("package.use outranks IUSE defaults, and the most specific atom wins") {

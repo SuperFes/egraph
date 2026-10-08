@@ -67,6 +67,12 @@ struct UserEntry {
                                                      const Store& installed,
                                                      const RepositoryIndex& index);
 
+// Each flag of the user's package.use lines (theirs, its `*/*` lines in make.conf's layer, the
+// user profile's package.use files) over the ebuilds of installed cps it matches: outside the
+// IUSE of all of them (no_effect), changing nothing on its own as stacked without it, undone by
+// a later step for some (contradicted) or set so already (no_effect).
+[[nodiscard]] std::vector<Finding> use_findings(const Store& installed, const Evaluated& evaluated);
+
 // The findings over the user's entries in both ledgers, ordered.
 [[nodiscard]] std::vector<Finding> check_config(const Store& installed, const Evaluated& evaluated,
                                                 const RepositoryIndex& index);
