@@ -1599,6 +1599,8 @@ SCENARIOS = {
                 "*/* -@MINE",
                 "app-misc/l @MINE",
                 "app-misc/gone EULA",
+                # Another line for an atom: grabdict_package adds its tokens to the first's.
+                "app-misc/l FOO",
             ),
             "package.mask": (
                 "=app-misc/m-2",

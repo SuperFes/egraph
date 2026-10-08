@@ -39,6 +39,15 @@ struct VersionSpec {
     std::string homepage = {};
 };
 
+// A line of the visibility ledger.
+struct LedgerLine {
+    std::string atom = {};
+    std::string var = {};
+    std::string tokens = {};
+    std::string file = "file";
+    std::uint32_t line = 1;
+};
+
 // A repository index on x86, ACCEPT_KEYWORDS="x86" and everything else accepted unless a test
 // says otherwise.
 class IndexBuilder {
@@ -94,6 +103,20 @@ class IndexBuilder {
         return {.first = first, .count = static_cast<std::uint32_t>(index_.entries.size()) - first};
     }
 
+    // Ledger entries, appended in order.
+    Range lines(const std::vector<LedgerLine>& lines) {
+        const auto first = static_cast<std::uint32_t>(index_.ledger_entries.size());
+        for (const auto& line : lines) {
+            index_.ledger_entries.push_back({.file = intern(line.file),
+                                             .line = line.line,
+                                             .atom = intern(line.atom),
+                                             .var = intern(line.var),
+                                             .tokens = ids(line.tokens)});
+        }
+        return {.first = first,
+                .count = static_cast<std::uint32_t>(index_.ledger_entries.size()) - first};
+    }
+
     Range ids(std::string_view text) {
         const auto first = static_cast<std::uint32_t>(index_.ids.size());
         for (const auto& word : words(text)) {
@@ -124,6 +147,8 @@ class IndexBuilder {
     }
 
     egraph::VisibilityConfig& config() { return index_.visibility; }
+    egraph::VisibilityLedger& ledger() { return index_.ledger; }
+    std::uint32_t string(std::string_view text) { return intern(text); }
     void locate(std::string_view repository, std::string_view location) {
         const auto at = std::ranges::find(names_, repository) - names_.begin();
         index_.repositories.at(static_cast<std::size_t>(at)).location = intern(location);

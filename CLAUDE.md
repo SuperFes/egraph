@@ -93,8 +93,9 @@ at zero differences. `test_myopts.py` likewise holds the options `--resume-list`
 resume entry (`emerge_myopts`, through `build/shadow`) to emerge's own `parse_opts`.
 `test_ledger.py` holds the USE ledger (every source of a flag's state, with file and line) to
 UseManager's and config's own lists on every scenario, and the visibility ledger (keywords, masks,
-licenses, properties, restrictions), stacked, to the managers' values; `test_system.py` does both
-on the live one.
+licenses, properties, restrictions), stacked, to the managers' values, in Python and in C++
+(`src/visibility_stack.cpp`, through the shadow binary); `test_system.py` does both on the live
+one.
 
 `builder/tests/depclean.py` runs portage's own depclean (`_calc_depclean`, test code only), and
 `builder/tests/update.py` its `emerge --pretend --update @installed` (with `--newuse` or

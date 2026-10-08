@@ -1,6 +1,7 @@
 """The USE ledger: every source of a flag's state, entry by entry with its file and line, held
 to what portage loaded."""
 
+import json
 import os
 import re
 import subprocess
@@ -14,6 +15,7 @@ from conftest import portdb, write_index, write_stores
 from egraph_build import evaluated, ledger
 
 EGRAPH = os.environ.get("EGRAPH")
+SHADOW = os.environ.get("EGRAPH_SHADOW")
 
 
 def entries_of(use_ledger):
@@ -152,16 +154,28 @@ def as_lists(atom_dict):
 
 
 def by_cp_of(entries, tokens_of=tuple):
-    """{cp: {atom: tokens}} as a manager keeps a package.* file, later lines winning."""
+    """{cp: {atom: tokens}} as a manager keeps package.* files: grabdict_package joins the lines
+    for an atom within a file (a source, for a directory), a later source's replacing them.
+    """
     from portage.dep import Atom
 
-    found = {}
+    sources = {}
     for entry in entries:
-        atom = Atom(
-            entry.atom, allow_wildcard=True, allow_repo=True, allow_build_id=True
-        )
-        found.setdefault(atom.cp, {})[str(atom)] = tokens_of(entry.tokens)
+        source = sources.setdefault(_source_of(entry.file), {})
+        source.setdefault(entry.atom, []).extend(entry.tokens)
+    found = {}
+    for source in sources.values():
+        for text, tokens in source.items():
+            atom = Atom(text, allow_wildcard=True, allow_repo=True, allow_build_id=True)
+            found.setdefault(atom.cp, {})[str(atom)] = tokens_of(tokens)
     return found
+
+
+def _source_of(path):
+    """The package.* file or directory path is read through."""
+    while path and os.path.basename(os.path.dirname(path)).startswith("package."):
+        path = os.path.dirname(path)
+    return path
 
 
 def as_dicts(atom_dict, tokens_of=tuple):
@@ -329,6 +343,7 @@ def test_the_config_scenario(playgrounds):
     assert [(e.atom, e.tokens) for e in vis.package_license] == [
         ("app-misc/l", ("@MINE",)),
         ("app-misc/gone", ("EULA",)),
+        ("app-misc/l", ("FOO",)),
     ]
     assert local(vis.license_groups)[-1] == (
         f"{user}/license_groups",
@@ -343,6 +358,33 @@ def test_the_config_scenario(playgrounds):
     assert [(e.atom, e.tokens) for e in vis.package_accept_restrict] == [
         ("app-misc/r", ("fetch",))
     ]
+
+
+def assert_visibility_stacks_in_cpp(index, tmp_path):
+    """egraph's stacking of the index's visibility ledger is the visibility the index holds."""
+    from egraph_build import repository, store
+
+    if not SHADOW:
+        pytest.skip("set EGRAPH_SHADOW to the shadow binary (meson test does)")
+    path = tmp_path / "index.egraph"
+    meta = store.RepositoryMeta("0", "0", "/", 0)
+    store.write(path, store.encode_repository(index, meta))
+    result = subprocess.run(
+        [SHADOW],
+        input=json.dumps({"check": "visibility", "index": str(path)}) + "\n",
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    held = json.loads(repository.to_json(index))["visibility"]
+    del held["eapis"], held["arch"]
+    assert json.loads(result.stdout) == held
+
+
+def test_the_visibility_ledger_stacks_in_cpp_as_portage_stacks_it(scenario, tmp_path):
+    from egraph_build import repository
+
+    assert_visibility_stacks_in_cpp(repository.assemble(portdb(scenario), ()), tmp_path)
 
 
 def tuple_of(entries):

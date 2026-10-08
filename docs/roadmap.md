@@ -1020,6 +1020,11 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     before, the lines gained and lost); the `plan` notice it makes, until the next plan.
   - 17f2 (done): watch records the change as it plans; the notice read beside the others (`notices`,
     `status`, the interface, where enter opens the updates, and `notify`).
+- 17g: `watch` and `notify` restart themselves when their binary is replaced. Decided with the
+  user (2026-10-08): the executable's directory is watched, and once the new file has gone a
+  second unchanged, the process re-execs the same path and arguments between refreshes, keeping
+  its PID (systemd, supervise-daemon and a terminal alike); a failed exec is logged and the old
+  binary keeps running. Scheduled after 18e2.
 
 ## 18. Explaining and checking the configuration
 
@@ -1076,6 +1081,11 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
     inputs of the index, so editing them went unnoticed; they are now.
   - 18e2: visibility evaluated from the ledger's entries rather than portage's net lists, each
     mask reason naming the entry that decides it; shadowed as now, the net lists dropped.
+    - 18e2a (done): the ledger stacked in C++ as the managers stack it (`stack_visibility`), every
+      atom and token with its entry, held to the index's net lists by the shadow binary on every
+      scenario and the live system.
+    - 18e2b: `VersionMasks` reads the stack; the net lists dropped (format 6), but EAPIs and ARCH.
+    - 18e2c: each mask reason with the entry deciding it, shown after it as `use` shows sources.
   - 18e3: the check: an entry's effect found by stacking without it; dead, contradicted
     (overridden for everything it matches), redundant (changes nothing on its own), outside
     IUSE, not installed; `egraph config check`, its layout and exit status.
