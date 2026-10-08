@@ -1059,6 +1059,21 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
 - 18e: `egraph config check`: entries matching nothing (dead) or nothing installed, flags outside
   the IUSE of all they match, keywords accepted without the entry, masks and unmasks that change
   nothing, entries contradicting each other; the other `package.*` files join the ledger.
+  Decided with the user (2026-10-08): every configuration file portage reads for a package, not
+  only `package.use`; visibility stacked in C++ and shadowed, as USE is, rather than the builder
+  asking portage once per entry; findings by severity (dead, contradicted, then not installed,
+  quieter), each file's in line order, linter style; exit 1 on a dead or contradicted entry.
+  - 18e1: the rest of the configuration in the ledger (format 12): `package.accept_keywords`
+    (and `package.keywords`), `ACCEPT_KEYWORDS` by layer, `package.mask` and `package.unmask`
+    (the user's, the profiles' and the repositories'), `package.license` and `ACCEPT_LICENSE`
+    with the license groups, `package.properties`, `package.accept_restrict`, the user
+    profile's files; held entry for entry to portage's managers, as the USE ledger is.
+  - 18e2: visibility in C++ (keywords, masks, licenses, properties), each candidate's reasons
+    and the entries deciding them, shadowed against portage's on every scenario and the live
+    system.
+  - 18e3: the check: an entry's effect found by stacking without it; dead, contradicted
+    (overridden for everything it matches), redundant (changes nothing on its own), outside
+    IUSE, not installed; `egraph config check`, its layout and exit status.
 - 18f: the `config` notice from watch, its count of findings; enter opens the check.
 
 ## 19. What-if
