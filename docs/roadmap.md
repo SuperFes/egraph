@@ -1127,9 +1127,30 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
 
 ## 19. What-if
 
-Flags and `package.env` toggled in the app, per package or globally, the plan shown changing.
-The service keeps a warm portage configuration in Python, so a re-evaluation costs a fraction of
-an emerge run (`docs/vision.md`).
+Flags and `package.env` toggled in the app, per package or globally, the plan shown changing
+(`docs/vision.md`).
+
+Decided with the user (2026-10-08): all in C++ from the USE ledger and its stacking (18), with
+the planner's USE changes, so no warm portage configuration in the service; the cps a change
+newly reaches are evaluated on request, as a plan's targets are. Accepted changes go to egraph's
+own files, `package.use/egraph` and `package.env/egraph` (a global flag as a `*/*` line), never
+the user's lines or `make.conf`; a package's toggle names its cp. Installed packages an env
+switch would build differently are offered for a rebuild apart, never planned unasked. In the
+app, space toggles a flag on a package's USE table, and a what-if page lists the pending
+changes (undo, save) and takes typed lines.
+
+- 19a: what-if lines as ledger entries after the user's own (`atom flags`, `flags` as a `*/*`
+  line, `atom envfiles`), each candidate restacked and its dependencies reduced under its new
+  USE; held to portage's USE with the line written into the file, on every scenario.
+- 19b: `--use` and `--env` on the plan commands: the plan with the changes, the toggled
+  packages rebuilt as with `-U`, the cps newly reached evaluated on request; held to emerge's
+  plan with the files edited, on every scenario.
+- 19c: the plan marked with what the change does: merges added, dropped, rebuilt, USE changed,
+  and a summary.
+- 19d: an env switch's installed packages, built differently from then on, offered for a
+  rebuild.
+- 19e: the interface: toggles on the USE table, the what-if page, the plan page following.
+- 19f: saving to egraph's files.
 
 ## 20. Build knowledge
 
