@@ -1063,14 +1063,19 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
   only `package.use`; visibility stacked in C++ and shadowed, as USE is, rather than the builder
   asking portage once per entry; findings by severity (dead, contradicted, then not installed,
   quieter), each file's in line order, linter style; exit 1 on a dead or contradicted entry.
-  - 18e1: the rest of the configuration in the ledger (format 12): `package.accept_keywords`
-    (and `package.keywords`), `ACCEPT_KEYWORDS` by layer, `package.mask` and `package.unmask`
-    (the user's, the profiles' and the repositories'), `package.license` and `ACCEPT_LICENSE`
-    with the license groups, `package.properties`, `package.accept_restrict`, the user
-    profile's files; held entry for entry to portage's managers, as the USE ledger is.
-  - 18e2: visibility in C++ (keywords, masks, licenses, properties), each candidate's reasons
-    and the entries deciding them, shadowed against portage's on every scenario and the live
-    system.
+  - 18e1 (done): the visibility ledger, in the repository index (format 5) beside the
+    visibility the index already evaluates in C++: every source of a version's visibility with
+    its file and line, the ACCEPT variables layer by layer (`profile.env`, `make.globals`, each
+    profile's `make.defaults`, `make.conf` with the `*/*` lines of `package.license`,
+    `package.properties` and `package.accept_restrict` folded in, the environment), the license
+    groups, and the `package.mask`, `package.unmask`, `package.keywords`,
+    `package.accept_keywords` and `package.license` files of the repositories, the profiles
+    and the user, with `package.properties` and `package.accept_restrict`. Stacked as the
+    managers stack them, held to their values on every scenario and the live system (no
+    fallbacks there). The user's `license_groups` and a repository's `package.unmask` were not
+    inputs of the index, so editing them went unnoticed; they are now.
+  - 18e2: visibility evaluated from the ledger's entries rather than portage's net lists, each
+    mask reason naming the entry that decides it; shadowed as now, the net lists dropped.
   - 18e3: the check: an entry's effect found by stacking without it; dead, contradicted
     (overridden for everything it matches), redundant (changes nothing on its own), outside
     IUSE, not installed; `egraph config check`, its layout and exit status.

@@ -53,6 +53,298 @@ def test_every_entry_is_on_its_line(scenario):
             assert re.match(rf"\s*(export\s+)?{entry.var}=", text), entry
 
 
+def visibility_entries_of(vis):
+    yield from vis.env_d
+    yield from vis.globals
+    for node in vis.profiles:
+        for source in node[1:]:
+            yield from source
+    for repo in vis.repositories:
+        yield from repo.package_mask
+        yield from repo.package_unmask
+    for name in ledger.VisibilityLedger._fields[4:]:
+        yield from getattr(vis, name)
+
+
+def test_every_visibility_entry_is_on_its_line(scenario):
+    """Line 0 is where a source fell back to portage's values: none of the scenarios' do."""
+    vis = ledger.read_visibility(portdb(scenario).settings)
+    for entry in visibility_entries_of(vis):
+        if not entry.file:
+            continue
+        assert entry.line > 0, entry
+        text = line_of(entry).split("#")[0]
+        if entry.atom and not entry.var:
+            # A mask file's line is its atom; a package.* file's starts with it.
+            assert text.split()[0] == entry.atom, entry
+            assert set(entry.tokens) <= set(text.split()[1:]), entry
+        elif entry.atom == "*/*":
+            assert text.split() == ["*/*", *entry.tokens], entry
+        elif entry.file.endswith("license_groups"):
+            assert text.split() == [entry.var, *entry.tokens], entry
+        else:
+            assert re.match(rf"\s*(export\s+)?{entry.var}=", text), entry
+
+
+def masks_of(vis, settings, unmask):
+    """package.mask (or package.unmask) stacked from the ledger as MaskManager stacks it."""
+    from portage.dep import Atom
+    from portage.util import append_repo, stack_lists
+
+    def lines(entries):
+        return [
+            (
+                (
+                    entry.atom
+                    if entry.atom[:1] == "-"
+                    else Atom(
+                        entry.atom,
+                        allow_wildcard=True,
+                        allow_repo=True,
+                        allow_build_id=True,
+                    )
+                ),
+                entry.file,
+            )
+            for entry in entries
+        ]
+
+    field = "package_unmask" if unmask else "package_mask"
+    by_name = {repo.name: repo for repo in vis.repositories}
+    repo_lines = []
+    for repo in vis.repositories:
+        own = lines(getattr(repo, field))
+        if unmask:
+            stacked = [stack_lists([own], incremental=1, remember_source_file=True)]
+        elif repo.masters:
+            stacked = [
+                stack_lists(
+                    [lines(getattr(by_name[master], field)), own],
+                    incremental=1,
+                    remember_source_file=True,
+                )
+                for master in repo.masters
+            ]
+        else:
+            stacked = [stack_lists([own], incremental=1, remember_source_file=True)]
+        repo_lines.extend(
+            append_repo(stack_lists(stacked), repo.name, remember_source_file=True)
+        )
+    profile_lines = stack_lists(
+        [lines(getattr(node, field)) for node in vis.profiles],
+        incremental=1,
+        remember_source_file=True,
+    )
+    stacked = stack_lists(
+        [repo_lines, profile_lines, lines(getattr(vis, field))],
+        incremental=1,
+        remember_source_file=True,
+        ignore_repo=True,
+    )
+    found = {}
+    for atom, _ in stacked:
+        found.setdefault(atom.cp, []).append(str(atom))
+    return found
+
+
+def as_lists(atom_dict):
+    return {cp: [str(atom) for atom in atoms] for cp, atoms in atom_dict.items()}
+
+
+def by_cp_of(entries, tokens_of=tuple):
+    """{cp: {atom: tokens}} as a manager keeps a package.* file, later lines winning."""
+    from portage.dep import Atom
+
+    found = {}
+    for entry in entries:
+        atom = Atom(
+            entry.atom, allow_wildcard=True, allow_repo=True, allow_build_id=True
+        )
+        found.setdefault(atom.cp, {})[str(atom)] = tokens_of(entry.tokens)
+    return found
+
+
+def as_dicts(atom_dict, tokens_of=tuple):
+    return {
+        cp: {str(atom): tokens_of(tokens) for atom, tokens in atoms.items()}
+        for cp, atoms in atom_dict.items()
+    }
+
+
+def stacked_accept(vis, settings, var):
+    """var's tokens across the layers regenerate stacks (env.d, make.globals, the profiles' make.defaults,
+    make.conf with the `*/*` folds, the environment), license groups expanded."""
+    expand = settings._license_manager.expandLicenseTokens
+    layers = [
+        vis.env_d,
+        vis.globals,
+        [entry for node in vis.profiles for entry in node.defaults],
+        vis.conf,
+        vis.env,
+    ]
+    tokens = []
+    for layer in layers:
+        for entry in layer:
+            if entry.var != var:
+                continue
+            if entry.atom == "*/*" and var == "ACCEPT_LICENSE":
+                tokens.extend(expand(entry.tokens))
+            else:
+                tokens.extend(entry.tokens)
+    return tokens
+
+
+def test_visibility_sources_are_portages(scenario):
+    assert_visibility_sources_are_portages(portdb(scenario).settings)
+
+
+def assert_visibility_sources_are_portages(settings):
+    """Stacked as portage's managers stack them, the ledger's entries are their values."""
+    from portage.package.ebuild._config.helper import prune_incremental
+
+    vis = ledger.read_visibility(settings)
+    masks = settings._mask_manager
+    assert masks_of(vis, settings, False) == as_lists(masks._pmaskdict)
+    assert masks_of(vis, settings, True) == as_lists(masks._punmaskdict)
+
+    keywords = settings._keywords_manager
+    for field, held in (
+        ("package_keywords", keywords._pkeywords_list),
+        ("package_accept_keywords", keywords._p_accept_keywords),
+    ):
+        layers = [by_cp_of(getattr(n, field)) for n in vis.profiles]
+        assert [layer for layer in layers if layer] == [as_dicts(d) for d in held]
+    defaults = tuple(
+        "~" + keyword
+        for keyword in settings.configdict["defaults"]
+        .get("ACCEPT_KEYWORDS", "")
+        .split()
+        if keyword[:1] not in "~-"
+    )
+    user = {}
+    for entry in vis.package_keywords + vis.package_accept_keywords:
+        user.setdefault(entry.atom, []).extend(entry.tokens)
+    assert by_cp_of(
+        [
+            ledger.Entry("", 0, atom, "", tuple(t) or defaults)
+            for atom, t in user.items()
+        ]
+    ) == as_dicts(keywords.pkeywordsdict)
+
+    licenses = settings._license_manager
+    groups = {}
+    for entry in vis.license_groups:
+        groups.setdefault(entry.var, []).extend(entry.tokens)
+    assert {k: frozenset(v) for k, v in groups.items()} == licenses._license_groups
+    expand = licenses.expandLicenseTokens
+    licensed = [e for n in vis.profiles for e in n.package_license] + list(
+        vis.package_license
+    )
+    assert by_cp_of(licensed, lambda t: sorted(expand(t))) == as_dicts(
+        licenses._plicensedict, sorted
+    )
+    assert by_cp_of(vis.package_properties) == as_dicts(settings._ppropertiesdict)
+    assert by_cp_of(vis.package_accept_restrict) == as_dicts(settings._paccept_restrict)
+
+    accept_license = prune_incremental(stacked_accept(vis, settings, "ACCEPT_LICENSE"))
+    assert (" ".join(accept_license) or "* -@EULA") == licenses._accept_license_str
+    for var, held in (
+        ("ACCEPT_PROPERTIES", settings._accept_properties),
+        ("ACCEPT_RESTRICT", settings._accept_restrict),
+    ):
+        assert tuple(prune_incremental(stacked_accept(vis, settings, var))) == held, var
+    accepted = []
+    for token in stacked_accept(vis, settings, "ACCEPT_KEYWORDS"):
+        if token == "-*":
+            accepted.clear()
+        elif token[:1] == "-":
+            accepted = [x for x in accepted if x != token[1:]]
+        elif token not in accepted:
+            accepted.append(token)
+    assert sorted(accepted) == sorted(settings["ACCEPT_KEYWORDS"].split())
+
+
+def test_the_config_scenario(playgrounds):
+    system = playgrounds("config")
+    vis = ledger.read_visibility(portdb(system).settings)
+
+    def local(entries):
+        return [
+            (os.path.relpath(e.file, system.eroot), e.line, e.atom, e.var, e.tokens)
+            for e in entries
+        ]
+
+    user = "etc/portage"
+    assert local(vis.conf)[1:] == [
+        (
+            f"{user}/make.conf",
+            16,
+            "",
+            "ACCEPT_LICENSE",
+            ("-*", "@FREE", "@BINARY-REDISTRIBUTABLE"),
+        ),
+        (f"{user}/make.conf", 17, "", "ACCEPT_PROPERTIES", ("*",)),
+        (f"{user}/make.conf", 18, "", "ACCEPT_RESTRICT", ("*", "-fetch")),
+        (f"{user}/package.license", 1, "*/*", "ACCEPT_LICENSE", ("-@MINE",)),
+        (
+            f"{user}/package.properties",
+            1,
+            "*/*",
+            "ACCEPT_PROPERTIES",
+            ("-interactive",),
+        ),
+        (f"{user}/package.accept_restrict", 1, "*/*", "ACCEPT_RESTRICT", ("-bindist",)),
+    ]
+    profile, user_profile = vis.profiles[-2:]
+    made = os.path.relpath(os.path.join(profile.path, "make.defaults"), system.eroot)
+    assert local(profile.defaults) == [
+        (made, 2, "", "ACCEPT_KEYWORDS", ("x86",)),
+        (made, 3, "", "ACCEPT_LICENSE", ("-*", "@FREE")),
+    ]
+    assert [e.atom for e in profile.package_mask] == ["app-misc/m", "app-misc/pm"]
+    assert [(e.atom, e.tokens) for e in profile.package_keywords] == [
+        ("app-misc/pk", ("x86",))
+    ]
+    assert [e.atom for e in user_profile.package_mask] == ["app-misc/up"]
+    assert [e.atom for e in user_profile.package_unmask] == ["app-misc/pm"]
+    (repo,) = [r for r in vis.repositories if r.name == "test_repo"]
+    assert [e.atom for e in repo.package_mask] == ["app-misc/rm", "=app-misc/k-1"]
+    assert [e.atom for e in repo.package_unmask] == ["app-misc/ru"]
+    assert local(vis.package_mask) == [
+        (f"{user}/package.mask", 1, "=app-misc/m-2", "", ()),
+        (f"{user}/package.mask", 2, "-app-misc/rm", "", ()),
+        (f"{user}/package.mask", 3, "app-misc/nothing", "", ()),
+    ]
+    assert [e.atom for e in vis.package_unmask] == ["=app-misc/m-1", "app-misc/ru"]
+    keywords = f"{user}/package.accept_keywords"
+    assert local(vis.package_accept_keywords) == [
+        (f"{keywords}/00-base", 2, "=app-misc/k-2", "", ()),
+        (f"{keywords}/00-base", 3, "app-misc/nothing", "", ("~x86",)),
+        (f"{keywords}/10-more", 1, "app-misc/k", "", ("~x86",)),
+        (f"{keywords}/10-more", 2, "app-misc/k-stable", "", ("~x86",)),
+    ]
+    assert local(vis.package_keywords) == [
+        (f"{user}/package.keywords", 1, "=app-misc/k-3", "", ("**",))
+    ]
+    assert [(e.atom, e.tokens) for e in vis.package_license] == [
+        ("app-misc/l", ("@MINE",)),
+        ("app-misc/gone", ("EULA",)),
+    ]
+    assert local(vis.license_groups)[-1] == (
+        f"{user}/license_groups",
+        1,
+        "",
+        "MINE",
+        ("EULA",),
+    )
+    assert [(e.atom, e.tokens) for e in vis.package_properties] == [
+        ("app-misc/p", ("interactive",))
+    ]
+    assert [(e.atom, e.tokens) for e in vis.package_accept_restrict] == [
+        ("app-misc/r", ("fetch",))
+    ]
+
+
 def tuple_of(entries):
     return tuple(token for entry in entries for token in entry.tokens)
 

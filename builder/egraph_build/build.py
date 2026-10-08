@@ -97,6 +97,7 @@ def builder_paths():
 USER_VISIBILITY_CONFIG = (
     "categories",
     "env",
+    "license_groups",
     "package.accept_keywords",
     "package.accept_restrict",
     "package.env",
@@ -150,6 +151,7 @@ def repository_paths(portdb, cps):
         ):
             paths.append(os.path.join(location, relative))
         paths.extend(_tree(os.path.join(location, "profiles", "package.mask")))
+        paths.extend(_tree(os.path.join(location, "profiles", "package.unmask")))
         paths.extend(_tree(os.path.join(location, "profiles", "updates")))
         cache = os.path.join(location, "metadata", "md5-cache")
         paths.append(cache)
@@ -285,6 +287,7 @@ def _index_scope(path, locations, categories, advisories):
             return ("eclass", location)
         if parts[0] == "profiles" and parts[1:2] in (
             ["package.mask"],
+            ["package.unmask"],
             ["license_groups"],
             ["updates"],
         ):

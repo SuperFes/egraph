@@ -168,6 +168,27 @@ def test_a_configuration_change_reads_no_metadata_again(repository_playground):
     )
 
 
+def test_a_user_license_group_change_is_read(repository_playground):
+    """A change to an input is what makes egraph rebuild the index."""
+    path = os.path.join(repository_playground.eroot, "etc/portage/license_groups")
+    with open(path, "w") as f:
+        f.write("MINE EULA\n")
+    _, inputs, index = first_index(repository_playground)
+    assert path in {item.path for item in inputs}
+    assert index.ledger.license_groups[-1].var == "MINE"
+
+
+def test_a_repository_unmask_change_is_read(repository_playground):
+    _, db = fresh_databases(repository_playground)
+    path = os.path.join(db.getRepositoryPath("test_repo"), "profiles", "package.unmask")
+    with open(path, "w") as f:
+        f.write("app-misc/testing\n")
+    _, inputs, index = first_index(repository_playground)
+    assert path in {item.path for item in inputs}
+    (repo,) = [r for r in index.ledger.repositories if r.name == "test_repo"]
+    assert [e.atom for e in repo.package_unmask] == ["app-misc/testing"]
+
+
 def test_an_overlay_eclass_change_reads_its_packages_again(repository_playground):
     previous = first_index(repository_playground)
     eclass = overlay(repository_playground, "eclass")

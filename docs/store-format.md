@@ -279,8 +279,9 @@ holds it instead, at line 0, so the semantics are always portage's.
 
 Inputs are the installed store's configuration and profile inputs, the user's visibility and USE
 configuration (`package.accept_keywords`, `package.mask`, `package.unmask`, `package.license`,
-`package.use` and their relatives, `env`, `repos.conf`), and per repository its root, layout,
-repository-wide masks, license groups, categories, package moves and eclass directory, every
+`package.use` and their relatives, `license_groups`, `env`, `repos.conf`), and per repository
+its root, layout, repository-wide masks and unmasks, license groups, categories, package moves
+and eclass directory, every
 category directory (for the cps it lists), the metadata cache directory of every category of the
 store's cps (installed and candidate), and outside the main repository the package directories
 and ebuilds of every such cp it carries.
@@ -294,7 +295,7 @@ beside the installed store, named after it (`installed.egraph` → `installed.re
 and is written by its own builder run (`egraph-build --repository`), as it changes with the
 repositories and the configuration rather than with the installed packages.
 
-It uses the installed store's framing with magic `EGRAPHRI` and its own format version, now 4.
+It uses the installed store's framing with magic `EGRAPHRI` and its own format version, now 5.
 
 | Id | Section | Contents |
 |---|---|---|
@@ -305,8 +306,9 @@ It uses the installed store's framing with magic `EGRAPHRI` and its own format v
 | 5 | Versions | count, then the records below, sorted by cp, then by repository in section 4's order, then by version as `cp_list` gives them |
 | 6 | Visibility | the configuration records below |
 | 7 | Advisories | count, then the GLSA records below, sorted by id |
+| 8 | Visibility ledger | where each source of visibility was read from, below |
 
-All seven sections are required.
+All eight sections are required.
 
 A version record, for each ebuild whose metadata portage could read:
 
@@ -343,6 +345,35 @@ The visibility section holds, in order, each as portage's config parsed it:
 6. `ACCEPT_PROPERTIES`: list of string ids; then `package.properties` as an entry list.
 7. `ACCEPT_RESTRICT`: list of string ids; then `package.accept_restrict` as an entry list.
 
+The visibility ledger holds every source of a version's visibility entry by entry, each as the
+evaluated store's USE ledger keeps one: `(file, line, atom, var, tokens)`, the file and line it
+was read from (line 0 where portage's values could not be told apart line by line, and the
+whole source is then portage's values at line 0; an empty file for the environment and for
+portage's built-in defaults). In order:
+
+1. The ACCEPT variables (`ACCEPT_KEYWORDS`, `ACCEPT_LICENSE`, `ACCEPT_PROPERTIES`,
+   `ACCEPT_RESTRICT`) in `profile.env`, then in `make.globals` and portage's built-in defaults:
+   an entry per variable set, the variable as var.
+2. Profile nodes: count, then per node in stacking order its path's string id and six entry
+   lists: `make.defaults`' ACCEPT variables, `package.mask`, `package.unmask` (in the portage-1
+   format only), `package.keywords`, `package.accept_keywords`, and `package.license` (in the
+   profile-license format only). A mask file's entry is its line's atom, a removal's `-`
+   included, with no tokens; a `package.*` file's is its atom and the tokens portage kept, var
+   empty.
+3. Repositories with profiles, in portage's order: count, then per repository its name's
+   string id, its masters as a list of string ids, and its `profiles/package.mask` and
+   `profiles/package.unmask` (in the portage-1 format only).
+4. The conf layer: `make.conf`'s ACCEPT variables, expanded as portage expands them, then the
+   `*/*` lines of the user's `package.license`, `package.properties` and
+   `package.accept_restrict`, atom `*/*` and var the variable portage folds them into (license
+   groups unexpanded).
+5. The environment's ACCEPT variables (`backupenv`).
+6. License groups, from the profiles' `license_groups` and then the user's: an entry per group,
+   its name as var and its members as tokens.
+7. The user's `package.mask`, `package.unmask`, `package.keywords`, `package.accept_keywords`
+   (an empty token list where portage defaults it to the `~` keywords), `package.license`,
+   `package.properties` and `package.accept_restrict`, without the `*/*` lines item 4 holds.
+
 A GLSA record holds what portage's `glsa` module parses from one under `GLSA_DIR`, by default
 the main repository's `metadata/glsa` (those it cannot parse, or whose arch it would refuse,
 left out):
@@ -358,6 +389,6 @@ An entry list is a count, then `(atom, tokens)`: the atom's string id (a wildcar
 ones, each group in portage's order (`ExtendedAtomDict`), as a lookup for a cp collects them.
 
 Inputs are the evaluated store's configuration inputs, and per repository its root, layout,
-repository-wide masks, license groups, categories and eclass directory, every category
+repository-wide masks and unmasks, license groups, categories and eclass directory, every category
 directory, the metadata cache directory of every category, and outside the main repository
 every package directory and ebuild; and the GLSAs' directory, which a change reads again alone.

@@ -232,22 +232,27 @@ void write_json_string(std::ostream& out, std::string_view bytes) {
 
 namespace {
 
-void write_entries(std::ostream& out, const Evaluated& evaluated, Range range) {
+void write_ledger_entries(std::ostream& out, const Tables& tables,
+                          std::span<const LedgerEntry> entries) {
     out << '[';
     bool first = true;
-    for (const auto& entry : evaluated.entries_in(range)) {
+    for (const auto& entry : entries) {
         out << (first ? "{\"atom\":" : ",{\"atom\":");
         first = false;
-        write_string(out, evaluated, entry.atom);
+        write_string(out, tables, entry.atom);
         out << ",\"file\":";
-        write_string(out, evaluated, entry.file);
+        write_string(out, tables, entry.file);
         out << ",\"line\":" << entry.line << ",\"tokens\":";
-        write_string_list(out, evaluated, entry.tokens);
+        write_string_list(out, tables, entry.tokens);
         out << ",\"var\":";
-        write_string(out, evaluated, entry.var);
+        write_string(out, tables, entry.var);
         out << '}';
     }
     out << ']';
+}
+
+void write_entries(std::ostream& out, const Evaluated& evaluated, Range range) {
+    write_ledger_entries(out, evaluated, evaluated.entries_in(range));
 }
 
 // A profile node's or a repository's object: its files beside its other members, every key in
@@ -473,6 +478,57 @@ void write_layers(std::ostream& out, const RepositoryIndex& index, std::span<con
     out << ']';
 }
 
+void write_visibility_ledger(std::ostream& out, const RepositoryIndex& index) {
+    const auto& ledger = index.ledger;
+    const auto entries = [&](std::string_view key, Range range, bool first = false) {
+        out << (first ? "" : ",");
+        write_json_string(out, key);
+        out << ':';
+        write_ledger_entries(out, index, index.ledger_entries_in(range));
+    };
+    out << '{';
+    entries("conf", ledger.conf, true);
+    entries("env", ledger.env);
+    entries("env_d", ledger.env_d);
+    entries("globals", ledger.globals);
+    entries("license_groups", ledger.license_groups);
+    entries("package_accept_keywords", ledger.package_accept_keywords);
+    entries("package_accept_restrict", ledger.package_accept_restrict);
+    entries("package_keywords", ledger.package_keywords);
+    entries("package_license", ledger.package_license);
+    entries("package_mask", ledger.package_mask);
+    entries("package_properties", ledger.package_properties);
+    entries("package_unmask", ledger.package_unmask);
+    out << ",\"profiles\":[";
+    bool first = true;
+    for (const auto& node : ledger.profiles) {
+        out << (first ? "{" : ",{");
+        first = false;
+        entries("defaults", node.defaults, true);
+        entries("package_accept_keywords", node.package_accept_keywords);
+        entries("package_keywords", node.package_keywords);
+        entries("package_license", node.package_license);
+        entries("package_mask", node.package_mask);
+        entries("package_unmask", node.package_unmask);
+        out << ",\"path\":";
+        write_string(out, index, node.path);
+        out << '}';
+    }
+    out << "],\"repositories\":[";
+    first = true;
+    for (const auto& repo : ledger.repositories) {
+        out << (first ? "{\"masters\":" : ",{\"masters\":");
+        first = false;
+        write_string_list(out, index, repo.masters);
+        out << ",\"name\":";
+        write_string(out, index, repo.name);
+        entries("package_mask", repo.package_mask);
+        entries("package_unmask", repo.package_unmask);
+        out << '}';
+    }
+    out << "]}";
+}
+
 } // namespace
 
 void write_repository_json(std::ostream& out, const RepositoryIndex& index) {
@@ -502,7 +558,9 @@ void write_repository_json(std::ostream& out, const RepositoryIndex& index) {
         write_string(out, index, advisory.title);
         out << '}';
     }
-    out << R"(],"format":4,"repositories":[)";
+    out << R"(],"format":5,"ledger":)";
+    write_visibility_ledger(out, index);
+    out << R"(,"repositories":[)";
     first = true;
     for (const auto& repository : index.repositories) {
         out << (first ? "{" : ",{")

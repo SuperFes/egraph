@@ -3,6 +3,7 @@
 #include "encoding.hpp"
 
 #include <format>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -18,7 +19,8 @@ constexpr std::uint32_t section_repositories = 4;
 constexpr std::uint32_t section_versions = 5;
 constexpr std::uint32_t section_visibility = 6;
 constexpr std::uint32_t section_advisories = 7;
-constexpr std::size_t section_count = 7;
+constexpr std::uint32_t section_visibility_ledger = 8;
+constexpr std::size_t section_count = 8;
 
 std::optional<StoreError> read_meta(std::span<const std::byte> section, RepositoryIndex& index) {
     Reader r(section, "meta");
@@ -146,7 +148,63 @@ std::optional<StoreError> read_advisories(std::span<const std::byte> section,
     return r.error();
 }
 
+Range read_ledger_entries(Reader& r, RepositoryIndex& index, std::uint32_t strings) {
+    const auto count = r.count();
+    const auto first = size32(index.ledger_entries.size());
+    for (std::uint32_t i = 0; i < count && r.ok(); ++i) {
+        LedgerEntry entry;
+        entry.file = r.index(strings, "string");
+        entry.line = r.index(std::numeric_limits<std::uint32_t>::max(), "line");
+        entry.atom = r.index(strings, "string");
+        entry.var = r.index(strings, "string");
+        entry.tokens = read_ids(r, index.ids, strings, "string");
+        index.ledger_entries.push_back(entry);
+    }
+    return {.first = first, .count = size32(index.ledger_entries.size()) - first};
+}
+
+std::optional<StoreError> read_visibility_ledger(std::span<const std::byte> section,
+                                                 RepositoryIndex& index) {
+    Reader r(section, "visibility ledger");
+    const auto strings = size32(index.strings.size());
+    auto& ledger = index.ledger;
+    ledger.env_d = read_ledger_entries(r, index, strings);
+    ledger.globals = read_ledger_entries(r, index, strings);
+    const auto nodes = r.count();
+    for (std::uint32_t i = 0; i < nodes && r.ok(); ++i) {
+        VisibilityNode node;
+        node.path = r.index(strings, "string");
+        for (auto* range :
+             {&node.defaults, &node.package_mask, &node.package_unmask, &node.package_keywords,
+              &node.package_accept_keywords, &node.package_license}) {
+            *range = read_ledger_entries(r, index, strings);
+        }
+        ledger.profiles.push_back(node);
+    }
+    const auto repositories = r.count();
+    for (std::uint32_t i = 0; i < repositories && r.ok(); ++i) {
+        MaskRepository repo;
+        repo.name = r.index(strings, "string");
+        repo.masters = read_ids(r, index.ids, strings, "string");
+        repo.package_mask = read_ledger_entries(r, index, strings);
+        repo.package_unmask = read_ledger_entries(r, index, strings);
+        ledger.repositories.push_back(repo);
+    }
+    for (auto* range :
+         {&ledger.conf, &ledger.env, &ledger.license_groups, &ledger.package_mask,
+          &ledger.package_unmask, &ledger.package_keywords, &ledger.package_accept_keywords,
+          &ledger.package_license, &ledger.package_properties, &ledger.package_accept_restrict}) {
+        *range = read_ledger_entries(r, index, strings);
+    }
+    r.finish();
+    return r.error();
+}
+
 } // namespace
+
+std::span<const LedgerEntry> RepositoryIndex::ledger_entries_in(Range range) const {
+    return std::span{ledger_entries}.subspan(range.first, range.count);
+}
 
 std::span<const ConfigEntry> RepositoryIndex::entries_in(Range range) const {
     return std::span{entries}.subspan(range.first, range.count);
@@ -178,7 +236,8 @@ std::expected<RepositoryIndex, StoreError> decode_repository(std::span<const std
     for (const auto& error : {read_repositories(section(section_repositories), index),
                               read_versions(section(section_versions), index),
                               read_visibility(section(section_visibility), index),
-                              read_advisories(section(section_advisories), index)}) {
+                              read_advisories(section(section_advisories), index),
+                              read_visibility_ledger(section(section_visibility_ledger), index)}) {
         if (error) {
             return std::unexpected(*error);
         }

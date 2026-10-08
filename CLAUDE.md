@@ -92,7 +92,9 @@ scenario. Any change to `src/atom.cpp` or `src/version.cpp` must keep it and the
 at zero differences. `test_myopts.py` likewise holds the options `--resume-list` writes in emerge's
 resume entry (`emerge_myopts`, through `build/shadow`) to emerge's own `parse_opts`.
 `test_ledger.py` holds the USE ledger (every source of a flag's state, with file and line) to
-UseManager's and config's own lists on every scenario, and `test_system.py` on the live one.
+UseManager's and config's own lists on every scenario, and the visibility ledger (keywords, masks,
+licenses, properties, restrictions), stacked, to the managers' values; `test_system.py` does both
+on the live one.
 
 `builder/tests/depclean.py` runs portage's own depclean (`_calc_depclean`, test code only), and
 `builder/tests/update.py` its `emerge --pretend --update @installed` (with `--newuse` or

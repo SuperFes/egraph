@@ -1542,4 +1542,96 @@ SCENARIOS = {
         },
         "world": ("app-misc/a", "app-misc/b", "app-misc/c"),
     },
+    # Every source of visibility, for the visibility ledger and the configuration check:
+    # ACCEPT_* in the profile and make.conf, a user license group, package.keywords and
+    # package.accept_keywords (in a directory, an empty one defaulting to ~x86), masks and
+    # unmasks in the repositories, the profile, the user's profile and the user's files (a
+    # removal among them), package.license, package.properties and package.accept_restrict with
+    # their `*/*` lines; and entries that match nothing or change nothing.
+    "config": {
+        "profile": {
+            "package.mask": ("app-misc/m", "app-misc/pm"),
+            "package.keywords": ("app-misc/pk x86",),
+            "package.accept_keywords": ("app-misc/pak ~x86",),
+        },
+        "files": {
+            "profile/make.defaults": (
+                'ARCH="x86"',
+                'ACCEPT_KEYWORDS="x86"',
+                'ACCEPT_LICENSE="-* @FREE"',
+            ),
+            "etc/portage/license_groups": ("MINE EULA",),
+            "etc/portage/profile/package.mask": ("app-misc/up",),
+            "etc/portage/profile/package.unmask": ("app-misc/pm",),
+            "etc/portage/package.accept_keywords/00-base": (
+                "# kept",
+                "=app-misc/k-2",
+                "app-misc/nothing ~x86",
+                "",
+            ),
+            "etc/portage/package.accept_keywords/10-more": (
+                "app-misc/k ~x86",
+                "app-misc/k-stable ~x86",
+            ),
+            "etc/portage/package.keywords": ("=app-misc/k-3 **",),
+            "etc/portage/package.properties": (
+                "*/* -interactive",
+                "app-misc/p interactive",
+            ),
+            "etc/portage/package.accept_restrict": (
+                "*/* -bindist",
+                "app-misc/r fetch",
+            ),
+        },
+        "repo_configs": {
+            "test_repo": {
+                "package.mask": ("app-misc/rm", "=app-misc/k-1"),
+                "package.unmask": ("app-misc/ru",),
+            }
+        },
+        "user_config": {
+            "make.conf": (
+                'ACCEPT_LICENSE="${ACCEPT_LICENSE} @BINARY-REDISTRIBUTABLE"',
+                'ACCEPT_PROPERTIES="*"',
+                'ACCEPT_RESTRICT="* -fetch"',
+            ),
+            "package.license": (
+                "*/* -@MINE",
+                "app-misc/l @MINE",
+                "app-misc/gone EULA",
+            ),
+            "package.mask": (
+                "=app-misc/m-2",
+                "-app-misc/rm",
+                "app-misc/nothing",
+            ),
+            "package.unmask": ("=app-misc/m-1", "app-misc/ru"),
+        },
+        "ebuilds": {
+            "app-misc/k-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/k-2": {"EAPI": "8", "KEYWORDS": "~x86"},
+            "app-misc/k-3": {"EAPI": "8", "KEYWORDS": ""},
+            "app-misc/k-stable-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/m-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/m-2": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/pm-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/up-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/rm-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/ru-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/pk-1": {"EAPI": "8", "KEYWORDS": "~x86"},
+            "app-misc/pak-1": {"EAPI": "8", "KEYWORDS": "~x86"},
+            "app-misc/l-1": {"EAPI": "8", "KEYWORDS": "x86", "LICENSE": "EULA"},
+            "app-misc/p-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "PROPERTIES": "interactive",
+            },
+            "app-misc/r-1": {"EAPI": "8", "KEYWORDS": "x86", "RESTRICT": "fetch"},
+        },
+        "installed": {
+            "app-misc/k-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/m-1": {"EAPI": "8", "KEYWORDS": "x86"},
+        },
+        "world": ("app-misc/k", "app-misc/m"),
+    },
 }

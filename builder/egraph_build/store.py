@@ -66,10 +66,14 @@ EVALUATED_SECTIONS = (
 )
 
 REPOSITORY_MAGIC = b"EGRAPHRI"
-REPOSITORY_FORMAT_VERSION = 4
-SECTION_REPOSITORIES, SECTION_VERSIONS, SECTION_VISIBILITY, SECTION_ADVISORIES = range(
-    4, 8
-)
+REPOSITORY_FORMAT_VERSION = 5
+(
+    SECTION_REPOSITORIES,
+    SECTION_VERSIONS,
+    SECTION_VISIBILITY,
+    SECTION_ADVISORIES,
+    SECTION_VISIBILITY_LEDGER,
+) = range(4, 9)
 REPOSITORY_SECTIONS = (
     SECTION_META,
     SECTION_INPUTS,
@@ -78,6 +82,7 @@ REPOSITORY_SECTIONS = (
     SECTION_VERSIONS,
     SECTION_VISIBILITY,
     SECTION_ADVISORIES,
+    SECTION_VISIBILITY_LEDGER,
 )
 
 _HEADER = struct.Struct("<8sII")
@@ -287,9 +292,7 @@ def encode(layer, meta, inputs=()):
     return _frame(MAGIC, FORMAT_VERSION, SECTIONS, sections)
 
 
-def _write_ledger(use_ledger, strings):
-    w = _Writer()
-
+def _ledger_entries_writer(w, strings):
     def entries(listed):
         w.varint(len(listed))
         for e in listed:
@@ -298,6 +301,13 @@ def _write_ledger(use_ledger, strings):
             w.varint(strings(e.atom))
             w.varint(strings(e.var))
             w.ids([strings(token) for token in e.tokens])
+
+    return entries
+
+
+def _write_ledger(use_ledger, strings):
+    w = _Writer()
+    entries = _ledger_entries_writer(w, strings)
 
     for names in (
         use_ledger.use_order,
@@ -327,6 +337,60 @@ def _write_ledger(use_ledger, strings):
         entries(listed)
     w.ids([strings(token) for token in use_ledger.features])
     return w.out
+
+
+def _write_visibility_ledger(vis, strings):
+    w = _Writer()
+    entries = _ledger_entries_writer(w, strings)
+    entries(vis.env_d)
+    entries(vis.globals)
+    w.varint(len(vis.profiles))
+    for node in vis.profiles:
+        w.varint(strings(node.path))
+        for listed in node[1:]:
+            entries(listed)
+    w.varint(len(vis.repositories))
+    for repo in vis.repositories:
+        w.varint(strings(repo.name))
+        w.ids([strings(name) for name in repo.masters])
+        entries(repo.package_mask)
+        entries(repo.package_unmask)
+    for name in ledger.VisibilityLedger._fields[4:]:
+        entries(getattr(vis, name))
+    return w.out
+
+
+def _read_visibility_ledger(data, strings):
+    r = _Reader(data, "visibility ledger")
+    nstrings = len(strings)
+
+    def s():
+        return strings[r.varint(nstrings)]
+
+    def entries():
+        return tuple(
+            ledger.Entry(
+                s(), r.varint(), s(), s(), tuple(strings[i] for i in r.ids(nstrings))
+            )
+            for _ in range(r.count())
+        )
+
+    env_d, made_globals = entries(), entries()
+    profiles = tuple(
+        ledger.VisibilityNode(
+            s(), *(entries() for _ in ledger.VisibilityNode._fields[1:])
+        )
+        for _ in range(r.count())
+    )
+    repositories = tuple(
+        ledger.MaskRepository(
+            s(), tuple(strings[i] for i in r.ids(nstrings)), entries(), entries()
+        )
+        for _ in range(r.count())
+    )
+    rest = tuple(entries() for _ in ledger.VisibilityLedger._fields[4:])
+    r.done()
+    return ledger.VisibilityLedger(env_d, made_globals, profiles, repositories, *rest)
 
 
 def _read_ledger(data, strings):
@@ -548,6 +612,10 @@ def encode_repository(index, meta, inputs=()):
             for atoms in (p.vulnerable, p.unaffected):
                 w.ids([strings(atom) for atom in atoms])
     sections[SECTION_ADVISORIES] = w.out
+
+    sections[SECTION_VISIBILITY_LEDGER] = _write_visibility_ledger(
+        index.ledger, strings
+    )
 
     sections[SECTION_STRINGS] = _write_strings(strings)
     return _frame(
@@ -988,10 +1056,13 @@ def decode_repository(data):
         )
         advisories.append(Advisory(nr, title, synopsis, revision, packages))
     r.done()
+    vis_ledger = _read_visibility_ledger(sections[SECTION_VISIBILITY_LEDGER], strings)
     return (
         meta,
         inputs,
-        RepositoryIndex(repositories, tuple(versions), visibility, tuple(advisories)),
+        RepositoryIndex(
+            repositories, tuple(versions), visibility, tuple(advisories), vis_ledger
+        ),
     )
 
 

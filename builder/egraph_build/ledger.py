@@ -152,7 +152,7 @@ def _expand_prefixes(tokens):
     return out
 
 
-def _dict_source(path, recursive, expected, prefixes=False):
+def _dict_source(path, recursive, expected, prefixes=False, var="USE"):
     """A package.* file's entries, one per line, each its atom and the tokens portage kept."""
     flat = _flatten(expected)
     cps = {str(atom): atom.cp for atoms in expected.values() for atom in atoms}
@@ -165,12 +165,12 @@ def _dict_source(path, recursive, expected, prefixes=False):
             continue
         values = _expand_prefixes(tokens[1:]) if prefixes else tokens[1:]
         kept, consumed[atom] = _subsequence(values, wanted[atom], consumed[atom])
-        entries.append(Entry(name, number, atom, "USE", tuple(kept)))
+        entries.append(Entry(name, number, atom, var, tuple(kept)))
     complete = all(consumed[atom] == len(tokens) for atom, tokens in flat)
     # Specificity breaks ties by the order of a cp's keys, which is all that has to agree.
     if complete and _by_cp(_keys(entries), cps) == _by_cp(wanted, cps):
         return tuple(entries)
-    return tuple(Entry(path, 0, atom, "USE", tokens) for atom, tokens in flat)
+    return tuple(Entry(path, 0, atom, var, tokens) for atom, tokens in flat)
 
 
 def _keys(entries):
@@ -311,10 +311,13 @@ def _make_conf_files(settings):
     return files
 
 
-def _make_conf(files):
+def _make_conf(files, expand=None):
+    """make.conf's values; with expand, its references to what make.defaults set expanded, as
+    config.__init__ reads it."""
     values = {}
+    expand = {} if expand is None else expand
     for name in files:
-        values.update(getconfig(name, allow_sourcing=True, expand={}) or {})
+        values.update(getconfig(name, allow_sourcing=True, expand=expand) or {})
     return values
 
 
@@ -502,4 +505,379 @@ def to_json(ledger):
         "env": _entries_json(ledger.env),
         "env_d": _entries_json(ledger.env_d),
         "features": list(ledger.features),
+    }
+
+
+# The incremental variables visibility is decided from.
+ACCEPT = ("ACCEPT_KEYWORDS", "ACCEPT_LICENSE", "ACCEPT_PROPERTIES", "ACCEPT_RESTRICT")
+
+
+class VisibilityNode(NamedTuple):
+    """A profile node's sources of visibility: make.defaults' ACCEPT variables, then its
+    package.mask, package.unmask, package.keywords, package.accept_keywords and (in the
+    profile-license format) package.license."""
+
+    path: str
+    defaults: tuple = ()
+    package_mask: tuple = ()
+    package_unmask: tuple = ()
+    package_keywords: tuple = ()
+    package_accept_keywords: tuple = ()
+    package_license: tuple = ()
+
+
+class MaskRepository(NamedTuple):
+    name: str
+    masters: tuple = ()
+    package_mask: tuple = ()
+    package_unmask: tuple = ()
+
+
+class VisibilityLedger(NamedTuple):
+    """Every source of a version's visibility, entry by entry: the ACCEPT variables by layer,
+    the license groups, and the package.* files of the repositories, the profile nodes and the
+    user. A mask file's entry is its line's atom, `-` and all, with no tokens."""
+
+    env_d: tuple = ()
+    # make.globals, and portage's built-in defaults (no file) for what it leaves out.
+    globals: tuple = ()
+    profiles: tuple = ()
+    repositories: tuple = ()
+    # make.conf, then the `*/*` lines of package.license, package.properties and
+    # package.accept_restrict, as config.__init__ folds them into the conf layer.
+    conf: tuple = ()
+    env: tuple = ()
+    # One entry per group definition: the group as var, its members as tokens.
+    license_groups: tuple = ()
+    package_mask: tuple = ()
+    package_unmask: tuple = ()
+    package_keywords: tuple = ()
+    package_accept_keywords: tuple = ()
+    package_license: tuple = ()
+    package_properties: tuple = ()
+    package_accept_restrict: tuple = ()
+
+
+def _atom_lines(path, recursive, expected):
+    """A package.mask-style file's entries, an atom per line, held to portage's values."""
+    expected = tuple(str(value) for value, _ in expected)
+    entries = []
+    at = 0
+    for name, number, tokens in _lines(path, recursive):
+        kept, at = _subsequence([" ".join(tokens)], expected, at)
+        if kept:
+            entries.append(Entry(name, number, kept[0], "", ()))
+    if at == len(expected):
+        return tuple(entries)
+    return tuple(Entry(path, 0, atom, "", ()) for atom in expected)
+
+
+def _by_cp_dict(flat):
+    """grabdict_package's {atom: tokens} as {cp: {atom: tokens}}, as the managers keep it."""
+    grouped = {}
+    for atom, tokens in flat.items():
+        grouped.setdefault(atom.cp, {})[atom] = tokens
+    return grouped
+
+
+def _package_dict(path, recursive, without_global=False, **options):
+    """A package.* file's entries as grabdict_package reads it; without its `*/*` line when
+    portage folds that elsewhere."""
+    from portage.util import grabdict_package
+
+    grabbed = grabdict_package(path, recursive=recursive, **options)
+    if without_global:
+        grabbed.pop("*/*", None)
+    return _dict_source(path, recursive, _by_cp_dict(grabbed), var="")
+
+
+def _user_package_dict(path, without_global=False):
+    return _package_dict(
+        path,
+        True,
+        without_global,
+        allow_wildcard=True,
+        allow_repo=True,
+        verify_eapi=False,
+        allow_build_id=True,
+        allow_use=False,
+    )
+
+
+def _profile_package_dict(node, name):
+    from portage.repository.config import allow_profile_repo_deps
+
+    return _package_dict(
+        os.path.join(node.location, name),
+        node.portage1_directories,
+        verify_eapi=True,
+        eapi=node.eapi,
+        eapi_default=None,
+        allow_repo=allow_profile_repo_deps(node),
+        allow_build_id=node.allow_build_id,
+        allow_use=False,
+    )
+
+
+def _accept_assigned(files, values):
+    return [
+        Entry(*_assignment(files, var), "", var, tuple(values[var].split()))
+        for var in ACCEPT
+        if values.get(var) is not None
+    ]
+
+
+def _accept_held(entries, layer, path):
+    """entries where they stack to the layer's ACCEPT variables, concatenated as stack_dicts
+    and regenerate concatenate incrementals; else portage's values at line 0."""
+    stacked = {}
+    for entry in entries:
+        stacked.setdefault(entry.var, []).extend(entry.tokens)
+    wanted = {var: layer[var].split() for var in ACCEPT if layer.get(var) is not None}
+    if {k: v for k, v in stacked.items() if v} == {
+        k: v for k, v in wanted.items() if v
+    }:
+        return tuple(entries)
+    return tuple(Entry(path, 0, "", var, tuple(v)) for var, v in wanted.items())
+
+
+def _global_lines(path, var):
+    """A user package.* file's `*/*` lines, which config.__init__ folds into var."""
+    return [
+        Entry(name, number, "*/*", var, tuple(tokens[1:]))
+        for name, number, tokens in _lines(path, True)
+        if tokens[0] == "*/*"
+    ]
+
+
+def _license_groups(locations):
+    """Each license_groups line as LicenseManager reads them: the group, then its members."""
+    entries = []
+    for location in locations:
+        for name, number, tokens in _lines(
+            os.path.join(location, "license_groups"), False
+        ):
+            if len(tokens) > 1:
+                entries.append(Entry(name, number, "", tokens[0], tuple(tokens[1:])))
+    return tuple(entries)
+
+
+def _mask_file(path, recursive, **options):
+    from portage.util import grabfile_package
+
+    return _atom_lines(
+        path,
+        recursive,
+        grabfile_package(
+            path, recursive=recursive, remember_source_file=True, **options
+        ),
+    )
+
+
+def _make_globals(settings):
+    import portage
+    from portage.const import PORTAGE_BASE_PATH
+
+    if portage._not_installed:
+        return os.path.join(PORTAGE_BASE_PATH, "cnf", "make.globals")
+    return os.path.join(settings.global_config_path, "make.globals")
+
+
+def read_visibility(settings):
+    """The VisibilityLedger of settings, a config with nothing set."""
+    from portage.repository.config import allow_profile_repo_deps
+
+    locations = settings._locations_manager
+    nodes = locations.profiles_complex
+    profiles = []
+    # make.defaults expanded node by node, then make.conf, as config.__init__ reads them.
+    expand = dict(settings.configdict["env.d"])
+    for node in nodes:
+        path = os.path.join(node.location, "make.defaults")
+        files = _file_list(path, node.portage1_directories)
+        expand.pop("USE", None)
+        values = (
+            getconfig(path, expand=expand, recursive=node.portage1_directories) or {}
+        )
+        mask_options = dict(
+            verify_eapi=True,
+            eapi=node.eapi,
+            eapi_default=None,
+            allow_repo=allow_profile_repo_deps(node),
+            allow_build_id=node.allow_build_id,
+        )
+        profiles.append(
+            VisibilityNode(
+                path=node.location,
+                defaults=tuple(_accept_assigned(files, values)),
+                package_mask=_mask_file(
+                    os.path.join(node.location, "package.mask"),
+                    node.portage1_directories,
+                    **mask_options,
+                ),
+                package_unmask=(
+                    _mask_file(
+                        os.path.join(node.location, "package.unmask"),
+                        node.portage1_directories,
+                        **mask_options,
+                    )
+                    if node.portage1_directories
+                    else ()
+                ),
+                package_keywords=_profile_package_dict(node, "package.keywords"),
+                package_accept_keywords=_profile_package_dict(
+                    node, "package.accept_keywords"
+                ),
+                package_license=(
+                    _user_package_dict(
+                        os.path.join(node.location, "package.license"), True
+                    )
+                    if "profile-license" in node.profile_formats
+                    else ()
+                ),
+            )
+        )
+    defaults = tuple(entry for node in profiles for entry in node.defaults)
+    held = _accept_held(defaults, settings.configdict["defaults"], "")
+    if held != defaults and profiles:
+        path = os.path.join(profiles[-1].path, "make.defaults")
+        profiles = [node._replace(defaults=()) for node in profiles]
+        profiles[-1] = profiles[-1]._replace(
+            defaults=tuple(entry._replace(file=path) for entry in held)
+        )
+
+    repositories = []
+    for repo in settings.repositories.repos_with_profiles():
+        base = os.path.join(repo.location, "profiles")
+        options = dict(
+            verify_eapi=True,
+            eapi_default=repo.eapi,
+            allow_repo=allow_profile_repo_deps(repo),
+            allow_build_id=("build-id" in repo.profile_formats),
+        )
+        repositories.append(
+            MaskRepository(
+                name=repo.name,
+                masters=tuple(master.name for master in repo.masters),
+                package_mask=_mask_file(
+                    os.path.join(base, "package.mask"),
+                    repo.portage1_profiles,
+                    **options,
+                ),
+                package_unmask=(
+                    _mask_file(os.path.join(base, "package.unmask"), True, **options)
+                    if repo.portage1_profiles
+                    else ()
+                ),
+            )
+        )
+
+    user = _user_config(settings)
+    conf_files = _make_conf_files(settings)
+    conf = _accept_assigned(conf_files, _make_conf(conf_files, expand))
+    for name, var in (
+        ("package.license", "ACCEPT_LICENSE"),
+        ("package.properties", "ACCEPT_PROPERTIES"),
+        ("package.accept_restrict", "ACCEPT_RESTRICT"),
+    ):
+        conf.extend(_global_lines(os.path.join(user, name), var))
+    # package.license's `*/*` folds in with its groups expanded.
+    licenses = settings._license_manager
+    expanded = tuple(
+        (
+            entry._replace(tokens=tuple(licenses.expandLicenseTokens(entry.tokens)))
+            if entry.atom == "*/*" and entry.var == "ACCEPT_LICENSE"
+            else entry
+        )
+        for entry in conf
+    )
+    held = _accept_held(
+        expanded, settings.configdict["conf"], conf_files[-1] if conf_files else ""
+    )
+    conf = tuple(conf) if held == expanded else held
+
+    profile_env = os.path.join(settings["EROOT"], "etc", "profile.env")
+    env_d = _accept_assigned([profile_env], settings.configdict["env.d"])
+    made_globals = _make_globals(settings)
+    return VisibilityLedger(
+        env_d=_accept_held(env_d, settings.configdict["env.d"], profile_env),
+        globals=_accept_held(
+            tuple(
+                entry if entry.line else entry._replace(file="")
+                for entry in _accept_assigned(
+                    [made_globals], settings.configdict["globals"]
+                )
+            ),
+            settings.configdict["globals"],
+            made_globals,
+        ),
+        profiles=tuple(profiles),
+        repositories=tuple(repositories),
+        conf=conf,
+        env=tuple(
+            Entry("", 0, "", var, tuple(settings.backupenv[var].split()))
+            for var in ACCEPT
+            if settings.backupenv.get(var) is not None
+        ),
+        license_groups=_license_groups(
+            [*locations.profile_locations, locations.abs_user_config]
+        ),
+        package_mask=_mask_file(
+            os.path.join(user, "package.mask"),
+            True,
+            allow_wildcard=True,
+            allow_repo=True,
+            verify_eapi=False,
+            allow_build_id=True,
+        ),
+        package_unmask=_mask_file(
+            os.path.join(user, "package.unmask"),
+            True,
+            allow_wildcard=True,
+            allow_repo=True,
+            verify_eapi=False,
+            allow_build_id=True,
+        ),
+        package_keywords=_user_package_dict(os.path.join(user, "package.keywords")),
+        package_accept_keywords=_user_package_dict(
+            os.path.join(user, "package.accept_keywords")
+        ),
+        package_license=_user_package_dict(os.path.join(user, "package.license"), True),
+        package_properties=_user_package_dict(
+            os.path.join(user, "package.properties"), True
+        ),
+        package_accept_restrict=_user_package_dict(
+            os.path.join(user, "package.accept_restrict"), True
+        ),
+    )
+
+
+def visibility_to_json(vis):
+    """The visibility ledger as a JSON value, for the repository index's canonical JSON."""
+    return {
+        "env_d": _entries_json(vis.env_d),
+        "globals": _entries_json(vis.globals),
+        "profiles": [
+            {
+                "path": node.path,
+                **{
+                    name: _entries_json(getattr(node, name))
+                    for name in VisibilityNode._fields[1:]
+                },
+            }
+            for node in vis.profiles
+        ],
+        "repositories": [
+            {
+                "name": repo.name,
+                "masters": list(repo.masters),
+                "package_mask": _entries_json(repo.package_mask),
+                "package_unmask": _entries_json(repo.package_unmask),
+            }
+            for repo in vis.repositories
+        ],
+        **{
+            name: _entries_json(getattr(vis, name))
+            for name in VisibilityLedger._fields[4:]
+        },
     }

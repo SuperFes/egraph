@@ -116,20 +116,6 @@ struct Candidate {
     [[nodiscard]] bool visible() const { return reasons.count == 0; }
 };
 
-// One line of the configuration a flag's state is stacked from.
-struct LedgerEntry {
-    // String id; empty for the environment.
-    std::uint32_t file = 0;
-    // 0 where portage's value could not be told apart line by line.
-    std::uint32_t line = 0;
-    // String id; empty for a global entry.
-    std::uint32_t atom = 0;
-    // String id: USE, or the USE_EXPAND or USE_EXPAND_UNPREFIXED variable it was set through.
-    std::uint32_t var = 0;
-    // String ids in Evaluated::ids, as portage stacks them: flag, -flag, -*, prefix_*.
-    Range tokens;
-};
-
 // The files of a profile node or of a repository's profiles directory, in the store's order.
 inline constexpr std::array<std::string_view, 12> ledger_files{
     "make.defaults",     "use.stable",

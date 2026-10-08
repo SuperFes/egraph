@@ -52,6 +52,19 @@ def test_the_ledger_reads_every_live_source_line_by_line(live_vardb):
     assert [e for e in entries_of(use_ledger) if e.file and not e.line] == []
 
 
+def test_the_visibility_ledger_reads_every_live_source_line_by_line(live_vardb):
+    from test_ledger import visibility_entries_of
+
+    vis = ledger.read_visibility(live_vardb.settings)
+    assert [e for e in visibility_entries_of(vis) if e.file and not e.line] == []
+
+
+def test_the_live_visibility_ledger_stacks_to_portages(live_vardb):
+    from test_ledger import assert_visibility_sources_are_portages
+
+    assert_visibility_sources_are_portages(live_vardb.settings)
+
+
 def test_json_covers_every_package(live_vardb, live_layer):
     document = json.loads(installed.to_json(live_layer))
     assert [pkg["cpv"] for pkg in document["packages"]] == list(

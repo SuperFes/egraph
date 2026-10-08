@@ -10,7 +10,8 @@ import json
 import os
 from typing import NamedTuple
 
-from egraph_build import ebuild, evaluated, masks
+from egraph_build import ebuild, evaluated, ledger, masks
+from egraph_build.ledger import VisibilityLedger
 
 # What a version record holds of the ebuild's metadata, and what its validity is checked on.
 KEYS = tuple(
@@ -116,6 +117,8 @@ class RepositoryIndex(NamedTuple):
     visibility: Visibility
     # Sorted by id.
     advisories: tuple = ()
+    # Where each source of visibility was read from, entry by entry.
+    ledger: VisibilityLedger = VisibilityLedger()
 
 
 def _tokens(text):
@@ -266,6 +269,7 @@ def assemble(portdb, versions, advisories=None):
         advisories=(
             read_advisories(portdb.settings) if advisories is None else advisories
         ),
+        ledger=ledger.read_visibility(portdb.settings),
     )
 
 
@@ -352,7 +356,7 @@ def to_json(index):
     """The index as canonical JSON: sorted keys, everything in the store's order."""
     v = index.visibility
     document = {
-        "format": 4,
+        "format": 5,
         "advisories": [
             {
                 "id": a.id,
@@ -420,5 +424,6 @@ def to_json(index):
             "accept_restrict": list(v.accept_restrict),
             "restrict": _entries_json(v.restrict),
         },
+        "ledger": ledger.visibility_to_json(index.ledger),
     }
     return json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"

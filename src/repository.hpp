@@ -14,7 +14,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t repository_format_version = 4;
+inline constexpr std::uint32_t repository_format_version = 5;
 
 struct RepositoryMeta {
     std::string egraph_version;
@@ -84,6 +84,48 @@ struct VisibilityConfig {
     Range restrict;
 };
 
+// A profile node's sources of visibility, ranges of RepositoryIndex::ledger_entries.
+struct VisibilityNode {
+    std::uint32_t path = 0;
+    // make.defaults' ACCEPT_ variables.
+    Range defaults;
+    Range package_mask;
+    Range package_unmask;
+    Range package_keywords;
+    Range package_accept_keywords;
+    // Only in the profile-license format.
+    Range package_license;
+};
+
+struct MaskRepository {
+    std::uint32_t name = 0;
+    // String ids.
+    Range masters;
+    Range package_mask;
+    Range package_unmask;
+};
+
+// Every source of a version's visibility, entry by entry (docs/store-format.md).
+struct VisibilityLedger {
+    Range env_d;
+    Range globals;
+    std::vector<VisibilityNode> profiles;
+    std::vector<MaskRepository> repositories;
+    // make.conf, then the `*/*` lines of package.license, package.properties and
+    // package.accept_restrict.
+    Range conf;
+    Range env;
+    // A group per entry: its name as var, its members as tokens.
+    Range license_groups;
+    Range package_mask;
+    Range package_unmask;
+    Range package_keywords;
+    Range package_accept_keywords;
+    Range package_license;
+    Range package_properties;
+    Range package_accept_restrict;
+};
+
 // A package entry of a GLSA.
 struct AdvisoryPackage {
     std::uint32_t cp = 0;
@@ -116,8 +158,12 @@ struct RepositoryIndex : Tables {
     // Sorted by id.
     std::vector<Advisory> advisories;
     std::vector<AdvisoryPackage> advisory_packages;
+    std::vector<LedgerEntry> ledger_entries;
+    VisibilityLedger ledger;
 
     [[nodiscard]] std::span<const ConfigEntry> entries_in(Range range) const EGRAPH_LIFETIMEBOUND;
+    [[nodiscard]] std::span<const LedgerEntry>
+    ledger_entries_in(Range range) const EGRAPH_LIFETIMEBOUND;
     [[nodiscard]] std::span<const AdvisoryPackage>
     packages_in(Range range) const EGRAPH_LIFETIMEBOUND;
 };

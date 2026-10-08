@@ -37,6 +37,22 @@ struct Range {
     std::uint32_t count = 0;
 };
 
+// One line of the configuration (the evaluated store's USE ledger, the repository index's
+// visibility ledger), with the file and line it was read from.
+struct LedgerEntry {
+    // String id; empty for the environment and portage's built-in defaults.
+    std::uint32_t file = 0;
+    // 0 where portage's value could not be told apart line by line.
+    std::uint32_t line = 0;
+    // String id: the line's atom (a mask file's with its `-`); empty for a global entry.
+    std::uint32_t atom = 0;
+    // String id: the variable it was set through (USE, a USE_EXPAND variable, an ACCEPT_
+    // variable), a license group's name, or empty for a package.* line.
+    std::uint32_t var = 0;
+    // String ids in the store's ids, as portage stacks them.
+    Range tokens;
+};
+
 enum class NodeType : std::uint8_t { atom, any_of, all_of, weak_blocker, strong_blocker };
 
 inline constexpr std::uint32_t no_parent = UINT32_MAX;
