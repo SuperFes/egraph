@@ -5,6 +5,7 @@ import struct
 import tempfile
 from typing import NamedTuple
 
+from egraph_build import ledger
 from egraph_build.evaluated import Candidate, Dependencies, EvaluatedLayer, Possible
 from egraph_build.installed import InstalledLayer, Node, Package
 from egraph_build.model import DEP_KINDS
@@ -43,14 +44,15 @@ INPUT_FILE, INPUT_DIRECTORY, INPUT_SYMLINK, INPUT_MISSING = range(4)
 DEFAULT_PATH = "var/cache/egraph/installed.egraph"
 
 EVALUATED_MAGIC = b"EGRAPHEV"
-EVALUATED_FORMAT_VERSION = 10
+EVALUATED_FORMAT_VERSION = 11
 (
     SECTION_DEPENDENCIES,
     SECTION_CANDIDATES,
     SECTION_REPOSITORY,
     SECTION_REQUESTED,
     SECTION_USE_EXPAND,
-) = range(4, 9)
+    SECTION_LEDGER,
+) = range(4, 10)
 EVALUATED_SECTIONS = (
     SECTION_META,
     SECTION_INPUTS,
@@ -60,6 +62,7 @@ EVALUATED_SECTIONS = (
     SECTION_REPOSITORY,
     SECTION_REQUESTED,
     SECTION_USE_EXPAND,
+    SECTION_LEDGER,
 )
 
 REPOSITORY_MAGIC = b"EGRAPHRI"
@@ -284,6 +287,94 @@ def encode(layer, meta, inputs=()):
     return _frame(MAGIC, FORMAT_VERSION, SECTIONS, sections)
 
 
+def _write_ledger(use_ledger, strings):
+    w = _Writer()
+
+    def entries(listed):
+        w.varint(len(listed))
+        for e in listed:
+            w.varint(strings(e.file))
+            w.varint(e.line)
+            w.varint(strings(e.atom))
+            w.varint(strings(e.var))
+            w.ids([strings(token) for token in e.tokens])
+
+    for names in (
+        use_ledger.use_order,
+        use_ledger.use_expand,
+        use_ledger.use_expand_unprefixed,
+    ):
+        w.ids([strings(name) for name in names])
+    w.varint(strings(use_ledger.arch))
+    w.varint(len(use_ledger.profiles))
+    for node in use_ledger.profiles:
+        w.varint(strings(node.path))
+        for listed in node.sources:
+            entries(listed)
+    w.varint(len(use_ledger.repositories))
+    for repo in use_ledger.repositories:
+        w.varint(strings(repo.name))
+        w.ids([strings(name) for name in repo.masters])
+        for listed in repo.sources:
+            entries(listed)
+    for listed in (use_ledger.conf, use_ledger.package_use, use_ledger.package_env):
+        entries(listed)
+    w.varint(len(use_ledger.env_files))
+    for name, listed in use_ledger.env_files:
+        w.varint(strings(name))
+        entries(listed)
+    for listed in (use_ledger.env, use_ledger.env_d):
+        entries(listed)
+    w.ids([strings(token) for token in use_ledger.features])
+    return w.out
+
+
+def _read_ledger(data, strings):
+    r = _Reader(data, "ledger")
+    nstrings = len(strings)
+
+    def s():
+        return strings[r.varint(nstrings)]
+
+    def listed():
+        return tuple(strings[i] for i in r.ids(nstrings))
+
+    def entries():
+        return tuple(
+            ledger.Entry(s(), r.varint(), s(), s(), listed()) for _ in range(r.count())
+        )
+
+    def sources():
+        return tuple(entries() for _ in ledger.FILES)
+
+    use_order, use_expand, unprefixed = listed(), listed(), listed()
+    arch = s()
+    profiles = tuple(ledger.Node(s(), sources()) for _ in range(r.count()))
+    repositories = tuple(
+        ledger.Repository(s(), listed(), sources()) for _ in range(r.count())
+    )
+    conf, package_use, package_env = entries(), entries(), entries()
+    env_files = tuple((s(), entries()) for _ in range(r.count()))
+    env, env_d = entries(), entries()
+    features = listed()
+    r.done()
+    return ledger.Ledger(
+        use_order,
+        use_expand,
+        unprefixed,
+        arch,
+        profiles,
+        repositories,
+        conf,
+        package_use,
+        package_env,
+        env_files,
+        env,
+        env_d,
+        features,
+    )
+
+
 def encode_evaluated(layer, meta, inputs=()):
     """The evaluated store bytes for an EvaluatedLayer, its EvaluatedMeta and its Inputs."""
     strings = _Strings()
@@ -348,6 +439,11 @@ def encode_evaluated(layer, meta, inputs=()):
         w.varint(int(c.empty_groups_true))
         for kind in c.tokens:
             w.ids([strings(token) for token in kind])
+        w.varint(int(c.stable))
+        for values in (c.internal, c.features):
+            w.ids([strings(value) for value in values])
+        w.varint(strings(c.eapi))
+        w.varint(int(c.iuse_effective))
     sections[SECTION_CANDIDATES] = w.out
 
     for section, cps in (
@@ -362,6 +458,8 @@ def encode_evaluated(layer, meta, inputs=()):
     for names in (layer.use_expand(), layer.use_expand_hidden()):
         w.ids([strings(name) for name in names])
     sections[SECTION_USE_EXPAND] = w.out
+
+    sections[SECTION_LEDGER] = _write_ledger(layer.ledger(), strings)
 
     sections[SECTION_STRINGS] = _write_strings(strings)
     return _frame(
@@ -722,9 +820,25 @@ def decode_evaluated(data):
         tokens = tuple(
             tuple(strings[i] for i in r.ids(nstrings)) for _ in range(len(DEP_KINDS))
         )
+        stable = bool(r.varint(2))
+        internal = tuple(strings[i] for i in r.ids(nstrings))
+        features = tuple(strings[i] for i in r.ids(nstrings))
+        eapi = s()
+        iuse_effective = bool(r.varint(2))
         candidates.append(
             Candidate(
-                *fields, *lists, errors, deps, required_use, empty_groups_true, tokens
+                *fields,
+                *lists,
+                errors,
+                deps,
+                required_use,
+                empty_groups_true,
+                tokens,
+                stable,
+                internal,
+                features,
+                eapi,
+                iuse_effective,
             )
         )
     r.done()
@@ -769,7 +883,8 @@ def decode_evaluated(data):
                 *mask,
             )
         )
-    return meta, inputs, EvaluatedLayer(packages, candidates, *listed)
+    use_ledger = _read_ledger(sections[SECTION_LEDGER], strings)
+    return meta, inputs, EvaluatedLayer(packages, candidates, *listed, use_ledger)
 
 
 def decode_repository(data):

@@ -16,8 +16,9 @@ from portage.eapi import _get_eapi_attrs
 from portage.exception import InvalidAtom, InvalidDependString
 from portage.versions import cpv_getkey
 
-from egraph_build import dynamic, installed, masks
+from egraph_build import dynamic, installed, ledger, masks
 from egraph_build.model import DEP_KINDS
+from egraph_build.profile import has_iuse_effective
 
 SOURCES = dynamic.SOURCES
 EBUILD, VDB, MOVED = range(len(SOURCES))
@@ -137,6 +138,12 @@ class Candidate(NamedTuple):
     # Per kind, its dependency string's tokens as use_reduce splits them, for USE it could be
     # built with instead; empty for a masked candidate.
     tokens: tuple = NO_DEPS
+    # Its own USE layers, as the ledger stacks them: ledger.PackageLayers' fields.
+    stable: bool = False
+    internal: tuple = ()
+    features: tuple = ()
+    eapi: str = ""
+    iuse_effective: bool = True
 
 
 def _cpv(pkg):
@@ -156,6 +163,7 @@ class EvaluatedLayer:
         requested=(),
         use_expand=(),
         use_expand_hidden=(),
+        use_ledger=ledger.Ledger(),
     ):
         self._packages = {pkg.cpv: pkg for pkg in sorted(packages, key=_cpv)}
         self._candidates = tuple(sorted(candidates, key=_candidate_key))
@@ -163,6 +171,7 @@ class EvaluatedLayer:
         self._requested = tuple(sorted(requested))
         self._use_expand = tuple(sorted(set(use_expand)))
         self._use_expand_hidden = tuple(sorted(set(use_expand_hidden)))
+        self._ledger = use_ledger
 
     def __iter__(self):
         return iter(self._packages.values())
@@ -195,6 +204,10 @@ class EvaluatedLayer:
     def use_expand_hidden(self):
         """USE_EXPAND_HIDDEN's variables, lowercased and sorted: groups emerge leaves out."""
         return self._use_expand_hidden
+
+    def ledger(self):
+        """The ledger.Ledger of every source of a flag's state."""
+        return self._ledger
 
     def candidates(self, cp=None):
         """Candidates sorted by cp, cpv and repo; only cp's when given."""
@@ -541,6 +554,7 @@ def read_candidates(portdb, settings, cp, installed_cpvs, match, ebuild_use=None
                 continue
             settings.setcpv(cpv, mydb=metadata)
             current = metadata
+            layers = ledger.package_layers(settings)
             iuse = _iuse(metadata)
             if ebuild_use is not None and cpv in installed_cpvs:
                 ebuild_use.record(cpv, repo, iuse, settings)
@@ -582,6 +596,9 @@ def read_candidates(portdb, settings, cp, installed_cpvs, match, ebuild_use=None
                     required_use=required_use,
                     empty_groups_true=empty_groups_true,
                     tokens=tokens,
+                    **layers._asdict(),
+                    eapi=metadata["EAPI"],
+                    iuse_effective=has_iuse_effective(metadata["EAPI"]),
                 )
             )
     return found
@@ -822,6 +839,7 @@ def rebuild(vardb, portdb, previous, cps, carry=None, match=None, requested=()):
             requested,
             portdb.settings.get("USE_EXPAND", "").lower().split(),
             portdb.settings.get("USE_EXPAND_HIDDEN", "").lower().split(),
+            ledger.read(portdb.settings),
         ),
         frozenset(read),
     )
@@ -880,16 +898,22 @@ def to_json(layer):
             "required_use": list(c.required_use),
             "empty_groups_true": c.empty_groups_true,
             "tokens": [list(kind) for kind in c.tokens],
+            "stable": c.stable,
+            "internal": list(c.internal),
+            "features": list(c.features),
+            "eapi": c.eapi,
+            "iuse_effective": c.iuse_effective,
         }
         for c in layer.candidates()
     ]
     document = {
-        "format": 10,
+        "format": 11,
         "packages": packages,
         "candidates": candidates,
         "repository_cps": list(layer.repository_cps()),
         "requested": list(layer.requested()),
         "use_expand": list(layer.use_expand()),
         "use_expand_hidden": list(layer.use_expand_hidden()),
+        "ledger": ledger.to_json(layer.ledger()),
     }
     return json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"

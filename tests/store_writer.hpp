@@ -235,28 +235,41 @@ inline std::vector<std::byte> fresh_sample() {
 // Candidates of app-misc/a: a-1, visible, USE and IUSE "flag", which the profile forces; a-2,
 // masked by keyword; of dev-libs/b: b-2, visible, with DEPEND app-misc/a matching a-1. The
 // repositories hold app-misc/a and dev-libs/b; dev-libs/gone was evaluated on request. USE_EXPAND
-// is PYTHON_TARGETS and VIDEO_CARDS, the latter hidden.
-inline constexpr std::initializer_list<std::string_view> evaluated_strings{"",
-                                                                           "app-misc/a-1",
-                                                                           "dev-libs/b-1",
-                                                                           "8",
-                                                                           "dev-libs/b:=",
-                                                                           "app-misc/a",
-                                                                           "0",
-                                                                           "test_repo",
-                                                                           "flag",
-                                                                           "app-misc/a-2",
-                                                                           "~amd64 keyword",
-                                                                           "RDEPEND",
-                                                                           "bad dep",
-                                                                           "dev-libs/b",
-                                                                           "dev-libs/gone",
-                                                                           "-minimal",
-                                                                           "flag*",
-                                                                           "-new%",
-                                                                           "dev-libs/b-2",
-                                                                           "python_targets",
-                                                                           "video_cards"};
+// is PYTHON_TARGETS and VIDEO_CARDS, the latter hidden. a-1 is stable with IUSE +flag; b-2 has
+// FEATURES=test. The USE ledger: USE_ORDER pkg:defaults, USE_EXPAND VIDEO_CARDS, ARCH x86, one
+// profile node whose make.defaults line 2 sets USE=flag, test_repo with nothing, package.use line
+// 3 "app-misc/a -minimal", the features layer test.
+inline constexpr std::initializer_list<std::string_view> evaluated_strings{
+    "",
+    "app-misc/a-1",
+    "dev-libs/b-1",
+    "8",
+    "dev-libs/b:=",
+    "app-misc/a",
+    "0",
+    "test_repo",
+    "flag",
+    "app-misc/a-2",
+    "~amd64 keyword",
+    "RDEPEND",
+    "bad dep",
+    "dev-libs/b",
+    "dev-libs/gone",
+    "-minimal",
+    "flag*",
+    "-new%",
+    "dev-libs/b-2",
+    "python_targets",
+    "video_cards",
+    "USE",
+    "pkg",
+    "defaults",
+    "VIDEO_CARDS",
+    "x86",
+    "/profile",
+    "/profile/make.defaults",
+    "/etc/portage/package.use",
+    "test"};
 
 inline std::vector<Section> evaluated_sections() {
     Bytes meta;
@@ -293,16 +306,33 @@ inline std::vector<Section> evaluated_sections() {
     Bytes candidates;
     candidates.varint(3);
     // cp, cpv, repo, slot, sub-slot, USE, IUSE, forced, reasons, errors, the five node lists,
-    // REQUIRED_USE, empty groups and the five token lists.
+    // REQUIRED_USE, empty groups, the five token lists, stable, internal, features, EAPI and
+    // IUSE_EFFECTIVE.
     candidates.varints({5, 1, 7, 6, 6}).list({8}).list({8}).list({8}).list({}).varint(0);
     candidates.varints({0, 0, 0, 0, 0}).list({8}).varint(0).list({}).list({}).list({});
-    candidates.list({}).list({});
+    candidates.list({}).list({}).varint(1).list({8}).list({}).varint(3).varint(1);
     candidates.varints({5, 9, 7, 6, 6}).list({}).list({8}).list({}).list({10}).varint(0);
     candidates.varints({0, 0, 0, 0, 0}).list({}).varint(0);
-    candidates.list({}).list({}).list({}).list({}).list({});
+    candidates.list({}).list({}).list({}).list({}).list({}).varint(0).list({}).list({});
+    candidates.varint(3).varint(1);
     candidates.varints({13, 18, 7, 6, 6}).list({}).list({}).list({}).list({}).varint(0);
     candidates.varint(0).varint(1).varints({0, 0, 5}).list({0}).varints({0, 0, 0});
     candidates.list({}).varint(1).list({}).list({5}).list({}).list({}).list({});
+    candidates.varint(0).list({}).list({29}).varint(3).varint(0);
+
+    // Entries: file, line, atom, variable, tokens.
+    Bytes ledger;
+    ledger.list({22, 23}).list({24}).list({}).varint(25);
+    ledger.varint(1).varint(26).varint(1).varints({27, 2, 0, 21}).list({8});
+    for (int file = 1; file < 12; ++file) {
+        ledger.varint(0);
+    }
+    ledger.varint(1).varint(7).list({});
+    for (int file = 0; file < 12; ++file) {
+        ledger.varint(0);
+    }
+    ledger.varint(0).varint(1).varints({28, 3, 5, 21}).list({15}).varint(0);
+    ledger.varint(0).varint(0).varint(0).list({29});
 
     return {{.id = 1, .bytes = meta.bytes()},
             {.id = 2, .bytes = inputs.bytes()},
@@ -311,7 +341,8 @@ inline std::vector<Section> evaluated_sections() {
             {.id = 5, .bytes = candidates.bytes()},
             {.id = 6, .bytes = Bytes{}.list({5, 13}).bytes()},
             {.id = 7, .bytes = Bytes{}.list({14}).bytes()},
-            {.id = 8, .bytes = Bytes{}.list({19, 20}).list({20}).bytes()}};
+            {.id = 8, .bytes = Bytes{}.list({19, 20}).list({20}).bytes()},
+            {.id = 9, .bytes = ledger.bytes()}};
 }
 
 inline std::vector<std::byte> assemble_evaluated(const std::vector<Section>& sections) {

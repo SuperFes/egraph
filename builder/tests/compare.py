@@ -92,8 +92,17 @@ def possible_mismatches(vardb, portdb, cpv, found, deps, size=None):
             for chosen in itertools.combinations(flags, fewer):
                 if edge in oracle.possible(vardb, portdb, cpv, chosen):
                     problems.append(f"{edge} with {flags}: {chosen} add it already")
-    source, _, _ = oracle.dynamic_dep_strings(vardb, portdb, cpv)
+    source, strings, _ = oracle.dynamic_dep_strings(vardb, portdb, cpv)
     toggles = oracle.use_toggles(vardb, portdb, cpv) if source == "ebuild" else ()
+    # Only flags a conditional names change what use_reduce selects; the rest only multiply
+    # the combinations.
+    conditional = {
+        token.rstrip("?").lstrip("!")
+        for string in strings.values()
+        for token in string.split()
+        if token.endswith("?")
+    }
+    toggles = [toggle for toggle in toggles if toggle.lstrip("-") in conditional]
     have = {(edge.kind, edge.child) for edge in deps}
     for count in range(1, (size or len(toggles)) + 1):
         for chosen in itertools.combinations(toggles, count):

@@ -29,6 +29,7 @@ def playground_arguments(name):
     arguments.pop("bounded", None)
     arguments.pop("pulls", None)
     arguments.pop("held", None)
+    arguments.pop("files", None)
     arguments["installed"] = {
         cpv: {"KEYWORDS": "x86", **metadata}
         for cpv, metadata in arguments.get("installed", {}).items()
@@ -37,8 +38,8 @@ def playground_arguments(name):
 
 
 def make_playground(name, removed=(), deselected=()):
-    """A scenario's playground, with the package moves ResolverPlayground cannot write itself;
-    without the installed cpvs removed and the world atoms deselected."""
+    """A scenario's playground, with the package moves and files ResolverPlayground cannot write
+    itself; without the installed cpvs removed and the world atoms deselected."""
     from portage.tests.resolver.ResolverPlayground import ResolverPlayground
 
     arguments = playground_arguments(name)
@@ -62,6 +63,21 @@ def make_playground(name, removed=(), deselected=()):
         for quarter, lines in updates.items():
             with open(os.path.join(path, quarter), "w") as f:
                 f.writelines(f"{line}\n" for line in lines)
+    files = SCENARIOS[name].get("files", {})
+    if files:
+        profile = os.path.realpath(
+            os.path.join(playground.eroot, "etc", "portage", "make.profile")
+        )
+        for name_, lines in files.items():
+            if name_.startswith("profile/"):
+                path = os.path.join(profile, name_[len("profile/") :])
+            else:
+                path = os.path.join(playground.eroot, name_)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.writelines(f"{line}\n" for line in lines)
+        # The files ResolverPlayground cannot write itself, read as a fresh config would.
+        playground.settings, playground.trees = playground._load_config()
     return playground
 
 

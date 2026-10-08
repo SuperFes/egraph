@@ -1034,12 +1034,16 @@ serve the interface and step 19 alike; `egraph use <pkg> [flag]` and `egraph con
 entry matching nothing in any repository is dead, one matching only packages not installed is
 listed apart, more quietly; watch keeps one `config` notice counting the findings.
 
-- 18a: the USE ledger in the evaluated store: every source of a flag's state as entries (layer,
+- 18a (done): the USE ledger in the evaluated store (format 11): every source of a flag's state as entries (layer,
   file, line, atom or none, tokens), read with portage's own loaders: each profile node's
   `make.defaults` (USE and its USE_EXPAND variables, expanded), `use.*` and `package.use.*` in
   the profiles and the repositories, `make.conf`, the user's `package.use`, the environment;
   per candidate its IUSE defaults; `USE_ORDER`, the incremental USE_EXPAND variables and ARCH.
-  Held entry for entry to UseManager's and config's own lists.
+  Held entry for entry to UseManager's and config's own lists, falling back to portage's values
+  at line 0 where a source's lines say otherwise (none in the scenarios or on this machine: 1629
+  entries, read in 0.1 s). `*/*` in the user's `package.use` and `package.env` goes to the conf
+  layer, as portage folds it there. Candidates gain their stable bit, `pkginternal` and
+  `features` layers, EAPI and IUSE_EFFECTIVE.
 - 18b: extended atoms in the C++ matcher (`*/*`, `cat/*`, `*/pkg`, `::repo`, `=cpv*`), held to
   portage's matching in `test_match`, and `best_match_to_list`'s order of specificity.
 - 18c: the stacking in C++: per candidate, each flag's final state and the entries that set it,

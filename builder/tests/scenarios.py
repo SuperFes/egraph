@@ -32,6 +32,16 @@ ATOM_VERSIONS = (
 # alternative top-2 chooses for being in the graph.
 TOP_1 = "dev-libs/b dev-libs/d dev-libs/i dev-libs/r dev-libs/post app-misc/via"
 
+# The ledger scenario's app-misc/a: a flag per source of a flag's state.
+LEDGER_IUSE = " ".join(
+    (
+        "+idefault pdefault pminus pmask umask pforce pkgflag masked conf glob user slotflag",
+        "exact more ranged stableflag stablemasked stableforced",
+        "video_cards_vesa video_cards_intel video_cards_radeon video_cards_nvidia",
+        "linguas_en linguas_de",
+    )
+)
+
 SCENARIOS = {
     # The fork's _InstalledGraph test system.
     "reference": {
@@ -1439,5 +1449,89 @@ SCENARIOS = {
             ),
             "package.unmask": ("app-misc/unmasked",),
         },
+    },
+    # Every source of a flag's state, for the USE ledger and its stacking: a profile of its own
+    # (make.defaults with USE_EXPAND, stable files, specificity between package.use atoms), the
+    # user's profile, make.conf replacing a USE_EXPAND variable, package.use in a directory with
+    # `*/*`, `VAR: -* x` and ties, package.env (`*/*` too) with FEATURES=test, and RESTRICT=test.
+    "ledger": {
+        "profile": {
+            "eapi": ("9",),
+            "use.force": ("x86", "pforce"),
+            "use.mask": ("pmask", "umask"),
+            "use.stable": ("stableflag",),
+            "package.use": (
+                "app-misc/a pkgflag",
+                ">=app-misc/a-2 -pkgflag",
+            ),
+            "package.use.mask": ("=app-misc/a-1 masked",),
+            "package.use.stable.force": ("app-misc/a stableforced",),
+        },
+        "files": {
+            "profile/make.defaults": (
+                'ARCH="x86"',
+                'ACCEPT_KEYWORDS="x86"',
+                'USE_EXPAND="VIDEO_CARDS LINGUAS"',
+                'USE="pdefault -pminus conf"',
+                'VIDEO_CARDS="vesa intel"',
+                'LINGUAS="en"',
+            ),
+            "profile/use.stable.mask": ("stablemasked",),
+            "etc/portage/profile/use.mask": ("-umask",),
+            "etc/portage/package.use/00-base": (
+                "# everything",
+                "*/* glob",
+                "",
+                "app-misc/a user -conf VIDEO_CARDS: -* nvidia",
+                "app-misc/a:0 slotflag",
+            ),
+            "etc/portage/package.use/10-more": (
+                "=app-misc/a-2 exact",
+                "app-misc/a more",
+                ">=app-misc/a-1 ranged -glob",
+                "<app-misc/a-3 -ranged",
+            ),
+            "etc/portage/package.env": (
+                "*/* everywhere.conf",
+                "app-misc/b withenv.conf",
+                "app-misc/c withtest.conf",
+            ),
+            "etc/portage/env/everywhere.conf": ('USE="globalenv"',),
+            "etc/portage/env/withenv.conf": ('USE="fromenv"', 'FEATURES="test"'),
+            "etc/portage/env/withtest.conf": ('FEATURES="test"',),
+        },
+        "user_config": {
+            "make.conf": ('USE="${USE} -pdefault linguas_*"', 'VIDEO_CARDS="radeon"'),
+            "package.accept_keywords": ("=app-misc/a-2 ~x86",),
+        },
+        "ebuilds": {
+            "app-misc/a-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "IUSE": LEDGER_IUSE,
+            },
+            "app-misc/a-2": {
+                "EAPI": "8",
+                "KEYWORDS": "~x86",
+                "IUSE": LEDGER_IUSE,
+            },
+            "app-misc/b-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "IUSE": "fromenv globalenv glob test",
+            },
+            "app-misc/c-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "IUSE": "test +idefault",
+                "RESTRICT": "test",
+            },
+        },
+        "installed": {
+            "app-misc/a-1": {"EAPI": "8", "IUSE": LEDGER_IUSE, "USE": "idefault"},
+            "app-misc/b-1": {"EAPI": "8", "IUSE": "fromenv globalenv glob test"},
+            "app-misc/c-1": {"EAPI": "8", "IUSE": "test +idefault", "RESTRICT": "test"},
+        },
+        "world": ("app-misc/a", "app-misc/b", "app-misc/c"),
     },
 }

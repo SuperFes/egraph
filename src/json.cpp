@@ -4,10 +4,12 @@
 #include <array>
 #include <cstdint>
 #include <format>
+#include <initializer_list>
 #include <numeric>
 #include <optional>
 #include <ostream>
 #include <sstream>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -228,6 +230,109 @@ void write_json_string(std::ostream& out, std::string_view bytes) {
     out << '"';
 }
 
+namespace {
+
+void write_entries(std::ostream& out, const Evaluated& evaluated, Range range) {
+    out << '[';
+    bool first = true;
+    for (const auto& entry : evaluated.entries_in(range)) {
+        out << (first ? "{\"atom\":" : ",{\"atom\":");
+        first = false;
+        write_string(out, evaluated, entry.atom);
+        out << ",\"file\":";
+        write_string(out, evaluated, entry.file);
+        out << ",\"line\":" << entry.line << ",\"tokens\":";
+        write_string_list(out, evaluated, entry.tokens);
+        out << ",\"var\":";
+        write_string(out, evaluated, entry.var);
+        out << '}';
+    }
+    out << ']';
+}
+
+// A profile node's or a repository's object: its files beside its other members, every key in
+// sorted order as the builder's canonical JSON has them.
+template <typename Members>
+void write_sources(std::ostream& out, const Evaluated& evaluated, const LedgerSources& sources,
+                   std::initializer_list<std::string_view> names, const Members& members) {
+    std::vector<std::string_view> keys(ledger_files.begin(), ledger_files.end());
+    keys.insert(keys.end(), names);
+    std::ranges::sort(keys);
+    out << '{';
+    bool first = true;
+    for (const auto key : keys) {
+        out << (first ? "" : ",");
+        first = false;
+        write_json_string(out, key);
+        out << ':';
+        if (const auto file = std::ranges::find(ledger_files, key); file != ledger_files.end()) {
+            write_entries(out, evaluated,
+                          sources.at(static_cast<std::size_t>(file - ledger_files.begin())));
+        } else {
+            members(key);
+        }
+    }
+    out << '}';
+}
+
+void write_ledger(std::ostream& out, const Evaluated& evaluated) {
+    const auto& ledger = evaluated.ledger;
+    out << R"({"arch":)";
+    write_string(out, evaluated, ledger.arch);
+    out << ",\"conf\":";
+    write_entries(out, evaluated, ledger.conf);
+    out << ",\"env\":";
+    write_entries(out, evaluated, ledger.env);
+    out << ",\"env_d\":";
+    write_entries(out, evaluated, ledger.env_d);
+    out << ",\"env_files\":[";
+    bool first = true;
+    for (const auto& file : ledger.env_files) {
+        out << (first ? "{\"entries\":" : ",{\"entries\":");
+        first = false;
+        write_entries(out, evaluated, file.entries);
+        out << ",\"name\":";
+        write_string(out, evaluated, file.name);
+        out << '}';
+    }
+    out << "],\"features\":";
+    write_string_list(out, evaluated, ledger.features);
+    out << ",\"package_env\":";
+    write_entries(out, evaluated, ledger.package_env);
+    out << ",\"package_use\":";
+    write_entries(out, evaluated, ledger.package_use);
+    out << ",\"profiles\":[";
+    first = true;
+    for (const auto& node : ledger.profiles) {
+        out << (first ? "" : ",");
+        first = false;
+        write_sources(out, evaluated, node.sources, {"path"},
+                      [&](std::string_view) { write_string(out, evaluated, node.path); });
+    }
+    out << "],\"repositories\":[";
+    first = true;
+    for (const auto& repo : ledger.repositories) {
+        out << (first ? "" : ",");
+        first = false;
+        write_sources(out, evaluated, repo.sources, {"masters", "name"}, [&](std::string_view key) {
+            if (key == "name") {
+                write_string(out, evaluated, repo.name);
+            } else {
+                write_string_list(out, evaluated, repo.masters);
+            }
+        });
+    }
+    out << "],\"use_expand\":";
+    write_string_list(out, evaluated, ledger.use_expand);
+    out << ",\"use_expand_unprefixed\":";
+    write_string_list(out, evaluated, ledger.use_expand_unprefixed);
+    out << ",\"use_order\":";
+    write_string_list(out, evaluated, ledger.use_order);
+    out << '}';
+}
+
+} // namespace
+
 void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
     constexpr std::array<std::string_view, 3> sources{"ebuild", "vdb", "moved"};
     out << R"({"candidates":[)";
@@ -240,13 +345,20 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string(out, evaluated, candidate.cpv);
         out << ",\"deps\":";
         write_deps(out, evaluated, candidate.deps);
+        out << ",\"eapi\":";
+        write_string(out, evaluated, candidate.eapi);
         out << ",\"empty_groups_true\":" << (candidate.empty_groups_true ? "true" : "false");
         out << ",\"errors\":";
         write_pairs(out, evaluated, candidate.errors);
+        out << ",\"features\":";
+        write_string_list(out, evaluated, candidate.features);
         out << ",\"forced\":";
         write_string_list(out, evaluated, candidate.forced);
+        out << ",\"internal\":";
+        write_string_list(out, evaluated, candidate.internal);
         out << ",\"iuse\":";
         write_string_list(out, evaluated, candidate.iuse);
+        out << ",\"iuse_effective\":" << (candidate.iuse_effective ? "true" : "false");
         out << ",\"reasons\":";
         write_string_list(out, evaluated, candidate.reasons);
         out << ",\"repo\":";
@@ -255,6 +367,7 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string_list(out, evaluated, candidate.required_use);
         out << ",\"slot\":";
         write_string(out, evaluated, candidate.slot);
+        out << ",\"stable\":" << (candidate.stable ? "true" : "false");
         out << ",\"sub_slot\":";
         write_string(out, evaluated, candidate.sub_slot);
         out << ",\"tokens\":[";
@@ -266,7 +379,9 @@ void write_evaluated_json(std::ostream& out, const Evaluated& evaluated) {
         write_string_list(out, evaluated, candidate.use);
         out << '}';
     }
-    out << R"(],"format":10,"packages":[)";
+    out << R"(],"format":11,"ledger":)";
+    write_ledger(out, evaluated);
+    out << R"(,"packages":[)";
     first = true;
     for (const auto& pkg : evaluated.packages) {
         out << (first ? "{\"cpv\":" : ",{\"cpv\":");

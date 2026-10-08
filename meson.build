@@ -201,6 +201,7 @@ python.install_sources(
     'builder/egraph_build/evaluated.py',
     'builder/egraph_build/installed.py',
     'builder/egraph_build/kernel.py',
+    'builder/egraph_build/ledger.py',
     'builder/egraph_build/masks.py',
     'builder/egraph_build/model.py',
     'builder/egraph_build/notices.py',

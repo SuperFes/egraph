@@ -1,6 +1,6 @@
 # Store format
 
-Status: format version 6 (evaluated store: 10, repository index: 3), implemented by `builder/egraph_build/store.py`
+Status: format version 6 (evaluated store: 11, repository index: 3), implemented by `builder/egraph_build/store.py`
 (writer and a Python reader) and `src/store.cpp`, `src/evaluated.cpp` and `src/repository.cpp` (C++ readers). Any
 layout change bumps the version.
 
@@ -116,7 +116,7 @@ The installed packages as emerge sees them against the repositories: their depen
 store it was built against, named after it (`installed.egraph` → `installed.evaluated.egraph`:
 the last extension replaced by `.evaluated.egraph`), and is written by the same builder run.
 
-It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 10.
+It uses the installed store's framing with magic `EGRAPHEV` and its own format version, now 11.
 Package ids are the installed store's, so an evaluated store is current only while the installed
 store beside it has the build start recorded in its meta, and its own inputs stat the same.
 
@@ -130,8 +130,9 @@ store beside it has the build start recorded in its meta, and its own inputs sta
 | 6 | Repository | list of string ids: every cp with an ebuild in a repository, sorted |
 | 7 | Requested | list of string ids: the cps evaluated on request beside those the installed packages reach, sorted |
 | 8 | USE_EXPAND | two lists of string ids: the variables of `USE_EXPAND`, then of `USE_EXPAND_HIDDEN`, lowercased, sorted |
+| 9 | USE ledger | every source of a flag's state, below |
 
-All eight sections are required. Section 8 is how emerge groups a package's flags for display:
+All nine sections are required. Section 8 is how emerge groups a package's flags for display:
 one group per `USE_EXPAND` variable but the hidden ones, its flags named without the prefix.
 
 A dependency record is how emerge reads the package's dependencies by default, and how it
@@ -224,6 +225,57 @@ together. Blockers name nothing.
 10. Tokens: five lists of string ids, one per dependency kind in the order of field 7: the
     dependency string's tokens in order as `use_reduce` splits it, conditionals and all, for
     egraph to reduce under other USE than field 2's. Empty for a masked candidate.
+11. Stable: 1 when its keywords are accepted as stable ones (portage's `pkg.stable`), which
+    brings in the `*.stable*` files of the USE ledger; else 0.
+12. Internal: list of string ids, the `pkginternal` layer's USE as `setcpv` sets it: its IUSE
+    defaults (`+flag` as `flag`, `-flag` kept), then `-test` when FEATURES=test is on and its
+    RESTRICT holds `test`.
+13. Features: list of string ids, the `features` layer's USE for it: `test` when its FEATURES
+    hold it.
+14. EAPI: string id.
+15. IUSE_EFFECTIVE: 1 when its EAPI has it (portage's `eapi_has_iuse_effective`), which decides
+    its implicit IUSE: IUSE_EFFECTIVE, else the profile's implicit IUSE patterns; else 0.
+
+The USE ledger is what portage stacks a package's USE from, entry by entry, each with where it
+was read. An entry is: file (string id, the empty string for the environment), line (0 where it
+could not be told apart, below), atom (string id, the empty string for a global entry), variable
+(string id: `USE`, or the USE_EXPAND or USE_EXPAND_UNPREFIXED variable it was set through), and
+tokens (list of string ids, as portage reads them: `flag`, `-flag`, `-*`, `prefix_*`, and in a
+user `package.use` the USE_EXPAND form `VAR: a -b` expanded to `var_a -var_b`). An entry list is a
+count, then the entries in the order portage reads them: files in `_recursive_file_list`'s order,
+lines in order. Several lines with one atom in one source make one key of portage's, its tokens
+in line order, keyed at its first line.
+
+1. `USE_ORDER`: list of string ids, its layers as the variable lists them.
+2. `USE_EXPAND` and `USE_EXPAND_UNPREFIXED`: two lists of string ids, as the variables give
+   them. A USE_EXPAND variable set in a layer replaces the flags of its prefix stacked so far
+   (portage's INCREMENTALS never holds one).
+3. `ARCH`: string id.
+4. Profiles: count, then per profile node, in portage's order (the user's `/etc/portage/profile`
+   last when there is one): its directory (string id), then twelve entry lists: `make.defaults`,
+   `use.stable`, `use.force`, `use.stable.force`, `use.mask`, `use.stable.mask`, `package.use`,
+   `package.use.stable`, `package.use.force`, `package.use.stable.force`, `package.use.mask`,
+   `package.use.stable.mask`. A `make.defaults` entry per variable, its tokens with the
+   USE_EXPAND prefix put on as `regenerate` does: the USE_EXPAND_UNPREFIXED variables, then the
+   USE_EXPAND ones set anywhere, in `USE_EXPAND`'s order, then `USE`.
+5. Repositories: count, then per repository with profiles: its name (string id), its masters
+   (list of string ids), then the same twelve entry lists from its `profiles` directory; its
+   `make.defaults` entries keep their variables unexpanded, as the `repo` layer stacks them.
+6. The `conf` layer: entry list, `USE` and the USE_EXPAND variables `make.conf` sets,
+   unexpanded; then the user `package.use`'s `*/*` lines (atom `*/*`) and the environment files
+   `package.env` names for `*/*`, which portage folds into this layer.
+7. The user's `package.use`: entry list.
+8. `package.env`: entry list, each entry's tokens the environment files it names.
+9. Environment files: count, then per file under `env/` that `package.env` names: its name
+   (string id) and an entry list, `USE` and the USE_EXPAND variables it sets.
+10. The environment (`env`, as `reset` restores it from `backupenv`) and `env.d` layers: two
+    entry lists, `USE` and the USE_EXPAND variables each holds.
+11. The `features` layer's global USE: list of string ids.
+
+Every source is checked against portage's own as it is read: the tokens per atom (and their
+order) of `UseManager`'s dictionaries, its tuples, `make_defaults_use`, `_repo_make_defaults`,
+and config's layers. Where a source differs from what its lines give, it is stored as portage
+holds it instead, at line 0, so the semantics are always portage's.
 
 Inputs are the installed store's configuration and profile inputs, the user's visibility and USE
 configuration (`package.accept_keywords`, `package.mask`, `package.unmask`, `package.license`,

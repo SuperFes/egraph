@@ -8,7 +8,7 @@ import subprocess
 import pytest
 
 from compare import QUERIES, assert_agrees
-from egraph_build import cli, evaluated, installed, oracle, store
+from egraph_build import cli, evaluated, installed, ledger, oracle, store
 
 pytestmark = [
     pytest.mark.system,
@@ -42,6 +42,14 @@ def test_oracle_reads_the_live_vdb(live_vardb):
 @pytest.mark.parametrize("query", QUERIES)
 def test_installed_layer_agrees_with_portage(live_vardb, live_layer, query):
     assert_agrees(live_vardb, live_layer, query, sample=SAMPLE)
+
+
+def test_the_ledger_reads_every_live_source_line_by_line(live_vardb):
+    """No source of the live configuration falls back to portage's values at line 0."""
+    from test_ledger import entries_of
+
+    use_ledger = ledger.read(live_vardb.settings)
+    assert [e for e in entries_of(use_ledger) if e.file and not e.line] == []
 
 
 def test_json_covers_every_package(live_vardb, live_layer):

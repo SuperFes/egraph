@@ -9,11 +9,12 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace egraph {
 
-inline constexpr std::uint32_t evaluated_format_version = 10;
+inline constexpr std::uint32_t evaluated_format_version = 11;
 
 // Where an installed package's dependency strings came from under --dynamic-deps=y.
 enum class DepSource : std::uint8_t { ebuild, vdb, moved };
@@ -102,8 +103,82 @@ struct Candidate {
     // String ids in Evaluated::ids, one per entry of dep_kinds: the dependency string's tokens,
     // to reduce under other USE (reduce_dependencies). Empty for a masked candidate.
     std::array<Range, dep_kinds.size()> tokens;
+    // Its own layers of the USE ledger: its keywords accepted as stable ones (bringing in the
+    // *.stable* files), and string ids in Evaluated::ids, the pkginternal layer's USE (IUSE
+    // defaults, -test where RESTRICT drops the feature) and the features layer's (test).
+    bool stable = false;
+    Range internal;
+    Range features;
+    // String id: its EAPI; and whether that has IUSE_EFFECTIVE, which decides its implicit IUSE.
+    std::uint32_t eapi = 0;
+    bool iuse_effective = true;
 
     [[nodiscard]] bool visible() const { return reasons.count == 0; }
+};
+
+// One line of the configuration a flag's state is stacked from.
+struct LedgerEntry {
+    // String id; empty for the environment.
+    std::uint32_t file = 0;
+    // 0 where portage's value could not be told apart line by line.
+    std::uint32_t line = 0;
+    // String id; empty for a global entry.
+    std::uint32_t atom = 0;
+    // String id: USE, or the USE_EXPAND or USE_EXPAND_UNPREFIXED variable it was set through.
+    std::uint32_t var = 0;
+    // String ids in Evaluated::ids, as portage stacks them: flag, -flag, -*, prefix_*.
+    Range tokens;
+};
+
+// The files of a profile node or of a repository's profiles directory, in the store's order.
+inline constexpr std::array<std::string_view, 12> ledger_files{
+    "make.defaults",     "use.stable",
+    "use.force",         "use.stable.force",
+    "use.mask",          "use.stable.mask",
+    "package.use",       "package.use.stable",
+    "package.use.force", "package.use.stable.force",
+    "package.use.mask",  "package.use.stable.mask"};
+
+// Ranges in Evaluated::ledger_entries, one per entry of ledger_files.
+using LedgerSources = std::array<Range, ledger_files.size()>;
+
+struct LedgerNode {
+    // String id: the profile directory.
+    std::uint32_t path = 0;
+    LedgerSources sources;
+};
+
+struct LedgerRepository {
+    // String ids: its name, and its masters in Evaluated::ids.
+    std::uint32_t name = 0;
+    Range masters;
+    LedgerSources sources;
+};
+
+struct LedgerEnvFile {
+    // String id: its name under env/.
+    std::uint32_t name = 0;
+    // In Evaluated::ledger_entries.
+    Range entries;
+};
+
+// Every source of a flag's state, as portage stacks a package's USE. Ranges of entries are in
+// Evaluated::ledger_entries, of string ids in Evaluated::ids.
+struct Ledger {
+    Range use_order;
+    Range use_expand;
+    Range use_expand_unprefixed;
+    // String id.
+    std::uint32_t arch = 0;
+    std::vector<LedgerNode> profiles;
+    std::vector<LedgerRepository> repositories;
+    Range conf;
+    Range package_use;
+    Range package_env;
+    std::vector<LedgerEnvFile> env_files;
+    Range env;
+    Range env_d;
+    Range features;
 };
 
 struct EvaluatedMeta {
@@ -129,9 +204,14 @@ struct Evaluated : Tables {
     // String ids, sorted: USE_EXPAND's variables lowercased, and USE_EXPAND_HIDDEN's.
     Range use_expand;
     Range use_expand_hidden;
+    std::vector<LedgerEntry> ledger_entries;
+    Ledger ledger;
 
     [[nodiscard]] std::span<const Possible> possible_in(Range range) const EGRAPH_LIFETIMEBOUND {
         return std::span{possible}.subspan(range.first, range.count);
+    }
+    [[nodiscard]] std::span<const LedgerEntry> entries_in(Range range) const EGRAPH_LIFETIMEBOUND {
+        return std::span{ledger_entries}.subspan(range.first, range.count);
     }
 };
 

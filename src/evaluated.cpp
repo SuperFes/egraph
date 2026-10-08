@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <format>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -22,7 +23,8 @@ constexpr std::uint32_t section_candidates = 5;
 constexpr std::uint32_t section_repository = 6;
 constexpr std::uint32_t section_requested = 7;
 constexpr std::uint32_t section_use_expand = 8;
-constexpr std::size_t section_count = 8;
+constexpr std::uint32_t section_ledger = 9;
+constexpr std::size_t section_count = 9;
 constexpr std::uint32_t source_count = 3;
 
 std::optional<StoreError> read_meta(std::span<const std::byte> section, Evaluated& evaluated) {
@@ -113,6 +115,11 @@ std::optional<StoreError> read_candidates(std::span<const std::byte> section, Ev
         for (auto& kind : candidate.tokens) {
             kind = read_ids(r, evaluated.ids, strings, "string");
         }
+        candidate.stable = r.index(2, "stable") == 1;
+        candidate.internal = read_ids(r, evaluated.ids, strings, "string");
+        candidate.features = read_ids(r, evaluated.ids, strings, "string");
+        candidate.eapi = r.index(strings, "string");
+        candidate.iuse_effective = r.index(2, "IUSE_EFFECTIVE") == 1;
         evaluated.candidates.push_back(candidate);
     }
     r.finish();
@@ -142,6 +149,66 @@ std::optional<StoreError> read_use_expand(std::span<const std::byte> section,
     const auto strings = size32(evaluated.strings.size());
     evaluated.use_expand = read_ids(r, evaluated.ids, strings, "string");
     evaluated.use_expand_hidden = read_ids(r, evaluated.ids, strings, "string");
+    r.finish();
+    return r.error();
+}
+
+Range read_entries(Reader& r, Evaluated& evaluated, std::uint32_t strings) {
+    const auto count = r.count();
+    const auto first = size32(evaluated.ledger_entries.size());
+    for (std::uint32_t i = 0; i < count && r.ok(); ++i) {
+        LedgerEntry entry;
+        entry.file = r.index(strings, "string");
+        entry.line = r.index(std::numeric_limits<std::uint32_t>::max(), "line");
+        entry.atom = r.index(strings, "string");
+        entry.var = r.index(strings, "string");
+        entry.tokens = read_ids(r, evaluated.ids, strings, "string");
+        evaluated.ledger_entries.push_back(entry);
+    }
+    return {.first = first, .count = size32(evaluated.ledger_entries.size()) - first};
+}
+
+std::optional<StoreError> read_ledger(std::span<const std::byte> section, Evaluated& evaluated) {
+    Reader r(section, "ledger");
+    const auto strings = size32(evaluated.strings.size());
+    auto& ledger = evaluated.ledger;
+    ledger.use_order = read_ids(r, evaluated.ids, strings, "string");
+    ledger.use_expand = read_ids(r, evaluated.ids, strings, "string");
+    ledger.use_expand_unprefixed = read_ids(r, evaluated.ids, strings, "string");
+    ledger.arch = r.index(strings, "string");
+    const auto read_sources = [&](LedgerSources& sources) {
+        for (auto& source : sources) {
+            source = read_entries(r, evaluated, strings);
+        }
+    };
+    const auto nodes = r.count();
+    for (std::uint32_t i = 0; i < nodes && r.ok(); ++i) {
+        LedgerNode node;
+        node.path = r.index(strings, "string");
+        read_sources(node.sources);
+        ledger.profiles.push_back(node);
+    }
+    const auto repositories = r.count();
+    for (std::uint32_t i = 0; i < repositories && r.ok(); ++i) {
+        LedgerRepository repo;
+        repo.name = r.index(strings, "string");
+        repo.masters = read_ids(r, evaluated.ids, strings, "string");
+        read_sources(repo.sources);
+        ledger.repositories.push_back(repo);
+    }
+    ledger.conf = read_entries(r, evaluated, strings);
+    ledger.package_use = read_entries(r, evaluated, strings);
+    ledger.package_env = read_entries(r, evaluated, strings);
+    const auto files = r.count();
+    for (std::uint32_t i = 0; i < files && r.ok(); ++i) {
+        LedgerEnvFile file;
+        file.name = r.index(strings, "string");
+        file.entries = read_entries(r, evaluated, strings);
+        ledger.env_files.push_back(file);
+    }
+    ledger.env = read_entries(r, evaluated, strings);
+    ledger.env_d = read_entries(r, evaluated, strings);
+    ledger.features = read_ids(r, evaluated.ids, strings, "string");
     r.finish();
     return r.error();
 }
@@ -188,6 +255,9 @@ std::expected<Evaluated, StoreError> decode_evaluated(std::span<const std::byte>
         return std::unexpected(*error);
     }
     if (auto error = read_use_expand(section(section_use_expand), evaluated)) {
+        return std::unexpected(*error);
+    }
+    if (auto error = read_ledger(section(section_ledger), evaluated)) {
         return std::unexpected(*error);
     }
     return evaluated;

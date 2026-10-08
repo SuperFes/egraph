@@ -150,6 +150,37 @@ TEST_CASE("the sample evaluated store decodes") {
     CHECK(strings(evaluated->use_expand) ==
           std::vector<std::string_view>{"python_targets", "video_cards"});
     CHECK(strings(evaluated->use_expand_hidden) == std::vector<std::string_view>{"video_cards"});
+
+    CHECK(visible.stable);
+    CHECK(strings(visible.internal) == std::vector<std::string_view>{"flag"});
+    CHECK(strings(evaluated->candidates.at(2).features) == std::vector<std::string_view>{"test"});
+    CHECK_FALSE(evaluated->candidates.at(1).stable);
+    CHECK(evaluated->string(visible.eapi) == "8");
+    CHECK(visible.iuse_effective);
+    CHECK_FALSE(evaluated->candidates.at(2).iuse_effective);
+
+    const auto& ledger = evaluated->ledger;
+    CHECK(strings(ledger.use_order) == std::vector<std::string_view>{"pkg", "defaults"});
+    CHECK(strings(ledger.use_expand) == std::vector<std::string_view>{"VIDEO_CARDS"});
+    CHECK(evaluated->string(ledger.arch) == "x86");
+    REQUIRE(ledger.profiles.size() == 1);
+    CHECK(evaluated->string(ledger.profiles.front().path) == "/profile");
+    const auto defaults = evaluated->entries_in(ledger.profiles.front().sources.at(0));
+    REQUIRE(defaults.size() == 1);
+    CHECK(evaluated->string(defaults.front().file) == "/profile/make.defaults");
+    CHECK(defaults.front().line == 2);
+    CHECK(evaluated->string(defaults.front().atom).empty());
+    CHECK(evaluated->string(defaults.front().var) == "USE");
+    CHECK(strings(defaults.front().tokens) == std::vector<std::string_view>{"flag"});
+    REQUIRE(ledger.repositories.size() == 1);
+    CHECK(evaluated->string(ledger.repositories.front().name) == "test_repo");
+    const auto package_use = evaluated->entries_in(ledger.package_use);
+    REQUIRE(package_use.size() == 1);
+    CHECK(evaluated->string(package_use.front().atom) == "app-misc/a");
+    CHECK(package_use.front().line == 3);
+    CHECK(strings(package_use.front().tokens) == std::vector<std::string_view>{"-minimal"});
+    CHECK(ledger.env_files.empty());
+    CHECK(strings(ledger.features) == std::vector<std::string_view>{"test"});
 }
 
 TEST_CASE("every evaluated truncation is rejected") {
