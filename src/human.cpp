@@ -1754,6 +1754,47 @@ void human_versions(std::ostream& out, std::span<const std::string> records, con
     }
 }
 
+void human_findings(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    const auto& paint = theme.paint;
+    if (records.empty()) {
+        out << paint("no findings", Tone::note) << '\n';
+        return;
+    }
+    std::size_t errors = 0;
+    std::size_t warnings = 0;
+    std::size_t notes = 0;
+    for (const auto& row : split_all(records)) {
+        const auto file = row.at(0);
+        const auto line = row.at(1);
+        const auto severity = row.at(2);
+        const auto atom = row.at(4);
+        const auto token = row.at(5);
+        const auto message = row.at(6);
+        const auto tone = severity == "error"     ? Tone::bad
+                          : severity == "warning" ? Tone::count
+                                                  : Tone::note;
+        (severity == "error" ? errors : severity == "warning" ? warnings : notes) += 1;
+        const auto place = line == "0" ? std::string{file} : std::format("{}:{}", file, line);
+        out << paint(place + ":", Tone::note) << ' ' << paint(std::string{severity} + ":", tone)
+            << ' ' << paint(atom, Tone::name);
+        if (!token.empty()) {
+            out << ' ' << paint(token, Tone::use) << ':';
+        }
+        out << ' ' << message << '\n';
+    }
+    std::string summary;
+    const auto count = [&](std::size_t n, std::string_view one) {
+        if (n > 0) {
+            summary +=
+                std::format("{}{} {}{}", summary.empty() ? "" : ", ", n, one, n == 1 ? "" : "s");
+        }
+    };
+    count(errors, "error");
+    count(warnings, "warning");
+    count(notes, "note");
+    out << '\n' << paint(summary, Tone::count) << '\n';
+}
+
 void human_search(std::ostream& out, std::span<const std::string> records,
                   std::span<const std::string> keys, const Theme& theme) {
     const auto& paint = theme.paint;

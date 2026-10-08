@@ -1001,6 +1001,33 @@ TEST_CASE("versions align under their cp, and say why a masked one is") {
                        "    1  :1  ::gentoo  masked\n");
 }
 
+TEST_CASE("findings read as a linter's, then how many of each severity") {
+    std::ostringstream out;
+    egraph::human_findings(
+        out,
+        std::vector<std::string>{
+            "/etc/portage/package.use/x\t3\terror\tdead\tdev-libs/nope\t\tmatches nothing",
+            "/etc/portage/package.use/x\t5\twarning\tno-effect\tapp-misc/foo\tbaz\tnot in IUSE",
+            "/etc/portage/package.accept_keywords\t0\twarning\tno-effect\tdev-libs/b\t~x86\t"
+            "already accepted",
+            "/etc/portage/package.use/x\t7\tnote\tnot-installed\tapp-misc/gone\t\tnot installed",
+        },
+        plain);
+    CHECK(out.str() == "/etc/portage/package.use/x:3: error: dev-libs/nope matches nothing\n"
+                       "/etc/portage/package.use/x:5: warning: app-misc/foo baz: not in IUSE\n"
+                       "/etc/portage/package.accept_keywords: warning: dev-libs/b ~x86: already "
+                       "accepted\n"
+                       "/etc/portage/package.use/x:7: note: app-misc/gone not installed\n"
+                       "\n"
+                       "1 error, 2 warnings, 1 note\n");
+}
+
+TEST_CASE("no findings says so") {
+    std::ostringstream out;
+    egraph::human_findings(out, std::vector<std::string>{}, plain);
+    CHECK(out.str() == "no findings\n");
+}
+
 TEST_CASE("search shows each key's packages with their versions and metadata") {
     std::ostringstream out;
     const std::vector<std::string> keys{"ssl", "none"};

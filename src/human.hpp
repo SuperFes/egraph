@@ -200,6 +200,10 @@ void human_soname(std::ostream& out, std::span<const std::string> records, std::
 // one is.
 void human_versions(std::ostream& out, std::span<const std::string> records, const Theme& theme);
 
+// finding_record's records as a linter writes them, "file:line: severity: atom token: message",
+// then how many of each severity; "no findings" for none.
+void human_findings(std::ostream& out, std::span<const std::string> records, const Theme& theme);
+
 // search_lines' records under each key: per package the version shown (masked or not), the one
 // installed, and its homepage, license and description.
 void human_search(std::ostream& out, std::span<const std::string> records,

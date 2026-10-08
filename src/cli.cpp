@@ -7,6 +7,7 @@
 #include "blockers.hpp"
 #include "build_info.hpp"
 #include "check.hpp"
+#include "config_check.hpp"
 #include "depclean.hpp"
 #include "elog.hpp"
 #include "emerge.hpp"
@@ -1485,6 +1486,30 @@ Exit execute(const Versions& command, Session& session, const Invocation& invoca
         write_lines(out, *lines);
     }
     return Exit::ok;
+}
+
+Exit execute(const ConfigCommand& /*command*/, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    const auto stores = session.stores();
+    if (!stores) {
+        return fail(err, stores.error());
+    }
+    const auto index = session.repository();
+    if (!index) {
+        return fail(err, index.error());
+    }
+    const auto& [installed, evaluated] = stores->get();
+    const auto findings = check_config(installed, evaluated, *index);
+    std::vector<std::string> lines;
+    for (const auto& finding : findings) {
+        lines.push_back(finding_record(finding));
+    }
+    if (const auto style = output(invocation); style.human) {
+        human_findings(out, lines, style.theme);
+    } else {
+        write_lines(out, lines);
+    }
+    return failing(findings) ? Exit::failure : Exit::ok;
 }
 
 Exit execute(const Blockers& command, Session& session, const Invocation& invocation,
@@ -4326,6 +4351,13 @@ void configure(CLI::App& app, Invocation& invocation) {
               invocation, "packages", &Versions::packages,
               "Atoms, or names without a category; every version without any")
         ->type_name("ATOM");
+    add_field(add_command<ConfigCommand>(
+                  app, invocation,
+                  "The user's configuration: check lists the entries that do nothing or that "
+                  "later entries undo, and fails on any matching nothing or undone"),
+              invocation, "action", &ConfigCommand::action, "What to do with it: check")
+        ->required()
+        ->transform(one_of<ConfigAction>({{"check", ConfigAction::check}}));
     CLI::App* blockers_cmd = add_dynamic_deps(
         add_command<Blockers>(app, invocation, "Blockers between installed packages"));
     add_field(blockers_cmd, invocation, "packages", &Blockers::packages,

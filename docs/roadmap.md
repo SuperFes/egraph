@@ -1094,7 +1094,18 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
       last refused it (the `-*` a list was pruned after, for one nothing names).
   - 18e3: the check: an entry's effect found by stacking without it; dead, contradicted
     (overridden for everything it matches), redundant (changes nothing on its own), outside
-    IUSE, not installed; `egraph config check`, its layout and exit status.
+    IUSE, not installed; `egraph config check`, its layout and exit status. Decided with the
+    user (2026-10-08): only the user's files under `/etc/portage`; errors (dead, contradicted),
+    warnings (changing nothing: outside IUSE, already accepted, masks and unmasks with no
+    effect), notes (not installed).
+    - 18e3a (done): `egraph config check` with its findings' order, records, linter layout
+      (`file:line: severity: atom token: message`, then the counts) and exit status, over no
+      checks yet.
+    - 18e3b: dead and not-installed entries, in every `package.*` file of both ledgers.
+    - 18e3c: USE: flags outside IUSE, entries changing nothing (stacked without them),
+      contradicted ones.
+    - 18e3d: visibility: keywords already accepted, masks and unmasks, licenses, properties
+      and restrictions changing nothing.
 - 18f: the `config` notice from watch, its count of findings; enter opens the check.
 
 ## 19. What-if
