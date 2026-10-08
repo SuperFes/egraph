@@ -226,17 +226,57 @@ first, so the last one wins.
 Each USE flag's state for the ebuilds that
 .I package
 matches, an atom as configuration files take it, wildcards and all
-.RI ( */* " for every ebuild the stores hold), and where it was last set:"
+.RI ( */* " for every ebuild), and where it was last set:"
 .IR file : line ,
-or the layer of a package's own
-.RI ( pkginternal " for its IUSE defaults, " features " for FEATURES=test, " arch ).
+or the layer of a package's own (its IUSE default, RESTRICT=test, FEATURES=test, ARCH).
+The ebuilds are what emerge would build, the best visible version of each slot, and the
+installed versions' own.
 Flags are shown as emerge shows them: off with a
 .BR \- ,
-masked or forced in parentheses.
-The state is stacked from the configuration as portage stacks it, profile by profile, then
+masked or forced in parentheses; USE_EXPAND flags under their variable.
+The state is stacked from the configuration as portage stacks it, profile by profile and
+repository by repository, then
 .IR make.conf ,
+.IR package.env ,
 .I package.use
 and the environment, and holds to the USE each ebuild would be built with now.
+.IP
+With
+.IR flag ,
+every step that set it, in the order applied: a later
+.I package.use
+entry outranks an earlier one, being more specific.
+A step that changed nothing still shows, as an entry that does nothing for the package.
+.IP
+As lines, a flag per line:
+.IR cpv::repo ,
+the flag as shown,
+.B iuse
+or
+.B implicit
+(implied by the profile),
+the layer of the last step that set it
+.RB ( defaults ", " conf ", " pkg ", " force ", " mask ", ...;"
+a mask or force taken back sets nothing),
+its
+.IR file : line
+and its token; with
+.IR flag ,
+a step per line:
+.IR cpv::repo ,
+the flag,
+.B on
+or
+.BR off ,
+the layer,
+.IR file : line ,
+the entry's atom, its token, and
+.B changed
+or
+.BR unchanged .
+.TP
+.B \-\-all
+Every ebuild the atom matches, masked ones included.
 .SS soname \fIsoname\fR
 The installed packages that need a soname
 .RI ( libssl.so.3 ).

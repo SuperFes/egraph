@@ -1102,20 +1102,77 @@ Exit execute(const Rdeps& command, Session& session, const Invocation& invocatio
     return edges(command.packages, true, command.possible, session, invocation, out, err);
 }
 
-// Where a step was set: the entry's file and line, or its layer where it has none.
+// Where a step was set: the entry's file and line; empty for the environment and the layers of
+// a package's own.
 std::string step_place(const Evaluated& evaluated, const UseStep& step) {
     if (!step.entry) {
-        return std::string{layer_name(step.layer)};
+        return {};
     }
     const auto& entry = evaluated.ledger_entries.at(*step.entry);
     const auto file = evaluated.string(entry.file);
-    if (file.empty()) {
-        return std::format("{} (environment)", layer_name(step.layer));
+    if (file.empty() || entry.line == 0) {
+        return std::string{file};
     }
-    return entry.line == 0 ? std::string{file} : std::format("{}:{}", file, entry.line);
+    return std::format("{}:{}", file, entry.line);
 }
 
-Exit execute(const UseCommand& command, Session& session, const Invocation& /*invocation*/,
+// The candidates `use` shows: what emerge would build (the best visible version of each slot,
+// of one version the one of the repository priority puts first) and the installed versions' own
+// ebuilds; with all, every one the atom matches. priority(repo) ranks a repository, lower first.
+template <class Priority>
+std::vector<std::size_t> use_candidates(const Store& installed, const Evaluated& evaluated,
+                                        const Atom& atom, bool all, const Priority& priority) {
+    std::vector<std::size_t> matched;
+    for (std::size_t i = 0; i < evaluated.candidates.size(); ++i) {
+        const auto& candidate = evaluated.candidates.at(i);
+        const auto cp = evaluated.string(candidate.cp);
+        const auto cpv = evaluated.string(candidate.cpv);
+        const auto version = parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
+        if (version &&
+            matches(atom, cp, *version, evaluated.string(candidate.slot),
+                    evaluated.string(candidate.sub_slot), evaluated.string(candidate.repo))) {
+            matched.push_back(i);
+        }
+    }
+    if (all) {
+        return matched;
+    }
+    const auto version_of = [&](const Candidate& candidate) {
+        const auto cp = evaluated.string(candidate.cp);
+        const auto cpv = evaluated.string(candidate.cpv);
+        return parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1))).value_or(Version{});
+    };
+    std::vector<std::size_t> shown;
+    for (const auto i : matched) {
+        const auto& candidate = evaluated.candidates.at(i);
+        const bool is_installed = std::ranges::any_of(installed.packages, [&](const Package& pkg) {
+            return installed.string(pkg.cpv) == evaluated.string(candidate.cpv) &&
+                   installed.string(pkg.repo) == evaluated.string(candidate.repo);
+        });
+        // The first of the best visible versions in its cp and slot.
+        const bool best =
+            candidate.visible() && std::ranges::none_of(matched, [&](std::size_t j) {
+                const auto& other = evaluated.candidates.at(j);
+                if (j == i || !other.visible() || other.cp != candidate.cp ||
+                    evaluated.string(other.slot) != evaluated.string(candidate.slot)) {
+                    return false;
+                }
+                const auto order = vercmp(version_of(other), version_of(candidate));
+                if (order != 0) {
+                    return order > 0;
+                }
+                const auto ranks = std::pair{priority(evaluated.string(other.repo)),
+                                             priority(evaluated.string(candidate.repo))};
+                return ranks.first < ranks.second || (ranks.first == ranks.second && j < i);
+            });
+        if (best || is_installed) {
+            shown.push_back(i);
+        }
+    }
+    return shown;
+}
+
+Exit execute(const UseCommand& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     const auto atom = parse_config_atom(command.package);
     if (!atom) {
@@ -1127,24 +1184,40 @@ Exit execute(const UseCommand& command, Session& session, const Invocation& /*in
         return fail(err, stores.error());
     }
     const auto& [installed, evaluated] = stores->get();
+    // Only a version in two repositories needs the index's priorities; without one, by name.
+    std::optional<std::vector<std::string>> by_priority;
+    const auto priority = [&](std::string_view repo) {
+        if (!by_priority) {
+            by_priority.emplace();
+            if (const auto index = session.repository()) {
+                const RepositoryIndex& loaded = *index;
+                for (const auto& each : loaded.repositories) {
+                    by_priority->emplace_back(loaded.string(each.name));
+                }
+            }
+        }
+        const auto found = std::ranges::find(*by_priority, repo);
+        return found - by_priority->begin();
+    };
+    const auto shown = use_candidates(installed, evaluated, *atom, command.all, priority);
+    if (shown.empty()) {
+        err << "egraph: " << command.package << ": no ebuild matches\n";
+        return Exit::failure;
+    }
     const UseStacker stacker(installed, evaluated);
     std::vector<std::string> lines;
-    bool matched = false;
-    for (const auto& candidate : evaluated.candidates) {
-        const auto cp = evaluated.string(candidate.cp);
-        const auto cpv = evaluated.string(candidate.cpv);
-        const auto version = parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
-        const auto repo = evaluated.string(candidate.repo);
-        if (!version || !matches(*atom, cp, *version, evaluated.string(candidate.slot),
-                                 evaluated.string(candidate.sub_slot), repo)) {
-            continue;
-        }
-        matched = true;
+    for (const auto index : shown) {
+        const auto& candidate = evaluated.candidates.at(index);
+        const auto key = std::format("{}::{}", evaluated.string(candidate.cpv),
+                                     evaluated.string(candidate.repo));
         const auto stacked = stacker.stack(candidate);
-        std::vector<std::string> flags(stacked.use);
+        std::vector<std::string> iuse;
         for (const auto id : evaluated.ids_in(candidate.iuse)) {
-            flags.emplace_back(evaluated.string(id));
+            iuse.emplace_back(evaluated.string(id));
         }
+        std::ranges::sort(iuse);
+        std::vector<std::string> flags(iuse);
+        flags.insert(flags.end(), stacked.use.begin(), stacked.use.end());
         std::ranges::sort(flags);
         const auto [first, last] = std::ranges::unique(flags);
         flags.erase(first, last);
@@ -1152,22 +1225,70 @@ Exit execute(const UseCommand& command, Session& session, const Invocation& /*in
             if (command.flag && *command.flag != flag) {
                 continue;
             }
+            const auto found = stacked.steps.find(flag);
+            const std::vector<UseStep> none;
+            const auto& steps = found == stacked.steps.end() ? none : found->second;
+            if (command.flag) {
+                if (steps.empty()) {
+                    lines.push_back(std::format("{}\t{}\toff\t\t\t\t\t", key, flag));
+                }
+                for (const auto& step : steps) {
+                    const auto entry_atom =
+                        step.entry ? evaluated.string(evaluated.ledger_entries.at(*step.entry).atom)
+                                   : std::string_view{};
+                    lines.push_back(std::format("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", key, flag,
+                                                step.enabled ? "on" : "off", layer_name(step.layer),
+                                                step_place(evaluated, step), entry_atom, step.token,
+                                                step.changed ? "changed" : "unchanged"));
+                }
+                continue;
+            }
             const bool on = std::ranges::binary_search(stacked.use, flag);
             const bool fixed = std::ranges::binary_search(stacked.forced, flag);
-            const auto shown =
+            const auto spelled =
                 std::format("{}{}{}{}", fixed ? "(" : "", on ? "" : "-", flag, fixed ? ")" : "");
-            const auto steps = stacked.steps.find(flag);
-            const auto place = steps == stacked.steps.end() || steps->second.empty()
-                                   ? std::string{}
-                                   : step_place(evaluated, steps->second.back());
-            lines.push_back(std::format("{}::{}\t{}\t{}", cpv, repo, shown, place));
+            // A force or mask taken back sets nothing; the flag with <flag> shows it.
+            const auto setting =
+                std::ranges::find_if(steps.rbegin(), steps.rend(), [](const auto& step) {
+                    return !((step.layer == UseLayer::force || step.layer == UseLayer::mask) &&
+                             step.token.starts_with('-'));
+                });
+            const auto* last_step = setting == steps.rend() ? nullptr : &*setting;
+            lines.push_back(
+                std::format("{}\t{}\t{}\t{}\t{}\t{}", key, spelled,
+                            std::ranges::binary_search(iuse, flag) ? "iuse" : "implicit",
+                            last_step ? layer_name(last_step->layer) : "",
+                            last_step ? step_place(evaluated, *last_step) : "",
+                            last_step ? last_step->token : ""));
         }
     }
-    if (!matched) {
-        err << "egraph: " << command.package << ": no ebuild matches\n";
+    if (command.flag && lines.empty()) {
+        err << "egraph: " << *command.flag << ": not a flag of " << command.package << '\n';
         return Exit::failure;
     }
-    write_lines(out, lines);
+    if (const auto style = output(invocation); style.human) {
+        std::vector<std::string> groups;
+        for (const auto id : evaluated.ids_in(evaluated.ledger.use_expand)) {
+            const auto var = evaluated.string(id);
+            const auto hidden = std::ranges::any_of(
+                evaluated.ids_in(evaluated.use_expand_hidden), [&](std::uint32_t hidden_id) {
+                    const auto name = evaluated.string(hidden_id);
+                    return std::ranges::equal(name, var, [](char a, char b) {
+                        return a == (b >= 'A' && b <= 'Z' ? static_cast<char>(b - 'A' + 'a') : b);
+                    });
+                });
+            if (!hidden) {
+                groups.emplace_back(var);
+            }
+        }
+        if (command.flag) {
+            human_use_steps(out, lines, groups, style.theme);
+        } else {
+            human_use(out, lines, groups, style.theme);
+        }
+    } else {
+        write_lines(out, lines);
+    }
     return Exit::ok;
 }
 
@@ -4083,7 +4204,12 @@ void configure(CLI::App& app, Invocation& invocation) {
     add_field(use_cmd, invocation, "package", &UseCommand::package,
               "Atom as configuration files take it, wildcards and all, such as dev-libs/openssl")
         ->required();
-    add_field(use_cmd, invocation, "flag", &UseCommand::flag, "Only this flag");
+    add_field(use_cmd, invocation, "flag", &UseCommand::flag,
+              "Only this flag, with every step that set it");
+    use_cmd->add_flag_callback(
+        "--all", [&invocation] { std::get<UseCommand>(invocation.command).all = true; },
+        "Every ebuild the atom matches, not only what emerge would build and the installed "
+        "versions' own");
     CLI::App* soname = add_command<Soname>(app, invocation, "Installed consumers of a soname");
     add_field(soname, invocation, "soname", &Soname::soname, "Soname, such as libssl.so.3")
         ->required();

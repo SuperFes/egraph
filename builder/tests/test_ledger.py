@@ -8,7 +8,7 @@ import subprocess
 import pytest
 from portage.dep import Atom
 
-from conftest import portdb, write_stores
+from conftest import portdb, write_index, write_stores
 
 from egraph_build import evaluated, ledger
 
@@ -214,16 +214,16 @@ def test_make_conf_linked_from_etc_is_read_once(tmp_path):
 
 
 def egraph_use(path, package="*/*"):
-    """{cpv::repo: {flag: (enabled, forced, where)}} as egraph use lists them."""
+    """{cpv::repo: {flag: (enabled, forced, where)}} as egraph use --all lists them."""
     result = subprocess.run(
-        [EGRAPH, "--store", str(path), "--no-refresh", "use", package],
+        [EGRAPH, "--store", str(path), "--no-refresh", "use", "--all", package],
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, result.stderr
     found = {}
     for line in result.stdout.splitlines():
-        pkg, shown, where = line.split("\t")
+        pkg, shown, _, _, where, _ = line.split("\t")
         forced = shown.startswith("(")
         shown = shown.strip("()")
         found.setdefault(pkg, {})[shown.lstrip("-")] = (
@@ -291,3 +291,73 @@ def test_candidates_use_is_emerges(scenario):
                 f"builder {sorted(c.use)} {sorted(c.forced)}"
             )
     assert not wrong, "\n".join(wrong)
+
+
+@pytest.mark.skipif(
+    not EGRAPH, reason="set EGRAPH to the egraph binary (meson test does)"
+)
+def test_use_shows_what_emerge_would_build_and_what_is_installed(scenario, tmp_path):
+    """Without --all: per cp and slot the best visible version, of one version the repository
+    portage puts first, and every installed version's own ebuild."""
+    from portage.versions import vercmp
+
+    path = tmp_path / "installed.egraph"
+    write_stores(scenario, path)
+    write_index(scenario, path)
+    layer, _ = evaluated.rebuild(scenario.vardb, portdb(scenario), None, None)
+    if not layer.candidates():
+        pytest.skip("no ebuilds in this scenario")
+    order = list(portdb(scenario).getRepositories())
+    installed = {
+        (cpv, scenario.vardb.aux_get(cpv, ["repository"])[0])
+        for cpv in scenario.vardb.cpv_all()
+    }
+    best = {}
+    for c in layer.candidates():
+        if c.reasons:
+            continue
+        version, key = c.cpv[len(c.cp) + 1 :], f"{c.cpv}::{c.repo}"
+        held = best.get((c.cp, c.slot))
+        newer = 1 if held is None else vercmp(version, held[0])
+        if newer > 0 or (newer == 0 and order.index(c.repo) < order.index(held[1])):
+            best[(c.cp, c.slot)] = (version, c.repo, key)
+    expected = {key for _, _, key in best.values()} | {
+        f"{c.cpv}::{c.repo}" for c in layer.candidates() if (c.cpv, c.repo) in installed
+    }
+    result = subprocess.run(
+        [EGRAPH, "--store", str(path), "--no-refresh", "use", "*/*"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    shown = {line.split("\t")[0] for line in result.stdout.splitlines()}
+    # An ebuild without flags lists none.
+    with_flags = {f"{c.cpv}::{c.repo}" for c in layer.candidates() if c.iuse or c.use}
+    assert shown == expected & with_flags
+
+
+@pytest.mark.skipif(
+    not EGRAPH, reason="set EGRAPH to the egraph binary (meson test does)"
+)
+def test_a_mask_taken_back_sets_nothing(playgrounds, tmp_path):
+    """The user profile's -umask unmasks umask, which nothing turns on: the flag's line names no
+    step, while its steps show the unmask, which changed nothing."""
+    path = tmp_path / "installed.egraph"
+    write_stores(playgrounds("ledger"), path)
+
+    def lines(*arguments):
+        result = subprocess.run(
+            [EGRAPH, "--store", str(path), "--no-refresh", "use", *arguments],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return [line.split("\t") for line in result.stdout.splitlines()]
+
+    (row,) = [row for row in lines("=app-misc/a-1") if row[1] == "-umask"]
+    assert row[2:] == ["iuse", "", "", ""]
+    steps = lines("=app-misc/a-1", "umask")
+    assert [(s[2], s[3], s[6], s[7]) for s in steps] == [
+        ("off", "mask", "-umask", "unchanged")
+    ]
+    assert steps[0][4].endswith("/etc/portage/profile/use.mask:1")

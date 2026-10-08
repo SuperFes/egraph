@@ -78,6 +78,8 @@ struct UseCommand {
     static constexpr std::string_view name = "use";
     std::string package;
     std::optional<std::string> flag;
+    // Every ebuild the atom matches, not only what emerge would build and the installed ones.
+    bool all = false;
 };
 
 struct Soname {

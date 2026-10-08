@@ -100,18 +100,29 @@ std::string lowered(std::string_view text) {
     return out;
 }
 
-// stack_lists(incremental=True) of force or mask, each flag with the token that left it in.
-std::map<std::string, Token, std::less<>> stack_lists(const std::vector<Token>& tokens) {
-    std::map<std::string, Token, std::less<>> stacked;
+// stack_lists(incremental=True) of force or mask: each flag in it with the token that left it
+// in, and each taken out with the "-flag" that did.
+struct Stacked {
+    std::map<std::string, Token, std::less<>> in;
+    std::map<std::string, Token, std::less<>> out;
+};
+
+Stacked stack_lists(const std::vector<Token>& tokens) {
+    Stacked stacked;
     for (const auto& token : tokens) {
         if (token.text == "-*") {
-            stacked.clear();
+            stacked.in.clear();
         } else if (token.text.starts_with('-')) {
-            if (const auto found = stacked.find(token.text.substr(1)); found != stacked.end()) {
-                stacked.erase(found);
+            const auto flag = token.text.substr(1);
+            if (const auto found = stacked.in.find(flag); found != stacked.in.end()) {
+                stacked.in.erase(found);
+                stacked.out.insert_or_assign(std::string{flag}, token);
             }
         } else {
-            stacked.insert_or_assign(std::string{token.text}, token);
+            stacked.in.insert_or_assign(std::string{token.text}, token);
+            if (const auto found = stacked.out.find(token.text); found != stacked.out.end()) {
+                stacked.out.erase(found);
+            }
         }
     }
     return stacked;
@@ -436,14 +447,21 @@ StackedUse UseStacker::stack(const Candidate& candidate) const {
     }
     const auto forced = stack_lists(force);
     const auto masked = stack_lists(mask);
-    for (const auto& [flag, token] : forced) {
+    // A force or mask a later file took back changes nothing, but tells why there is none.
+    for (const auto& [flag, token] : forced.out) {
+        flags.set(flag, flags.enabled().contains(flag), UseLayer::force, token, true);
+    }
+    for (const auto& [flag, token] : forced.in) {
         flags.set(flag, true, UseLayer::force, token, true);
     }
     if (const auto arch = ev.string(ledger.arch); !arch.empty()) {
         flags.set(std::string{arch}, true, UseLayer::arch, {.text = arch, .entry = std::nullopt},
                   true);
     }
-    for (const auto& [flag, token] : masked) {
+    for (const auto& [flag, token] : masked.out) {
+        flags.set(flag, flags.enabled().contains(flag), UseLayer::mask, token, true);
+    }
+    for (const auto& [flag, token] : masked.in) {
         flags.set(flag, false, UseLayer::mask, token, true);
     }
 
@@ -467,7 +485,7 @@ StackedUse UseStacker::stack(const Candidate& candidate) const {
         }
     }
     for (const auto flag : iuse) {
-        if (forced.contains(flag) || masked.contains(flag)) {
+        if (forced.in.contains(flag) || masked.in.contains(flag)) {
             out.forced.emplace_back(flag);
         }
     }

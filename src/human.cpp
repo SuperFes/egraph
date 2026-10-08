@@ -1954,6 +1954,212 @@ void human_diff(std::ostream& out, std::span<const std::string> records, std::st
     out << '\n';
 }
 
+namespace {
+
+std::string lower(std::string_view text) {
+    std::string out{text};
+    std::ranges::transform(out, out.begin(), [](char c) {
+        return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+    });
+    return out;
+}
+
+// A repository's file from its name on: /var/db/repos/gentoo/profiles/x as gentoo/profiles/x.
+std::string_view short_place(std::string_view place) {
+    const auto profiles = place.find("/profiles/");
+    if (profiles == std::string_view::npos || profiles == 0) {
+        return place;
+    }
+    return place.substr(place.rfind('/', profiles - 1) + 1);
+}
+
+// The group of groups a flag's prefix names, or none.
+std::optional<std::string_view> group_of(std::string_view flag,
+                                         std::span<const std::string> groups) {
+    for (const auto& group : groups) {
+        if (flag.starts_with(lower(group) + "_")) {
+            return group;
+        }
+    }
+    return std::nullopt;
+}
+
+// Where a step was set, in words: its file and line, or the layer of a package's own.
+std::string use_place(std::string_view layer, std::string_view place, std::string_view token) {
+    std::string where;
+    if (!place.empty()) {
+        where = std::string{short_place(place)};
+    } else if (layer == "pkginternal") {
+        where = token == "-test" ? "RESTRICT=test" : "IUSE default";
+    } else if (layer == "features") {
+        where = "FEATURES=test";
+    } else if (layer == "arch") {
+        where = "ARCH";
+    } else if (layer == "env") {
+        where = "the environment";
+    } else if (layer.empty()) {
+        where = "not set";
+    } else {
+        where = std::string{layer};
+    }
+    const bool undone = token.starts_with('-');
+    if (layer == "force") {
+        return (undone ? "unforced  " : "forced  ") + where;
+    }
+    if (layer == "mask") {
+        return (undone ? "unmasked  " : "masked  ") + where;
+    }
+    return where;
+}
+
+// What a token did to flag where it does not name it: a wildcard, or a USE_EXPAND variable.
+std::string use_token_note(std::string_view flag, std::string_view token,
+                           std::span<const std::string> groups) {
+    if (token.empty() || token == flag || (token.starts_with('-') && token.substr(1) == flag)) {
+        return {};
+    }
+    if (std::ranges::contains(groups, token)) {
+        return std::format("({}=)", token);
+    }
+    if (token.starts_with('-') && token.ends_with("_*")) {
+        const auto prefix = token.substr(1, token.size() - 2);
+        for (const auto& group : groups) {
+            if (lower(group) + "_" == prefix) {
+                return std::format("({}: -*)", group);
+            }
+        }
+    }
+    if (token == "-*" || token.ends_with("_*")) {
+        return std::format("({})", token);
+    }
+    if (const auto group = group_of(flag, groups)) {
+        return std::format("({})", *group);
+    }
+    return std::format("({})", token);
+}
+
+void use_header(std::ostream& out, std::string_view key, const Painter& paint) {
+    const auto colons = std::min(key.find("::"), key.size());
+    out << paint_cpv(key.substr(0, colons), paint) << paint(key.substr(colons), Tone::repo);
+}
+
+} // namespace
+
+void human_use(std::ostream& out, std::span<const std::string> records,
+               std::span<const std::string> groups, const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto rows = split_all(records);
+    std::vector<std::string_view> keys;
+    for (const auto& row : rows) {
+        if (std::ranges::find(keys, row.at(0)) == keys.end()) {
+            keys.push_back(row.at(0));
+        }
+    }
+    bool first = true;
+    for (const auto key : keys) {
+        out << (first ? "" : "\n");
+        first = false;
+        use_header(out, key, paint);
+        out << '\n';
+        // Plain flags first, then each group's, named without its prefix.
+        struct Shown {
+            std::string name;
+            bool on = false;
+            const Fields* row = nullptr;
+        };
+        std::vector<std::pair<std::string, std::vector<Shown>>> sections{{"", {}}};
+        for (const auto& group : groups) {
+            sections.emplace_back(group, std::vector<Shown>{});
+        }
+        for (const auto& row : rows) {
+            if (row.at(0) != key || row.at(2) != "iuse") {
+                continue;
+            }
+            const auto spelled = row.at(1);
+            const bool fixed = spelled.starts_with('(');
+            auto bare = fixed ? spelled.substr(1, spelled.size() - 2) : spelled;
+            const bool on = !bare.starts_with('-');
+            if (!on) {
+                bare.remove_prefix(1);
+            }
+            const auto group = group_of(bare, groups);
+            auto name = std::string{group ? bare.substr(group->size() + 1) : bare};
+            name = std::format("{}{}{}{}", fixed ? "(" : "", on ? "" : "-", name, fixed ? ")" : "");
+            const auto section = std::ranges::find_if(
+                sections, [&](const auto& s) { return s.first == group.value_or(""); });
+            section->second.push_back({.name = std::move(name), .on = on, .row = &row});
+        }
+        std::size_t width = 0;
+        for (const auto& [group, shown] : sections) {
+            for (const auto& flag : shown) {
+                width = std::max(width, flag.name.size() + (group.empty() ? 0 : 2));
+            }
+        }
+        for (const auto& [group, shown] : sections) {
+            if (shown.empty()) {
+                continue;
+            }
+            const std::string indent = group.empty() ? "  " : "    ";
+            if (!group.empty()) {
+                out << "  " << paint(group, Tone::heading) << '\n';
+            }
+            for (const auto& flag : shown) {
+                const auto& row = *flag.row;
+                out << indent << paint(flag.name, flag.on ? Tone::use : Tone::note)
+                    << std::string(width + 2 - flag.name.size() - (indent.size() - 2), ' ')
+                    << use_place(row.at(3), row.at(4), row.at(5));
+                std::string_view spelled = row.at(1);
+                if (spelled.starts_with('(')) {
+                    spelled = spelled.substr(1, spelled.size() - 2);
+                }
+                if (spelled.starts_with('-')) {
+                    spelled.remove_prefix(1);
+                }
+                if (const auto note = use_token_note(spelled, row.at(5), groups); !note.empty()) {
+                    out << "  " << paint(note, Tone::note);
+                }
+                out << '\n';
+            }
+        }
+    }
+}
+
+void human_use_steps(std::ostream& out, std::span<const std::string> records,
+                     std::span<const std::string> groups, const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto rows = split_all(records);
+    std::string_view current;
+    const Fields* previous = nullptr;
+    for (const auto& row : rows) {
+        if (row.at(0) != current) {
+            out << (current.empty() ? "" : "\n");
+            current = row.at(0);
+            previous = nullptr;
+            use_header(out, current, paint);
+            out << "  " << paint(row.at(1), Tone::use) << '\n';
+        }
+        const bool on = row.at(2) == "on";
+        out << "  " << paint(on ? "+" : "-", on ? Tone::good : Tone::bad) << ' '
+            << use_place(row.at(3), row.at(4), row.at(6));
+        if (!row.at(5).empty()) {
+            out << "  " << paint_dependency(row.at(5), paint);
+        }
+        // Package entries apply least specific first, so a later one of the same layer outranks.
+        if (previous != nullptr && !row.at(5).empty() && !previous->at(5).empty() &&
+            previous->at(3) == row.at(3) && previous->at(5) != row.at(5)) {
+            out << "  " << paint("(more specific)", Tone::note);
+        }
+        if (const auto note = use_token_note(row.at(1), row.at(6), groups); !note.empty()) {
+            out << "  " << paint(note, Tone::note);
+        }
+        if (row.at(7) == "unchanged") {
+            out << "  " << paint("(no change)", Tone::note);
+        }
+        out << '\n';
+        previous = &row;
+    }
+}
+
 void human_match(std::ostream& out, std::span<const std::string> records,
                  std::span<const std::string> atoms, const Theme& theme) {
     const auto& paint = theme.paint;

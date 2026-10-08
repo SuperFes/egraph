@@ -228,6 +228,12 @@ TEST_CASE("masks beat forces, and a later profile node takes either back") {
     CHECK(a.use == Flags{"f", "g"});
     CHECK(a.forced == Flags{"f", "m"});
     CHECK(a.steps.at("m").back().layer == egraph::UseLayer::mask);
+    // g's mask, taken back, is its last step: it changed nothing.
+    const auto& g = a.steps.at("g").back();
+    CHECK(g.layer == egraph::UseLayer::mask);
+    CHECK(g.token == "-g");
+    CHECK(g.enabled);
+    CHECK_FALSE(g.changed);
 }
 
 TEST_CASE("the stable files apply to stable ebuilds alone") {

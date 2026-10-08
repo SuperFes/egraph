@@ -269,6 +269,15 @@ void human_history(std::ostream& out, std::span<const std::string> records, cons
 void human_match(std::ostream& out, std::span<const std::string> records,
                  std::span<const std::string> atoms, const Theme& theme);
 
+// use's lines as a table per ebuild: each flag of its IUSE as emerge spells it and where it was
+// last set, the flags of each of groups (USE_EXPAND variables) under it.
+void human_use(std::ostream& out, std::span<const std::string> records,
+               std::span<const std::string> groups, const Theme& theme);
+
+// use's lines for one flag: each step that set it, in the order applied.
+void human_use_steps(std::ostream& out, std::span<const std::string> records,
+                     std::span<const std::string> groups, const Theme& theme);
+
 // The legend for the kind letters and the any-of marker, and with possible the toggles.
 void human_legend(std::ostream& out, const Theme& theme, bool possible = false);
 

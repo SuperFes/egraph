@@ -806,6 +806,51 @@ TEST_CASE("match lists each atom's packages") {
           "? x/a  2 matches\n  * x/a-1\n  * x/a-2\n\n? >=x/b-2  no installed package\n");
 }
 
+TEST_CASE("use lists each ebuild's flags, USE_EXPAND ones grouped, and where each was set") {
+    const std::vector<std::string> groups{"VIDEO_CARDS"};
+    const std::vector<std::string> records{
+        "x/a-1::r\tidefault\tiuse\tpkginternal\t\tidefault",
+        "x/a-1::r\t-conf\tiuse\tpkg\t/etc/portage/package.use:4\t-conf",
+        "x/a-1::r\t(-m)\tiuse\tmask\t/var/db/repos/gentoo/profiles/base/use.mask:9\tm",
+        "x/a-1::r\t-u\tiuse\tmask\t/etc/portage/profile/use.mask:1\t-u",
+        "x/a-1::r\t-never\tiuse\t\t\t",
+        "x/a-1::r\tx86\timplicit\tarch\t\tx86",
+        "x/a-1::r\tvideo_cards_nvidia\tiuse\tpkg\t/etc/portage/package.use:4\tvideo_cards_nvidia",
+        "x/a-1::r\t-video_cards_vesa\tiuse\tconf\t/etc/portage/make.conf:15\tVIDEO_CARDS",
+        "x/b-1::r\ttest\tiuse\tfeatures\t\ttest",
+    };
+    std::ostringstream out;
+    egraph::human_use(out, records, groups, plain);
+    CHECK(out.str() == "x/a-1::r\n"
+                       "  idefault  IUSE default\n"
+                       "  -conf     /etc/portage/package.use:4\n"
+                       "  (-m)      masked  gentoo/profiles/base/use.mask:9\n"
+                       "  -u        unmasked  /etc/portage/profile/use.mask:1\n"
+                       "  -never    not set\n"
+                       "  VIDEO_CARDS\n"
+                       "    nvidia  /etc/portage/package.use:4\n"
+                       "    -vesa   /etc/portage/make.conf:15  (VIDEO_CARDS=)\n"
+                       "\n"
+                       "x/b-1::r\n"
+                       "  test  FEATURES=test\n");
+}
+
+TEST_CASE("use with a flag lists every step that set it, in the order applied") {
+    const std::vector<std::string> records{
+        "x/a-2::r\tranged\toff\tpkg\t/etc/portage/package.use:4\t<x/a-3\t-ranged\tunchanged",
+        "x/a-2::r\tranged\ton\tpkg\t/etc/portage/package.use:3\t>=x/a-1\tranged\tchanged",
+        "x/b-1::r\tranged\toff\t\t\t\t\t",
+    };
+    std::ostringstream out;
+    egraph::human_use_steps(out, records, {}, plain);
+    CHECK(out.str() == "x/a-2::r  ranged\n"
+                       "  - /etc/portage/package.use:4  <x/a-3  (no change)\n"
+                       "  + /etc/portage/package.use:3  >=x/a-1  (more specific)\n"
+                       "\n"
+                       "x/b-1::r  ranged\n"
+                       "  - not set\n");
+}
+
 TEST_CASE("every glyph set fills every glyph") {
     for (const auto set :
          {egraph::GlyphSet::nerd, egraph::GlyphSet::unicode, egraph::GlyphSet::ascii}) {
