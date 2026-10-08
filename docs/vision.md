@@ -43,6 +43,24 @@ The loop egraph should absorb: run `emerge -pv`, read the USE flags, edit `packa
 - The user may still edit `/etc/portage` directly; egraph reads what is there and never
   clobbers an edit it did not make. How the two stay in sync is the first thing to map out.
 
+## Audit and cleanup
+
+`egraph config check` (roadmap 18e3) lints the user's entries that do nothing. An audit goes
+further: everything the system defines that it need not, offered as a cleanup the user previews
+and accepts, as the what-if changes are saved. Recorded 2026-10-08.
+
+- Configuration: the same atom in several `package.use` (or other `package.*`) files, a flag set
+  twice, entries restating a default (an IUSE default, the profile's USE, a keyword already
+  stable), license, keyword and restriction tokens nothing installed needs, entries for versions
+  no longer in any repository, `package.env` entries and env files nothing uses, `savedconfig`
+  for packages gone.
+- World: entries the system pulls in anyway (in `@system`, the profile's packages, or a
+  dependency of another world entry the user would keep), and sets naming nothing installed.
+- Repositories: overlays nothing installed comes from, repository configuration naming ones
+  that are gone; distfiles and binary packages, as `eclean` finds them.
+- Each finding says what removing it would change (nothing, or what), from the same
+  stacking-without-it evaluation the check uses, so a cleanup never changes what gets built.
+
 ## Planning, building, and a distribution
 
 - The update set in merge order, as a tree down to each package's world root and as a table
