@@ -412,7 +412,7 @@ struct Watched {
     // it out of date makes it urgent, read at once.
     bool due = true;
     bool urgent = true;
-    // Reads so far, which turn the spinners.
+    // Ticks so far, which turn the spinners.
     std::size_t frame = 0;
     pressure::History history;
     std::optional<steve::Status> steve;

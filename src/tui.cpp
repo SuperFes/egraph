@@ -1598,6 +1598,7 @@ void App::handle(const Key& key) {
     } else if (key.kind == KeyKind::tick) {
         if (watched_ && pages_.empty()) {
             watched_->due = true;
+            ++watched_->frame;
         }
         if (checked_ && (checked_->stage == Checked::Stage::checking ||
                          checked_->stage == Checked::Stage::rebuilding)) {
@@ -2026,7 +2027,6 @@ void App::finish_watch(std::vector<emerge::Snapshot> snapshots, const pressure::
     }
     watched.due = false;
     watched.urgent = false;
-    ++watched.frame;
     const auto count = watch_rows(watched).size();
     watched.cursor.at = std::min(watched.cursor.at, count == 0 ? 0 : count - 1);
 }
@@ -2134,7 +2134,10 @@ std::optional<std::chrono::milliseconds> App::refresh() const {
         return wait_interval;
     }
     if (watched_ && pages_.empty()) {
-        return watch_interval;
+        // Spinners turn between reads while anything runs.
+        const bool spinning = std::ranges::any_of(
+            watched_->snapshots, [](const emerge::Snapshot& each) { return !each.tasks.empty(); });
+        return spinning ? wait_interval : watch_interval;
     }
     return std::nullopt;
 }

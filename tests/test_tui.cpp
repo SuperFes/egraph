@@ -1004,6 +1004,19 @@ TEST_CASE("the emerge view reads once a second, however often the loop wakes") {
     CHECK(samples == 2);
     REQUIRE(app.watched().has_value());
     CHECK(app.watched()->history.readings().size() == 2);
+    // The spinners turn on every tick, not only on reads.
+    CHECK(app.watched()->frame == 7);
+}
+
+TEST_CASE("the emerge view wakes each second while nothing runs") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{12, 140, {character(U'e'), key(KeyKind::tick)}};
+    egraph::tui::run(screen, app, ascii,
+                     {.watch = [] { return std::vector<egraph::emerge::Snapshot>{}; },
+                      .now = by_the_second(screen)});
+    CHECK(screen.timeouts.back() == egraph::tui::watch_interval);
 }
 
 TEST_CASE("e watches the running emerges, reading them again each second") {
@@ -1019,21 +1032,22 @@ TEST_CASE("e watches the running emerges, reading them again each second") {
     egraph::tui::run(screen, app, ascii, {.watch = watch, .now = by_the_second(screen)});
     CHECK(reads == 3);
     REQUIRE(app.watched().has_value());
-    CHECK(app.watched()->frame == 3);
-    // The list waits for keys; the emerge view wakes to read again.
+    CHECK(app.watched()->frame == 2);
+    // The list waits for keys; the emerge view wakes to turn its spinners, reading again each
+    // second.
     CHECK(screen.timeouts.front() == std::nullopt);
-    CHECK(screen.timeouts.back() == egraph::tui::watch_interval);
+    CHECK(screen.timeouts.back() == egraph::tui::wait_interval);
 
     const auto text = screen.text();
     CHECK(contains(screen.line(0), "egraph  > emerge"));
     CHECK(contains(text, " * emerge 4321   3 of 4 jobs   13 of 40 done   ######--------------  32%"
                          "   ! 1 failed"));
     // The spinner turned once a read, and the kinds: built, waiting, binary.
-    CHECK(contains(text, " >   |- \\ b dev-libs/b-2"));
+    CHECK(contains(text, " >   |- - b dev-libs/b-2"));
     CHECK(contains(text, "compile             1m40s   4.0x CPU   2.0 MiB peak"));
     CHECK(contains(text, "    |-   w x/new-1"));
     CHECK(contains(text, "waiting to merge      55s"));
-    CHECK(contains(text, "    `- \\ p app-misc/baz-1"));
+    CHECK(contains(text, "    `- - p app-misc/baz-1"));
     CHECK(contains(text, "starting"));
     CHECK(contains(screen.line(11), "enter open"));
 }
@@ -1062,7 +1076,7 @@ TEST_CASE("a task opens the page of its installed version, and esc comes back") 
     REQUIRE(app.watch_requested());
     app.finish_watch(running_emerges());
     CHECK_FALSE(app.watch_requested());
-    CHECK(app.refresh() == egraph::tui::watch_interval);
+    CHECK(app.refresh() == egraph::tui::wait_interval);
 
     // dev-libs/b-2 is building; b-1 is what is installed.
     app.handle(key(KeyKind::enter));
@@ -1423,6 +1437,7 @@ TEST_CASE("the emerge view draws the merge list as a tree that says what can sta
     app.finish_watch({building_lib()}, {}, std::nullopt, lib_merge_list());
     REQUIRE(app.plan_requested().has_value());
     app.finish_plan(lib_waits);
+    app.handle(key(KeyKind::tick));
     FakeScreen screen{12, 120, {}};
     egraph::tui::draw(screen, app, ascii);
     const auto text = screen.text();
