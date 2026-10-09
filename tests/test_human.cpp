@@ -352,6 +352,41 @@ TEST_CASE("updates line up versions and repositories, and count each kind") {
     CHECK(none.str() == "+ Nothing to update.\n");
 }
 
+TEST_CASE("updates say how long the plan will take, from the build history") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{
+                              "a/b-1\tupgrade\ta/b-2\tr",
+                              "a/c-1\tupgrade\ta/c-2\tr",
+                              "\testimate\t7810\t6442450944\t1\t1\t4",
+                          },
+                          plain);
+    CHECK(out.str() == "U a/b  1 > 2  ::r\nU a/c  1 > 2  ::r\n\n2 upgrades\n"
+                       "Estimate: about 2 h 10 min at -j4, 6.0 GiB at most; 1 never built here\n");
+    std::ostringstream unlimited;
+    egraph::human_updates(
+        unlimited, std::vector<std::string>{"a/b-1\tupgrade\ta/b-2\tr", "\testimate\t40\t\t1\t0\t"},
+        plain);
+    CHECK(unlimited.str() ==
+          "U a/b  1 > 2  ::r\n\n1 upgrade\nEstimate: about 40 s with no job limit\n");
+    // In a table, the same.
+    std::ostringstream table;
+    egraph::human_updates(
+        table,
+        std::vector<std::string>{"1\t\ta/b-1\tupgrade\ta/b-2\tr", "\testimate\t40\t\t1\t0\t1"},
+        plain, true);
+    CHECK(table.str().ends_with("\n1 upgrade\nEstimate: about 40 s at -j1\n"));
+}
+
+TEST_CASE("an estimate's seconds read as roughly as they are known") {
+    CHECK(egraph::rough_duration(0.2) == "1 s");
+    CHECK(egraph::rough_duration(40.4) == "40 s");
+    CHECK(egraph::rough_duration(59.6) == "1 min");
+    CHECK(egraph::rough_duration(749) == "12 min");
+    CHECK(egraph::rough_duration(3590) == "1 h");
+    CHECK(egraph::rough_duration(7810) == "2 h 10 min");
+}
+
 TEST_CASE("updates with lines tried mark what they add and change, then list what they drop") {
     std::ostringstream out;
     egraph::human_updates(

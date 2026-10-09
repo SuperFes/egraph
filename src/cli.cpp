@@ -14,6 +14,7 @@
 #include "elog.hpp"
 #include "emerge.hpp"
 #include "emerge_builds.hpp"
+#include "estimate.hpp"
 #include "evaluated.hpp"
 #include "exec.hpp"
 #include "freshness.hpp"
@@ -72,6 +73,7 @@
 #include <span>
 #include <sstream>
 #include <string_view>
+#include <thread>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -1733,6 +1735,36 @@ struct Shown {
     std::vector<Argument> arguments;
 };
 
+// The plan's estimate from the build history, as a line after its others: at the jobs given,
+// else at the latest build's; none when no package in it was built here.
+std::optional<std::string> estimate_of(const Store& store, const Evaluated& evaluated,
+                                       const Plan& plan, std::span<const Argument> arguments,
+                                       std::optional<std::uint32_t> given_jobs) {
+    std::ifstream in{builds_path(store.meta.eroot)};
+    if (!in) {
+        return std::nullopt;
+    }
+    std::ostringstream text;
+    text << in.rdbuf();
+    const auto records = read_builds(text.str());
+    const BuildKnowledge knowledge{records};
+    if (knowledge.empty()) {
+        return std::nullopt;
+    }
+    const auto steps = run_steps(store, evaluated, plan, arguments, true);
+    const auto cores = std::max(std::thread::hardware_concurrency(), 1U);
+    const auto jobs = given_jobs ? given_jobs : recorded_jobs(records);
+    // No limit: as many at once as a jobserver has tokens, one a core.
+    const auto estimate =
+        estimate_plan(Schedule{plan, steps, jobs},
+                      step_costs(knowledge, build_steps(store, evaluated, plan, steps), cores),
+                      cores, jobs ? std::nullopt : std::optional{cores});
+    if (estimate.known == 0) {
+        return std::nullopt;
+    }
+    return estimate_line(estimate, jobs);
+}
+
 // Held updates nothing can satisfy are always listed; the rest with --held.
 HeldLines held_lines(bool held) {
     return held ? HeldLines::all : HeldLines::unsatisfiable;
@@ -1886,6 +1918,9 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
     std::ranges::move(tried_changes(session, invocation, *store, evaluated, plan, command.rebuilds,
                                     targets, envs, "updates", command.table),
                       std::back_inserter(lines));
+    if (auto estimate = estimate_of(*store, evaluated, plan, {}, std::nullopt)) {
+        lines.push_back(std::move(*estimate));
+    }
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme, command.table, unlisted_held(plan, command.held));
     } else {
@@ -2184,7 +2219,8 @@ std::expected<Request, std::string> resolve_request(const PlanCommand& command, 
 // The plan for a request, shown; the exit status instead when there is none to show.
 std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_view name,
                                      Session& session, const Invocation& invocation,
-                                     std::ostream& out, std::ostream& err) {
+                                     std::ostream& out, std::ostream& err,
+                                     std::optional<std::uint32_t> jobs = std::nullopt) {
     if (!command.update && (command.deep || command.rebuilds != UseRebuilds::none)) {
         err << "egraph: " << name << ": -D, -N and -U are only planned with -u\n";
         return std::unexpected(Exit::usage);
@@ -2268,6 +2304,9 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
     std::ranges::move(tried_changes(session, invocation, *store, evaluated, shown.plan,
                                     command.rebuilds, targets, envs, name, command.table),
                       std::back_inserter(lines));
+    if (auto estimate = estimate_of(*store, evaluated, shown.plan, shown.arguments, jobs)) {
+        lines.push_back(std::move(*estimate));
+    }
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme, command.table,
                       unlisted_held(shown.plan, command.held));
@@ -3349,7 +3388,7 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
                const Invocation& invocation, std::ostream& out, std::ostream& err) {
     return act_on_plan(
         Exec::name, command.yes, session, invocation, out, err,
-        [&] { return show_plan(command, Exec::name, session, invocation, out, err); },
+        [&] { return show_plan(command, Exec::name, session, invocation, out, err, command.jobs); },
         [&](const Invocation& again) {
             return carry_out(command, merged, session, again, out, err);
         },

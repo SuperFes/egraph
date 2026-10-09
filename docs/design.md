@@ -943,6 +943,25 @@ history's log is appended) and keeps the last `build_keep` records of each cp (`
 20 by default; 0 records nothing), so the file stays a few MB at most and is read whole; lines it
 cannot read are kept as they are. `egraph builds` lists the records, as lines, JSON or CSV.
 
+Estimates (`src/estimate.hpp`) come from the history alone. A package's next build is foretold by
+its latest merged builds (5, the version's, else the cp's): each one's seconds without its fetch,
+except that one starved beside other builds on a saturated system (CPU busy at 90% or more, or
+any emerge build beside others, of which the system's load is unknown) is timed as its CPU
+seconds over the most cores the package kept busy in any of them; the median of those, the
+median CPU seconds over it for its parallelism (no more than the cores), the most memory any
+held and the median merge. A plan is then estimated by running its own `Schedule` ahead on a
+clock of its own rather than summing: the builds it lets start, at the jobs given or else the
+latest build's (as many as there are cores when there is no limit, as a jobserver's tokens
+gate them), progress at their own pace while their parallelism together fits the cores and are
+slowed alike when it does not (processor sharing; a build keeping no core busy keeps its pace),
+and merges take their seconds one at a time, so merge-wait and the waits between merges give
+the critical path. Its peak memory is the most the builds running at once held, of those whose
+peaks are known. Merges of packages never built here cost nothing and are counted apart;
+uninstalls cost nothing. The same run starts from a schedule under way, its running steps
+carried on from their elapsed seconds. The plan commands end with it as a line (`updates` at the latest
+build's jobs, `exec` at its `-j`); egraphd's status keeps it among the plan's lines, `status`
+shows it beside the counts, and a change in the estimate alone is no plan change.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

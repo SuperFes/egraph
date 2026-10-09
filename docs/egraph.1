@@ -518,6 +518,23 @@ when that is a directory), and the plan is made again on stores refreshed for th
 .B \-\-verify
 compares the USE changes emerge asks for, and only them: its merge list then is made before
 some of them.
+When the build history (see
+.BR builds )
+holds builds of packages the plan merges, the plan ends with how long it will take: its
+schedule run ahead as
+.B exec
+would run it, under FEATURES=merge\-wait, at the jobs
+.B exec
+is given
+.RB ( \-j )
+or else those of the latest build recorded (as many as there are cores for no limit), each
+build taking what its package's latest builds took (the version's, else the package's; one
+starved of CPU beside others timed by its CPU seconds), the builds sharing the cores by how
+many each keeps busy; and the most memory the builds running at once would hold. For scripts,
+the last line is an empty field, then
+.IR "" estimate " seconds peak known unknown jobs" ,
+the peak in bytes (empty when no build's is known), jobs empty for no limit, and unknown the
+merges of packages never built here, which count for nothing.
 .TP
 .B \-\-dynamic\-deps
 .TP
@@ -1380,8 +1397,10 @@ last planned (see
 .I status.json
 under
 .BR FILES ),
-read without planning anything: for a status bar. On a terminal, the counts that are not zero,
-the notices
+read without planning anything: for a status bar. On a terminal, the counts that are not zero
+and how long the plan would take from the build history (as
+.B updates
+estimates it), the notices
 .B watch
 found (see
 .I notices.json
@@ -1392,9 +1411,10 @@ lines, tab-separated: a key and its value for
 .BR upgrades ", " downgrades ", " rebuilds ", " new ", " held ", " uninstalls ", " masked ,
 .BR refused " and " current
 .RB ( yes " or " no ),
-and
 .B written
-(seconds since the epoch), then
+(seconds since the epoch), and
+.B estimate
+(the plan's seconds, empty without builds of its packages recorded), then
 .BR synced ,
 the repository and its sync time in seconds for each repository, empty without one, and
 .B notices

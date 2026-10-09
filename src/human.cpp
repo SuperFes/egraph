@@ -1,4 +1,5 @@
 #include "human.hpp"
+#include "estimate.hpp"
 #include "required_use.hpp"
 #include "status.hpp"
 
@@ -8,6 +9,7 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -16,6 +18,7 @@
 #include <ostream>
 #include <ranges>
 #include <set>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -1063,6 +1066,14 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     const auto& paint = theme.paint;
     const auto& glyph = theme.glyph();
     auto rows = split_all(records);
+    // The plan's estimate, taken off.
+    std::optional<EstimateLine> estimate;
+    for (std::size_t i = 0; i < rows.size() && !estimate; ++i) {
+        estimate = parse_estimate_line(records.subspan(i).front());
+        if (estimate) {
+            rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+    }
     // A table row's place and the earlier places it waits for, taken off ahead of its fields.
     std::vector<std::pair<std::string_view, std::string>> places(rows.size());
     std::size_t place_width = 0;
@@ -1572,6 +1583,18 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         first = false;
     }
     out << (counted ? "\n" : "");
+    if (estimate) {
+        auto text = std::format("about {} {}", rough_duration(estimate->seconds),
+                                estimate->jobs ? std::format("at -j{}", *estimate->jobs)
+                                               : std::string{"with no job limit"});
+        if (estimate->peak_memory) {
+            text += std::format(", {} at most", byte_size(*estimate->peak_memory));
+        }
+        if (estimate->unknown != 0) {
+            text += std::format("; {} never built here", estimate->unknown);
+        }
+        out << paint("Estimate:", Tone::heading) << ' ' << paint(text, Tone::note) << '\n';
+    }
     if (trying) {
         if (!counted) {
             out << '\n';
@@ -2617,6 +2640,18 @@ std::string byte_size(std::uint64_t bytes) {
         ++unit;
     }
     return std::format("{:.1f} {}", value, units.at(unit));
+}
+
+std::string rough_duration(double seconds) {
+    if (seconds < 59.5) {
+        return std::format("{} s", std::max<std::int64_t>(std::llround(seconds), 1));
+    }
+    const auto minutes = std::llround(seconds / 60);
+    if (minutes < 60) {
+        return std::format("{} min", minutes);
+    }
+    return minutes % 60 == 0 ? std::format("{} h", minutes / 60)
+                             : std::format("{} h {} min", minutes / 60, minutes % 60);
 }
 
 } // namespace egraph

@@ -3,10 +3,13 @@
 #include "human.hpp"
 
 #include <algorithm>
+#include <charconv>
+#include <cmath>
 #include <format>
 #include <functional>
 #include <limits>
 #include <ranges>
+#include <system_error>
 #include <variant>
 
 namespace egraph {
@@ -200,6 +203,61 @@ PlanEstimate estimate_plan(Schedule schedule, std::span<const StepCost> costs, u
     }
     estimate.seconds = now;
     return estimate;
+}
+
+std::vector<StepCost> step_costs(const BuildKnowledge& knowledge, std::span<const BuildStep> steps,
+                                 unsigned cores) {
+    std::vector<StepCost> costs;
+    costs.reserve(steps.size());
+    for (const auto& step : steps) {
+        const auto estimate = step.uninstall ? std::nullopt : knowledge.estimate(step.cpv, cores);
+        if (!estimate) {
+            costs.emplace_back();
+            continue;
+        }
+        costs.push_back({.build_seconds = estimate->seconds,
+                         .parallelism = estimate->parallelism,
+                         .peak_memory = estimate->peak_memory,
+                         .merge_seconds = estimate->merge_seconds,
+                         .known = true});
+    }
+    return costs;
+}
+
+std::optional<std::uint32_t> recorded_jobs(const std::vector<BuildRecord>& records) {
+    return records.empty() ? std::nullopt : records.back().jobs;
+}
+
+std::string estimate_line(const PlanEstimate& estimate, std::optional<std::uint32_t> jobs) {
+    return std::format("\testimate\t{}\t{}\t{}\t{}\t{}", std::llround(estimate.seconds),
+                       estimate.peak_memory ? std::to_string(*estimate.peak_memory) : "",
+                       estimate.known, estimate.unknown, jobs ? std::to_string(*jobs) : "");
+}
+
+std::optional<EstimateLine> parse_estimate_line(std::string_view line) {
+    std::vector<std::string_view> fields;
+    for (const auto field : std::views::split(line, '\t')) {
+        fields.emplace_back(field.begin(), field.end());
+    }
+    if (fields.size() != 7 || !fields.at(0).empty() || fields.at(1) != "estimate") {
+        return std::nullopt;
+    }
+    const auto number = [](std::string_view text, auto& value) {
+        const auto [end, error] = std::from_chars(text.begin(), text.end(), value);
+        return error == std::errc{} && end == text.end();
+    };
+    EstimateLine read;
+    if (!number(fields.at(2), read.seconds) || !number(fields.at(4), read.known) ||
+        !number(fields.at(5), read.unknown)) {
+        return std::nullopt;
+    }
+    if (!fields.at(3).empty() && !number(fields.at(3), read.peak_memory.emplace())) {
+        return std::nullopt;
+    }
+    if (!fields.at(6).empty() && !number(fields.at(6), read.jobs.emplace())) {
+        return std::nullopt;
+    }
+    return read;
 }
 
 } // namespace egraph

@@ -1238,7 +1238,7 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
   - 20c2 (done): a plan's estimate: `Schedule` run ahead on a clock of its own, the builds
     sharing the cores by their parallelism, from the start or from a run under way; its wall
     time, peak memory and the steps never built here.
-  - 20c3 (planned): `updates`, `plan`, `install` and `exec` say it.
+  - 20c3 (done): `updates`, `plan`, `install` and `exec` say it.
   - 20c4 (planned): the build view and status count down by it.
 - 20d (planned): estimates for a package never built here, from similar ones (build system,
   eclasses, distfile size), and scaled for USE and version.

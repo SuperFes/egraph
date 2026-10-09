@@ -204,6 +204,10 @@ TEST_CASE("a status summed up for a terminal") {
               "planned 5 minutes ago, before the stores last changed"});
     status.counts = {};
     CHECK(egraph::status_summary(status, true, now).front() == "no updates");
+    // From the build history, how long the plan would take.
+    status.counts = {.upgrades = 2};
+    status.lines = {"a/b-1\tupgrade\ta/b-2\tr", "\testimate\t7810\t\t1\t1\t4"};
+    CHECK(egraph::status_summary(status, true, now).front() == "2 upgrades, about 2 h 10 min");
 }
 
 TEST_CASE("a status as lines for a status bar") {
@@ -216,8 +220,11 @@ TEST_CASE("a status as lines for a status bar") {
     CHECK(egraph::status_lines(status, false) ==
           std::vector<std::string>{"upgrades\t3", "downgrades\t0", "rebuilds\t0", "new\t0",
                                    "held\t1", "uninstalls\t0", "masked\t0", "refused\tyes",
-                                   "current\tno", "written\t1791288000",
+                                   "current\tno", "written\t1791288000", "estimate\t",
                                    "synced\tgentoo\t1791158400", "synced\tlocal\t"});
+    auto estimated = status;
+    estimated.lines = {"\testimate\t7810\t\t1\t1\t4"};
+    CHECK(egraph::status_lines(estimated, true).at(10) == "estimate\t7810");
 }
 
 TEST_CASE("a status as JSON says whether it is current when asked") {
@@ -428,6 +435,9 @@ TEST_CASE("a configuration edit alone changing the plan is a plan change") {
     SECTION("not when the plan did not change") {
         after.lines = before.lines;
         after.counts = before.counts;
+        CHECK_FALSE(egraph::plan_change(before, after));
+        // Nor when only its estimate did.
+        after.lines.emplace_back("\testimate\t60\t\t1\t0\t");
         CHECK_FALSE(egraph::plan_change(before, after));
     }
     SECTION("not after a status that kept no inputs") {

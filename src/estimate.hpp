@@ -98,4 +98,31 @@ struct PlanEstimate {
                                          std::optional<std::uint32_t> tokens = std::nullopt,
                                          std::span<const RunningStep> running = {});
 
+// Each step's cost on a system of cores: a merge's from its package's estimate where it has
+// one, nothing otherwise; an uninstall's nothing.
+[[nodiscard]] std::vector<StepCost> step_costs(const BuildKnowledge& knowledge,
+                                               std::span<const BuildStep> steps, unsigned cores);
+
+// The jobs a plan is estimated at when none are given: those of the latest build recorded, none
+// for no limit.
+[[nodiscard]] std::optional<std::uint32_t> recorded_jobs(const std::vector<BuildRecord>& records);
+
+// For scripts, after a plan's lines: "<TAB>estimate<TAB>seconds<TAB>peak<TAB>known<TAB>unknown
+// <TAB>jobs", the seconds whole, the peak in bytes, empty when unknown, and jobs empty for no
+// limit.
+[[nodiscard]] std::string estimate_line(const PlanEstimate& estimate,
+                                        std::optional<std::uint32_t> jobs);
+
+struct EstimateLine {
+    double seconds = 0;
+    std::optional<std::uint64_t> peak_memory{};
+    std::size_t known = 0;
+    std::size_t unknown = 0;
+    std::optional<std::uint32_t> jobs{};
+    bool operator==(const EstimateLine&) const = default;
+};
+
+// An estimate_line back; none for any other line.
+[[nodiscard]] std::optional<EstimateLine> parse_estimate_line(std::string_view line);
+
 } // namespace egraph

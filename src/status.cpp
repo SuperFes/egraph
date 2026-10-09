@@ -1,6 +1,8 @@
 #include "status.hpp"
 
+#include "estimate.hpp"
 #include "evaluated.hpp"
+#include "human.hpp"
 #include "repository.hpp"
 #include "store.hpp"
 
@@ -9,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <format>
 #include <fstream>
@@ -268,7 +271,7 @@ std::vector<std::string> entries(std::span<const std::string> lines) {
             tab == std::string::npos
                 ? std::string_view{}
                 : std::string_view{line}.substr(tab + 1, line.find('\t', tab + 1) - tab - 1);
-        if (kind != "holder" && kind != "nodeps") {
+        if (kind != "holder" && kind != "nodeps" && kind != "estimate") {
             kept.push_back(line);
         }
     }
@@ -517,6 +520,20 @@ std::string age_text(Seconds then, Seconds now) {
     return "just now";
 }
 
+namespace {
+
+// The plan's estimate among its lines, if it has one.
+std::optional<EstimateLine> status_estimate(const Status& status) {
+    for (const auto& line : status.lines) {
+        if (auto estimate = parse_estimate_line(line)) {
+            return estimate;
+        }
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
 std::vector<std::string> status_summary(const Status& status, bool current, Seconds now) {
     const auto& counts = status.counts;
     std::string line;
@@ -535,6 +552,9 @@ std::vector<std::string> status_summary(const Status& status, bool current, Seco
     if (line.empty()) {
         line = "no updates";
     }
+    if (const auto estimate = status_estimate(status)) {
+        line += std::format(", about {}", rough_duration(estimate->seconds));
+    }
     if (counts.refused) {
         line += "; emerge would refuse the plan";
     }
@@ -552,6 +572,7 @@ std::vector<std::string> status_summary(const Status& status, bool current, Seco
 
 std::vector<std::string> status_lines(const Status& status, bool current) {
     const auto& counts = status.counts;
+    const auto estimate = status_estimate(status);
     const auto yes = [](bool value) { return value ? "yes" : "no"; };
     std::vector<std::string> lines{
         std::format("upgrades\t{}", counts.upgrades),
@@ -563,7 +584,9 @@ std::vector<std::string> status_lines(const Status& status, bool current) {
         std::format("masked\t{}", counts.masked),
         std::format("refused\t{}", yes(counts.refused)),
         std::format("current\t{}", yes(current)),
-        std::format("written\t{}", status.written.time_since_epoch().count())};
+        std::format("written\t{}", status.written.time_since_epoch().count()),
+        std::format("estimate\t{}",
+                    estimate ? std::to_string(std::llround(estimate->seconds)) : std::string{})};
     for (const auto& repository : status.repositories) {
         lines.push_back(std::format(
             "synced\t{}\t{}", repository.name,

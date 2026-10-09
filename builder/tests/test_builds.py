@@ -143,6 +143,46 @@ def test_egraph_builds_reads_the_history_back(machines):
     assert bad.returncode == 2
 
 
+def estimate(printed):
+    """A plan's estimate line: seconds, peak, known, unknown and jobs."""
+    *_, last = printed.splitlines()
+    fields = last.split("\t")
+    assert fields[:2] == ["", "estimate"], printed
+    return fields[2:]
+
+
+def test_a_plan_says_how_long_it_will_take_from_the_history(parallel, tmp_path):
+    """Its packages' builds run ahead at the jobs of the latest build: no shorter than the
+    longest build, no longer than all of them one after another."""
+    system, machine = parallel
+    age(system.playground.eroot)
+    ran = system.egraph("exec", "--yes", "-j3", "app-misc/top")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    records = history(system)
+    targets = ["=" + r["cpv"] for r in records]
+    plan = system.egraph("plan", *targets)
+    assert plan.returncode == 0, plan.stdout + plan.stderr
+    seconds, peak, known, unknown, jobs = estimate(plan.stdout)
+    assert (int(known), int(unknown), jobs) == (len(records), 0, "3")
+    longest = max(r["build_seconds"] for r in records)
+    together = sum(r["build_seconds"] + r["merge_seconds"] for r in records)
+    assert longest - 1 <= int(seconds) <= together + 1
+    if all("peak_memory" in r for r in records):
+        assert int(peak) >= max(r["peak_memory"] for r in records)
+    human = system.egraph("--layout", "human", "plan", *targets)
+    assert "Estimate: about " in human.stdout and " at -j3" in human.stdout
+    # exec at the jobs it is given; a package never built here counted apart.
+    shown = subprocess.run(
+        system.command("exec", "-j1", *targets, "app-misc/marked"),
+        input="n\n",
+        capture_output=True,
+        text=True,
+    )
+    seconds, peak, known, unknown, jobs = estimate(shown.stdout.split("egraph:")[0])
+    assert (int(known), int(unknown), jobs) == (len(records), 1, "1")
+    assert int(seconds) >= together - 1
+
+
 # The compile spins for a while, then holds 100 MB in a shell variable across a sleep.
 HUNGRY = INSTALL + """src_compile() {
 	local i held

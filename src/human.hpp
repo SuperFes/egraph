@@ -19,6 +19,9 @@ namespace egraph {
 // "512 B", "1.5 KiB", "2.0 MiB".
 [[nodiscard]] std::string byte_size(std::uint64_t bytes);
 
+// An estimate's seconds, as roughly as it is known: "40 s", "12 min", "2 h 10 min".
+[[nodiscard]] std::string rough_duration(double seconds);
+
 enum class Tone : std::uint8_t {
     heading,
     category,

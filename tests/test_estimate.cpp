@@ -238,3 +238,45 @@ TEST_CASE("a run under way is estimated from where it stands") {
     const std::vector<egraph::RunningStep> merging{{.step = 1, .merging = true, .elapsed = 0.5}};
     CHECK(egraph::estimate_plan(schedule, costs, 4, std::nullopt, merging).seconds == 31.5);
 }
+
+TEST_CASE("a plan's steps cost what their packages' builds foretell") {
+    auto known = build("app-misc/a-1", 100, 200);
+    known.peak_memory = 5;
+    known.jobs = 4;
+    auto last = build("app-misc/z-1", 10);
+    last.jobs = std::nullopt;
+    const BuildKnowledge knowledge{{known, last}};
+    const std::vector<egraph::BuildStep> steps{{.cpv = "app-misc/a-1"},
+                                               {.cpv = "app-misc/b-1"},
+                                               {.cpv = "app-misc/a-0", .uninstall = true}};
+    CHECK(egraph::step_costs(knowledge, steps, 8) == std::vector<StepCost>{{.build_seconds = 100,
+                                                                            .parallelism = 2,
+                                                                            .peak_memory = 5,
+                                                                            .merge_seconds = 2,
+                                                                            .known = true},
+                                                                           {},
+                                                                           {}});
+    CHECK_FALSE(egraph::recorded_jobs({known, last}));
+    CHECK(egraph::recorded_jobs({last, known}) == 4U);
+    CHECK_FALSE(egraph::recorded_jobs({}));
+}
+
+TEST_CASE("a plan's estimate is a line for scripts") {
+    CHECK(egraph::estimate_line(
+              {.seconds = 7810.4, .peak_memory = 6000000000, .known = 30, .unknown = 4}, 4) ==
+          "\testimate\t7810\t6000000000\t30\t4\t4");
+    CHECK(egraph::estimate_line({.seconds = 40.6, .known = 1}, std::nullopt) ==
+          "\testimate\t41\t\t1\t0\t");
+}
+
+TEST_CASE("an estimate line is read back") {
+    const PlanEstimate estimate{.seconds = 7810, .peak_memory = 6, .known = 30, .unknown = 4};
+    CHECK(egraph::parse_estimate_line(egraph::estimate_line(estimate, 4)) ==
+          egraph::EstimateLine{
+              .seconds = 7810, .peak_memory = 6, .known = 30, .unknown = 4, .jobs = 4});
+    CHECK(egraph::parse_estimate_line("\testimate\t41\t\t1\t0\t") ==
+          egraph::EstimateLine{.seconds = 41, .known = 1});
+    CHECK_FALSE(egraph::parse_estimate_line("\ttried\tnone"));
+    CHECK_FALSE(egraph::parse_estimate_line("\testimate\tx\t\t1\t0\t"));
+    CHECK_FALSE(egraph::parse_estimate_line("\testimate\t41\t\t1\t0"));
+}
