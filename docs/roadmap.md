@@ -1227,10 +1227,19 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
     size, distfile sizes, fetch time (a phase of its own), and steve's jobs and free tokens.
   - 20b4 (done): emerge's builds, as egraphd sees them in emerge's FEATURES=observability
     snapshots, marked as emerge's and settled by their vdb entries.
-- 20c (planned): estimates. A package's time from its own builds, scaled for the parallelism it
+- 20c (in progress): estimates. A package's time from its own builds, scaled for the parallelism it
   gets; a plan's wall time from the schedule run ahead with those times and the jobs (the
   critical path, not the sum), and its peak memory: `updates`, `plan`, `exec` and a whole
   `@world` update say how long they will take, and the build view counts down by time.
+  - 20c1 (done): a package's estimate from its latest merged builds (the version's, else the
+    cp's): its seconds alone, fetching left out, a build starved beside others on a saturated
+    system timed from its CPU seconds and the package's best parallelism; its parallelism, peak
+    memory and merge seconds.
+  - 20c2 (planned): a plan's estimate: `Schedule` run ahead on a clock of its own, the builds
+    sharing the cores by their parallelism, from the start or from a run under way; its wall
+    time, peak memory and the steps never built here.
+  - 20c3 (planned): `updates`, `plan`, `install` and `exec` say it.
+  - 20c4 (planned): the build view and status count down by it.
 - 20d (planned): estimates for a package never built here, from similar ones (build system,
   eclasses, distfile size), and scaled for USE and version.
 - 20e (planned): queries and views: a package's last builds as a table and a sparkline ("gcc,

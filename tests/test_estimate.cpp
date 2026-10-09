@@ -1,0 +1,124 @@
+#include "estimate.hpp"
+
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+
+#include <optional>
+#include <string>
+#include <vector>
+
+using Catch::Approx;
+using egraph::BuildKnowledge;
+using egraph::BuildRecord;
+using egraph::PackageEstimate;
+
+namespace {
+
+BuildRecord build(std::string cpv, double seconds, std::optional<double> cpu = std::nullopt) {
+    return {.origin = "exec",
+            .run = "run",
+            .cpv = std::move(cpv),
+            .phases = {{.phase = "compile", .seconds = seconds}},
+            .build_seconds = seconds,
+            .merge_seconds = 2,
+            .cpu_seconds = cpu};
+}
+
+BuildRecord beside(BuildRecord record, std::uint32_t others, std::optional<double> busy) {
+    record.beside = others;
+    if (busy) {
+        record.system = egraph::SystemShare{.cpu_busy = busy};
+    }
+    return record;
+}
+
+} // namespace
+
+TEST_CASE("a package never merged here has no estimate") {
+    auto failed = build("app-misc/a-1", 30, 30);
+    failed.outcome = BuildRecord::Outcome::failed;
+    const BuildKnowledge knowledge{{failed, build("app-misc/b-1", 10)}};
+    CHECK_FALSE(knowledge.empty());
+    CHECK_FALSE(knowledge.estimate("app-misc/a-1", 8));
+    CHECK_FALSE(knowledge.estimate("app-misc/c-1", 8));
+    CHECK(BuildKnowledge{{failed}}.empty());
+}
+
+TEST_CASE("a build alone is timed as it took, its fetch left out") {
+    auto alone = build("app-misc/a-1", 100, 300);
+    alone.phases.insert(alone.phases.begin(), {.phase = "fetch", .seconds = 20});
+    alone.build_seconds = 120;
+    alone.peak_memory = 1000;
+    auto again = build("app-misc/a-1", 110, 330);
+    again.peak_memory = 3000;
+    again.merge_seconds = 4;
+    const BuildKnowledge knowledge{{alone, again}};
+    CHECK(knowledge.estimate("app-misc/a-1", 8) == PackageEstimate{.seconds = 105,
+                                                                   .parallelism = 3,
+                                                                   .peak_memory = 3000,
+                                                                   .merge_seconds = 3,
+                                                                   .builds = 2,
+                                                                   .same_version = true});
+}
+
+TEST_CASE("the version's own builds come first, then the cp's latest") {
+    std::vector<BuildRecord> records;
+    records.reserve(9);
+    for (int i = 0; i < 7; ++i) {
+        records.push_back(build("app-misc/a-1", 10.0 * (i + 1)));
+    }
+    records.push_back(build("app-misc/a-2", 500));
+    records.push_back(build("app-misc/a-1", 1000));
+    const BuildKnowledge knowledge{records};
+    // a-2's one build.
+    const auto two = knowledge.estimate("app-misc/a-2", 4);
+    REQUIRE(two);
+    CHECK(two->seconds == 500);
+    CHECK(two->builds == 1);
+    CHECK(two->same_version);
+    // a-1's latest five: 40, 50, 60, 70 and 1000.
+    const auto one = knowledge.estimate("app-misc/a-1", 4);
+    REQUIRE(one);
+    CHECK(one->seconds == 60);
+    CHECK(one->builds == 5);
+    // a-3 from the cp's latest five: 50, 60, 70, 500 and 1000.
+    const auto three = knowledge.estimate("app-misc/a-3", 4);
+    REQUIRE(three);
+    CHECK(three->seconds == 70);
+    CHECK_FALSE(three->same_version);
+    // Without CPU seconds, one core's worth.
+    CHECK(three->parallelism == 1);
+}
+
+TEST_CASE("a build starved beside others is timed by its CPU seconds and its parallelism") {
+    // Alone it kept 4 cores busy; beside two others on a saturated system it took 300 s for
+    // 420 CPU seconds, 105 s at its own pace.
+    const BuildKnowledge knowledge{
+        {build("app-misc/a-1", 100, 400), beside(build("app-misc/a-1", 300, 420), 2, 1.0)}};
+    const auto estimate = knowledge.estimate("app-misc/a-1", 16);
+    REQUIRE(estimate);
+    CHECK(estimate->seconds == Approx(102.5));
+    CHECK(estimate->parallelism == Approx(410 / 102.5));
+    // Beside others on a system with room, it took what it needed.
+    const BuildKnowledge roomy{
+        {build("app-misc/a-1", 100, 400), beside(build("app-misc/a-1", 300, 420), 2, 0.5)}};
+    CHECK(roomy.estimate("app-misc/a-1", 16)->seconds == Approx(200));
+    // emerge's builds say nothing of the system: beside others, it counts as starved.
+    const BuildKnowledge unsaid{{build("app-misc/a-1", 100, 400),
+                                 beside(build("app-misc/a-1", 300, 420), 2, std::nullopt)}};
+    CHECK(unsaid.estimate("app-misc/a-1", 16)->seconds == Approx(102.5));
+    // Starved without CPU seconds: as it took.
+    const BuildKnowledge blind{{beside(build("app-misc/a-1", 300), 2, 1.0)}};
+    CHECK(blind.estimate("app-misc/a-1", 16)->seconds == 300);
+}
+
+TEST_CASE("a package's parallelism is no more than the system's cores") {
+    const BuildKnowledge knowledge{{build("app-misc/a-1", 100, 800)}};
+    CHECK(knowledge.estimate("app-misc/a-1", 16)->parallelism == 8);
+    CHECK(knowledge.estimate("app-misc/a-1", 4)->parallelism == 4);
+    // Waiting on nothing but sleep.
+    const BuildKnowledge idle{{build("app-misc/a-1", 100, 0)}};
+    const auto estimate = idle.estimate("app-misc/a-1", 4);
+    CHECK(estimate->seconds == 100);
+    CHECK(estimate->parallelism == 0);
+}
