@@ -3,6 +3,7 @@
 #include "action.hpp"
 #include "affected.hpp"
 
+#include "advice.hpp"
 #include "atom.hpp"
 #include "blockers.hpp"
 #include "build_info.hpp"
@@ -1791,28 +1792,38 @@ std::vector<StepFacts> facts_of(std::shared_ptr<const RepositoryIndex> loaded,
     return step_facts(*index, steps);
 }
 
-std::optional<std::string> estimate_of(const Session& session, const Invocation& invocation,
-                                       const Store& store, const Evaluated& evaluated,
-                                       const Plan& plan, std::span<const Argument> arguments,
-                                       std::optional<std::uint32_t> given_jobs) {
+std::vector<std::string> estimate_of(const Session& session, const Invocation& invocation,
+                                     const Store& store, const Evaluated& evaluated,
+                                     const Plan& plan, std::span<const Argument> arguments,
+                                     std::optional<std::uint32_t> given_jobs) {
     const auto records = read_history(builds_path(store.meta.eroot));
     BuildKnowledge knowledge{records};
     if (knowledge.empty()) {
-        return std::nullopt;
+        return {};
     }
     const auto steps = run_steps(store, evaluated, plan, arguments, true);
     const auto cores = build_cores();
     const auto jobs = given_jobs ? given_jobs : recorded_jobs(records);
     const auto built = build_steps(store, evaluated, plan, steps);
     const auto facts = facts_of(session.loaded_repository(), invocation, built, knowledge);
+    const auto costs = step_costs(knowledge, built, cores, facts);
     // No limit: as many at once as a jobserver has tokens, one a core.
-    const auto estimate =
-        estimate_plan(Schedule{plan, steps, jobs}, step_costs(knowledge, built, cores, facts),
-                      cores, jobs ? std::nullopt : std::optional{cores});
+    const auto estimate = estimate_plan(Schedule{plan, steps, jobs}, costs, cores,
+                                        jobs ? std::nullopt : std::optional{cores});
     if (estimate.known + estimate.guessed == 0) {
-        return std::nullopt;
+        return {};
     }
-    return estimate_line(estimate, jobs);
+    std::vector<std::string> lines{estimate_line(estimate, jobs)};
+    std::ranges::move(advice_lines(plan_advice(built, costs)), std::back_inserter(lines));
+    return lines;
+}
+
+// The clock a human layout tells the hour by.
+LocalClock local_clock() {
+    return {.now =
+                std::chrono::duration<double>{std::chrono::system_clock::now().time_since_epoch()}
+                    .count(),
+            .zone = local_zone()};
 }
 
 // Held updates nothing can satisfy are always listed; the rest with --held.
@@ -1968,12 +1979,11 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
     std::ranges::move(tried_changes(session, invocation, *store, evaluated, plan, command.rebuilds,
                                     targets, envs, "updates", command.table),
                       std::back_inserter(lines));
-    if (auto estimate =
-            estimate_of(session, invocation, *store, evaluated, plan, {}, std::nullopt)) {
-        lines.push_back(std::move(*estimate));
-    }
+    std::ranges::move(estimate_of(session, invocation, *store, evaluated, plan, {}, std::nullopt),
+                      std::back_inserter(lines));
     if (const auto style = output(invocation); style.human) {
-        human_updates(out, lines, style.theme, command.table, unlisted_held(plan, command.held));
+        human_updates(out, lines, style.theme, command.table, unlisted_held(plan, command.held),
+                      local_clock());
     } else {
         write_lines(out, lines);
     }
@@ -2355,13 +2365,12 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
     std::ranges::move(tried_changes(session, invocation, *store, evaluated, shown.plan,
                                     command.rebuilds, targets, envs, name, command.table),
                       std::back_inserter(lines));
-    if (auto estimate = estimate_of(session, invocation, *store, evaluated, shown.plan,
-                                    shown.arguments, jobs)) {
-        lines.push_back(std::move(*estimate));
-    }
+    std::ranges::move(
+        estimate_of(session, invocation, *store, evaluated, shown.plan, shown.arguments, jobs),
+        std::back_inserter(lines));
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme, command.table,
-                      unlisted_held(shown.plan, command.held));
+                      unlisted_held(shown.plan, command.held), local_clock());
     } else {
         write_lines(out, lines);
     }

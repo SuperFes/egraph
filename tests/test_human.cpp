@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <format>
 #include <sstream>
 #include <string>
@@ -384,6 +385,46 @@ TEST_CASE("updates say how long the plan will take, from the build history") {
         plain);
     CHECK(guessed.str().ends_with("Estimate: about 40 s at -j2; 3 guessed from similar packages, "
                                   "1 never built here\n"));
+}
+
+TEST_CASE("updates say when the plan would finish if started now") {
+    using namespace std::chrono;
+    const auto at = [](sys_seconds when) {
+        return static_cast<double>(when.time_since_epoch().count());
+    };
+    const auto noon = sys_days{2026y / October / 9} + 12h + 0min;
+    const egraph::LocalClock clock{.now = at(noon), .zone = *locate_zone("UTC")};
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{"a/b-1\tupgrade\ta/b-2\tr",
+                                                   "\testimate\t7810\t6442450944\t1\t1\t4"},
+                          plain, false, 0, clock);
+    CHECK(out.str().ends_with("Estimate: about 2 h 10 min at -j4, 6.0 GiB at most, done about "
+                              "14:10; 1 never built here\n"));
+    // Told in the clock's zone.
+    const egraph::LocalClock berlin{.now = at(noon), .zone = *locate_zone("Europe/Berlin")};
+    CHECK(egraph::finish_text(at(noon + 2h + 10min), berlin) == "16:10");
+    CHECK(egraph::finish_text(at(noon + 2h + 10min + 29s), clock) == "14:10");
+    CHECK(egraph::finish_text(at(noon + 2h + 10min + 31s), clock) == "14:11");
+    CHECK(egraph::finish_text(at(noon + 14h), clock) == "02:00 tomorrow");
+    CHECK(egraph::finish_text(at(noon + 72h + 5min), clock) == "Mon 12:05");
+    CHECK(egraph::finish_text(at(noon + 24h * 9), clock) == "2026-10-18 12:00");
+}
+
+TEST_CASE("updates say what the plan's tests cost") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{
+                              "a/b-1\tupgrade\ta/b-2\tr",
+                              "\testimate\t7810\t\t1\t0\t4",
+                              "\tadvice\ttests\t1500",
+                              "\tadvice\ttest\ta/b-2\t1200",
+                              "\tadvice\ttest\ta/c-1\t40",
+                          },
+                          plain);
+    CHECK(out.str() == "U a/b  1 > 2  ::r\n\n1 upgrade\n"
+                       "Estimate: about 2 h 10 min at -j4\n"
+                       "Tests: about 25 min of the building, a/b-2 20 min, a/c-1 40 s\n");
 }
 
 TEST_CASE("an estimate's seconds read as roughly as they are known") {

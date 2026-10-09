@@ -277,6 +277,40 @@ TEST_CASE("the history shows how a package's time grows with its distfiles") {
     CHECK(exponent(7, [](double bytes) { return bytes / 10; }) == egraph::guess_size_exponent);
 }
 
+TEST_CASE("a package's test phase is foretold as part of its seconds") {
+    const auto tested = [](std::string cpv, double compile, double test) {
+        auto record = build(std::move(cpv), compile + test);
+        record.phases.push_back({.phase = "test", .seconds = test});
+        return record;
+    };
+    const BuildKnowledge knowledge{{tested("app-misc/a-1", 100, 20),
+                                    tested("app-misc/a-1", 100, 40),
+                                    tested("app-misc/a-1", 100, 30)}};
+    const auto estimate = *knowledge.estimate("app-misc/a-1", 8);
+    CHECK(estimate.seconds == Approx(130));
+    CHECK(estimate.test_seconds == Approx(30));
+    // Scaled by the distfiles as the rest is.
+    auto sized = tested("app-misc/b-1", 100, 50);
+    sized.distfiles_size = 1000;
+    const BuildKnowledge scaled{{sized}};
+    CHECK(scaled.estimate(BuildWanted{.cpv = "app-misc/b-1", .distfiles = 1500}, 8)->test_seconds ==
+          Approx(75));
+    // A build without a test phase tested nothing.
+    CHECK(BuildKnowledge{{build("app-misc/c-1", 10)}}.estimate("app-misc/c-1", 8)->test_seconds ==
+          0);
+    // A guess's, the similar packages' weighed by how alike they are.
+    egraph::test::IndexBuilder builder;
+    builder.version({.cpv = "app-misc/cm-1", .inherited = "cmake"});
+    builder.version({.cpv = "app-misc/me-1", .inherited = "meson"});
+    BuildKnowledge learned{{tested("app-misc/cm-1", 100, 60), tested("app-misc/me-1", 10, 0)}};
+    learned.learn(builder.index());
+    CHECK(learned.guess(BuildWanted{.cpv = "app-misc/new-1", .eclasses = {{"cmake", "meson"}}}, 8)
+              ->test_seconds == Approx(30));
+    // And a step's cost carries it.
+    const std::vector<egraph::BuildStep> steps{{.cpv = "app-misc/a-1"}};
+    CHECK(egraph::step_costs(knowledge, steps, 8).at(0).test_seconds == Approx(30));
+}
+
 TEST_CASE("a plan's builds that wait for each other add up, merges and all") {
     const auto [plan, steps] = planned({{}, {0}, {1}});
     const std::vector costs{cost(10), cost(20), cost(30)};

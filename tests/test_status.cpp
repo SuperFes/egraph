@@ -439,6 +439,10 @@ TEST_CASE("a configuration edit alone changing the plan is a plan change") {
         // Nor when only its estimate did.
         after.lines.emplace_back("\testimate\t60\t\t1\t0\t");
         CHECK_FALSE(egraph::plan_change(before, after));
+        // Nor its advice.
+        after.lines.emplace_back("\tadvice\ttests\t600");
+        after.lines.emplace_back("\tadvice\ttest\tdev-libs/a-2\t600");
+        CHECK_FALSE(egraph::plan_change(before, after));
     }
     SECTION("not after a status that kept no inputs") {
         auto older = before;

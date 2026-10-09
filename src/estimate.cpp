@@ -44,6 +44,17 @@ bool starved(const BuildRecord& record) {
     return true;
 }
 
+// Its test phase's seconds; none without one.
+double test_phase_seconds(const BuildRecord& record) {
+    double seconds = 0;
+    for (const auto& phase : record.phases) {
+        if (phase.phase == "test") {
+            seconds += phase.seconds;
+        }
+    }
+    return seconds;
+}
+
 // The flags one has that the other lacks, either way.
 std::size_t use_distance(const std::vector<std::string>& built,
                          const std::vector<std::string>& wanted) {
@@ -214,6 +225,7 @@ std::optional<PackageEstimate> BuildKnowledge::guess(const BuildWanted& wanted,
     std::vector<std::pair<double, double>> peaks;
     double parallelism = 0;
     double merge = 0;
+    double tests = 0;
     double weights = 0;
     for (const auto& [similar, distance, latest] : alike) {
         const auto own = estimate(latest.get().cpv, cores).value_or(PackageEstimate{});
@@ -231,13 +243,15 @@ std::optional<PackageEstimate> BuildKnowledge::guess(const BuildWanted& wanted,
         }
         parallelism += similar * own.parallelism;
         merge += similar * own.merge_seconds;
+        tests += similar * own.test_seconds * scale;
         weights += similar;
     }
     PackageEstimate guessed{.seconds = geometric_mean(seconds, 1),
                             .parallelism = parallelism / weights,
                             .merge_seconds = merge / weights,
                             .builds = alike.size(),
-                            .guessed = true};
+                            .guessed = true,
+                            .test_seconds = tests / weights};
     if (!peaks.empty()) {
         guessed.peak_memory = static_cast<std::uint64_t>(std::llround(geometric_mean(peaks, 1)));
     }
@@ -278,11 +292,13 @@ std::optional<PackageEstimate> BuildKnowledge::estimate(const BuildWanted& wante
     std::vector<double> seconds;
     std::vector<double> cpu;
     std::vector<double> merges;
+    std::vector<double> tests;
     for (const BuildRecord& record : chosen) {
         const auto cpu_seconds = record.cpu_seconds.value_or(0);
         const bool timed = starved(record) && record.cpu_seconds && most_parallel > 0;
         const auto scale = distfile_scale(record, wanted.distfiles);
         seconds.push_back(scale * (timed ? cpu_seconds / most_parallel : seconds_building(record)));
+        tests.push_back(scale * test_phase_seconds(record));
         if (record.cpu_seconds) {
             cpu.push_back(scale * *record.cpu_seconds);
         }
@@ -294,6 +310,7 @@ std::optional<PackageEstimate> BuildKnowledge::estimate(const BuildWanted& wante
         }
     }
     estimate.seconds = median(seconds);
+    estimate.test_seconds = median(tests);
     if (!cpu.empty()) {
         estimate.parallelism = estimate.seconds > 0 ? median(cpu) / estimate.seconds : 0;
     }
@@ -456,7 +473,8 @@ std::vector<StepCost> step_costs(const BuildKnowledge& knowledge, std::span<cons
                          .peak_memory = estimate->peak_memory,
                          .merge_seconds = estimate->merge_seconds,
                          .known = !estimate->guessed,
-                         .guessed = estimate->guessed});
+                         .guessed = estimate->guessed,
+                         .test_seconds = estimate->test_seconds});
     }
     return costs;
 }

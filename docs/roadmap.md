@@ -1271,6 +1271,17 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
   `notmpfs` env), one whose peak memory at these jobs nears what the system has (fewer jobs,
   or steve's memory floor), FEATURES=test's cost per package, a binary package offered when a
   build is long and a binhost has it, a finish time for a run started now.
+  - 20f1 (done): a finish time for people, from the estimate and the local clock, and the
+    tests' cost: each estimate foretells its test phase, and a plan whose tests take two minutes
+    or more names their total and the three costliest (`advice` lines after the estimate's).
+  - 20f2 (planned): memory: a plan whose peak nears the system's memory is told the jobs that
+    keep it below, from the estimate run again at fewer, or steve's `--min-memory-avail` where
+    steve is the jobserver.
+  - 20f3 (planned): tmpfs: each build records its `PORTAGE_TMPDIR`; a package whose build
+    directory grew past the size of the tmpfs it builds on is offered a `notmpfs` env.
+  - 20f4 (planned): binary packages: a long build a binary package could replace, from the
+    local `PKGDIR` and the binhost indexes portage keeps cached (never fetched by egraph), the
+    USE matched as portage's binpkg-respect-use matches it.
 - 20g (planned): scheduling: among the builds ready at once, the longest first or the critical
   path first, beside emerge's order; a divergence from emerge, so behind an option and
   recorded in `docs/upstream-notes.md`.

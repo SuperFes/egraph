@@ -34,6 +34,8 @@ struct PackageEstimate {
     bool same_version = false;
     // From similar packages, the package never built here.
     bool guessed = false;
+    // Of its seconds, those its test phase takes.
+    double test_seconds = 0;
     bool operator==(const PackageEstimate&) const = default;
 };
 
@@ -120,6 +122,8 @@ struct StepCost {
     // From the package's own builds, or guessed from similar ones.
     bool known = false;
     bool guessed = false;
+    // Of build_seconds, those its test phase takes.
+    double test_seconds = 0;
     bool operator==(const StepCost&) const = default;
 };
 

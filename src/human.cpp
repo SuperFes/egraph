@@ -239,6 +239,16 @@ Fields split(std::string_view record) {
     }
 }
 
+// A number field, none for an empty or malformed one.
+std::optional<double> number_field(std::string_view field) {
+    double value = 0;
+    const auto [end, error] = std::from_chars(field.begin(), field.end(), value);
+    if (field.empty() || error != std::errc{} || end != field.end()) {
+        return std::nullopt;
+    }
+    return value;
+}
+
 std::vector<Fields> split_all(std::span<const std::string> records) {
     std::vector<Fields> all;
     all.reserve(records.size());
@@ -1066,7 +1076,7 @@ void put_beside(std::ostream& out, std::string_view beside, const Painter& paint
 } // namespace
 
 void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme,
-                   bool table, std::size_t unlisted) {
+                   bool table, std::size_t unlisted, std::optional<LocalClock> clock) {
     const auto& paint = theme.paint;
     const auto& glyph = theme.glyph();
     auto rows = split_all(records);
@@ -1077,6 +1087,23 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         if (estimate) {
             rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
         }
+    }
+    // Its advice, taken off: the tests' seconds, and the costliest packages' in order.
+    std::optional<double> test_seconds;
+    std::vector<std::pair<std::string_view, double>> tested;
+    for (std::size_t i = rows.size(); i-- > 0;) {
+        const auto& row = rows.at(i);
+        if (row.size() < 3 || !row.at(0).empty() || row.at(1) != "advice") {
+            continue;
+        }
+        if (row.at(2) == "tests" && row.size() == 4) {
+            test_seconds = number_field(row.at(3));
+        } else if (row.at(2) == "test" && row.size() == 5) {
+            if (const auto seconds = number_field(row.at(4))) {
+                tested.emplace(tested.begin(), row.at(3), *seconds);
+            }
+        }
+        rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
     }
     // A table row's place and the earlier places it waits for, taken off ahead of its fields.
     std::vector<std::pair<std::string_view, std::string>> places(rows.size());
@@ -1594,6 +1621,10 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         if (estimate->peak_memory) {
             text += std::format(", {} at most", byte_size(*estimate->peak_memory));
         }
+        if (clock) {
+            text +=
+                std::format(", done about {}", finish_text(clock->now + estimate->seconds, *clock));
+        }
         std::vector<std::string> apart;
         if (estimate->guessed != 0) {
             apart.push_back(std::format("{} guessed from similar packages", estimate->guessed));
@@ -1605,6 +1636,13 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             text += (i == 0 ? "; " : ", ") + apart.at(i);
         }
         out << paint("Estimate:", Tone::heading) << ' ' << paint(text, Tone::note) << '\n';
+    }
+    if (test_seconds) {
+        auto text = std::format("about {} of the building", rough_duration(*test_seconds));
+        for (const auto& [cpv, seconds] : tested) {
+            text += std::format(", {} {}", cpv, rough_duration(seconds));
+        }
+        out << paint("Tests:", Tone::heading) << ' ' << paint(text, Tone::note) << '\n';
     }
     if (trying) {
         if (!counted) {
@@ -2665,17 +2703,26 @@ std::string rough_duration(double seconds) {
                              : std::format("{} h {} min", minutes / 60, minutes % 60);
 }
 
-namespace {
-
-// A number field, none for an empty or malformed one.
-std::optional<double> number_field(std::string_view field) {
-    double value = 0;
-    const auto [end, error] = std::from_chars(field.begin(), field.end(), value);
-    if (field.empty() || error != std::errc{} || end != field.end()) {
-        return std::nullopt;
+std::string finish_text(double at, const LocalClock& clock) {
+    using namespace std::chrono;
+    const auto& zone = clock.zone.get();
+    const auto local = zone.to_local(sys_seconds{minutes{std::llround(at / 60)}});
+    const auto ahead = (floor<days>(local) -
+                        floor<days>(zone.to_local(sys_seconds{seconds{std::llround(clock.now)}})))
+                           .count();
+    if (ahead == 0) {
+        return std::format("{:%H:%M}", local);
     }
-    return value;
+    if (ahead == 1) {
+        return std::format("{:%H:%M} tomorrow", local);
+    }
+    if (ahead > 1 && ahead < 7) {
+        return std::format("{:%a %H:%M}", local);
+    }
+    return std::format("{:%F %H:%M}", local);
 }
+
+namespace {
 
 std::vector<double> numbers_field(std::string_view field) {
     std::vector<double> values;

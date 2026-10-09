@@ -1010,6 +1010,13 @@ counts down between, published as `egraph_remaining` in exec's status file; the 
 emerge view shows it, and gives every running build, emerge's too, its package's expected
 seconds from the history (read again when the file changes).
 
+Advice (`src/advice.hpp`) follows the estimate as lines of its own, from the same step costs:
+each package's estimate also foretells its test phase (the median of its builds' test-phase
+seconds, scaled as the rest; a guess's the likeness-weighted mean), and once a plan's tests take
+two minutes or more in all, their total and the three costliest are named. A status keeps them
+among the plan's lines, and they are no plan change either. The finish time is no line: it is
+the estimate's seconds from now, which only the human layout says, in the local zone.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

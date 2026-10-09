@@ -535,12 +535,20 @@ twice either way, where the repository index and the build know both; a package 
 here guessed from the five built here most like it, those sharing most of its eclasses, the
 rarer an eclass the more it counts, each scaled by the distfiles' sizes as far as the history
 shows a build's time grows with them), the builds sharing the cores by how
-many each keeps busy; and the most memory the builds running at once would hold. For scripts,
-the last line is an empty field, then
+many each keeps busy; and the most memory the builds running at once would hold. For people,
+it says when the plan would finish if started now. For scripts, a line of an empty field, then
 .IR "" estimate " seconds peak known unknown jobs guessed" ,
 the peak in bytes (empty when no build's is known), jobs empty for no limit, guessed the merges
 of packages never built here guessed from similar ones, and unknown those with nothing like
 them, which count for nothing.
+Advice follows it, each line an empty field, then
+.B advice
+and what it is about: where the builds' test phases (FEATURES=test) would take two minutes or
+more in all,
+.IR "" "tests seconds" ,
+then
+.IR "" "test cpv seconds"
+for the three costliest, as their builds foretell them.
 .TP
 .B \-\-dynamic\-deps
 .TP

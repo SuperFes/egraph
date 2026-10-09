@@ -7,6 +7,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <iosfwd>
 #include <optional>
 #include <span>
@@ -21,6 +22,16 @@ namespace egraph {
 
 // An estimate's seconds, as roughly as it is known: "40 s", "12 min", "2 h 10 min".
 [[nodiscard]] std::string rough_duration(double seconds);
+
+// The time a layout tells the hour by: now, in seconds since the epoch, and the local zone.
+struct LocalClock {
+    double now = 0;
+    std::reference_wrapper<const std::chrono::time_zone> zone;
+};
+
+// A time ahead (seconds since the epoch), to the minute, as near as clock's day lets it be said:
+// "15:40" today, "02:10 tomorrow", "Mon 02:10" within the week, else "2026-10-20 02:10".
+[[nodiscard]] std::string finish_text(double at, const LocalClock& clock);
 
 enum class Tone : std::uint8_t {
     heading,
@@ -238,9 +249,11 @@ remedy_lines(std::span<const std::string_view> holders, std::span<const std::str
 // updates records: one line per package, its versions or the flags it would be rebuilt for. With
 // table, records from update_lines' table: in merge order, each led by its place and followed by
 // the places it waits for, new packages among them. unlisted counts the held updates the records
-// leave out, for --held to list.
+// leave out, for --held to list. With clock, the estimate says when the plan would finish if
+// started now.
 void human_updates(std::ostream& out, std::span<const std::string> records, const Theme& theme,
-                   bool table = false, std::size_t unlisted = 0);
+                   bool table = false, std::size_t unlisted = 0,
+                   std::optional<LocalClock> clock = std::nullopt);
 
 // merge_differences' records after a plan: that emerge --pretend agrees, or where it does not;
 // verb says what it does ("merges", "removes").

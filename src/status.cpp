@@ -271,7 +271,7 @@ std::vector<std::string> entries(std::span<const std::string> lines) {
             tab == std::string::npos
                 ? std::string_view{}
                 : std::string_view{line}.substr(tab + 1, line.find('\t', tab + 1) - tab - 1);
-        if (kind != "holder" && kind != "nodeps" && kind != "estimate") {
+        if (kind != "holder" && kind != "nodeps" && kind != "estimate" && kind != "advice") {
             kept.push_back(line);
         }
     }

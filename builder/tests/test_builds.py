@@ -215,10 +215,46 @@ def test_egraph_builds_views_sum_the_history_up(machines):
 
 def estimate(printed):
     """A plan's estimate line: seconds, peak, known, unknown, jobs and guessed."""
-    *_, last = printed.splitlines()
-    fields = last.split("\t")
-    assert fields[:2] == ["", "estimate"], printed
-    return fields[2:]
+    (line,) = [l for l in printed.splitlines() if l.startswith("\testimate\t")]
+    return line.split("\t")[2:]
+
+
+def advice(printed):
+    """A plan's advice lines, each without its leading fields."""
+    return [
+        l.split("\t")[2:] for l in printed.splitlines() if l.startswith("\tadvice\t")
+    ]
+
+
+def test_a_plan_says_what_its_tests_cost(machines):
+    """Builds whose test phases took long are named after the estimate, and the plan says when
+    it would finish."""
+    system, machine = machines
+    age(system.playground.eroot)
+    ran = system.egraph("exec", "--yes", "app-misc/needs")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    records = history(system)
+    path = os.path.join(system.playground.eroot, "var", "lib", "egraph", "builds.jsonl")
+    with open(path, "w") as f:
+        for i, record in enumerate(records):
+            tests = 100 * (i + 1)
+            # Each build ran a short test phase of its own: it now takes tests.
+            (phase,) = [p for p in record["phases"] if p["phase"] == "test"]
+            record["build_seconds"] += tests - phase["seconds"]
+            phase["seconds"] = tests
+            f.write(json.dumps(record) + "\n")
+    targets = ["=" + r["cpv"] for r in records]
+    plan = system.egraph("plan", *targets)
+    assert plan.returncode == 0, plan.stdout + plan.stderr
+    total, *tested = advice(plan.stdout)
+    costs = sorted(
+        ((100 * (i + 1), r["cpv"]) for i, r in enumerate(records)), reverse=True
+    )
+    assert total == ["tests", str(sum(c for c, _ in costs))]
+    assert tested == [["test", cpv, str(c)] for c, cpv in costs[:3]]
+    human = system.egraph("--layout", "human", "plan", *targets)
+    assert ", done about " in human.stdout
+    assert "Tests: about " in human.stdout
 
 
 def test_a_plan_says_how_long_it_will_take_from_the_history(parallel, tmp_path):
