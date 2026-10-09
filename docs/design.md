@@ -946,6 +946,18 @@ counters. Once a build is gone from the snapshots, its vdb entry settles it: mer
 from there), else failed while emerge runs on, else interrupted and left out. The records are
 `origin` "emerge", run `emerge-<pid>`; only builds into egraphd's own root are kept.
 
+Earlier builds come from emerge.log, read only, through `egraph builds --import`
+(`src/emerge_log.hpp`): a build is keyed by its "(n of m) cpv" in its lines, started by
+`>>> emerge`, built until `=== (n of m) Merging`, merged until `::: completed emerge`, and kept
+only when a `Compiling/` line said it built (not `Merging Binary`) into the EROOT emerge names;
+its jobs are its session's `*** emerge` options', which emerge writes after folding in
+`EMERGE_DEFAULT_OPTS`. Concurrent emerges interleave in the log; the count and cpv keep their
+builds apart, and a build takes the latest session's jobs. The records are merged into the file
+by start, skipping any within 60 s of one the file holds for the cpv, and pruned as an append
+is. `BuildKnowledge` drops a cp's imported records when it has one of its own, and
+`recorded_jobs` prefers the latest own record's jobs: an imported build's time includes its
+fetch and clean, in whole seconds, with no CPU time to tell a starved build from a slow one.
+
 Each append rewrites the file under its directory's lock (`os::rewrite_locked`, as the store
 history's log is appended) and keeps the last `build_keep` records of each cp (`egraph.conf`,
 20 by default; 0 records nothing), so the file stays a few MB at most and is read whole; lines it

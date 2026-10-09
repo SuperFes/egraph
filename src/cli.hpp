@@ -302,6 +302,10 @@ struct BuildsCommand {
     bool rebuilds = false;
     bool failing = false;
     bool slower = false;
+    // In place of a view: emerge's earlier builds added from emerge.log (that file, else
+    // ${EPREFIX}/var/log/emerge.log).
+    bool import = false;
+    std::optional<std::filesystem::path> emerge_log;
 };
 
 // The installed packages and root sets now against a generation of the system store's history.

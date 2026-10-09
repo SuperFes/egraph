@@ -1,5 +1,7 @@
 #include "estimate.hpp"
 
+#include "emerge_log.hpp"
+
 #include "human.hpp"
 
 #include <algorithm>
@@ -35,6 +37,10 @@ double median(std::vector<double> values) {
 
 // Whether it got less of the system than it asked for: beside others on a saturated system, or
 // beside others on one that said nothing of itself.
+bool imported_build(const BuildRecord& record) {
+    return record.origin == emerge_log_origin;
+}
+
 bool starved(const BuildRecord& record) {
     if (record.beside == 0) {
         return false;
@@ -108,6 +114,12 @@ BuildKnowledge::BuildKnowledge(const std::vector<BuildRecord>& records) {
         if (record.outcome == BuildRecord::Outcome::merged) {
             auto& found = by_cp_[cp_of(record.cpv)];
             found.push_back(record);
+        }
+    }
+    // Builds read from emerge.log count only for a package egraph never timed itself.
+    for (auto& [cp, builds] : by_cp_) {
+        if (!std::ranges::all_of(builds, imported_build)) {
+            std::erase_if(builds, imported_build);
         }
     }
     // Each package's latest build, sized, as a point of log seconds over log bytes.
@@ -553,6 +565,10 @@ std::vector<StepCost> step_costs(const BuildKnowledge& knowledge, std::span<cons
 }
 
 std::optional<std::uint32_t> recorded_jobs(const std::vector<BuildRecord>& records) {
+    const auto own = std::ranges::find_if_not(records | std::views::reverse, imported_build);
+    if (own != (records | std::views::reverse).end()) {
+        return own->jobs;
+    }
     return records.empty() ? std::nullopt : records.back().jobs;
 }
 

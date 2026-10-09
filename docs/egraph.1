@@ -1462,6 +1462,32 @@ files, and the flags turned off and on). As lines: the cp, the cpv, its start,
 its seconds and the earlier median, then a line per change: an empty field,
 .BR change ,
 what changed, before and after (empty where it was not set).
+.TP
+.B \-\-import
+In place of the builds, add emerge's earlier builds to the history from its log, which is only
+read: each build it compiled and merged into this root, from its
+.B >>> emerge
+line to its
+.B === Merging
+line, its merge from there to its completion, at the jobs its session's options allowed
+.RB ( \-\-jobs
+there, which hold
+.BR EMERGE_DEFAULT_OPTS ' ,
+else one). Binary packages merged, failed builds and builds cut short are left out, as are those
+the history holds already (one of the same version that started within a minute: egraphd's
+record of it, or an earlier import), so importing again adds nothing. They are marked
+.B origin
+.B emerge.log
+and coarser than egraph's own (whole seconds, no phases, nothing measured): an estimate takes
+them only for a package egraph never timed itself, and the jobs of egraph's own latest build
+over theirs. Prints how many were added (for people, of how many). Never needed.
+.TP
+.BI \-\-emerge\-log " file"
+The log
+.B \-\-import
+reads;
+.I ${EPREFIX}/var/log/emerge.log
+otherwise, where emerge writes it whatever the root.
 .SS diff \fR[\fIwhen\fR]
 The installed packages and root sets now against the system as its history kept it (see
 .I ${ROOT}${EPREFIX}/var/lib/egraph

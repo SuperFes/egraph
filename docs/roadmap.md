@@ -1296,8 +1296,11 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
   countdown following it, and a plan in emerge's order told of one a tenth and five minutes
   sooner. emerge's stays the default until real histories (20h) show another finishes sooner;
   then it becomes the default.
-- 20h (planned): importing earlier build times from `emerge.log` (read only, marked as
-  imported, coarser), never required.
+- 20h (done): importing earlier build times from `emerge.log` (read only, marked as
+  imported, coarser), never required. `egraph builds --import`: each compiled build's start,
+  build and merge seconds and its session's jobs, origin `emerge.log`, merged into the history
+  by start, those it holds already left out; estimates take them only where egraph has no build
+  of its own.
 - 20i (planned): space: what removing a package frees with the orphans it leaves (the vdb's
   SIZE).
 - 20j (planned): a GLSA filter in the list (the matching landed in 17e1).

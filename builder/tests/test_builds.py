@@ -159,6 +159,40 @@ def test_egraph_builds_says_what_rebuilds_fails_and_got_slower(machines):
     assert system.egraph("builds", "--failing", "--slower").returncode == 2
 
 
+def test_emerges_earlier_builds_are_imported_from_its_log(machines):
+    """A build emerge ran is read from its emerge.log, coarser and marked so, once; plans are
+    estimated from it."""
+    system, machine = machines
+    machine.emerge("-1 app-misc/lib")
+    log = os.path.join(machine.eprefix, "var", "log", "emerge.log")
+    assert os.path.exists(log)
+    with open(log) as f:
+        before = f.read()
+    imported = system.egraph("builds", "--import")
+    assert imported.returncode == 0, imported.stdout + imported.stderr
+    assert imported.stdout == "1\n"
+    (record,) = history(system)
+    assert (record["origin"], record["cpv"], record["outcome"]) == (
+        "emerge.log",
+        "app-misc/lib-1",
+        "merged",
+    )
+    assert record["jobs"] == 1 and record["merge_seconds"] >= 0
+    # emerge.log is only read; a second import adds nothing.
+    with open(log) as f:
+        assert f.read() == before
+    again = system.egraph("--layout", "human", "builds", "--import")
+    assert again.stdout == f"0 of the 1 builds in {log} added to the build history\n"
+    assert len(history(system)) == 1
+    age(system.playground.eroot)
+    plan = system.egraph("plan", "=app-misc/lib-1")
+    assert plan.returncode == 0, plan.stdout + plan.stderr
+    seconds, peak, known, unknown, jobs, guessed = estimate(plan.stdout)
+    assert (known, unknown, jobs) == ("1", "0", "1")
+    assert system.egraph("builds", "--import", "app-misc/lib").returncode == 2
+    assert system.egraph("builds", "--emerge-log", log).returncode == 2
+
+
 def test_egraph_builds_reads_the_history_back(machines):
     """As lines, for the packages given, as the file holds them and as CSV."""
     system, machine = machines

@@ -15,6 +15,7 @@
 #include "elog.hpp"
 #include "emerge.hpp"
 #include "emerge_builds.hpp"
+#include "emerge_log.hpp"
 #include "estimate.hpp"
 #include "evaluated.hpp"
 #include "exec.hpp"
@@ -4090,6 +4091,49 @@ Exit execute(const LogCommand& command, Session&, const Invocation& invocation, 
     return Exit::ok;
 }
 
+// builds --import: emerge.log's builds into the history, and how many were added.
+Exit import_builds(const BuildsCommand& command, const Invocation& invocation, std::ostream& out,
+                   std::ostream& err) {
+    const auto log = command.emerge_log.value_or(emerge_log_path(invocation.eprefix.value_or("")));
+    std::ifstream in{log};
+    if (!in) {
+        err << std::format("egraph: builds: {} cannot be read\n", log.string());
+        return Exit::failure;
+    }
+    std::ostringstream text;
+    text << in.rdbuf();
+    const auto settings = read_settings(settings_path(config_root(invocation)));
+    if (!settings) {
+        err << "egraph: builds: " << settings.error() << '\n';
+        return Exit::failure;
+    }
+    if (settings->build_keep <= 0) {
+        err << "egraph: builds: build_keep is 0, so the history keeps no builds\n";
+        return Exit::failure;
+    }
+    const auto eroot = invocation.root / invocation.eprefix.value_or("").relative_path();
+    const auto records = emerge_log_builds(text.str(), eroot.string());
+    const auto path = builds_path(eroot);
+    std::size_t added = 0;
+    const auto written = os::rewrite_locked(path, [&](std::string_view whole) {
+        auto imported =
+            imported_builds(whole, records, static_cast<std::size_t>(settings->build_keep));
+        added = imported.added;
+        return std::move(imported.text);
+    });
+    if (!written) {
+        err << std::format("egraph: builds: {}: {}\n", path.string(), written.error().message());
+        return Exit::failure;
+    }
+    if (output(invocation).human) {
+        out << std::format("{} of the {} builds in {} added to the build history\n", added,
+                           records.size(), log.string());
+    } else {
+        out << added << '\n';
+    }
+    return Exit::ok;
+}
+
 Exit execute(const BuildsCommand& command, Session&, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     const auto views =
@@ -4104,6 +4148,18 @@ Exit execute(const BuildsCommand& command, Session&, const Invocation& invocatio
         err << "egraph: builds: --slowest, --by, --rebuilds, --failing and --slower are views of "
                "their own; give one\n";
         return Exit::usage;
+    }
+    if (command.emerge_log && !command.import) {
+        err << "egraph: builds: --emerge-log names the file --import reads\n";
+        return Exit::usage;
+    }
+    if (command.import) {
+        if (views > 0 || command.format || !command.packages.empty()) {
+            err << "egraph: builds: --import adds to the history; it takes no packages, view or "
+                   "format\n";
+            return Exit::usage;
+        }
+        return import_builds(command, invocation, out, err);
     }
     std::ostringstream text;
     if (std::ifstream in{
@@ -5292,6 +5348,19 @@ void configure(CLI::App& app, Invocation& invocation) {
     builds_cmd->add_flag_callback(
         "--slower", [&invocation] { std::get<BuildsCommand>(invocation.command).slower = true; },
         "Each package whose latest build got slower, with what changed under it");
+    builds_cmd->add_flag_callback(
+        "--import", [&invocation] { std::get<BuildsCommand>(invocation.command).import = true; },
+        "Add emerge's earlier builds from emerge.log to the history, marked as read from it and "
+        "coarser (whole seconds, nothing measured), those it holds already left out; never "
+        "needed, and emerge.log is only read");
+    builds_cmd
+        ->add_option_function<std::string>(
+            "--emerge-log",
+            [&invocation](const std::string& path) {
+                std::get<BuildsCommand>(invocation.command).emerge_log = path;
+            },
+            "The emerge.log --import reads; ${EPREFIX}/var/log/emerge.log otherwise")
+        ->type_name("FILE");
     add_field(builds_cmd, invocation, "--by", &BuildsCommand::by,
               "The time spent building in each week or month, in place of the builds")
         ->type_name("PERIOD")

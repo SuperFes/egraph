@@ -200,8 +200,8 @@ struct StepFacts {
                                                std::span<const BuildStep> steps, unsigned cores,
                                                std::span<const StepFacts> facts = {});
 
-// The jobs a plan is estimated at when none are given: those of the latest build recorded, none
-// for no limit.
+// The jobs a plan is estimated at when none are given: those of the latest build recorded, one
+// of egraph's own over those read from emerge.log; none for no limit.
 [[nodiscard]] std::optional<std::uint32_t> recorded_jobs(const std::vector<BuildRecord>& records);
 
 // For scripts, after a plan's lines: "<TAB>estimate<TAB>seconds<TAB>peak<TAB>known<TAB>unknown
