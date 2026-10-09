@@ -38,7 +38,8 @@ class Session {
     // The installed store and the evaluated store built with it, current together; the
     // evaluated store as if the invocation's what-if lines were saved.
     [[nodiscard]] Loaded<Stores> stores() EGRAPH_LIFETIMEBOUND;
-    // stores() as loaded, without the invocation's what-if lines: what they are compared to.
+    // stores() as loaded, without the invocation's what-if lines (which it never tries): what
+    // they are compared to.
     [[nodiscard]] Loaded<Stores> untried_stores() EGRAPH_LIFETIMEBOUND;
     // As stores(), shared with a caller that keeps them past the session's next adopt().
     [[nodiscard]] std::expected<std::shared_ptr<const Stores>, std::string> shared_stores();

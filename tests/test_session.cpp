@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -158,4 +159,75 @@ TEST_CASE("a session without refreshing says how to replace a store from another
     const auto installed = session.installed();
     REQUIRE_FALSE(installed.has_value());
     CHECK(installed.error().ends_with("egraph rebuild writes it anew"));
+}
+
+TEST_CASE("untried stores are loaded without trying the lines") {
+    const TempDir dir;
+    write_fresh(dir.path());
+    auto invocation = at(dir.path());
+    invocation.config_root = dir.path();
+    invocation.what_if = {
+        {.file = egraph::WhatIfLine::File::env, .atom = "app-misc/a", .tokens = {"missing.conf"}}};
+    std::ostringstream warnings;
+    egraph::Session session{invocation, warnings};
+    CHECK(session.untried_stores().has_value());
+    REQUIRE_FALSE(session.stores().has_value());
+    CHECK(session.stores().error() == "env/missing.conf: no such env file");
+}
+
+namespace {
+
+egraph::Exit save(const egraph::Invocation& invocation, std::string& out, std::string& err) {
+    std::ostringstream printed;
+    std::ostringstream problems;
+    const auto exit = egraph::run(invocation, printed, problems);
+    out = printed.str();
+    err = problems.str();
+    return exit;
+}
+
+} // namespace
+
+TEST_CASE("save writes the lines to egraph's files under the configuration root") {
+    const TempDir dir;
+    write_fresh(dir.path());
+    auto invocation = at(dir.path());
+    invocation.config_root = dir.path();
+    invocation.layout = egraph::Layout::lines;
+    invocation.command = egraph::Save{};
+    std::string out;
+    std::string err;
+    CHECK(save(invocation, out, err) == egraph::Exit::usage);
+    CHECK(err == "egraph: save: nothing to save; give the lines with --use and --env\n");
+
+    invocation.what_if = {
+        {.file = egraph::WhatIfLine::File::use, .atom = "app-misc/a", .tokens = {"x", "-y"}},
+        {.file = egraph::WhatIfLine::File::use, .atom = "*/*", .tokens = {"-nls"}}};
+    REQUIRE(save(invocation, out, err) == egraph::Exit::ok);
+    const auto file = dir.path() / "etc/portage/package.use/egraph";
+    CHECK(out == file.string() + "\tapp-misc/a x -y\n" + file.string() + "\t*/* -nls\n");
+    std::ifstream in(file);
+    std::stringstream text;
+    text << in.rdbuf();
+    CHECK(text.str().ends_with("\napp-misc/a x -y\n*/* -nls\n"));
+
+    // A line naming an env file the configuration lacks is not saved.
+    invocation.what_if = {
+        {.file = egraph::WhatIfLine::File::env, .atom = "app-misc/a", .tokens = {"missing.conf"}}};
+    CHECK(save(invocation, out, err) == egraph::Exit::failure);
+    CHECK(err == "egraph: save: env/missing.conf: no such env file\n");
+    CHECK_FALSE(std::filesystem::exists(dir.path() / "etc/portage/package.env"));
+}
+
+TEST_CASE("a shell line saves the lines it gives, though they choose no stores") {
+    const TempDir dir;
+    write_fresh(dir.path());
+    auto invocation = at(dir.path());
+    invocation.config_root = dir.path();
+    std::istringstream in{"--use 'app-misc/a x' save\n"};
+    std::ostringstream out;
+    std::ostringstream err;
+    CHECK(egraph::shell(invocation, in, out, err, false) == egraph::Exit::ok);
+    CHECK(err.str().find("chooses the stores") == std::string::npos);
+    CHECK(std::filesystem::exists(dir.path() / "etc/portage/package.use/egraph"));
 }

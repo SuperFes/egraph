@@ -18,19 +18,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def save(playground, lines):
-    """Appends lines, (file, text) pairs, to package.use/egraph or package.env/egraph (to the
-    file itself where package.use or package.env is one), flags alone after */*."""
-    user = os.path.join(playground.eroot, "etc", "portage")
+def save(playground, path, lines):
+    """Saves lines, (file, text) pairs, as egraph save writes them to the playground's
+    configuration, from the stores at path."""
+    options = ["--config-root", playground.eroot]
     for name, text in lines:
-        path = os.path.join(user, f"package.{name}")
-        if not os.path.isfile(path):
-            os.makedirs(path, exist_ok=True)
-            path = os.path.join(path, "egraph")
-        if "/" not in text.split()[0]:
-            text = "*/* " + text
-        with open(path, "a", encoding="utf-8") as out:
-            out.write(text + "\n")
+        options += [f"--{name}", text]
+    result = egraph(path, *options, "save", check=False)
+    assert result.returncode == 0, result.stderr
 
 
 def candidates_use(system):
@@ -61,7 +56,7 @@ def tried_and_saved(playground, tmp_path, lines):
         )
         for pkg, flags in found.items()
     }
-    save(playground, lines)
+    save(playground, path, lines)
     _, changed = playground._load_config()
     saved = System(
         playground.eroot, changed[playground.eroot]["vartree"].dbapi, changed
@@ -142,7 +137,7 @@ def test_plans_with_flags_tried_are_emerges(name, mutable_playground, tmp_path):
         options += [f"--{file}", text]
     result = egraph(path, *options, "updates", "-D", check=False)
     before = update.updates(trees, playground.eroot, changed_use=True, deep=True)
-    save(playground, lines)
+    save(playground, path, lines)
     _, changed = playground._load_config()
     expected = update.updates(changed, playground.eroot, changed_use=True, deep=True)
     if not expected.success and not refuses(expected):
@@ -252,7 +247,7 @@ def test_env_files_tried_list_and_rebuild_what_they_change(
         ["app-misc/c-1", "env", "withtest.conf", "withtest.conf withenv.conf"],
     ]
     result = egraph(path, *options, "updates", "-D", "--rebuild-env", check=False)
-    save(playground, lines)
+    save(playground, path, lines)
     _, changed = playground._load_config()
     expected = update.updates(
         changed,

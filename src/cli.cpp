@@ -3307,6 +3307,63 @@ Exit execute(const Select& command, Session& session, const Invocation& invocati
         "Have emerge add these to @selected, merging what is not installed?", true);
 }
 
+Exit execute(const Save&, Session& session, const Invocation& invocation, std::ostream& out,
+             std::ostream& err) {
+    const auto& lines = invocation.what_if;
+    if (lines.empty()) {
+        err << "egraph: save: nothing to save; give the lines with --use and --env\n";
+        return Exit::usage;
+    }
+    const auto stores = session.untried_stores();
+    if (!stores) {
+        return fail(err, stores.error());
+    }
+    const auto user_config = config_root(invocation) / "etc/portage";
+    // A line that cannot be tried is not saved: an env file the configuration lacks.
+    if (const auto tried =
+            with_what_if(stores->get().evaluated, stores->get().installed, lines, user_config);
+        !tried) {
+        err << "egraph: save: " << tried.error() << '\n';
+        return Exit::failure;
+    }
+    const auto files = saved_files(user_config, lines);
+    if (!files) {
+        err << "egraph: save: " << files.error() << '\n';
+        return Exit::failure;
+    }
+    if (const auto written = write_saved(*files); !written) {
+        err << "egraph: save: " << written.error() << (os::is_root() ? "" : "; run egraph as root")
+            << '\n';
+        return Exit::failure;
+    }
+    // The configuration changed under the stores.
+    session.reload();
+    std::vector<std::string> records;
+    for (const auto& line : lines) {
+        std::string text = line.atom;
+        for (const auto& token : line.tokens) {
+            text += " " + token;
+        }
+        records.push_back(
+            std::format("{}\t{}", what_if_path(user_config, line.file).string(), text));
+    }
+    if (output(invocation).human) {
+        std::string_view last;
+        for (const auto& record : records) {
+            const auto tab = record.find('\t');
+            const auto path = std::string_view{record}.substr(0, tab);
+            if (path != last) {
+                out << "Saved to " << path << ":\n";
+                last = path;
+            }
+            out << "  " << std::string_view{record}.substr(tab + 1) << '\n';
+        }
+    } else {
+        write_lines(out, records);
+    }
+    return Exit::ok;
+}
+
 Exit execute(const Deselect& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     const auto depclean = session.depclean(true, invocation.dynamic_deps);
@@ -4682,6 +4739,9 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->type_name("PACKAGE")
         ->required();
     add_yes<Deselect>(deselect_cmd, invocation);
+    add_command<Save>(app, invocation,
+                      "Write the lines --use and --env try to egraph's own package.use and "
+                      "package.env files");
     CLI::App* sync_cmd = add_dynamic_deps(add_command<Sync>(
         app, invocation,
         "Have emaint sync the repositories, then show the updates and the notices"));
@@ -5188,7 +5248,12 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
         // --help arrives here too, with exit code 0.
         return {.quit = false, .exit = app.exit(e, out, err) == 0 ? Exit::ok : Exit::usage};
     }
-    if (const auto option = changed_stores(invocation, command)) {
+    // save writes the lines it is given, trying them on nothing.
+    auto choosing = command;
+    if (std::holds_alternative<Save>(command.command)) {
+        choosing.what_if = invocation.what_if;
+    }
+    if (const auto option = changed_stores(invocation, choosing)) {
         return usage(std::format("{} chooses the stores, which the {} keeps; start another "
                                  "egraph for others",
                                  *option, where));
@@ -5210,6 +5275,9 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
     }
     if (context == Context::interface && acts(command.command)) {
         return usage("actions run from the command line or the shell");
+    }
+    if (context == Context::interface && std::holds_alternative<Save>(command.command)) {
+        return usage("the what-if page saves its lines with s");
     }
     if (context == Context::interface) {
         // The interface lays the fields out itself.

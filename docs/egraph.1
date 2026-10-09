@@ -1055,6 +1055,26 @@ removes them; nothing is merged or removed.
 .TP
 .BR \-y ", " \-\-yes
 Run emerge without asking.
+.SS save
+Write the lines
+.B \-\-use
+and
+.B \-\-env
+try to egraph's own files,
+.I package.use/egraph
+and
+.I package.env/egraph
+under the configuration root (or append them to
+.I package.use
+or
+.I package.env
+where that is the user's single file), as
+.BI "path" "<TAB>" "line"
+per line. egraph's files keep one line per atom: a flag's new token replaces its old one, as an
+env file's does, and a line left without tokens goes. A line that cannot be tried, naming an env
+file the configuration lacks, saves nothing. Writing under
+.I /etc/portage
+needs root, as actions do; the stores refresh with the configuration.
 .SS sync \fR[\fIrepository\fR...]
 .B emaint sync \-\-auto
 syncs the repositories set to auto-sync, as

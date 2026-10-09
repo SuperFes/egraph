@@ -232,6 +232,11 @@ struct Deselect {
     bool yes = false;
 };
 
+// The lines --use and --env try, written to egraph's own files (what_if_path).
+struct Save {
+    static constexpr std::string_view name = "save";
+};
+
 // emaint sync --auto (or the repositories named, as emerge --sync takes them), then the updates the
 // repositories now offer, shown as updates shows them, and the notices.
 struct Sync : Updates {
@@ -353,7 +358,7 @@ struct Affected {
 using Command =
     std::variant<std::monostate, Deps, Rdeps, Why, Match, UseCommand, Soname, Broken, Search,
                  Versions, ConfigCommand, Blockers, Orphans, Updates, PlanCommand, Update, Install,
-                 Exec, Remove, Select, Deselect, Sync, NoticesCommand, Export, Stats, LogCommand,
+                 Exec, Remove, Select, Deselect, Save, Sync, NoticesCommand, Export, Stats, LogCommand,
                  Diff, HistoryCommand, StatusCommand, Rebuild, Refresh, Watch, Check, Notify, Tui,
                  Shell, Complete, Affected>;
 

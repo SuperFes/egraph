@@ -263,19 +263,19 @@ Loaded<Stores> Session::stores() {
 }
 
 Loaded<Stores> Session::untried_stores() {
-    if (auto both = shared_stores(); !both) {
-        return std::unexpected(std::move(both.error()));
-    }
-    return std::cref(*stores_);
-}
-
-std::expected<std::shared_ptr<const Stores>, std::string> Session::shared_stores() {
     if (!stores_) {
         auto loaded = open_current<Stores>(invocation_, warnings_.get(), used_, load_stores);
         if (!loaded) {
             return std::unexpected(std::move(loaded.error()));
         }
         stores_ = std::make_shared<const Stores>(std::move(*loaded));
+    }
+    return std::cref(*stores_);
+}
+
+std::expected<std::shared_ptr<const Stores>, std::string> Session::shared_stores() {
+    if (auto untried = untried_stores(); !untried) {
+        return std::unexpected(std::move(untried.error()));
     }
     if (invocation_.what_if.empty()) {
         return stores_;

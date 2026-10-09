@@ -1189,8 +1189,8 @@ changes (undo, save) and takes typed lines.
   once its dialog (each file and the lines it gets) is confirmed; both need root, as actions do.
   - 19f1 (done): the files' new text (`saved_text`), and writing them (`write_saved`), each
     through a hidden file beside it, which portage passes over.
-  - 19f2: the `save` command; held to portage's USE and env files with the files saved being
-    the same as with the lines tried.
+  - 19f2 (done): the `save` command; held to portage's USE, emerge's plans and its env
+    rebuilds with the files it saves, on every scenario (the what-if tests save through it).
   - 19f3: the what-if page's `s`.
 
 ## 20. Build knowledge
