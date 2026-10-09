@@ -14,7 +14,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t repository_format_version = 6;
+inline constexpr std::uint32_t repository_format_version = 7;
 
 struct RepositoryMeta {
     std::string egraph_version;
@@ -28,6 +28,15 @@ struct Repository {
     std::uint32_t location = 0;
     // Whether emerge --search reads its descriptions from a metadata/pkg_desc_index.
     bool description_index = false;
+};
+
+// The files SRC_URI names in the same places, and their bytes: fetched once when the
+// conditionals over any one of those places are all met.
+struct FetchGroup {
+    // In RepositoryIndex::fetch_places, per place its conditionals: string ids, "flag?" or
+    // "!flag?", the outermost first.
+    Range places;
+    std::uint64_t bytes = 0;
 };
 
 // One version of a cp in one repository.
@@ -51,6 +60,10 @@ struct IndexVersion {
     std::uint32_t homepage = 0;
     // String ids: what depgraph finds invalid in it, as it words each after "invalid: ".
     Range invalid;
+    // String ids: the eclasses it inherits, as INHERITED lists them.
+    Range inherited;
+    // In RepositoryIndex::fetch_groups: its distfiles, in SRC_URI's order.
+    Range fetch;
 };
 
 struct Eapi {
@@ -135,6 +148,8 @@ struct RepositoryIndex : Tables {
     std::vector<Input> inputs;
     std::vector<Repository> repositories;
     std::vector<IndexVersion> versions;
+    std::vector<FetchGroup> fetch_groups;
+    std::vector<Range> fetch_places;
     VisibilityConfig visibility;
     // Sorted by id.
     std::vector<Advisory> advisories;
@@ -146,7 +161,15 @@ struct RepositoryIndex : Tables {
     ledger_entries_in(Range range) const EGRAPH_LIFETIMEBOUND;
     [[nodiscard]] std::span<const AdvisoryPackage>
     packages_in(Range range) const EGRAPH_LIFETIMEBOUND;
+    [[nodiscard]] std::span<const FetchGroup> fetch_in(Range range) const EGRAPH_LIFETIMEBOUND;
+    [[nodiscard]] std::span<const Range> places_in(Range range) const EGRAPH_LIFETIMEBOUND;
 };
+
+// The bytes of the distfiles version fetches under use (sorted): those of the groups with a
+// place whose conditionals use meets, as portage's fetch map holds them under it.
+[[nodiscard]] std::uint64_t distfiles_size(const RepositoryIndex& index,
+                                           const IndexVersion& version,
+                                           std::span<const std::string> use);
 
 // Rejects anything that does not follow docs/store-format.md exactly.
 [[nodiscard]] std::expected<RepositoryIndex, StoreError>

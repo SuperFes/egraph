@@ -14,6 +14,7 @@ from egraph_build.repository import (
     Advisory,
     AdvisoryPackage,
     Eapi,
+    FetchGroup,
     Repository,
     RepositoryIndex,
     Version,
@@ -65,7 +66,7 @@ EVALUATED_SECTIONS = (
 )
 
 REPOSITORY_MAGIC = b"EGRAPHRI"
-REPOSITORY_FORMAT_VERSION = 6
+REPOSITORY_FORMAT_VERSION = 7
 (
     SECTION_REPOSITORIES,
     SECTION_VERSIONS,
@@ -565,6 +566,13 @@ def encode_repository(index, meta, inputs=()):
         w.varint(strings(v.description))
         w.varint(strings(v.homepage))
         w.ids([strings(message) for message in v.invalid])
+        w.ids([strings(eclass) for eclass in v.inherited])
+        w.varint(len(v.fetch))
+        for group in v.fetch:
+            w.varint(len(group.places))
+            for place in group.places:
+                w.ids([strings(condition) for condition in place])
+            w.varint(group.bytes)
     sections[SECTION_VERSIONS] = w.out
 
     vis = index.visibility
@@ -996,6 +1004,11 @@ def decode_repository(data):
                 s(),
                 s(),
                 listed(),
+                listed(),
+                tuple(
+                    FetchGroup(tuple(listed() for _ in range(r.count())), r.varint())
+                    for _ in range(r.count())
+                ),
             )
         )
     r.done()

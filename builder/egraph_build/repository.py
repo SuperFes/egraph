@@ -19,14 +19,25 @@ KEYS = tuple(
             "DESCRIPTION",
             "EAPI",
             "HOMEPAGE",
+            "INHERITED",
             "KEYWORDS",
             "LICENSE",
             "PROPERTIES",
             "RESTRICT",
             "SLOT",
+            "SRC_URI",
         }
     )
 )
+
+
+class FetchGroup(NamedTuple):
+    """The files SRC_URI names in the same places, and their bytes: fetched once when the
+    conditionals over any one of those places are all met."""
+
+    # Per place, its conditionals, "flag?" or "!flag?", the outermost first.
+    places: tuple
+    bytes: int
 
 
 class Version(NamedTuple):
@@ -47,6 +58,10 @@ class Version(NamedTuple):
     homepage: str
     # What depgraph finds invalid in it, as it words each after "invalid: ".
     invalid: tuple
+    # The eclasses it inherits, as INHERITED lists them.
+    inherited: tuple = ()
+    # Its distfiles, FetchGroups in SRC_URI's order.
+    fetch: tuple = ()
 
 
 class Eapi(NamedTuple):
@@ -143,12 +158,71 @@ def with_use(version, settings):
     return version._replace(use=tuple(sorted(use)))
 
 
+def fetch_groups(src_uri, sizes):
+    """SRC_URI's files grouped by the places it names them in, each place the conditionals over
+    it, as portage's fetch map names a file (a URI's basename, or what "->" renames it to);
+    groups in the order each first appears, each file's bytes from sizes, a file it lacks
+    counting none, and groups of no bytes left out."""
+    tokens = src_uri.split()
+    # By file, the conditionals over each place it appears, in order.
+    places = {}
+    # The conditional over each open parenthesis, None for a plain one.
+    stack = []
+    pending = None
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token.endswith("?"):
+            pending = token
+        elif token == "(":
+            stack.append(pending)
+            pending = None
+        elif token == ")":
+            if stack:
+                stack.pop()
+        else:
+            name = os.path.basename(token)
+            if i + 2 < len(tokens) and tokens[i + 1] == "->":
+                name = tokens[i + 2]
+                i += 2
+            conditions = tuple(c for c in stack if c is not None)
+            found = places.setdefault(name, [])
+            if conditions not in found:
+                found.append(conditions)
+        i += 1
+    groups = {}
+    for name, found in places.items():
+        key = tuple(found)
+        groups[key] = groups.get(key, 0) + sizes.get(name, 0)
+    return tuple(FetchGroup(p, b) for p, b in groups.items() if b)
+
+
+def distfile_sizes(portdb, cp, repo):
+    """By distfile name, its bytes as the Manifest of cp's directory in repo records them;
+    nothing where it has none."""
+    from portage.exception import PortageException
+
+    location = portdb.getRepositoryPath(repo)
+    try:
+        manifest = portdb.repositories.get_repo_for_location(location).load_manifest(
+            os.path.join(location, cp), portdb.settings["DISTDIR"]
+        )
+    except (OSError, PortageException):
+        return {}
+    return {
+        name: int(entry["size"])
+        for name, entry in manifest.fhashdict.get("DIST", {}).items()
+        if "size" in entry
+    }
+
+
 def read_versions(portdb, cps, settings=None):
     """The version records of cps in every repository, in the index's order."""
     settings = settings or UseReader(portdb)
     found = []
     for cp in sorted(cps):
         for repo in portdb.getRepositories():
+            sizes = None
             for cpv in portdb.cp_list(cp, mytree=portdb.getRepositoryPath(repo)):
                 try:
                     metadata = dict(
@@ -157,6 +231,8 @@ def read_versions(portdb, cps, settings=None):
                 except KeyError:
                     continue
                 metadata["repository"] = repo
+                if sizes is None and metadata["SRC_URI"]:
+                    sizes = distfile_sizes(portdb, cp, repo)
                 slot, _, sub_slot = metadata["SLOT"].partition("/")
                 version = Version(
                     cp=cp,
@@ -173,6 +249,8 @@ def read_versions(portdb, cps, settings=None):
                     description=metadata["DESCRIPTION"],
                     homepage=metadata["HOMEPAGE"],
                     invalid=tuple(masks.invalid_ebuild(portdb, cpv, metadata)),
+                    inherited=_tokens(metadata["INHERITED"]),
+                    fetch=fetch_groups(metadata["SRC_URI"], sizes or {}),
                 )
                 found.append(with_use(version, settings))
     return tuple(found)
@@ -272,7 +350,7 @@ def to_json(index):
     """The index as canonical JSON: sorted keys, everything in the store's order."""
     v = index.visibility
     document = {
-        "format": 6,
+        "format": 7,
         "advisories": [
             {
                 "id": a.id,
@@ -315,6 +393,11 @@ def to_json(index):
                 "description": x.description,
                 "homepage": x.homepage,
                 "invalid": list(x.invalid),
+                "inherited": list(x.inherited),
+                "fetch": [
+                    {"places": [list(p) for p in g.places], "bytes": g.bytes}
+                    for g in x.fetch
+                ],
             }
             for x in index.versions
         ],

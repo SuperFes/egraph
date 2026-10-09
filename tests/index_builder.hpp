@@ -25,6 +25,12 @@ inline std::vector<std::string> words(std::string_view text) {
     return found;
 }
 
+// A fetch group: the conditionals over each of its places, space-separated, and its bytes.
+struct FetchSpec {
+    std::vector<std::string> places;
+    std::uint64_t bytes = 0;
+};
+
 struct VersionSpec {
     std::string cpv;
     std::string keywords = "x86";
@@ -37,6 +43,8 @@ struct VersionSpec {
     std::string repo = "gentoo";
     std::string description = {};
     std::string homepage = {};
+    std::string inherited = {};
+    std::vector<FetchSpec> fetch = {};
 };
 
 // A line of the visibility ledger.
@@ -91,6 +99,21 @@ class IndexBuilder {
         version.use = ids(spec.use);
         version.description = intern(spec.description);
         version.homepage = intern(spec.homepage);
+        version.inherited = ids(spec.inherited);
+        const auto first = static_cast<std::uint32_t>(index_.fetch_groups.size());
+        for (const auto& [places, bytes] : spec.fetch) {
+            const auto first_place = static_cast<std::uint32_t>(index_.fetch_places.size());
+            for (const auto& conditions : places) {
+                index_.fetch_places.push_back(ids(conditions));
+            }
+            index_.fetch_groups.push_back(
+                {.places = {.first = first_place,
+                            .count = static_cast<std::uint32_t>(index_.fetch_places.size()) -
+                                     first_place},
+                 .bytes = bytes});
+        }
+        version.fetch = {.first = first,
+                         .count = static_cast<std::uint32_t>(index_.fetch_groups.size()) - first};
         index_.versions.push_back(version);
         return static_cast<std::uint32_t>(index_.versions.size() - 1);
     }

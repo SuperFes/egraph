@@ -102,6 +102,36 @@ def test_incremental_agrees_with_full(live_vardb, tmp_path, monkeypatch):
     assert cli.main(["--incremental", "--store", str(path)]) == cli.EXIT_OK
 
 
+def test_live_distfiles_under_each_installed_use_are_portages_fetch_maps(
+    live_databases, tmp_path
+):
+    """Every version of each installed cp, under the installed package's USE."""
+    from portage.versions import cpv_getkey
+    from test_repository import distfiles_in_cpp, portage_distfiles
+
+    vardb, portdb = live_databases
+    cases = []
+    for cpv in vardb.cpv_all():
+        (use,) = vardb.aux_get(cpv, ["USE"])
+        for repo in portdb.getRepositories():
+            location = portdb.getRepositoryPath(repo)
+            for version in portdb.cp_list(cpv_getkey(cpv), mytree=location):
+                cases.append((str(version), repo, tuple(use.split())))
+    expected = []
+    for cpv, repo, use in cases:
+        try:
+            expected.append(portage_distfiles(portdb, cpv, repo, use))
+        except Exception:
+            # An ebuild portage cannot fetch for; egraph's answer is not compared.
+            expected.append(None)
+    found = distfiles_in_cpp(portdb, cases, tmp_path)
+    assert [
+        (case, f, e)
+        for case, f, e in zip(cases, found, expected)
+        if e is not None and f != e
+    ] == []
+
+
 @pytest.fixture(scope="module")
 def live_databases():
     return cli.open_databases("/", "/")

@@ -1,16 +1,20 @@
 """The repository index: every version as portage reads it, and what visibility is decided from."""
 
+import itertools
+import json
 import os
 import shutil
+import subprocess
 
 import portage
 import managers
 import pytest
 from conftest import portdb
 from test_build import fresh_databases
-from test_ledger import stacked_in_cpp
+from portage.versions import cpv_getkey
+from test_ledger import SHADOW, stacked_in_cpp
 
-from egraph_build import __version__, build, repository, store
+from egraph_build import __version__, build, installed, repository, store
 
 
 def test_every_version_in_every_repository_as_portage_reads_it(scenario):
@@ -216,3 +220,160 @@ def test_an_invalid_ebuild_carries_what_depgraph_finds_wrong(playgrounds):
         "app-misc/invfb-2",
         "app-misc/invupd-2",
     }
+
+
+FETCH_EBUILDS = {
+    "app-misc/plain-1": {"EAPI": "8", "SRC_URI": "https://example.org/plain-1.tar.gz"},
+    "app-misc/cond-1": {
+        "EAPI": "8",
+        "IUSE": "doc l10n_de",
+        "SRC_URI": "https://example.org/cond-1.tar.gz"
+        " doc? ( https://example.org/cond-doc-1.tar.gz"
+        " l10n_de? ( https://example.org/de.xpi -> cond-de-1.xpi ) )"
+        " !doc? ( https://example.org/cond-nodoc-1.tar.gz )"
+        " x86? ( https://example.org/cond-x86-1.tar.gz )"
+        " l10n_de? ( https://example.org/cond-x86-1.tar.gz )",
+        "MISC_CONTENT": "inherit cmake toolchain-funcs\n",
+    },
+    "app-misc/cond-2": {
+        "EAPI": "8",
+        "IUSE": "doc",
+        "SRC_URI": "https://example.org/cond-2.tar.gz"
+        " doc? ( https://example.org/cond-doc-1.tar.gz )",
+        "MISC_CONTENT": "inherit cmake\n",
+    },
+    "app-misc/none-1": {"EAPI": "8"},
+}
+
+FETCH_DISTFILES = {
+    "plain-1.tar.gz": 100,
+    "cond-1.tar.gz": 1000,
+    "cond-doc-1.tar.gz": 200,
+    "cond-de-1.xpi": 30,
+    "cond-nodoc-1.tar.gz": 7,
+    "cond-x86-1.tar.gz": 4,
+    "cond-2.tar.gz": 2000,
+}
+
+
+@pytest.fixture(scope="module")
+def fetch_playground(gnupg_home):
+    """A repository whose ebuilds fetch distfiles under conditionals, Manifests and all."""
+    from portage.tests.resolver.ResolverPlayground import ResolverPlayground
+
+    playground = ResolverPlayground(
+        ebuilds=FETCH_EBUILDS,
+        distfiles={name: b"x" * size for name, size in FETCH_DISTFILES.items()},
+        eclasses={"cmake": ["# cmake"], "toolchain-funcs": ["# toolchain-funcs"]},
+    )
+    yield playground
+    playground.cleanup()
+
+
+@pytest.fixture(scope="module")
+def fetch_db(fetch_playground):
+    return portdb(fetch_playground)
+
+
+def test_fetch_groups_follow_the_conditionals_over_each_file():
+    sizes = {"a.tar.gz": 10, "b.tar.gz": 5, "renamed": 3, "c": 1}
+    groups = repository.fetch_groups(
+        "https://x/a.tar.gz doc? ( mirror://y/b.tar.gz https://z/q -> renamed"
+        " !x86? ( c ) ) ( https://x/a.tar.gz ) doc? ( b.tar.gz ) missing.tar.gz"
+        " other? ( missing.tar.gz )",
+        sizes,
+    )
+    assert groups == (
+        repository.FetchGroup(((),), 10),
+        repository.FetchGroup((("doc?",),), 8),
+        repository.FetchGroup((("doc?", "!x86?"),), 1),
+    )
+    # A file in two places, fetched once when either's conditionals are met.
+    assert repository.fetch_groups(
+        "de? ( a.tar.gz b.tar.gz ) de-AT? ( a.tar.gz ) de-CH? ( b.tar.gz )", sizes
+    ) == (
+        repository.FetchGroup((("de?",), ("de-AT?",)), 10),
+        repository.FetchGroup((("de?",), ("de-CH?",)), 5),
+    )
+    assert repository.fetch_groups("", sizes) == ()
+
+
+def test_each_version_carries_its_eclasses_and_distfiles(fetch_db):
+    index = repository.read(fetch_db)
+    versions = {v.cpv: v for v in index.versions}
+    for v in index.versions:
+        (inherited,) = fetch_db.aux_get(v.cpv, ["INHERITED"], myrepo=v.repo)
+        assert v.inherited == tuple(inherited.split())
+    assert set(versions["app-misc/cond-1"].inherited) == {"cmake", "toolchain-funcs"}
+    assert versions["app-misc/cond-1"].fetch == (
+        repository.FetchGroup(((),), 1000),
+        repository.FetchGroup((("doc?",),), 200),
+        repository.FetchGroup((("doc?", "l10n_de?"),), 30),
+        repository.FetchGroup((("!doc?",),), 7),
+        repository.FetchGroup((("x86?",), ("l10n_de?",)), 4),
+    )
+    assert versions["app-misc/plain-1"].fetch == (repository.FetchGroup(((),), 100),)
+    assert versions["app-misc/none-1"].fetch == ()
+    meta = store.RepositoryMeta("0.0.0", "3.0.0", "/", 7)
+    assert store.decode_repository(store.encode_repository(index, meta))[2] == index
+
+
+def portage_distfiles(db, cpv, repo, use):
+    """The bytes of cpv's fetch map under use, from its Manifest, as portage reckons them."""
+    location = db.getRepositoryPath(repo)
+    files = db.getFetchMap(cpv, useflags=set(use), mytree=location)
+    manifest = db.repositories.get_repo_for_location(location).load_manifest(
+        os.path.join(location, cpv_getkey(cpv)), db.settings["DISTDIR"]
+    )
+    return manifest.getDistfilesSize(files)
+
+
+def distfiles_in_cpp(db, cases, tmp_path):
+    """egraph's distfile bytes for each (cpv, repo, use) of cases, from db's index."""
+    if not SHADOW:
+        pytest.skip("set EGRAPH_SHADOW to the shadow binary (meson test does)")
+    path = tmp_path / "index.egraph"
+    meta = store.RepositoryMeta("0", "0", "/", 0)
+    store.write(path, store.encode_repository(repository.read(db), meta))
+    request = {
+        "check": "distfiles",
+        "index": str(path),
+        "cases": [{"cpv": c, "repo": r, "use": list(u)} for c, r, u in cases],
+    }
+    result = subprocess.run(
+        [SHADOW], input=json.dumps(request) + "\n", capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)["bytes"]
+
+
+def test_a_versions_distfiles_under_a_use_are_its_fetch_maps(fetch_db, tmp_path):
+    flags = ("doc", "l10n_de", "x86")
+    cases = [
+        (cpv, "test_repo", use)
+        for cp in fetch_db.cp_all()
+        for cpv in fetch_db.cp_list(cp)
+        for n in range(len(flags) + 1)
+        for use in itertools.combinations(flags, n)
+    ]
+    assert distfiles_in_cpp(fetch_db, cases, tmp_path) == [
+        portage_distfiles(fetch_db, cpv, repo, use) for cpv, repo, use in cases
+    ]
+
+
+def test_cpp_exports_each_versions_eclasses_and_distfiles(fetch_playground, tmp_path):
+    from test_golden import EGRAPH, META
+
+    path = tmp_path / "installed.egraph"
+    vardb = fetch_playground.trees[fetch_playground.eroot]["vartree"].dbapi
+    store.write(path, store.encode(installed.build(vardb), META))
+    index = repository.read(portdb(fetch_playground))
+    meta = store.RepositoryMeta("0.0.0", "3.0.0", "/", 0)
+    store.write(store.repository_path(path), store.encode_repository(index, meta))
+    result = subprocess.run(
+        [EGRAPH, "--store", str(path), "--no-refresh", "export", "--format", "json"]
+        + ["--repository"],
+        capture_output=True,
+    )
+    assert result.stderr == b""
+    assert result.stdout == repository.to_json(index).encode()

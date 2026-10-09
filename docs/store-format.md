@@ -301,7 +301,7 @@ beside the installed store, named after it (`installed.egraph` → `installed.re
 and is written by its own builder run (`egraph-build --repository`), as it changes with the
 repositories and the configuration rather than with the installed packages.
 
-It uses the installed store's framing with magic `EGRAPHRI` and its own format version, now 6.
+It uses the installed store's framing with magic `EGRAPHRI` and its own format version, now 7.
 
 | Id | Section | Contents |
 |---|---|---|
@@ -331,6 +331,14 @@ A version record, for each ebuild whose metadata portage could read:
    that do not parse under its EAPI, conditionals on flags outside its IUSE, an invalid SLOT),
    as it words each after `invalid: `; empty for a valid one. depgraph masks an invalid ebuild
    that portdb counts as visible.
+6. Inherited: list of string ids, the eclasses as INHERITED lists them.
+7. Fetch groups: count, then per group its places (count, then per place a list of string
+   ids, the conditionals over it, `flag?` or `!flag?`, the outermost first) and its bytes. A
+   group holds the files SRC_URI names in the same places, as portage's fetch map names them
+   (a URI's basename, or what `->` renames it to), in the order each group first appears; its
+   bytes are their sizes in the package's Manifest, a file the Manifest lacks counting none,
+   and a group of no bytes is left out. The files are fetched, once, under a USE that meets
+   every conditional of any one place.
 
 The visibility section holds what portage itself decides, apart from its configuration files:
 
@@ -385,3 +393,5 @@ Inputs are the evaluated store's configuration inputs, and per repository its ro
 repository-wide masks and unmasks, license groups, categories and eclass directory, every category
 directory, the metadata cache directory of every category, and outside the main repository
 every package directory and ebuild; and the GLSAs' directory, which a change reads again alone.
+A Manifest is read with its cp's versions: a change to it alone, which a sync makes only with
+the ebuilds that fetch its files, waits for the cp to be read again.

@@ -2,7 +2,9 @@
 
 #include "encoding.hpp"
 
+#include <algorithm>
 #include <format>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -68,6 +70,21 @@ std::optional<StoreError> read_versions(std::span<const std::byte> section,
         version.description = r.index(strings, "string");
         version.homepage = r.index(strings, "string");
         version.invalid = read_ids(r, index.ids, strings, "string");
+        version.inherited = read_ids(r, index.ids, strings, "string");
+        const auto groups = r.count();
+        const auto first = size32(index.fetch_groups.size());
+        for (std::uint32_t j = 0; j < groups && r.ok(); ++j) {
+            const auto places = r.count();
+            const auto first_place = size32(index.fetch_places.size());
+            for (std::uint32_t k = 0; k < places && r.ok(); ++k) {
+                index.fetch_places.push_back(read_ids(r, index.ids, strings, "string"));
+            }
+            FetchGroup group{.places = {.first = first_place,
+                                        .count = size32(index.fetch_places.size()) - first_place}};
+            group.bytes = r.varint();
+            index.fetch_groups.push_back(group);
+        }
+        version.fetch = {.first = first, .count = size32(index.fetch_groups.size()) - first};
         index.versions.push_back(version);
     }
     r.finish();
@@ -180,6 +197,35 @@ std::span<const LedgerEntry> RepositoryIndex::ledger_entries_in(Range range) con
 
 std::span<const AdvisoryPackage> RepositoryIndex::packages_in(Range range) const {
     return std::span{advisory_packages}.subspan(range.first, range.count);
+}
+
+std::span<const FetchGroup> RepositoryIndex::fetch_in(Range range) const {
+    return std::span{fetch_groups}.subspan(range.first, range.count);
+}
+
+std::span<const Range> RepositoryIndex::places_in(Range range) const {
+    return std::span{fetch_places}.subspan(range.first, range.count);
+}
+
+std::uint64_t distfiles_size(const RepositoryIndex& index, const IndexVersion& version,
+                             std::span<const std::string> use) {
+    const auto met = [&](std::string_view condition) {
+        const bool negated = condition.starts_with('!');
+        condition.remove_prefix(negated ? 1 : 0);
+        condition.remove_suffix(condition.ends_with('?') ? 1 : 0);
+        return std::ranges::binary_search(use, condition, std::less<>{}) != negated;
+    };
+    std::uint64_t total = 0;
+    const auto all_met = [&](Range place) {
+        return std::ranges::all_of(index.ids_in(place),
+                                   [&](std::uint32_t id) { return met(index.string(id)); });
+    };
+    for (const auto& group : index.fetch_in(version.fetch)) {
+        if (std::ranges::any_of(index.places_in(group.places), all_met)) {
+            total += group.bytes;
+        }
+    }
+    return total;
 }
 
 std::expected<RepositoryIndex, StoreError> decode_repository(std::span<const std::byte> data) {

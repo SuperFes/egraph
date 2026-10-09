@@ -546,7 +546,7 @@ void write_repository_json(std::ostream& out, const RepositoryIndex& index) {
         write_string(out, index, advisory.title);
         out << '}';
     }
-    out << R"(],"format":6,"ledger":)";
+    out << R"(],"format":7,"ledger":)";
     write_visibility_ledger(out, index);
     out << R"(,"repositories":[)";
     first = true;
@@ -572,8 +572,23 @@ void write_repository_json(std::ostream& out, const RepositoryIndex& index) {
         write_string(out, index, version.description);
         out << ",\"eapi\":";
         write_string(out, index, version.eapi);
-        out << ",\"homepage\":";
+        out << ",\"fetch\":[";
+        bool first_group = true;
+        for (const auto& group : index.fetch_in(version.fetch)) {
+            out << (first_group ? "{\"bytes\":" : ",{\"bytes\":") << group.bytes << ",\"places\":[";
+            first_group = false;
+            bool first_place = true;
+            for (const auto& place : index.places_in(group.places)) {
+                out << (first_place ? "" : ",");
+                first_place = false;
+                write_string_list(out, index, place);
+            }
+            out << "]}";
+        }
+        out << "],\"homepage\":";
         write_string(out, index, version.homepage);
+        out << ",\"inherited\":";
+        write_string_list(out, index, version.inherited);
         out << ",\"invalid\":";
         write_string_list(out, index, version.invalid);
         out << ",\"keywords\":";

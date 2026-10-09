@@ -339,6 +339,7 @@ unit_tests = executable(
   'tests/test_remedy.cpp',
   'tests/test_remove.cpp',
   'tests/test_replace.cpp',
+  'tests/test_repository.cpp',
   'tests/test_request.cpp',
   'tests/test_exec.cpp',
   'tests/test_os.cpp',

@@ -7,6 +7,8 @@
 //   {"check": "myopts", "options": [...]} -> the options as emerge's parser leaves them
 //   {"check": "visibility", "index": path} -> the index's visibility ledger stacked, in the
 //     shape of its visibility section
+//   {"check": "distfiles", "index": path, "cases": [{"cpv", "repo", "use": [...]}, ...]}
+//     -> {"bytes": [...]}, each version's distfiles under its USE, null for one not indexed
 #include "repository.hpp"
 #include "required_use.hpp"
 #include "resume.hpp"
@@ -107,6 +109,29 @@ nlohmann::json visibility_json(const std::string& path) {
             {"restrict", keys_json(stacked.restrict)}};
 }
 
+// The bytes each case's version fetches under its USE.
+nlohmann::json distfiles_json(const std::string& path, const nlohmann::json& cases) {
+    const auto index = egraph::load_repository(path);
+    if (!index) {
+        throw std::runtime_error{"cannot load " + path};
+    }
+    auto bytes = nlohmann::json::array();
+    for (const auto& each : cases) {
+        const auto cpv = each.at("cpv").get<std::string>();
+        const auto repo = each.at("repo").get<std::string>();
+        auto use = each.at("use").get<std::vector<std::string>>();
+        std::ranges::sort(use);
+        const auto found = std::ranges::find_if(index->versions, [&](const auto& version) {
+            return index->string(version.cpv) == cpv &&
+                   index->string(index->repositories.at(version.repository).name) == repo;
+        });
+        bytes.push_back(found == index->versions.end()
+                            ? nlohmann::json(nullptr)
+                            : nlohmann::json(egraph::distfiles_size(*index, *found, use)));
+    }
+    return {{"bytes", bytes}};
+}
+
 } // namespace
 
 int main() {
@@ -117,6 +142,12 @@ int main() {
             if (input.at("check") == "myopts") {
                 const auto options = input.at("options").get<std::vector<std::string>>();
                 std::cout << egraph::emerge_myopts(options) << '\n';
+                continue;
+            }
+            if (input.at("check") == "distfiles") {
+                std::cout << distfiles_json(input.at("index").get<std::string>(), input.at("cases"))
+                                 .dump()
+                          << '\n';
                 continue;
             }
             if (input.at("check") == "visibility") {

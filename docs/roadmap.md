@@ -1243,6 +1243,14 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
     and each running build its expected time.
 - 20d (planned): estimates for a package never built here, from similar ones (build system,
   eclasses, distfile size), and scaled for USE and version.
+  - 20d1 (done): the repository index carries each version's eclasses and its distfiles:
+    SRC_URI's groups by the conditionals over them, each with its files' bytes from the
+    Manifest; egraph sums a version's distfiles under a USE, held to portage's fetch map.
+  - 20d2 (planned): a cp built here at another version or USE: the builds of the nearest USE
+    first, scaled by the distfiles' size.
+  - 20d3 (planned): a package never built here, from the most similar ones that were (their
+    eclasses in common, the rarer weighing more), scaled by the distfiles' size, and counted
+    apart as guessed.
 - 20e (planned): queries and views: a package's last builds as a table and a sparkline ("gcc,
   the last 12 times"), the slowest packages, total build time by week or month, what rebuilds
   most often and why (subslot rebuilds, USE churn), packages that fail now and then, and a
