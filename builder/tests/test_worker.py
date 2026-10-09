@@ -168,9 +168,10 @@ class Machine:
         assert result.returncode == 0, result.stdout + result.stderr
         return result
 
-    def worker(self, *lines, options=()):
+    def worker(self, *lines, options=(), environments=None):
         """The worker's events for lines, each request's in turn, its exit status and what it
-        wrote to stderr."""
+        wrote to stderr; the environments builds start in go to environments, if given, and
+        are left out."""
         result = subprocess.run(
             [sys.executable, "-m", "egraph_build", "--worker", *options],
             input="".join(line + "\n" for line in lines),
@@ -179,6 +180,9 @@ class Machine:
             text=True,
         )
         events = [json.loads(line) for line in result.stdout.splitlines()]
+        if environments is not None:
+            environments.extend(e["environment"] for e in events if "environment" in e)
+        events = [e for e in events if "environment" not in e]
         return events, result.returncode, result.stderr
 
     def talk(self):
@@ -476,7 +480,9 @@ def until_final(process):
     events = []
     while True:
         events.append(json.loads(process.stdout.readline()))
-        if "phase" not in events[-1]:
+        if "environment" in events[-1]:
+            events.pop()
+        elif "phase" not in events[-1]:
             return events
 
 
@@ -663,6 +669,28 @@ def test_a_merge_records_its_world_atom(machine):
     )
     assert events == merged("app-misc/lib-1")
     holds(machine, {"var/lib/portage/world": "app-misc/lib\n"})
+
+
+def test_a_build_reports_the_environment_it_starts_in(machine):
+    """Its compiler variables as portage sets them for the build, package.env's included."""
+    os.makedirs(machine.path("etc/portage/env"), exist_ok=True)
+    with open(machine.path("etc/portage/env/lib.conf"), "w") as f:
+        f.write('CFLAGS="-O3 -flib"\nMAKEOPTS="-j3"\n')
+    with open(machine.path("etc/portage/package.env"), "w") as f:
+        f.write("app-misc/lib lib.conf\n")
+    environments = []
+    events, status, stderr = machine.worker(
+        build("app-misc/lib-1"), build("app-misc/files-1"), environments=environments
+    )
+    assert status == 0, stderr
+    assert len(environments) == 2
+    lib, files = environments
+    assert lib["CFLAGS"] == "-O3 -flib"
+    assert lib["MAKEOPTS"] == "-j3"
+    assert set(lib) <= set(worker.ENVIRONMENT)
+    # The other package's are make.conf's, as phases set MAKEOPTS when it is unset.
+    assert files.get("CFLAGS") == (machine.playground.settings.get("CFLAGS") or None)
+    assert files["MAKEOPTS"] != "-j3"
 
 
 def test_a_failed_phase_merges_nothing_and_names_its_log(machine):

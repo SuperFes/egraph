@@ -226,17 +226,23 @@ TEST_CASE("what a merge replaces no longer blocks the merges after it") {
 TEST_CASE("the worker's events are read from its lines") {
     using Kind = egraph::WorkerEvent::Kind;
     CHECK(egraph::parse_event(R"({"phase": "compile"})") ==
-          egraph::WorkerEvent{.kind = Kind::phase, .text = "compile", .status = 0, .log = ""});
+          egraph::WorkerEvent{
+              .kind = Kind::phase, .text = "compile", .status = 0, .log = "", .values = {}});
     CHECK(egraph::parse_event(R"({"built": "a/b-1"})") ==
-          egraph::WorkerEvent{.kind = Kind::built, .text = "a/b-1", .status = 0, .log = ""});
+          egraph::WorkerEvent{
+              .kind = Kind::built, .text = "a/b-1", .status = 0, .log = "", .values = {}});
     CHECK(egraph::parse_event(R"({"merged": "a/b-1"})") ==
-          egraph::WorkerEvent{.kind = Kind::merged, .text = "a/b-1", .status = 0, .log = ""});
+          egraph::WorkerEvent{
+              .kind = Kind::merged, .text = "a/b-1", .status = 0, .log = "", .values = {}});
     CHECK(egraph::parse_event(R"({"uninstalled": "a/b-1"})") ==
-          egraph::WorkerEvent{.kind = Kind::uninstalled, .text = "a/b-1", .status = 0, .log = ""});
+          egraph::WorkerEvent{
+              .kind = Kind::uninstalled, .text = "a/b-1", .status = 0, .log = "", .values = {}});
     CHECK(egraph::parse_event(R"({"failed": "compile", "status": 1, "log": "/l"})") ==
-          egraph::WorkerEvent{.kind = Kind::failed, .text = "compile", .status = 1, .log = "/l"});
+          egraph::WorkerEvent{
+              .kind = Kind::failed, .text = "compile", .status = 1, .log = "/l", .values = {}});
     CHECK(egraph::parse_event(R"({"error": "no ebuild"})") ==
-          egraph::WorkerEvent{.kind = Kind::error, .text = "no ebuild", .status = 0, .log = ""});
+          egraph::WorkerEvent{
+              .kind = Kind::error, .text = "no ebuild", .status = 0, .log = "", .values = {}});
     for (const auto* line :
          {"not json", "[]", "{}", R"({"phase": 1})", R"({"failed": "x"})",
           R"({"failed": "x", "status": "1", "log": "/l"})", R"({"other": "x"})"}) {
@@ -247,20 +253,25 @@ TEST_CASE("the worker's events are read from its lines") {
 
 TEST_CASE("only a phase leaves its request going") {
     using Kind = egraph::WorkerEvent::Kind;
-    CHECK_FALSE(egraph::final_event({.kind = Kind::phase, .text = "x", .status = 0, .log = ""}));
+    CHECK_FALSE(egraph::final_event(
+        {.kind = Kind::phase, .text = "x", .status = 0, .log = "", .values = {}}));
     for (const auto kind :
          {Kind::built, Kind::merged, Kind::uninstalled, Kind::failed, Kind::error}) {
-        CHECK(egraph::final_event({.kind = kind, .text = "x", .status = 0, .log = ""}));
+        CHECK(
+            egraph::final_event({.kind = kind, .text = "x", .status = 0, .log = "", .values = {}}));
     }
     CHECK(egraph::describe_event(
-              {.kind = Kind::failed, .text = "compile", .status = 1, .log = "/l"}) ==
+              {.kind = Kind::failed, .text = "compile", .status = 1, .log = "/l", .values = {}}) ==
           "compile failed with status 1 (log: /l)");
     CHECK(egraph::describe_event(
-              {.kind = Kind::phase, .text = "compile", .status = 0, .log = ""}) == "compile");
-    CHECK(egraph::describe_event({.kind = Kind::built, .text = "a/b-1", .status = 0, .log = ""}) ==
+              {.kind = Kind::phase, .text = "compile", .status = 0, .log = "", .values = {}}) ==
+          "compile");
+    CHECK(egraph::describe_event(
+              {.kind = Kind::built, .text = "a/b-1", .status = 0, .log = "", .values = {}}) ==
           "built");
     CHECK(egraph::describe_event(
-              {.kind = Kind::error, .text = "no ebuild", .status = 0, .log = ""}) == "no ebuild");
+              {.kind = Kind::error, .text = "no ebuild", .status = 0, .log = "", .values = {}}) ==
+          "no ebuild");
 }
 
 TEST_CASE("a plan merging portage is told from one that does not") {

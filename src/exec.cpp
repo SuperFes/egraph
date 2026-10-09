@@ -423,6 +423,20 @@ std::expected<WorkerEvent, std::string> parse_event(std::string_view line) {
     if (!fields.is_object()) {
         return std::unexpected(std::format("not a JSON object: {}", line));
     }
+    if (const auto found = fields.find("environment"); found != fields.end()) {
+        WorkerEvent event{
+            .kind = Kind::environment, .text = "", .status = 0, .log = "", .values = {}};
+        if (!found->is_object()) {
+            return std::unexpected(std::format("not an event: {}", line));
+        }
+        for (const auto& [name, value] : found->items()) {
+            if (!value.is_string()) {
+                return std::unexpected(std::format("not an event: {}", line));
+            }
+            event.values.emplace(name, value.get<std::string>());
+        }
+        return event;
+    }
     for (const auto& [name, kind] : {std::pair{"phase", Kind::phase},
                                      {"built", Kind::built},
                                      {"merged", Kind::merged},
@@ -436,7 +450,8 @@ std::expected<WorkerEvent, std::string> parse_event(std::string_view line) {
         if (!found->is_string()) {
             break;
         }
-        WorkerEvent event{.kind = kind, .text = found->get<std::string>(), .status = 0, .log = ""};
+        WorkerEvent event{
+            .kind = kind, .text = found->get<std::string>(), .status = 0, .log = "", .values = {}};
         if (kind == Kind::failed) {
             const auto status = fields.find("status");
             const auto log = fields.find("log");
@@ -453,7 +468,7 @@ std::expected<WorkerEvent, std::string> parse_event(std::string_view line) {
 }
 
 bool final_event(const WorkerEvent& event) {
-    return event.kind != WorkerEvent::Kind::phase;
+    return event.kind != WorkerEvent::Kind::phase && event.kind != WorkerEvent::Kind::environment;
 }
 
 bool merges_cp(const Plan& plan, const Evaluated& original, std::string_view cp) {
@@ -476,6 +491,7 @@ std::string describe_event(const WorkerEvent& event) {
         return std::format("{} failed with status {} (log: {})", event.text, event.status,
                            event.log);
     case Kind::phase:
+    case Kind::environment:
     case Kind::error:
         break;
     }

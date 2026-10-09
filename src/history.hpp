@@ -25,6 +25,8 @@ enum class PlanWhen : std::uint8_t { refresh, sync, never };
 struct Settings {
     // How many days of generations to keep; 0 keeps none.
     int history_days = 90;
+    // How many builds of each cp the build history keeps; 0 records none.
+    int build_keep = 20;
     PlanWhen plan = PlanWhen::refresh;
     // After how many days since its sync a repository is a notice; 0 never.
     int stale_days = 7;

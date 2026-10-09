@@ -283,6 +283,16 @@ struct LogCommand {
     std::optional<std::string> run;
 };
 
+// The build history's records, those of the packages given or all.
+enum class BuildsFormat : std::uint8_t { json, csv };
+struct BuildsCommand {
+    static constexpr std::string_view name = "builds";
+    // Atoms or cps; all when empty.
+    std::vector<std::string> packages;
+    // The records as the file holds them, or as CSV; else by the output's layout.
+    std::optional<BuildsFormat> format;
+};
+
 // The installed packages and root sets now against a generation of the system store's history.
 struct Diff {
     static constexpr std::string_view name = "diff";
@@ -359,8 +369,8 @@ using Command =
     std::variant<std::monostate, Deps, Rdeps, Why, Match, UseCommand, Soname, Broken, Search,
                  Versions, ConfigCommand, Blockers, Orphans, Updates, PlanCommand, Update, Install,
                  Exec, Remove, Select, Deselect, Save, Sync, NoticesCommand, Export, Stats,
-                 LogCommand, Diff, HistoryCommand, StatusCommand, Rebuild, Refresh, Watch, Check,
-                 Notify, Tui, Shell, Complete, Affected>;
+                 LogCommand, BuildsCommand, Diff, HistoryCommand, StatusCommand, Rebuild, Refresh,
+                 Watch, Check, Notify, Tui, Shell, Complete, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

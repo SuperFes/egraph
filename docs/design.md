@@ -881,6 +881,26 @@ names and that are installed still. Only a target merged again by a plain (not `
 needs that; an update has nothing left to do for what merged, and a dependency that merged
 satisfies its atom. The schedule takes a merge with no step for done, so what waited for it runs.
 
+## Build history
+
+`exec` records each build as it ends in `${EROOT}/var/lib/egraph/builds.jsonl`
+(`src/builds.hpp`), never in emerge's files: one JSON object a line, keys sorted, with a
+`version` (1) that a reader skips lines of another version by. `BuildRecorder` turns the
+schedule's trace and the workers' events into the records, as `RunEvents` turns them into log
+events: a merge step's record once it merged (with the merge's seconds and merge-wait's hold) or
+failed (the phase, its status and log, or the worker's error); an uninstall or a skip records
+nothing. Each record has the cpv, repository and slot, the flags the candidate is built with,
+the env files `package.env` applies to it (the USE ledger's stacker), the build environment's
+compiler variables (the worker reports them from the build's configuration before its first
+phase, an `environment` event), the toolchain cps' versions installed when the build started
+(the installed store's, changed by the run's own merges of them), each build phase's seconds,
+the run's jobs and the most builds that ran beside it.
+
+Each append rewrites the file under its directory's lock (`os::rewrite_locked`, as the store
+history's log is appended) and keeps the last `build_keep` records of each cp (`egraph.conf`,
+20 by default; 0 records nothing), so the file stays a few MB at most and is read whole; lines it
+cannot read are kept as they are. `egraph builds` lists the records, as lines, JSON or CSV.
+
 ## Roots and exit codes
 
 - Both tools take `--root`, `--config-root` and `--eprefix`, defaulting to `ROOT`,

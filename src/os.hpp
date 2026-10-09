@@ -252,10 +252,15 @@ std::expected<void, std::error_code> replace_with_text(const std::filesystem::pa
 std::expected<void, std::error_code> append_locked(const std::filesystem::path& path,
                                                    std::string_view text);
 
-// Appends text to the file at path by writing it anew with text at its end and renaming that
-// over it, under an exclusive lock on its directory: anyone who can write the directory can
-// append, whoever owns the file, and appends beside each other never lose a line. Creates the
-// file (mode 0644) and its directories.
+// Writes the file at path anew as rewrite makes it from its text (empty when there is none) and
+// renames that over it, under an exclusive lock on its directory: anyone who can write the
+// directory can rewrite it, whoever owns the file, and rewrites beside each other never lose one
+// another's changes. Creates the file (mode 0644) and its directories.
+std::expected<void, std::error_code>
+rewrite_locked(const std::filesystem::path& path,
+               const std::function<std::string(std::string_view)>& rewrite);
+
+// Appends text to the file at path through rewrite_locked.
 std::expected<void, std::error_code> append_replacing(const std::filesystem::path& path,
                                                       std::string_view text);
 

@@ -47,6 +47,9 @@ struct RunSummary {
 // Each run the events hold, in the order of its first event.
 [[nodiscard]] std::vector<RunSummary> summarize(std::span<const Event> events);
 
+// Seconds since the epoch in zone, as "2026-10-05 12:03:11".
+[[nodiscard]] std::string local_time(double time, const std::chrono::time_zone& zone);
+
 // The run whose id is or starts with prefix; an error for none or more than one.
 [[nodiscard]] std::expected<std::string, std::string> find_run(std::span<const RunSummary> runs,
                                                                std::string_view prefix);

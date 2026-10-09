@@ -224,6 +224,13 @@ std::expected<Settings, std::string> parse_settings(std::string_view text) {
                     "line {}: history_days takes a number of days, not {}", line_number, value));
             }
             settings.history_days = *days;
+        } else if (key == "build_keep") {
+            const auto builds = number(value);
+            if (!builds) {
+                return std::unexpected(std::format(
+                    "line {}: build_keep takes a number of builds, not {}", line_number, value));
+            }
+            settings.build_keep = *builds;
         } else if (key == "stale_days") {
             const auto days = number(value);
             if (!days) {

@@ -109,6 +109,25 @@ def parse_request(line):
     return Merge(cpv_of(cpv), repo, tuple(map(cpv_of, blockers)), world)
 
 
+# The build environment's variables a build's record keeps (build_environment_keys in
+# src/builds.hpp).
+ENVIRONMENT = (
+    "CC",
+    "CXX",
+    "CFLAGS",
+    "CXXFLAGS",
+    "LDFLAGS",
+    "RUSTFLAGS",
+    "MAKEOPTS",
+    "NINJAOPTS",
+)
+
+
+def environment(settings):
+    """Of ENVIRONMENT, the variables settings has set, as the build gets them."""
+    return {key: settings[key] for key in ENVIRONMENT if settings.get(key)}
+
+
 def event(**fields):
     """An event's line."""
     return json.dumps(fields, sort_keys=True) + "\n"
@@ -300,6 +319,7 @@ class Worker:
             return False
         lock = _BuildDirLock(settings)
         lock.lock()
+        emit(event(environment=environment(settings)))
         for phase in PHASES:
             emit(event(phase=phase))
             if phase == "unpack":

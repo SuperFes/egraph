@@ -865,8 +865,9 @@ std::expected<void, std::error_code> replace_with_text(const std::filesystem::pa
     return rename_over(temp, absolute);
 }
 
-std::expected<void, std::error_code> append_replacing(const std::filesystem::path& path,
-                                                      std::string_view text) {
+std::expected<void, std::error_code>
+rewrite_locked(const std::filesystem::path& path,
+               const std::function<std::string(std::string_view)>& rewrite) {
     namespace fs = std::filesystem;
     const auto absolute = fs::absolute(path);
     std::error_code error;
@@ -894,9 +895,17 @@ std::expected<void, std::error_code> append_replacing(const std::filesystem::pat
         }
         whole = std::move(read).str();
     }
-    whole += text;
     // Closing the directory lets the lock go.
-    return replace_with_text(absolute, whole);
+    return replace_with_text(absolute, rewrite(whole));
+}
+
+std::expected<void, std::error_code> append_replacing(const std::filesystem::path& path,
+                                                      std::string_view text) {
+    return rewrite_locked(path, [text](std::string_view whole) {
+        std::string appended{whole};
+        appended += text;
+        return appended;
+    });
 }
 
 bool utf8_locale() {

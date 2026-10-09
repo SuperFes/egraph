@@ -6,6 +6,7 @@
 #include "atom.hpp"
 #include "blockers.hpp"
 #include "build_info.hpp"
+#include "builds.hpp"
 #include "check.hpp"
 #include "config_check.hpp"
 #include "depclean.hpp"
@@ -3015,9 +3016,36 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     for (const auto& [step, name] : std::views::zip(steps, names)) {
         logged.push_back({.cpv = name, .uninstall = std::holds_alternative<UninstallStep>(step)});
     }
-    RunEvents events{log::new_run(), std::move(logged)};
+    const auto run = log::new_run();
+    RunEvents events{run, std::move(logged)};
     auto logger = logger_of(invocation, out);
     const auto now = epoch_seconds;
+    // Each build's record in the build history, appended as it merges or fails.
+    std::size_t build_keep = 0;
+    if (const auto egraph_settings = read_settings(settings_path(config_root(invocation)))) {
+        build_keep = egraph_settings->build_keep > 0
+                         ? static_cast<std::size_t>(egraph_settings->build_keep)
+                         : 0;
+    } else {
+        out << std::format("egraph: exec: warning: {}, so no builds are recorded\n",
+                           egraph_settings.error());
+    }
+    BuildRecorder builds{std::string{Exec::name}, run,
+                         build_steps(shown.store.get(), shown.evaluated.get(), plan, steps),
+                         installed_toolchain(shown.store.get()), jobs};
+    const auto builds_file = builds_path(shown.store.get().meta.eroot);
+    bool builds_told = false;
+    const auto keep_build = [&](const std::optional<BuildRecord>& record) {
+        if (!record) {
+            return;
+        }
+        if (const auto kept = append_build(builds_file, *record, build_keep);
+            !kept && !builds_told) {
+            out << std::format("egraph: exec: cannot record the build in {}: {}\n",
+                               builds_file.string(), kept.error().message());
+            builds_told = true;
+        }
+    };
     logger.write(events.started({.command = std::string{Exec::name},
                                  .targets = shown.request.targets,
                                  .options = request_options(shown.request, command.oneshot),
@@ -3051,6 +3079,10 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     const auto outcome = run_schedule(
         schedule, pool, requests,
         [&](std::size_t step, const WorkerEvent& event) {
+            builds.reported(step, event, now());
+            if (event.kind == WorkerEvent::Kind::environment) {
+                return;
+            }
             say(step, describe_event(event));
             if (event.kind == WorkerEvent::Kind::phase) {
                 observer.phase(step, event.text);
@@ -3076,6 +3108,7 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
             if (const auto logs = events.traced(step, what, now())) {
                 logger.write(*logs);
             }
+            keep_build(builds.traced(step, what, now()));
             if (what == Traced::merged && std::holds_alternative<MergeStep>(steps.at(step))) {
                 state.merged.push_back(names.at(step));
                 record();
@@ -3722,6 +3755,38 @@ Exit execute(const LogCommand& command, Session&, const Invocation& invocation, 
     for (const auto& event : events) {
         if (event.run == *found) {
             out << (human ? log::event_line(event, *zone) : log::file_line(event)) << '\n';
+        }
+    }
+    return Exit::ok;
+}
+
+Exit execute(const BuildsCommand& command, Session&, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    std::ostringstream text;
+    if (std::ifstream in{
+            builds_path(invocation.root / invocation.eprefix.value_or("").relative_path())};
+        in) {
+        text << in.rdbuf();
+    }
+    const auto records = matching_builds(read_builds(text.str()), command.packages);
+    if (!records) {
+        err << "egraph: builds: " << records.error() << '\n';
+        return Exit::usage;
+    }
+    if (command.format == BuildsFormat::json) {
+        for (const auto& record : *records) {
+            out << build_record_json(record) << '\n';
+        }
+    } else if (command.format == BuildsFormat::csv) {
+        out << builds_csv_header() << '\n';
+        for (const auto& record : *records) {
+            out << build_csv_row(record) << '\n';
+        }
+    } else {
+        const auto* zone = &local_zone();
+        const bool human = output(invocation).human;
+        for (const auto& record : *records) {
+            out << (human ? build_line(record, *zone) : build_fields(record)) << '\n';
         }
     }
     return Exit::ok;
@@ -4809,6 +4874,15 @@ void configure(CLI::App& app, Invocation& invocation) {
                                       "events of one"),
               invocation, "run", &LogCommand::run, "A run's id, or the start of it")
         ->type_name("RUN");
+    CLI::App* builds_cmd = add_command<BuildsCommand>(
+        app, invocation, "The build history: each build exec ran, oldest first, a line each");
+    add_field(builds_cmd, invocation, "packages", &BuildsCommand::packages,
+              "Packages whose builds to show, as atoms or cps; all when omitted")
+        ->type_name("PACKAGE");
+    add_field(builds_cmd, invocation, "--format", &BuildsCommand::format,
+              "The records as JSON lines, as the history holds them, or as CSV")
+        ->transform(
+            one_of<BuildsFormat>({{"json", BuildsFormat::json}, {"csv", BuildsFormat::csv}}, true));
     CLI::App* diff_cmd = add_command<Diff>(
         app, invocation,
         "The installed packages and root sets now against the system as the history kept it");

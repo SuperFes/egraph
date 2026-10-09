@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -130,7 +131,7 @@ class StepRequests {
 
 // What egraph-build --worker reports of a request.
 struct WorkerEvent {
-    enum class Kind : std::uint8_t { phase, built, merged, uninstalled, failed, error };
+    enum class Kind : std::uint8_t { phase, environment, built, merged, uninstalled, failed, error };
     Kind kind = Kind::phase;
     // The phase starting, the cpv built or done, the phase that failed, or the error's
     // message.
@@ -138,6 +139,8 @@ struct WorkerEvent {
     // For a failed phase: its exit status and build log.
     int status = 0;
     std::string log{};
+    // For the environment a build starts in: its variables, by name.
+    std::map<std::string, std::string> values{};
     auto operator<=>(const WorkerEvent&) const = default;
 };
 

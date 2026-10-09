@@ -38,6 +38,14 @@ TEST_CASE("settings are key = value lines with comments") {
     CHECK(egraph::parse_settings("  history_days=0  # off\n")->history_days == 0);
 }
 
+TEST_CASE("the build history keeps 20 builds of each cp unless set") {
+    CHECK(egraph::parse_settings("")->build_keep == 20);
+    CHECK(egraph::parse_settings("build_keep = 5\n")->build_keep == 5);
+    CHECK(egraph::parse_settings("build_keep = 0\n")->build_keep == 0);
+    CHECK(egraph::parse_settings("build_keep = all").error() ==
+          "line 1: build_keep takes a number of builds, not all");
+}
+
 TEST_CASE("the terminal setting is a command line as written") {
     CHECK(egraph::parse_settings("")->terminal.empty());
     CHECK(egraph::parse_settings("terminal = wezterm start --  # for notify\n")->terminal ==

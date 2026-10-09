@@ -68,13 +68,13 @@ std::string text(const Event& event, std::string_view name) {
     return value == nullptr ? std::string{} : *value;
 }
 
+} // namespace
+
 std::string local_time(double time, const std::chrono::time_zone& zone) {
     const auto seconds =
         std::chrono::sys_seconds{std::chrono::seconds{static_cast<std::int64_t>(std::floor(time))}};
     return std::format("{:%Y-%m-%d %H:%M:%S}", std::chrono::zoned_time{&zone, seconds});
 }
-
-} // namespace
 
 std::vector<Event> file_events(std::string_view text) {
     std::vector<Event> events;

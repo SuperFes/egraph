@@ -1267,6 +1267,25 @@ command, the status, the four counts, the seconds (empty when unfinished) and th
 .I run
 The events of the run whose id this is, or starts with: each with its time and message, or as
 lines, as the file holds them, a JSON object each.
+.SS builds \fR[\fIpackage\fR...]
+The build history (see
+.I ${EROOT}/var/lib/egraph/builds.jsonl
+under
+.BR FILES ):
+each build
+.B exec
+ran, oldest first, a line each, with when it started, the cpv and repository, how it ended
+.RB ( merged " or " failed ,
+with the phase that failed) and how long its build and merge took. As lines, the fields are
+separated by tabs: the start in seconds since the epoch, the cpv, the repository, the outcome, the
+build's seconds, the merge's seconds (empty when it failed), the phase that failed (empty when it
+merged), the jobs the run allowed (empty for no limit) and the most other builds beside it.
+.TP
+.I package
+Only the builds of the packages these atoms or cps match.
+.TP
+.BR \-\-format " json|csv"
+The records as the history holds them, a JSON object a line, or as CSV with a header line.
 .SS diff \fR[\fIwhen\fR]
 The installed packages and root sets now against the system as its history kept it (see
 .I ${ROOT}${EPREFIX}/var/lib/egraph
@@ -1620,6 +1639,9 @@ starts a comment):
 .BI history_days " days"
 How long generations of the system store are kept (default 90); 0 keeps none.
 .TP
+.BI build_keep " builds"
+How many builds of each package (by cp) the build history keeps (default 20); 0 records none.
+.TP
 .BR plan " " refresh | sync | never
 After which refreshes
 .B watch
@@ -1642,6 +1664,15 @@ unset, one found as
 .B notify
 describes.
 .RE
+.TP
+.I ${EROOT}/var/lib/egraph/builds.jsonl
+The build history: a JSON object a line for each build
+.B exec
+ran, appended as it merges or fails, with its cpv, repository, slot, flags, package.env files, its
+environment's compiler variables, the toolchain's installed versions, each phase's seconds, its
+build's and merge's seconds, its outcome, and the run's jobs; kept to the last
+.B build_keep
+builds of each package.
 .TP
 .I ${ROOT}${EPREFIX}/var/lib/egraph
 The system store's history: when a refresh changes the installed packages or the root sets, what

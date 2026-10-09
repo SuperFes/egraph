@@ -25,7 +25,7 @@ Update the status column as steps land.
 | 17 | `egraphd`, the service | done |
 | 18 | Explaining and checking the configuration | planned |
 | 19 | What-if | done |
-| 20 | Build knowledge | planned |
+| 20 | Build knowledge | in progress |
 | 21 | The fork's speedups upstream | planned |
 | 22 | Portage's tools in egraph's space | to map out |
 
@@ -1195,39 +1195,50 @@ changes (undo, save) and takes typed lines.
 
 ## 20. Build knowledge
 
-- Build history from the emerge monitor's cgroup readings: time and peak memory per package,
-  which gives every plan an estimate ("34 rebuilds, about 2 h, 6 GB peak").
-- A build history store of egraph's own (todo, to map out; recorded 2026-10-05), written by
-  `exec` as each step ends, never dependent on emerge's files:
-  - What each build records: package, version, repository, USE, the build's environment
-    (CFLAGS, MAKEOPTS, `package.env`, the toolchain's versions), wall and CPU time per phase,
-    peak memory, the build directory's peak size, installed size, distfile sizes and fetch
-    time, how many builds ran beside it and the load average and PSI over it, the jobs and
-    steve's tokens it had, the outcome and the failing phase's log.
-  - Estimates: a package's time from its own builds, scaled for USE, version and the
-    parallelism it gets; for one never built here, from similar ones (build system, eclasses,
-    distfile size). A plan's wall time from the schedule itself, run ahead with those times
-    and the jobs (the critical path, not the sum): `updates`, `plan`, `exec` and a whole
-    `@world` update say how long they will take, and the build view counts down by time, not
-    packages.
-  - Queries and views: a package's last builds as a table and a sparkline ("gcc, the last 12
-    times"), the slowest packages, total build time by week or month, what rebuilds most often
-    and why (subslot rebuilds, USE churn), packages that fail now and then, and a build that
-    got slower (a toolchain or CFLAGS change, LTO), each a page in the living app.
-  - Advice from it: a build whose directory will not fit a tmpfs `PORTAGE_TMPDIR` (offer a
-    `notmpfs` env), one whose peak memory at these jobs nears what the system has (fewer
-    jobs, or steve's memory floor), FEATURES=test's cost per package, a binary package offered
-    when a build is long and a binhost has it, a finish time for a run started now.
-  - Scheduling from it: among the builds ready at once, the longest first or the critical
-    path first, beside emerge's order; a divergence from emerge, so behind an option and
-    recorded in `docs/upstream-notes.md`.
-  - Importing earlier build times from `emerge.log` (read only, marked as imported, coarser),
-    never required.
-  - Export as JSON or CSV. The storage format (SQLite, or an append-only file of our own with
-    an index) is the first thing to map out; C APIs stay behind `os.cpp`-style wrappers.
-- GLSAs matched against the store at once, and a filter in the list.
-- Space: what removing a package frees with the orphans it leaves (the vdb's SIZE).
-- Notifications: moved to step 17e.
+How long each build takes and what it costs, recorded as each step ends, never dependent on
+emerge's files, and every plan given an estimate ("34 rebuilds, about 2 h, 6 GB peak").
+
+Decided with the user (2026-10-08): the history is an append-only JSON-lines file of egraph's
+own, `${EROOT}/var/lib/egraph/builds.jsonl`, one record per finished build, pruned to the last
+builds of each cp (`build_keep` in `egraph.conf`, 20 by default); a binary format of our own if
+that ever grows too slow. `exec` measures each build
+in a cgroup of its own (root on cgroup2: the worker moved into a leaf for the build, its
+counters read by C++ at each phase), else from the worker's `RUSAGE_CHILDREN` (CPU time, and the
+largest single process for memory). Builds by emerge that the monitor or `egraphd` sees through
+observability go in too, marked as emerge's, with what it reports. Core first (20a to 20c).
+
+- 20a (done): the record and the file. `exec` records each build as it merges or fails:
+  cpv, repository, slot, USE, the env files, the compiler variables (the worker's
+  `environment` event), the toolchain's versions, each phase's seconds, the outcome and failing
+  phase with its log's path, the run's jobs and the most builds beside it. Each append
+  rewrites the file under its directory's lock, pruned to `build_keep` (rather than a
+  compaction at the end of a run). `egraph builds [atom]` lists them, as JSON or CSV with
+  `--format`. Held to the run's trace, log and vdb entries on a parallel run.
+- 20b (planned): resources. CPU time per phase, peak memory and IO from the build's cgroup (or
+  rusage), load average and PSI over it, steve's tokens, the build directory's peak size,
+  installed size, distfile sizes and fetch time; emerge's builds from the monitor.
+- 20c (planned): estimates. A package's time from its own builds, scaled for the parallelism it
+  gets; a plan's wall time from the schedule run ahead with those times and the jobs (the
+  critical path, not the sum), and its peak memory: `updates`, `plan`, `exec` and a whole
+  `@world` update say how long they will take, and the build view counts down by time.
+- 20d (planned): estimates for a package never built here, from similar ones (build system,
+  eclasses, distfile size), and scaled for USE and version.
+- 20e (planned): queries and views: a package's last builds as a table and a sparkline ("gcc,
+  the last 12 times"), the slowest packages, total build time by week or month, what rebuilds
+  most often and why (subslot rebuilds, USE churn), packages that fail now and then, and a
+  build that got slower (a toolchain or CFLAGS change, LTO), each a page in the living app.
+- 20f (planned): advice: a build whose directory will not fit a tmpfs `PORTAGE_TMPDIR` (offer a
+  `notmpfs` env), one whose peak memory at these jobs nears what the system has (fewer jobs,
+  or steve's memory floor), FEATURES=test's cost per package, a binary package offered when a
+  build is long and a binhost has it, a finish time for a run started now.
+- 20g (planned): scheduling: among the builds ready at once, the longest first or the critical
+  path first, beside emerge's order; a divergence from emerge, so behind an option and
+  recorded in `docs/upstream-notes.md`.
+- 20h (planned): importing earlier build times from `emerge.log` (read only, marked as
+  imported, coarser), never required.
+- 20i (planned): space: what removing a package frees with the orphans it leaves (the vdb's
+  SIZE).
+- 20j (planned): a GLSA filter in the list (the matching landed in 17e1).
 
 ## 21. The fork's speedups upstream
 
