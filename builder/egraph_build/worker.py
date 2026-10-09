@@ -244,11 +244,27 @@ def _setcpv(settings, cpv, metadata, portdb):
     settings.mycpv = _pkg_str(cpv, metadata=metadata, settings=settings, db=portdb)
 
 
+def use_cgroup(settings, root):
+    """Places each build's phases in a cgroup leaf of its own under root, as emerge's
+    FEATURES="cgroup" does under its own hierarchy, where portage can (as root, on cgroup v2);
+    with no root, in none, since nothing would read and remove the leaves."""
+    from portage.const import SUPPORTED_FEATURES
+
+    settings.unlock()
+    if root is not None and "cgroup" in SUPPORTED_FEATURES:
+        settings.features.add("cgroup")
+        settings["PORTAGE_CGROUP_ROOT"] = root
+        settings.backup_changes("PORTAGE_CGROUP_ROOT")
+    else:
+        settings.features.discard("cgroup")
+    settings.lock()
+
+
 class Worker:
     """Merges into one root, as its configuration says, with what portage keeps between merges
     loaded once."""
 
-    def __init__(self, config_root=None, root=None, eprefix=None):
+    def __init__(self, config_root=None, root=None, eprefix=None, cgroup=None):
         import portage
 
         from egraph_build.cli import portage_environment
@@ -257,6 +273,7 @@ class Worker:
         options = {"config_root": config_root, "target_root": root, "eprefix": eprefix}
         trees = portage.create_trees(**options, env=env)
         self._settings = portage.config(**options, env=env)
+        use_cgroup(self._settings, cgroup)
         eroot = self._eroot = self._settings["EROOT"]
         self._portdb = trees[eroot]["porttree"].dbapi
         self._vartree = trees[eroot]["vartree"]
@@ -515,7 +532,7 @@ def _silenced():
         os.close(devnull)
 
 
-def main(config_root=None, root=None, eprefix=None, background=False):
+def main(config_root=None, root=None, eprefix=None, background=False, cgroup=None):
     # The events keep stdout to themselves; what anything else writes there goes to stderr.
     sys.stdout.flush()
     events = os.fdopen(os.dup(sys.stdout.fileno()), "w")
@@ -531,5 +548,5 @@ def main(config_root=None, root=None, eprefix=None, background=False):
         os.environ.pop("PYTHONPATH", None)
     else:
         os.environ["PYTHONPATH"] = pythonpath
-    serve(Worker(config_root, root, eprefix), sys.stdin, emit, background)
+    serve(Worker(config_root, root, eprefix, cgroup), sys.stdin, emit, background)
     return 0

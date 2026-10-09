@@ -1220,8 +1220,9 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
     reused worker's peak cannot be reset), storage IO from its `io`, the peak memory of the
     processes below it sampled each second, and the system's CPU busy share, mean load and PSI
     stall shares over the build.
-  - 20b2 (planned): a cgroup leaf per build where egraph runs as root on cgroup2, for an exact
-    `memory.peak`, `cpu.stat`, `io.stat` and the build's own pressure.
+  - 20b2 (done): a cgroup leaf per build where egraph runs as root on cgroup2, for an exact
+    `memory.peak`, `cpu.stat`, `io.stat` and the build's own pressure, through portage's own
+    FEATURES=cgroup pointed at egraph's hierarchy (its test needs root, and skips without it).
   - 20b3 (planned): sizes: the build directory at the end of install, the installed size,
     distfile sizes and fetch time, and steve's tokens.
   - 20b4 (planned): emerge's builds, as the monitor or egraphd sees them, marked as emerge's.

@@ -3,6 +3,7 @@
 // The build history: a record of each build as it ends, in ${EROOT}/var/lib/egraph/builds.jsonl,
 // one JSON object a line, kept to the last builds of each cp.
 
+#include "cgroup.hpp"
 #include "exec.hpp"
 #include "pressure.hpp"
 #include "schedule.hpp"
@@ -56,6 +57,19 @@ struct SystemShare {
     bool operator==(const SystemShare&) const = default;
 };
 
+// The share of a build's time its own tasks stalled on CPU, memory or IO, from its cgroup's
+// pressure.
+struct StallShare {
+    std::optional<double> cpu{};
+    std::optional<double> memory{};
+    std::optional<double> io{};
+    bool operator==(const StallShare&) const = default;
+};
+
+// Where a build's measures came from: its worker's counters and samples of the processes under
+// it, or its own cgroup, exact.
+enum class Measured : std::uint8_t { proc, cgroup };
+
 struct BuildRecord {
     enum class Outcome : std::uint8_t { merged, failed };
     // Who ran it: "exec".
@@ -91,13 +105,17 @@ struct BuildRecord {
     std::optional<std::uint32_t> jobs{};
     // The most other builds running at once beside it.
     std::uint32_t beside = 0;
-    // From its worker's counters: the user and system seconds of its processes, the most memory
-    // they held at once (sampled each second), and the bytes they read from and wrote to storage.
+    // The user and system seconds of its processes, the most memory they held at once, and the
+    // bytes they read from and wrote to storage; from its cgroup where it had one, else from its
+    // worker's counters and the memory sampled each second.
     std::optional<double> cpu_seconds{};
     std::optional<std::uint64_t> peak_memory{};
     std::optional<std::uint64_t> read_bytes{};
     std::optional<std::uint64_t> write_bytes{};
+    std::optional<Measured> measured{};
     std::optional<SystemShare> system{};
+    // Its own stalls, from its cgroup.
+    std::optional<StallShare> build_stall{};
     bool operator==(const BuildRecord&) const = default;
 };
 
@@ -163,10 +181,12 @@ using Toolchain = std::map<std::string, std::map<std::string, std::string>>;
 // The toolchain cps' versions installed, by slot.
 [[nodiscard]] Toolchain installed_toolchain(const Store& store);
 
-// What /proc said at one of a build's events: its worker's counters, and the system's.
+// What /proc said at one of a build's events: its worker's counters, and the system's; and its
+// cgroup leaf's counters, once its processes made it.
 struct Probe {
     std::optional<usage::Counters> worker{};
     std::optional<pressure::Sample> system{};
+    std::optional<cgroup::Counters> cgroup{};
 };
 
 // The records of a run's builds, from what its schedule traces and its workers report, as

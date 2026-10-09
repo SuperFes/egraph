@@ -181,6 +181,17 @@ import portage, and run the ebuilds, from the copy
 made in
 .IR dir .
 .TP
+.BI \-\-cgroup " dir"
+With
+.BR \-\-worker :
+put each build's phases in a cgroup v2 leaf of its own under
+.IR dir ,
+named for its cpv, as FEATURES=cgroup puts them under
+.BR emerge 's
+own hierarchy, where portage supports it and runs as root.
+Without it, FEATURES=cgroup is turned off for the worker's builds, since nothing would read
+or remove their leaves.
+.TP
 .B \-\-background
 With
 .BR \-\-worker ,

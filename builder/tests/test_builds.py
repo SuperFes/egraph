@@ -169,6 +169,7 @@ def test_a_build_is_measured_by_what_its_processes_used(hungry):
         sum(p["cpu_seconds"] for p in record["phases"]) <= record["cpu_seconds"] + 0.01
     )
     assert record["peak_memory"] >= 100_000_000
+    assert record["measured"] in ("proc", "cgroup")
     if os.path.exists("/proc/self/io"):
         assert record["read_bytes"] >= 0 and record["write_bytes"] >= 0
     shares = record["system"]
@@ -180,3 +181,38 @@ def test_a_build_is_measured_by_what_its_processes_used(hungry):
     listed = system.egraph("builds", "--format", "csv").stdout.splitlines()
     header, row = listed[0].split(","), listed[1].split(",")
     assert int(row[header.index("peak_memory")]) == record["peak_memory"]
+
+
+def cgroups_writable():
+    from portage.const import SUPPORTED_FEATURES
+
+    return (
+        os.geteuid() == 0
+        and os.path.exists("/sys/fs/cgroup/cgroup.controllers")
+        and os.access("/sys/fs/cgroup", os.W_OK)
+        and "cgroup" in SUPPORTED_FEATURES
+    )
+
+
+@pytest.mark.skipif(not cgroups_writable(), reason="needs root on a writable cgroup v2")
+def test_a_build_as_root_is_measured_in_its_own_cgroup(hungry):
+    """Its phases in a leaf of egraph's hierarchy, read exactly and removed with it."""
+    system, machine = hungry
+    age(system.playground.eroot)
+    ran = system.egraph("exec", "--yes", "app-misc/hungry")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    (record,) = history(system)
+    assert record["measured"] == "cgroup"
+    phases = {p["phase"]: p for p in record["phases"]}
+    assert phases["compile"]["cpu_seconds"] >= phases["configure"]["cpu_seconds"] + 0.2
+    assert record["peak_memory"] >= 100_000_000
+    assert (
+        abs(sum(p["cpu_seconds"] for p in record["phases"]) - record["cpu_seconds"])
+        < 0.01
+    )
+    base = "/sys/fs/cgroup/egraph"
+    assert not [n for n in os.listdir(base) if n.startswith("exec-")] or all(
+        os.path.exists(f"/proc/{n[5:]}")
+        for n in os.listdir(base)
+        if n.startswith("exec-")
+    )

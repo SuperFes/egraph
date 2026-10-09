@@ -7,6 +7,7 @@
 #include "blockers.hpp"
 #include "build_info.hpp"
 #include "builds.hpp"
+#include "cgroup.hpp"
 #include "check.hpp"
 #include "config_check.hpp"
 #include "depclean.hpp"
@@ -2957,6 +2958,14 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     if (jobs != 1U) {
         argv.emplace_back("--background");
     }
+    // As root on cgroup v2, each build in a leaf of its own, measured exactly; else from /proc.
+    std::optional<cgroup::Hierarchy> hierarchy;
+    if (os::is_root()) {
+        if (auto made = cgroup::Hierarchy::create("/sys/fs/cgroup", os::process_id())) {
+            hierarchy = std::move(*made);
+            argv.insert(argv.end(), {"--cgroup", hierarchy->root().string()});
+        }
+    }
     // Portage merging itself into the running root: the workers run on a copy of the portage
     // running now, taken before the run, as emerge updates itself.
     std::optional<RemovedAtEnd> portage_copy;
@@ -3033,14 +3042,19 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     BuildRecorder builds{std::string{Exec::name}, run,
                          build_steps(shown.store.get(), shown.evaluated.get(), plan, steps),
                          installed_toolchain(shown.store.get()), jobs};
-    // By step, the worker building it, measured from /proc at its events and sampled each second
-    // while it builds.
+    // By step, the worker building it, measured from /proc and its leaf at its events and
+    // sampled each second while it builds.
     std::map<std::size_t, std::int64_t> building;
     const auto ticks = os::clock_ticks();
     const auto page = os::page_size();
-    const auto probe = [&](std::optional<std::int64_t> pid) {
+    const auto leaf = [&](std::size_t step) {
+        return hierarchy ? std::optional{hierarchy->leaf(names.at(step))} : std::nullopt;
+    };
+    const auto probe = [&](std::size_t step, std::optional<std::int64_t> pid) {
+        const auto path = leaf(step);
         return Probe{.worker = pid ? usage::read_counters(*pid, ticks) : std::nullopt,
-                     .system = pressure::read_sample()};
+                     .system = pressure::read_sample(),
+                     .cgroup = path ? cgroup::read_counters(*path) : std::nullopt};
     };
     auto sampled_at = std::chrono::steady_clock::now();
     const auto sample = [&] {
@@ -3113,7 +3127,7 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
             const auto worker = building.find(step);
             builds.reported(step, event, now(),
                             event.kind == WorkerEvent::Kind::phase && worker != building.end()
-                                ? probe(worker->second)
+                                ? probe(step, worker->second)
                                 : Probe{});
             sample();
             if (event.kind == WorkerEvent::Kind::environment) {
@@ -3145,19 +3159,30 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                 logger.write(*logs);
             }
             Probe probed;
+            const auto path = leaf(step);
             if (what == Traced::build_started) {
                 const auto pid = worker ? pool.pid(*worker) : std::nullopt;
                 if (pid) {
                     building.insert_or_assign(step, *pid);
                 }
-                probed = probe(pid);
+                // Counted from nothing.
+                if (path) {
+                    cgroup::remove(*path);
+                }
+                probed = probe(step, pid);
             } else if (what == Traced::built || what == Traced::build_failed) {
                 const auto found = building.find(step);
-                probed =
-                    probe(found != building.end() ? std::optional{found->second} : std::nullopt);
+                probed = probe(step, found != building.end() ? std::optional{found->second}
+                                                             : std::nullopt);
                 if (found != building.end()) {
                     building.erase(found);
                 }
+            }
+            // As emerge's Scheduler, after the build and after the merge, whose phases make it
+            // again.
+            if (path && (what == Traced::built || what == Traced::build_failed ||
+                         what == Traced::merged || what == Traced::merge_failed)) {
+                cgroup::remove(*path);
             }
             keep_build(builds.traced(step, what, now(), probed));
             if (what == Traced::merged && std::holds_alternative<MergeStep>(steps.at(step))) {

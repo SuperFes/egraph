@@ -87,6 +87,10 @@ std::string_view outcome_name(BuildRecord::Outcome outcome) {
     return outcome == BuildRecord::Outcome::merged ? "merged" : "failed";
 }
 
+std::string_view measured_name(Measured measured) {
+    return measured == Measured::cgroup ? "cgroup" : "proc";
+}
+
 // The record's cp, if the line is one.
 std::optional<std::string> record_cp(std::string_view line) {
     const auto record = parse_build_record(line);
@@ -159,6 +163,21 @@ std::string build_record_json(const BuildRecord& record) {
     }
     if (record.write_bytes) {
         json.emplace("write_bytes", *record.write_bytes);
+    }
+    if (record.measured) {
+        json.emplace("measured", measured_name(*record.measured));
+    }
+    if (record.build_stall) {
+        auto stall = Json::object();
+        const auto share = [&](std::string_view key, std::optional<double> value) {
+            if (value) {
+                stall.emplace(key, *value);
+            }
+        };
+        share("cpu", record.build_stall->cpu);
+        share("memory", record.build_stall->memory);
+        share("io", record.build_stall->io);
+        json.emplace("build_stall", std::move(stall));
     }
     if (record.system) {
         auto system = Json::object();
@@ -284,6 +303,20 @@ std::expected<BuildRecord, std::string> parse_build_record(std::string_view line
                                     .stall_cpu = number_at(*found, "stall_cpu"),
                                     .stall_memory = number_at(*found, "stall_memory"),
                                     .stall_io = number_at(*found, "stall_io")};
+    }
+    if (const auto measured = string_at(json, "measured")) {
+        if (*measured != "proc" && *measured != "cgroup") {
+            return std::unexpected("an unknown measure: " + *measured);
+        }
+        record.measured = *measured == "cgroup" ? Measured::cgroup : Measured::proc;
+    }
+    if (const auto found = json.find("build_stall"); found != json.end()) {
+        if (!found->is_object()) {
+            return std::unexpected("build_stall is not an object");
+        }
+        record.build_stall = StallShare{.cpu = number_at(*found, "cpu"),
+                                        .memory = number_at(*found, "memory"),
+                                        .io = number_at(*found, "io")};
     }
     return record;
 }
@@ -503,13 +536,15 @@ std::string share_or_empty(std::optional<double> share) {
 std::string_view builds_csv_header() {
     return "start,origin,run,cpv,repo,slot,outcome,build_seconds,merge_seconds,waited,"
            "failed_phase,status,error,jobs,beside,cpu_seconds,peak_memory,read_bytes,write_bytes,"
-           "cpu_busy,load,stall_cpu,stall_memory,stall_io,use,env_files,log";
+           "measured,cpu_busy,load,stall_cpu,stall_memory,stall_io,build_stall_cpu,"
+           "build_stall_memory,build_stall_io,use,env_files,log";
 }
 
 std::string build_csv_row(const BuildRecord& record) {
     const auto seconds =
         std::chrono::sys_seconds{std::chrono::seconds{static_cast<std::int64_t>(record.start)}};
     const auto system = record.system.value_or(SystemShare{});
+    const auto stall = record.build_stall.value_or(StallShare{});
     const std::vector<std::string> fields{
         std::format("{:%Y-%m-%dT%H:%M:%SZ}", seconds),
         record.origin,
@@ -530,11 +565,15 @@ std::string build_csv_row(const BuildRecord& record) {
         count_or_empty(record.peak_memory),
         count_or_empty(record.read_bytes),
         count_or_empty(record.write_bytes),
+        record.measured ? std::string{measured_name(*record.measured)} : std::string{},
         share_or_empty(system.cpu_busy),
         system.load ? std::format("{:.2f}", *system.load) : std::string{},
         share_or_empty(system.stall_cpu),
         share_or_empty(system.stall_memory),
         share_or_empty(system.stall_io),
+        share_or_empty(stall.cpu),
+        share_or_empty(stall.memory),
+        share_or_empty(stall.io),
         joined(record.use),
         joined(record.env_files),
         record.log.value_or("")};
@@ -550,8 +589,15 @@ std::string build_csv_row(const BuildRecord& record) {
 
 namespace {
 
-// The CPU seconds a worker's processes used between two probes.
+// The CPU seconds a build's processes used between two probes: from its leaf once there is one,
+// which held nothing before it was made.
 std::optional<double> cpu_between(const Probe& before, const Probe& after) {
+    if (after.cgroup && after.cgroup->cpu_usec) {
+        const auto since = before.cgroup ? before.cgroup->cpu_usec.value_or(0) : 0;
+        return static_cast<double>(*after.cgroup->cpu_usec > since ? *after.cgroup->cpu_usec - since
+                                                                   : 0) /
+               1e6;
+    }
     if (!before.worker || !after.worker) {
         return std::nullopt;
     }
@@ -664,6 +710,29 @@ BuildRecord BuildRecorder::record(std::size_t step, BuildRecord::Outcome outcome
         found.write_bytes = grown(before.worker->write_bytes, after.worker->write_bytes);
     }
     found.peak_memory = times.peak_memory;
+    if (found.cpu_seconds || found.peak_memory || found.read_bytes) {
+        found.measured = Measured::proc;
+    }
+    // Its leaf, made for it alone, counted from nothing: exact where the controllers keep it.
+    if (const auto& leaf = after.cgroup) {
+        found.measured = Measured::cgroup;
+        if (leaf->memory_peak) {
+            found.peak_memory = leaf->memory_peak;
+        }
+        if (leaf->read_bytes && leaf->write_bytes) {
+            found.read_bytes = leaf->read_bytes;
+            found.write_bytes = leaf->write_bytes;
+        }
+        const auto share = [&](std::optional<std::uint64_t> total) {
+            return stalled(std::uint64_t{0}, total, found.build_seconds);
+        };
+        const StallShare stall{.cpu = share(leaf->stalls.cpu),
+                               .memory = share(leaf->stalls.memory),
+                               .io = share(leaf->stalls.io)};
+        if (stall != StallShare{}) {
+            found.build_stall = stall;
+        }
+    }
     found.system = system_share(before.system, after.system, times.loads, times.load_samples,
                                 found.build_seconds);
     if (outcome == BuildRecord::Outcome::failed && times.failure) {

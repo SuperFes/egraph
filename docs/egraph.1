@@ -1286,6 +1286,13 @@ A record also holds each phase's seconds and CPU seconds, the bytes the build re
 to storage, and how busy the system was over it: the share of CPU time busy, the mean load, and the
 shares of the time some tasks stalled on CPU, memory and IO, where the kernel keeps pressure stall
 information.
+When
+.B exec
+runs as root on cgroup v2, each build's phases run in a cgroup of their own (under
+.IR /sys/fs/cgroup/egraph ,
+through portage's FEATURES=cgroup), whose counters measure them exactly, with the shares of the
+build's time its own tasks stalled; otherwise its worker's counters and samples of its processes
+do. Each record says which measured it.
 .TP
 .I package
 Only the builds of the packages these atoms or cps match.

@@ -132,6 +132,8 @@ TEST_CASE("a build record reads back as written") {
     record.write_bytes = 0;
     record.system = egraph::SystemShare{
         .cpu_busy = 0.9, .load = 7.5, .stall_cpu = 0.25, .stall_memory = 0, .stall_io = 0.01};
+    record.measured = egraph::Measured::cgroup;
+    record.build_stall = egraph::StallShare{.cpu = 0.5, .memory = std::nullopt, .io = 0.125};
     const auto line = egraph::build_record_json(record);
     CHECK(line.find('\n') == std::string::npos);
     CHECK(egraph::parse_build_record(line) == record);
@@ -298,6 +300,64 @@ TEST_CASE("a build is measured by its worker's counters at its start, phases and
     CHECK(record->system->stall_cpu == 0.25);
     CHECK(record->system->stall_memory == 0);
     CHECK(record->system->stall_io == 0.1);
+    CHECK(record->measured == egraph::Measured::proc);
+    CHECK_FALSE(record->build_stall);
+}
+
+TEST_CASE("a build in its own cgroup is measured by its leaf") {
+    using Kind = WorkerEvent::Kind;
+    using egraph::cgroup::Counters;
+    BuildRecorder recorder{"exec", "run1", steps(), toolchain(), 4};
+    const auto in_leaf = [](double worker_cpu, std::optional<Counters> leaf) {
+        auto probed = probe(worker_cpu, 1000, 2000);
+        probed.cgroup = std::move(leaf);
+        return probed;
+    };
+    // The leaf is made by the first phase's processes.
+    CHECK_FALSE(recorder.traced(0, Traced::build_started, 100, in_leaf(5, std::nullopt)));
+    recorder.reported(0, event(Kind::phase, "setup"), 100, in_leaf(5, std::nullopt));
+    recorder.reported(0, event(Kind::phase, "compile"), 102,
+                      in_leaf(5.5, Counters{.cpu_usec = 750'000}));
+    recorder.sampled(0, 300, std::nullopt);
+    // Over the 10 s it built, its own tasks stalled 2.5 s on CPU; the kernel kept no IO
+    // pressure.
+    const Counters end{.cpu_usec = 40'750'000,
+                       .memory_peak = 4096,
+                       .read_bytes = 100,
+                       .write_bytes = 200,
+                       .stalls = {.cpu = 2'500'000, .memory = 0, .io = std::nullopt}};
+    CHECK_FALSE(recorder.traced(0, Traced::built, 110, in_leaf(45.5, end)));
+    CHECK_FALSE(recorder.traced(0, Traced::merge_started, 115, probe(46, 9000, 9000)));
+    const auto record = recorder.traced(0, Traced::merged, 120, probe(50, 20000, 20000));
+    REQUIRE(record);
+    CHECK(record->phases ==
+          std::vector<egraph::PhaseTime>{{.phase = "setup", .seconds = 2, .cpu_seconds = 0.75},
+                                         {.phase = "compile", .seconds = 8, .cpu_seconds = 40}});
+    CHECK(record->cpu_seconds == 40.75);
+    CHECK(record->peak_memory == 4096U);
+    CHECK(record->read_bytes == 100U);
+    CHECK(record->write_bytes == 200U);
+    CHECK(record->measured == egraph::Measured::cgroup);
+    CHECK(record->build_stall == egraph::StallShare{.cpu = 0.25, .memory = 0, .io = std::nullopt});
+
+    // A leaf without the memory and io controllers: those from /proc.
+    CHECK_FALSE(recorder.traced(3, Traced::build_started, 200, in_leaf(1, std::nullopt)));
+    recorder.reported(3, event(Kind::phase, "compile"), 200, in_leaf(1, std::nullopt));
+    recorder.sampled(3, 700, std::nullopt);
+    auto bare = in_leaf(9, Counters{.cpu_usec = 2'000'000});
+    bare.worker->read_bytes = 1500;
+    recorder.reported(
+        3, {.kind = Kind::failed, .text = "compile", .status = 1, .log = "/l", .values = {}}, 204,
+        bare);
+    const auto failed = recorder.traced(3, Traced::build_failed, 204, bare);
+    REQUIRE(failed);
+    CHECK(failed->phases.at(0).cpu_seconds == 2);
+    CHECK(failed->cpu_seconds == 2);
+    CHECK(failed->peak_memory == 700U);
+    CHECK(failed->read_bytes == 500U);
+    CHECK(failed->write_bytes == 0U);
+    CHECK(failed->measured == egraph::Measured::cgroup);
+    CHECK_FALSE(failed->build_stall);
 }
 
 TEST_CASE("a build is measured as far as its probes go") {
@@ -315,6 +375,7 @@ TEST_CASE("a build is measured as far as its probes go") {
     CHECK_FALSE(record->peak_memory);
     CHECK_FALSE(record->read_bytes);
     CHECK_FALSE(record->system);
+    CHECK_FALSE(record->measured);
 
     // A worker whose IO is not accounted, and a failure with its processes' time.
     egraph::Probe start{.worker = egraph::usage::Counters{.children_cpu = 1}, .system = {}};
@@ -534,7 +595,7 @@ TEST_CASE("as CSV, a header and a row per build, quoted where it must be") {
     record.error = R"(said "no", twice)";
     CHECK(egraph::build_csv_row(record) ==
           R"(2025-10-08T14:02:11Z,exec,run1,app-misc/a-1,gentoo,0,merged,10.0,2.0,0.0,,,)"
-          R"("said ""no"", twice",,0,,,,,,,,,,ssl zstd,,)");
+          R"("said ""no"", twice",,0,,,,,,,,,,,,,,ssl zstd,,)");
     record.error.reset();
     record.cpu_seconds = 61.25;
     record.peak_memory = 1048576;
@@ -542,9 +603,11 @@ TEST_CASE("as CSV, a header and a row per build, quoted where it must be") {
     record.write_bytes = 0;
     record.system = egraph::SystemShare{
         .cpu_busy = 0.5, .load = 3.25, .stall_cpu = 0.125, .stall_memory = 0, .stall_io = 0.5};
+    record.measured = egraph::Measured::cgroup;
+    record.build_stall = egraph::StallShare{.cpu = 0.25, .memory = 0, .io = std::nullopt};
     CHECK(egraph::build_csv_row(record) ==
           R"(2025-10-08T14:02:11Z,exec,run1,app-misc/a-1,gentoo,0,merged,10.0,2.0,0.0,,,,,0,)"
-          R"(61.2,1048576,4096,0,0.500,3.25,0.125,0.000,0.500,ssl zstd,,)");
+          R"(61.2,1048576,4096,0,cgroup,0.500,3.25,0.125,0.000,0.500,0.250,0.000,,ssl zstd,,)");
     const auto header = egraph::builds_csv_header();
-    CHECK(std::ranges::count(header, ',') == 26);
+    CHECK(std::ranges::count(header, ',') == 30);
 }

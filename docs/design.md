@@ -906,6 +906,17 @@ memory of the processes below its worker is summed (the worker's own left out) f
 the load is sampled for its mean. A sum of RSS counts shared pages once a process, and a peak
 between samples is missed; the build's cgroup measures both exactly where egraph can make one.
 
+As root on cgroup v2 (`src/cgroup.hpp`), `exec` makes `/sys/fs/cgroup/egraph/exec-<pid>` with the
+cpu, io and memory controllers for its children, reaping those of runs no longer alive, and hands
+it to the workers (`--cgroup`), which turn portage's own FEATURES=cgroup on with
+`PORTAGE_CGROUP_ROOT` there, as emerge's Scheduler points it at its `emerge-<pid>`. Each phase
+spawn then joins the leaf named for its cpv before it execs, so a reused worker races nothing and
+its own Python stays out. The leaf is removed (its leftovers killed, as emerge does) at the
+build's start, its end and its merge's end, so it counts from nothing: `cpu.stat`'s usage per
+phase and in all, `memory.peak`, `io.stat` and the leaf's own PSI totals replace the /proc
+measures where the kernel keeps them, and the record's `measured` says which. Without
+`--cgroup` the worker turns FEATURES=cgroup off, since nothing would read or remove the leaves.
+
 Each append rewrites the file under its directory's lock (`os::rewrite_locked`, as the store
 history's log is appended) and keeps the last `build_keep` records of each cp (`egraph.conf`,
 20 by default; 0 records nothing), so the file stays a few MB at most and is read whole; lines it

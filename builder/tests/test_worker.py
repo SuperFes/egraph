@@ -786,3 +786,25 @@ def test_ebuilds_inherit_no_pythonpath_of_the_builders():
     assert worker.without_builder(builder + "/", builder) is None
     assert worker.without_builder("", builder) is None
     assert worker.without_builder("/a::/b", builder) == "/a:/b"
+
+
+def test_builds_go_in_a_cgroup_leaf_only_under_egraphs_hierarchy(machine):
+    """Under the root egraph gives it, as emerge's Scheduler points FEATURES=cgroup at its own;
+    without one, not even where make.conf asks, since nothing would read or remove the leaves.
+    """
+    import portage
+    from portage.const import SUPPORTED_FEATURES
+
+    if "cgroup" not in SUPPORTED_FEATURES:
+        pytest.skip("this portage has no FEATURES=cgroup")
+    settings = portage.config(clone=machine.playground.settings)
+    worker.use_cgroup(settings, "/sys/fs/cgroup/egraph/exec-1")
+    # As each build's settings are taken from the worker's.
+    build = portage.config(clone=settings)
+    assert "cgroup" in build.features
+    assert build["PORTAGE_CGROUP_ROOT"] == "/sys/fs/cgroup/egraph/exec-1"
+    asked = portage.config(clone=machine.playground.settings)
+    asked.unlock()
+    asked.features.add("cgroup")
+    worker.use_cgroup(asked, None)
+    assert "cgroup" not in portage.config(clone=asked).features

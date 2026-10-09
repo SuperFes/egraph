@@ -133,6 +133,12 @@ def parser():
         "emerge running more than one job",
     )
     p.add_argument(
+        "--cgroup",
+        metavar="DIR",
+        help="with --worker: put each build's phases in a cgroup v2 leaf of its own under DIR, "
+        "named for its cpv, as FEATURES=cgroup does (as root)",
+    )
+    p.add_argument(
         "--portage-copy",
         type=Path,
         help="with --worker: run on the copy of portage --copy-portage made there",
@@ -534,7 +540,9 @@ def main(argv=None):
             from egraph_build import selfupdate
 
             selfupdate.use_copy(str(args.portage_copy))
-        return worker.main(args.config_root, args.root, args.eprefix, args.background)
+        return worker.main(
+            args.config_root, args.root, args.eprefix, args.background, args.cgroup
+        )
     if args.mode == "json":
         from egraph_build import build, installed
 
