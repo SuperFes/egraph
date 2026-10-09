@@ -1377,6 +1377,30 @@ tries a line: the views show the stores with the lines tried, made in the backgr
 they change saying what it was, and the sets' plans what they change in them, as
 .B updates
 marks it: a merge they add, or change, tried, and one they drop listed dimmed.
+.B a
+and
+.B e
+there try a typed
+.I package.use
+or
+.I package.env
+line naming the package.
+The first line turns the list to a what-if page after the notices, there while lines are tried:
+it lists them, with what they change in the set's plan and the installed packages the
+.I package.env
+lines build otherwise;
+.B x
+drops a line,
+.B u
+undoes the last change,
+.B a
+and
+.B e
+try a typed line, and
+.B r
+rebuilds those packages in the plans, as
+.B \-\-rebuild\-env
+does.
 A set's plan is made in the background the first time its page shows, as
 .B exec \-uDN
 on its set plans it. Beside them, the plan of

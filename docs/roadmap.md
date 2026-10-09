@@ -1179,8 +1179,9 @@ changes (undo, save) and takes typed lines.
     rows `+ tried`, `~ tried` or dropped, the plan view's merges `+` or `~`, the dropped after
     them, and a `tried:` count. Each set planned twice in the background, @installed too
     while lines are tried.
-  - 19e4: the what-if page: the lines pending, dropped with `x`, undone with `u`, typed with
-    `a`; the plan's `Tried:` count; the env rebuilds, `r` planning them.
+  - 19e4 (done): the what-if page: the lines pending, dropped with `x`, undone with `u`, typed
+    with `a` (package.use) or `e` (package.env), as they are on a package's page, there naming
+    it; the set's plan's `tried:` count; the env rebuilds, `r` planning them.
 - 19f: saving to egraph's files.
 
 ## 20. Build knowledge

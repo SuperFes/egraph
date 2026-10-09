@@ -699,6 +699,21 @@ class App {
         return owned_ && !lines_.empty() && (trying_ || tried_version_ != version_);
     }
     [[nodiscard]] bool trying() const { return trying_; }
+    // The what-if page, after the notices, while there are lines: the first line turns to it.
+    [[nodiscard]] bool on_what_if() const { return on_what_if_ && !lines_.empty(); }
+    [[nodiscard]] const Cursor& what_if_cursor() const { return what_if_cursor_; }
+    // A line being typed, on the what-if page or a package's (the package named first), for its
+    // file.
+    struct TypedLine {
+        WhatIfLine::File file = WhatIfLine::File::use;
+        std::string text;
+    };
+    [[nodiscard]] const std::optional<TypedLine>& typed_line() const { return typed_line_; }
+    // The installed packages the env lines tried build otherwise, as last tried.
+    [[nodiscard]] const std::vector<EnvChange>& env_changes() const { return env_changes_; }
+    // Whether the plans rebuild them, as --rebuild-env.
+    [[nodiscard]] bool rebuild_env() const { return rebuild_env_; }
+    [[nodiscard]] bool can_undo() const { return !undo_.empty(); }
     [[nodiscard]] TryRequest start_try();
     // Shows the stores tried, each view where it was, unless the lines changed meanwhile.
     void finish_try(TryResult result);
@@ -799,6 +814,16 @@ class App {
     void rebase(const std::shared_ptr<const Stores>& stores);
     // Toggles the flag for atom: takes back the line's token for it, or adds one turning it.
     void toggle(const FlagState& flag, const std::string& atom);
+    // Tries lines in place of the current ones, which undo brings back; the first turn the list
+    // to the what-if page, and none show the stores untried.
+    void set_lines(std::vector<WhatIfLine> lines, bool undoable = true);
+    void handle_what_if(const Key& key);
+    // Enter tries the line typed, turning to the what-if page with the first.
+    void handle_typed_line(TypedLine& typed, const Key& key);
+    // Drops the plans made, to be made again in the background.
+    void replan();
+    // The installed packages the plans rebuild for the env lines, sorted.
+    [[nodiscard]] std::vector<std::uint32_t> reinstalled() const;
     // The page's plan, or none yet.
     [[nodiscard]] const ScopePlan& current() const;
     // Moves the list to the page step pages on, the first and last staying put.
@@ -883,6 +908,13 @@ class App {
     std::uint64_t tried_version_ = 0;
     std::uint64_t try_version_ = 0;
     bool trying_ = false;
+    bool on_what_if_ = false;
+    Cursor what_if_cursor_;
+    std::optional<TypedLine> typed_line_;
+    // The lines before each change, the last latest.
+    std::vector<std::vector<WhatIfLine>> undo_;
+    std::vector<EnvChange> env_changes_;
+    bool rebuild_env_ = false;
     std::optional<StatusShown> status_;
     std::optional<NoticesShown> notices_;
     bool on_notices_ = false;
@@ -1138,11 +1170,12 @@ inline std::vector<Span> rebuild_flags(std::string_view flags) {
 inline std::vector<Span> page_spans(const App& app, const Glyphs& glyph) {
     const Pen picked{.fg = palette::crust, .bg = palette::mauve, .bold = true};
     std::vector<Span> spans{{" ", {}}};
+    const bool elsewhere = app.on_notices() || app.on_what_if();
     if (!app.has_evaluated()) {
-        spans.push_back({" packages ", app.on_notices() ? tone_pen(Tone::note) : picked});
+        spans.push_back({" packages ", elsewhere ? tone_pen(Tone::note) : picked});
     }
     for (const auto scope : app.has_evaluated() ? std::span{scopes} : std::span<const Scope>{}) {
-        const bool shown = !app.on_notices() && scope == app.scope();
+        const bool shown = !elsewhere && scope == app.scope();
         const bool waiting = app.planning() == scope || (shown && !app.scope_planned(scope));
         auto text =
             waiting ? std::format(" {} {} ", spinner_frame(app.frame(), glyph), scope_name(scope))
@@ -1153,6 +1186,10 @@ inline std::vector<Span> page_spans(const App& app, const Glyphs& glyph) {
         const auto count = notices->notices.size();
         spans.push_back({std::format(" notices {} ", count),
                          app.on_notices() ? picked : tone_pen(count ? Tone::bad : Tone::note)});
+    }
+    if (const auto lines = app.what_if().size(); lines != 0) {
+        spans.push_back({.text = std::format(" what if {} ", lines),
+                         .pen = app.on_what_if() ? picked : tone_pen(Tone::use)});
     }
     return spans;
 }
@@ -1346,6 +1383,120 @@ template <class S> void draw_notices(S& screen, App& app, const Glyphs& glyph, S
     }
     for (unsigned line = 0; line < detail_rows; ++line) {
         put_spans(screen, first + height + 1 + line, 6, {{detail[line], {}}}, size.cols);
+    }
+}
+
+// What the lines tried change in the page's plan, counted as updates counts them.
+inline std::string tried_count(const App& app) {
+    const auto& tried = app.current_tried();
+    if (tried.empty()) {
+        return "";
+    }
+    std::size_t added = 0;
+    std::size_t changed = 0;
+    std::size_t dropped = 0;
+    for (const auto& merge : tried) {
+        (merge.change == TriedMerge::Change::added     ? added
+         : merge.change == TriedMerge::Change::changed ? changed
+                                                       : dropped)++;
+    }
+    std::string text;
+    for (const auto& [count, words] :
+         {std::pair{added, "more"}, {dropped, "fewer"}, {changed, "changed"}}) {
+        if (count != 0) {
+            text += std::format("{}{} {}", text.empty() ? "  tried: " : ", ", count, words);
+        }
+    }
+    return text;
+}
+
+// The what-if page: the lines tried, as egraph's files would hold them, what they change in the
+// page's plan, and the installed packages the env lines build otherwise.
+template <class S> void draw_what_if(S& screen, App& app, const Glyphs& glyph, Size size) {
+    const auto& lines = app.what_if();
+    draw_title(screen, app, size.cols,
+               {{std::format(" {} egraph ", glyph.package),
+                 {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
+                {std::format(" {}  ", app.store().meta.eroot), tone_pen(Tone::note)},
+                {lines.size() == 1 ? std::string{"1 line tried"}
+                                   : std::format("{} lines tried", lines.size()),
+                 tone_pen(Tone::count)}},
+               glyph);
+    put_spans(screen, 1, 0, page_spans(app, glyph), size.cols);
+    put_spans(screen, 2, 0, {{"      file  line", tone_pen(Tone::note)}}, size.cols);
+    const unsigned first = 3;
+    std::vector<std::vector<Span>> after;
+    after.emplace_back();
+    const auto& scope = scope_name(app.scope());
+    const auto note = [](std::string text) {
+        return Span{.text = std::move(text), .pen = tone_pen(Tone::note)};
+    };
+    const auto heading = [](std::string text) {
+        return Span{.text = std::move(text), .pen = tone_pen(Tone::heading)};
+    };
+    if (app.trying()) {
+        after.push_back({note(std::format("{} trying", spinner_frame(app.frame(), glyph)))});
+    } else if (!app.scope_planned(app.scope())) {
+        after.push_back(
+            {note(std::format("{} planning {}", spinner_frame(app.frame(), glyph), scope))});
+    } else if (auto counted = tried_count(app); !counted.empty()) {
+        after.push_back({heading(std::string{scope}), note(std::move(counted))});
+    } else {
+        after.push_back({heading(std::string{scope}), note("  the plan is the same")});
+    }
+    if (const auto& changes = app.env_changes(); !changes.empty()) {
+        after.emplace_back();
+        after.push_back({heading("Built differently from now on (package.env)")});
+        for (const auto& change : changes) {
+            const auto joined = [](const std::vector<std::string>& files) {
+                std::string text;
+                for (const auto& file : files) {
+                    text += (text.empty() ? "" : " ") + file;
+                }
+                return text.empty() ? std::string{"none"} : text;
+            };
+            std::vector<Span> row{note("   ")};
+            std::ranges::move(
+                cpv_spans(app.installed().string(app.installed().packages.at(change.package).cpv)),
+                std::back_inserter(row));
+            row.push_back(note(std::format("  {} {} {}", joined(change.before), glyph.instead,
+                                           joined(change.after))));
+            after.push_back(std::move(row));
+        }
+        after.push_back({note(app.rebuild_env() ? "   rebuilt in the plans; r leaves them out"
+                                                : "   r rebuilds them in the plans")});
+    }
+    const auto room = size.rows > first + 1 ? size.rows - first - 1 : 0U;
+    const auto tail = static_cast<unsigned>(std::min<std::size_t>(after.size(), room / 2));
+    const unsigned height = room - tail;
+    app.set_height(height);
+    const auto& cursor = app.what_if_cursor();
+    for (unsigned line = 0; line < height; ++line) {
+        const auto index = cursor.top + line;
+        if (index >= lines.size()) {
+            break;
+        }
+        const auto& tried = lines.at(index);
+        const bool selected = index == cursor.at;
+        const auto bg = selected ? std::optional<Color>{palette::surface} : std::nullopt;
+        if (selected) {
+            screen.fill_row(first + line, {.fg = std::nullopt, .bg = palette::surface});
+        }
+        std::string tokens;
+        for (const auto& token : tried.tokens) {
+            tokens += " " + token;
+        }
+        put_spans(
+            screen, first + line, 0,
+            {marker(selected, glyph),
+             {tried.file == WhatIfLine::File::use ? " use   " : " env   ", tone_pen(Tone::note)},
+             {tried.atom, tone_pen(Tone::name)},
+             {tokens, tone_pen(tried.file == WhatIfLine::File::use ? Tone::use : Tone::note)}},
+            size.cols, bg);
+    }
+    const auto shown = static_cast<unsigned>(std::min<std::size_t>(lines.size(), height));
+    for (unsigned line = 0; line < tail; ++line) {
+        put_spans(screen, first + shown + line, 0, after.at(line), size.cols);
     }
 }
 
@@ -1718,30 +1869,6 @@ inline std::vector<Span> merge_spans(const App& app, const Planned& planned, std
         }
     }
     return spans;
-}
-
-// What the lines tried change in the page's plan, counted as updates counts them.
-inline std::string tried_count(const App& app) {
-    const auto& tried = app.current_tried();
-    if (tried.empty()) {
-        return "";
-    }
-    std::size_t added = 0;
-    std::size_t changed = 0;
-    std::size_t dropped = 0;
-    for (const auto& merge : tried) {
-        (merge.change == TriedMerge::Change::added     ? added
-         : merge.change == TriedMerge::Change::changed ? changed
-                                                       : dropped)++;
-    }
-    std::string text;
-    for (const auto& [count, words] :
-         {std::pair{added, "more"}, {dropped, "fewer"}, {changed, "changed"}}) {
-        if (count != 0) {
-            text += std::format("{}{} {}", text.empty() ? "  tried: " : ", ", count, words);
-        }
-    }
-    return text;
 }
 
 template <class S> void draw_plan(S& screen, App& app, const Glyphs& glyph, Size size) {
@@ -2282,6 +2409,13 @@ template <class S> void draw_prompt(S& screen, const App& app, Size size) {
                   {{std::format(":{}", *app.command_requested()), bar},
                    {"  running", {.fg = palette::overlay, .bg = palette::mantle}}},
                   size.cols);
+    } else if (const auto& typed = app.typed_line()) {
+        put_spans(screen, row, 0,
+                  {{typed->file == WhatIfLine::File::use ? "package.use: " : "package.env: ",
+                    {.fg = palette::overlay, .bg = palette::mantle}},
+                   {typed->text, bar},
+                   {" ", {.fg = std::nullopt, .bg = palette::mauve}}},
+                  size.cols);
     }
 }
 
@@ -2303,12 +2437,14 @@ template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
             draw_watch(screen, app, glyph, size);
         } else if (app.planned()) {
             draw_plan(screen, app, glyph, size);
+        } else if (app.on_what_if()) {
+            draw_what_if(screen, app, glyph, size);
         } else if (app.on_notices()) {
             draw_notices(screen, app, glyph, size);
         } else {
             draw_list(screen, app, glyph, size);
         }
-        if (app.prompt() || app.command_requested()) {
+        if (app.prompt() || app.command_requested() || app.typed_line()) {
             draw_prompt(screen, app, size);
         } else {
             draw_hints(screen, size.rows - 1, size.cols, view_keys(app, glyph));

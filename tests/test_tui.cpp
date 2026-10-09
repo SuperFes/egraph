@@ -1886,6 +1886,11 @@ TEST_CASE("the plans follow the lines tried, marking what they add and change") 
 
     FakeScreen screen{20, 120, {}};
     app.handle(key(KeyKind::escape));
+    // From the what-if page the first line turned to, back to @installed.
+    for (int page = 0; page < 3; ++page) {
+        app.handle(key(KeyKind::left));
+    }
+    REQUIRE(app.scope() == egraph::tui::Scope::installed);
     app.handle(character(U'u'));
     REQUIRE(app.list().shown == std::vector<std::uint32_t>{0});
     egraph::tui::draw(screen, app, ascii);
@@ -1919,6 +1924,10 @@ TEST_CASE("a merge the lines tried drop is listed after the plan, dimmed") {
 
     FakeScreen screen{20, 120, {}};
     app.handle(key(KeyKind::escape));
+    for (int page = 0; page < 3; ++page) {
+        app.handle(key(KeyKind::left));
+    }
+    REQUIRE(app.scope() == egraph::tui::Scope::installed);
     // Still listed with the updates, as dropped.
     CHECK(app.list().shown == std::vector<std::uint32_t>{0});
     egraph::tui::draw(screen, app, ascii);
@@ -1928,6 +1937,143 @@ TEST_CASE("a merge the lines tried drop is listed after the plan, dimmed") {
     CHECK(contains(screen.text(), "0 merges  tried: 1 fewer"));
     CHECK(contains(screen.text(), "dropped by what is tried"));
     CHECK(contains(screen.text(), "- R app-misc/a  1  ::test_repo  (dropped)"));
+}
+
+TEST_CASE("the first line turns the list to the what-if page, which drops, undoes and plans") {
+    const egraph::test::TempDir config;
+    egraph::tui::App app{rebuilt(), true};
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    select_flag(app, "x");
+    CHECK_FALSE(app.on_what_if());
+    app.handle(character(U' '));
+    // Under the page it was toggled on.
+    CHECK(app.on_what_if());
+    REQUIRE(app.pages().size() == 1);
+    try_and_plan(app, config.path());
+    app.handle(key(KeyKind::escape));
+    FakeScreen screen{20, 100, {}};
+    egraph::tui::draw(screen, app, ascii);
+    auto text = screen.text();
+    CHECK(contains(text, "1 line tried"));
+    CHECK(contains(text, " what if 1 "));
+    CHECK(contains(text, "use   app-misc/a -x"));
+    CHECK(contains(text, "@installed  tried: 1 more"));
+
+    // Back to the sets and here again.
+    app.handle(key(KeyKind::left));
+    CHECK_FALSE(app.on_what_if());
+    CHECK(app.scope() == egraph::tui::Scope::system);
+    app.handle(key(KeyKind::right));
+    CHECK(app.on_what_if());
+
+    // Dropped, the page goes with the line, back to the set.
+    app.handle(character(U'x'));
+    CHECK(app.what_if().empty());
+    CHECK_FALSE(app.on_what_if());
+    CHECK(&app.evaluated() == &app.untried());
+    app.handle(key(KeyKind::right));
+    CHECK_FALSE(app.on_what_if());
+    app.handle(key(KeyKind::left));
+    app.handle(key(KeyKind::left));
+    app.handle(key(KeyKind::left));
+    // Undo is the page's: toggled again, it comes back; undone, nothing is tried and it goes.
+    app.handle(key(KeyKind::enter));
+    select_flag(app, "y");
+    app.handle(character(U' '));
+    app.handle(key(KeyKind::escape));
+    REQUIRE(app.on_what_if());
+    app.handle(character(U'u'));
+    CHECK(app.what_if().empty());
+    CHECK_FALSE(app.on_what_if());
+}
+
+TEST_CASE("the what-if page takes typed lines, saying why one is not a line") {
+    egraph::tui::App app{rebuilt(), true};
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    select_flag(app, "x");
+    app.handle(character(U' '));
+    app.handle(key(KeyKind::escape));
+    REQUIRE(app.on_what_if());
+    app.handle(character(U'a'));
+    CHECK(app.typed_line().has_value());
+    for (const char c : std::string_view{"app-misc/a z"}) {
+        app.handle(character(static_cast<char32_t>(c)));
+    }
+    FakeScreen screen{20, 100, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "package.use: app-misc/a z"));
+    app.handle(key(KeyKind::enter));
+    CHECK_FALSE(app.typed_line());
+    REQUIRE(app.what_if().size() == 2);
+    CHECK(app.what_if().back() == egraph::WhatIfLine{.file = egraph::WhatIfLine::File::use,
+                                                     .atom = "app-misc/a",
+                                                     .tokens = {"z"}});
+    CHECK(app.what_if_cursor().at == 1);
+
+    app.handle(character(U'e'));
+    for (const char c : std::string_view{"app-misc/a"}) {
+        app.handle(character(static_cast<char32_t>(c)));
+    }
+    app.handle(key(KeyKind::enter));
+    CHECK(app.what_if().size() == 2);
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "Not a line");
+}
+
+TEST_CASE("env lines list what they build otherwise, which r rebuilds in the plans") {
+    const egraph::test::TempDir config;
+    auto system = egraph::test::make_system({{.cpv = "app-misc/a-1", .iuse = "x", .use = "x"}},
+                                            {{.cpv = "app-misc/a-1", .iuse = "x", .use = "x"}});
+    egraph::test::set_ledger(system.evaluated,
+                             {.conf = {{.file = "mc", .line = 3, .tokens = "x"}},
+                              .env_files = {{"clang.conf", {{.file = "env/clang.conf"}}}}});
+    egraph::tui::App app{egraph::Stores{.installed = std::move(system.store),
+                                        .evaluated = std::move(system.evaluated)},
+                         true};
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    // On a package's page, a line names the package.
+    app.handle(character(U'e'));
+    REQUIRE(app.typed_line().has_value());
+    CHECK(app.typed_line()->text == "app-misc/a ");
+    for (const char c : std::string_view{"clang.conf"}) {
+        app.handle(character(static_cast<char32_t>(c)));
+    }
+    app.handle(key(KeyKind::enter));
+    CHECK(app.what_if() == std::vector<egraph::WhatIfLine>{{.file = egraph::WhatIfLine::File::env,
+                                                            .atom = "app-misc/a",
+                                                            .tokens = {"clang.conf"}}});
+    try_and_plan(app, config.path());
+    REQUIRE(app.env_changes().size() == 1);
+    CHECK(app.env_changes().front().after == std::vector<std::string>{"clang.conf"});
+    // emerge never rebuilds for an environment alone.
+    CHECK_FALSE(app.update_of(0).has_value());
+
+    app.handle(key(KeyKind::escape));
+    REQUIRE(app.on_what_if());
+    FakeScreen screen{20, 100, {}};
+    egraph::tui::draw(screen, app, ascii);
+    auto text = screen.text();
+    CHECK(contains(text, "env   app-misc/a clang.conf"));
+    CHECK(contains(text, "@installed  the plan is the same"));
+    CHECK(contains(text, "Built differently from now on (package.env)"));
+    CHECK(contains(text, "app-misc/a-1  none > clang.conf"));
+    CHECK(contains(text, "r rebuilds them in the plans"));
+
+    app.handle(character(U'r'));
+    CHECK(app.rebuild_env());
+    REQUIRE(app.scope_plan_requested());
+    app.finish_scope_plan(egraph::test::finish(app.start_scope_plan()));
+    REQUIRE(app.update_of(0).has_value());
+    CHECK(app.update_of(0)->kind == egraph::UpdateKind::rebuild);
+    REQUIRE(app.tried_of("app-misc/a-1").has_value());
+    CHECK(app.tried_of("app-misc/a-1")->change == egraph::tui::TriedMerge::Change::added);
+    egraph::tui::draw(screen, app, ascii);
+    text = screen.text();
+    CHECK(contains(text, "@installed  tried: 1 more"));
+    CHECK(contains(text, "rebuilt in the plans; r leaves them out"));
 }
 
 TEST_CASE("the check compares installed stores, and a preview keeps the evaluated one") {

@@ -701,23 +701,29 @@ ScopePlan scoped(Scope scope, Plan plan, const Store& store, const Evaluated& ev
 // and what the set reaches in scope, the set's atoms emerge's arguments.
 ScopePlan plan_set(Scope scope, const Store& store, const Evaluated& evaluated, const Graph& graph,
                    const std::vector<Masking>& masking, bool dynamic_deps,
-                   const std::shared_ptr<const Stores>& untried) {
-    // With lines tried, what they change against the plan made the same way without them.
+                   const std::shared_ptr<const Stores>& untried,
+                   const std::vector<std::uint32_t>& reinstall = {}) {
+    // With lines tried, what they change against the plan made the same way without them (and
+    // without the rebuilds they ask for).
     const auto tried = [&](const Plan& plan, const Targets& targets) {
         if (!untried) {
             return std::vector<TriedMerge>{};
         }
         const auto& before = untried->evaluated;
+        auto again = targets;
+        again.reinstall.clear();
         return tried_merges(tried_lines(
-            update_lines(store, before, plan_updates(store, before, shown_rebuilds, targets),
+            update_lines(store, before, plan_updates(store, before, shown_rebuilds, again),
                          shown_rebuilds, HeldLines::none, false, targets),
             update_lines(store, evaluated, plan, shown_rebuilds, HeldLines::none, false, targets)));
     };
     // Every installed package, as index() plans it.
     if (scope == Scope::installed) {
-        auto made = scoped(scope, plan_updates(store, evaluated, shown_rebuilds), store, evaluated,
-                           graph, {}, {});
-        made.tried = tried(made.plan, {});
+        Targets targets;
+        targets.reinstall = reinstall;
+        auto made = scoped(scope, plan_updates(store, evaluated, shown_rebuilds, targets), store,
+                           evaluated, graph, targets, {});
+        made.tried = tried(made.plan, targets);
         return made;
     }
     const auto request =
@@ -744,6 +750,7 @@ ScopePlan plan_set(Scope scope, const Store& store, const Evaluated& evaluated, 
     }
     targets.request = request->arguments;
     targets.dynamic_deps = dynamic_deps;
+    targets.reinstall = reinstall;
     auto plan = plan_updates(store, evaluated, shown_rebuilds, targets);
     auto changes = tried(plan, targets);
     const Rescope rescope = [&store, &options](const std::vector<bool>& removed) {
@@ -974,34 +981,74 @@ void App::finish_try(TryResult result) {
     }
     untried_ = std::move(result->untried);
     replace(std::move(result->tried));
+    env_changes_ = egraph::env_changes(installed(), untried(), evaluated(), lines_);
+    rebuild_env_ = rebuild_env_ && !env_changes_.empty();
 }
 
 void App::toggle(const FlagState& flag, const std::string& atom) {
-    auto line = std::ranges::find_if(lines_, [&](const WhatIfLine& each) {
+    auto lines = lines_;
+    auto line = std::ranges::find_if(lines, [&](const WhatIfLine& each) {
         return each.file == WhatIfLine::File::use && each.atom == atom;
     });
     const auto off = "-" + flag.flag;
-    if (line != lines_.end() &&
+    if (line != lines.end() &&
         (std::erase(line->tokens, flag.flag) + std::erase(line->tokens, off)) > 0) {
         if (line->tokens.empty()) {
-            lines_.erase(line);
+            lines.erase(line);
         }
-    } else if (line != lines_.end()) {
+    } else if (line != lines.end()) {
         line->tokens.push_back(flag.enabled ? off : flag.flag);
     } else {
-        lines_.push_back({.file = WhatIfLine::File::use,
-                          .atom = atom,
-                          .tokens = {flag.enabled ? off : flag.flag}});
+        lines.push_back({.file = WhatIfLine::File::use,
+                         .atom = atom,
+                         .tokens = {flag.enabled ? off : flag.flag}});
     }
+    set_lines(std::move(lines));
+}
+
+void App::set_lines(std::vector<WhatIfLine> lines, bool undoable) {
+    if (undoable) {
+        undo_.push_back(lines_);
+    }
+    if (lines_.empty() && !lines.empty()) {
+        on_what_if_ = true;
+        on_notices_ = false;
+    }
+    lines_ = std::move(lines);
+    what_if_cursor_.at = std::min(what_if_cursor_.at, lines_.empty() ? 0 : lines_.size() - 1);
     ++version_;
     // run() drops a try made for no lines.
     trying_ = trying_ && !lines_.empty();
-    if (lines_.empty() && untried_) {
-        auto untried = std::move(untried_);
-        untried_.reset();
-        tried_version_ = version_;
-        replace(std::move(untried));
+    if (lines_.empty()) {
+        on_what_if_ = false;
+        env_changes_.clear();
+        rebuild_env_ = false;
+        if (untried_) {
+            auto untried = std::move(untried_);
+            untried_.reset();
+            tried_version_ = version_;
+            replace(std::move(untried));
+        }
     }
+}
+
+void App::replan() {
+    ++generation_;
+    plans_ = {};
+    if (list_.only == Only::updates) {
+        filter();
+    }
+}
+
+std::vector<std::uint32_t> App::reinstalled() const {
+    std::vector<std::uint32_t> ids;
+    if (rebuild_env_) {
+        for (const auto& change : env_changes_) {
+            ids.push_back(change.package);
+        }
+        std::ranges::sort(ids);
+    }
+    return ids;
 }
 
 void App::finish_stale_check(std::optional<std::string> reason) {
@@ -1215,15 +1262,16 @@ bool App::scope_plan_requested() const {
 Job<ScopePlan> App::start_scope_plan() {
     planning_ = scope_;
     // Copies and shared stores, as the app may move on to others meanwhile.
-    auto made = std::async(std::launch::async,
-                           [scope = scope_, loaded = owned_, store = store_, evaluated = evaluated_,
-                            graph = graph_, masking = masking_, dynamic_deps = dynamic_deps_,
-                            generation = generation_, untried = untried_] {
-                               auto plan = plan_set(scope, store.get(), evaluated.get(),
-                                                    graph.get(), masking, dynamic_deps, untried);
-                               plan.generation = generation;
-                               return plan;
-                           });
+    auto made =
+        std::async(std::launch::async,
+                   [scope = scope_, loaded = owned_, store = store_, evaluated = evaluated_,
+                    graph = graph_, masking = masking_, dynamic_deps = dynamic_deps_,
+                    generation = generation_, untried = untried_, reinstall = reinstalled()] {
+                       auto plan = plan_set(scope, store.get(), evaluated.get(), graph.get(),
+                                            masking, dynamic_deps, untried, reinstall);
+                       plan.generation = generation;
+                       return plan;
+                   });
     return [made = std::move(made)]() mutable -> std::optional<ScopePlan> {
         if (made.wait_for(std::chrono::seconds{0}) != std::future_status::ready) {
             return std::nullopt;
@@ -1370,6 +1418,56 @@ void App::handle_notices(const Key& key) {
     }
 }
 
+void App::handle_typed_line(TypedLine& typed, const Key& key) {
+    if (key.kind == KeyKind::character && key.code >= U' ') {
+        append_utf8(typed.text, key.code);
+    } else if (key.kind == KeyKind::backspace && !typed.text.empty()) {
+        pop_code_point(typed.text);
+    } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace) {
+        typed_line_.reset();
+    } else if (key.kind == KeyKind::enter) {
+        auto line = parse_what_if(typed.file, typed.text);
+        if (!line) {
+            show({.error = true, .title = "Not a line", .lines = {std::move(line.error())}});
+            return;
+        }
+        typed_line_.reset();
+        auto lines = lines_;
+        lines.push_back(std::move(*line));
+        set_lines(std::move(lines));
+        what_if_cursor_.at = lines_.size() - 1;
+        keep_visible(what_if_cursor_, height_);
+    }
+}
+
+void App::handle_what_if(const Key& key) {
+    const bool on_line = what_if_cursor_.at < lines_.size();
+    if (is(key, U'q') || is(key, U'Q')) {
+        done_ = true;
+    } else if (key.kind == KeyKind::left || is(key, U'h')) {
+        turn_page(-1);
+    } else if (key.kind == KeyKind::right || is(key, U'l')) {
+        turn_page(1);
+    } else if (is(key, U'x') && on_line) {
+        auto lines = lines_;
+        lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(what_if_cursor_.at));
+        set_lines(std::move(lines));
+    } else if (is(key, U'u') && !undo_.empty()) {
+        auto lines = std::move(undo_.back());
+        undo_.pop_back();
+        set_lines(std::move(lines), false);
+    } else if (is(key, U'a')) {
+        typed_line_ = TypedLine{.file = WhatIfLine::File::use, .text = {}};
+    } else if (is(key, U'e')) {
+        typed_line_ = TypedLine{.file = WhatIfLine::File::env, .text = {}};
+    } else if (is(key, U'r') && !env_changes_.empty()) {
+        rebuild_env_ = !rebuild_env_;
+        replan();
+    } else if (is_move(key)) {
+        move(what_if_cursor_, lines_.size(), key, height_);
+    }
+}
+
 void App::work_on(const Notice& notice) {
     if (notice.kind == NoticeKind::masked && !notice.packages.empty()) {
         const auto& cpv = notice.packages.front();
@@ -1393,14 +1491,20 @@ void App::work_on(const Notice& notice) {
 
 void App::turn_page(int step) {
     const std::size_t sets = has_evaluated() ? scopes.size() : 1;
-    const auto count = static_cast<int>(sets + (notices_ ? 1 : 0));
-    const int shown = on_notices_ ? count - 1 : has_evaluated() ? static_cast<int>(scope_) : 0;
+    const auto notices = static_cast<int>(sets);
+    const auto what_if = notices + (notices_ ? 1 : 0);
+    const auto count = what_if + (lines_.empty() ? 0 : 1);
+    const int shown = on_what_if()      ? what_if
+                      : on_notices_     ? notices
+                      : has_evaluated() ? static_cast<int>(scope_)
+                                        : 0;
     const auto at = shown + step;
     if (at < 0 || at >= count) {
         return;
     }
-    on_notices_ = notices_.has_value() && at == count - 1;
-    if (on_notices_ || !has_evaluated()) {
+    on_what_if_ = !lines_.empty() && at == what_if;
+    on_notices_ = notices_.has_value() && at == notices;
+    if (on_what_if_ || on_notices_ || !has_evaluated()) {
         return;
     }
     scope_ = scopes.at(static_cast<std::size_t>(at));
@@ -1473,6 +1577,9 @@ void App::open(std::uint32_t package) {
 }
 
 bool App::typing() const {
+    if (typed_line_) {
+        return true;
+    }
     if (!pages_.empty() || listing_ || output_) {
         return false;
     }
@@ -1505,6 +1612,8 @@ void App::handle(const Key& key) {
         handle_notices(key);
     } else if (prompt_) {
         handle_prompt(*prompt_, key);
+    } else if (typed_line_) {
+        handle_typed_line(*typed_line_, key);
     } else if (is(key, U':') && !typing()) {
         prompt_.emplace();
     } else if (is(key, U'?') && !typing()) {
@@ -1528,6 +1637,8 @@ void App::handle(const Key& key) {
         handle_watch(key);
     } else if (planned_) {
         handle_plan(key);
+    } else if (on_what_if()) {
+        handle_what_if(key);
     } else if (on_notices_) {
         handle_notices(key);
     } else {
@@ -2543,6 +2654,10 @@ void App::handle_page(const Key& key) {
             open(*installed);
         } else if (is(key, U'i') && version) {
             install(store().string(store().packages.at(page.package).cp), *version);
+        } else if (is(key, U'a') || is(key, U'e')) {
+            typed_line_ = TypedLine{
+                .file = is(key, U'a') ? WhatIfLine::File::use : WhatIfLine::File::env,
+                .text = std::format("{} ", store().string(store().packages.at(page.package).cp))};
         } else if (const auto& flagged = page.cursor.at < page.rows.size()
                                              ? page.rows.at(page.cursor.at).flag
                                              : std::nullopt;
@@ -3209,6 +3324,8 @@ std::vector<Hint> page_keys(const App& app, const Glyphs& glyph) {
                                : "unfold",
          .bar = on_flag || unfolded || (on_link && app.can_unfold(*row))},
         {.key = "*", .meaning = "toggle for every package", .bar = on_flag},
+        {.key = "a", .meaning = "try a package.use line"},
+        {.key = "e", .meaning = "try a package.env line"},
         {.key = "i", .meaning = "install", .bar = row && row->version.has_value()},
         {.key = "esc", .meaning = "back", .bar = true}};
     add_common(keys);
@@ -3296,6 +3413,23 @@ std::vector<Hint> plan_keys(const Planned& planned, const Glyphs& glyph) {
     return keys;
 }
 
+std::vector<Hint> what_if_keys(const App& app, const Glyphs& glyph) {
+    std::vector<Hint> keys{{.key = std::string{glyph.move}, .meaning = "move"},
+                           {.key = std::string{glyph.pages}, .meaning = "page"},
+                           {.key = "x", .meaning = "drop", .bar = true},
+                           {.key = "u", .meaning = "undo", .bar = app.can_undo()},
+                           {.key = "a", .meaning = "add a package.use line", .bar = true},
+                           {.key = "e", .meaning = "add a package.env line"}};
+    if (!app.env_changes().empty()) {
+        keys.push_back({.key = "r",
+                        .meaning = app.rebuild_env() ? "leave the env rebuilds out"
+                                                     : "rebuild what env lines change",
+                        .bar = true});
+    }
+    add_common(keys);
+    return keys;
+}
+
 std::vector<Hint> notice_keys(const App& app, const Glyphs& glyph) {
     if (app.putting_off()) {
         std::vector<Hint> keys;
@@ -3328,6 +3462,10 @@ std::vector<Hint> notice_keys(const App& app, const Glyphs& glyph) {
 
 // In the order draw() picks the view on top.
 std::vector<Hint> view_keys(const App& app, const Glyphs& glyph) {
+    if (app.typed_line()) {
+        return {{.key = std::string{glyph.enter}, .meaning = "try", .bar = true},
+                {.key = "esc", .meaning = "cancel", .bar = true}};
+    }
     if (!app.pages().empty()) {
         return page_keys(app, glyph);
     }
@@ -3348,6 +3486,9 @@ std::vector<Hint> view_keys(const App& app, const Glyphs& glyph) {
     }
     if (const auto& planned = app.planned()) {
         return plan_keys(*planned, glyph);
+    }
+    if (app.on_what_if()) {
+        return what_if_keys(app, glyph);
     }
     if (app.on_notices()) {
         return notice_keys(app, glyph);
