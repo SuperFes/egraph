@@ -51,6 +51,9 @@ struct World {
     std::optional<Debounce::Clock::time_point> replaced;
     std::vector<Debounce::Clock::time_point> restarts;
     std::optional<std::string> restart_error;
+    // Each tick, and how soon each asks to be woken.
+    std::vector<Debounce::Clock::time_point> ticks;
+    std::optional<milliseconds> tick_wants;
 };
 
 struct FakeSelf {
@@ -110,7 +113,11 @@ std::expected<void, std::string> run(World& world, std::ostream& log) {
             const auto at = world.stale_asked++;
             return at < world.stale.size() && world.stale.at(at);
         },
-        [&world] { return world.clock; }, self, log);
+        [&world] { return world.clock; }, self, log,
+        [&world](Debounce::Clock::time_point now) {
+            world.ticks.push_back(now);
+            return world.tick_wants;
+        });
 }
 
 Step change(milliseconds after) {
@@ -268,4 +275,20 @@ TEST_CASE("a restart that fails is logged, and watching goes on") {
     CHECK(world.refreshed == std::vector{at(milliseconds{0}), at(milliseconds{4100})});
     CHECK(log.str().contains("egraph: watch: cannot restart, so keeps running: "
                              "/usr/bin/egraph: Exec format error\n"));
+}
+
+TEST_CASE("a tick runs before each wait, and may ask to be woken sooner") {
+    World world;
+    world.tick_wants = milliseconds{1000};
+    world.steps = {{.times_out = true},
+                   change(milliseconds{200}),
+                   {.after = milliseconds{1}, .woken = Woken{.stop = true}}};
+    std::ostringstream log;
+    CHECK(run(world, log));
+    CHECK(world.ticks ==
+          std::vector{at(milliseconds{0}), at(milliseconds{1000}), at(milliseconds{1200})});
+    // Sooner than the change's settling, which it does not put off.
+    CHECK(world.timeouts == std::vector<std::optional<milliseconds>>{
+                                milliseconds{1000}, milliseconds{1000}, milliseconds{1000}});
+    CHECK(world.refreshed == std::vector{at(milliseconds{0})});
 }

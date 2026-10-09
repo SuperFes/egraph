@@ -42,6 +42,13 @@ class Debounce {
     Clock::time_point last_{};
 };
 
+// A tick that never asks to be woken.
+struct NoTick {
+    std::optional<std::chrono::milliseconds> operator()(Debounce::Clock::time_point) const {
+        return std::nullopt;
+    }
+};
+
 // Keeps the stores fresh until a stop is asked. refresh() brings them up to date and returns the
 // directories to watch, or why it could not, which is logged and tried again on the next change
 // or after a while, twice as long each time. watch(directories) returns a watcher on them, or why
@@ -49,10 +56,13 @@ class Debounce {
 // whether the stores went stale since the refresh, as a change during one leaves them, which
 // counts as a change. now() is the time. self is a SelfRestart: between refreshes, once due, it
 // restarts, and what it returns, why it could not, is logged (empty only from a fake that did,
-// which ends the loop). The error when no watcher could be opened or waited on.
-template <class RefreshFn, class WatchFn, class StaleFn, class NowFn, class Self>
+// which ends the loop). tick(now) runs before each wait, whatever woke it, and returns how soon
+// it wants to run again, if at all. The error when no watcher could be opened or waited on.
+template <class RefreshFn, class WatchFn, class StaleFn, class NowFn, class Self,
+          class TickFn = NoTick>
 std::expected<void, std::string> keep_fresh(RefreshFn refresh, WatchFn watch, StaleFn stale,
-                                            NowFn now, Self& self, std::ostream& log) {
+                                            NowFn now, Self& self, std::ostream& log,
+                                            TickFn tick = {}) {
     using std::chrono::milliseconds;
     constexpr milliseconds longest_retry{3'600'000};
     std::vector<std::filesystem::path> directories;
@@ -88,6 +98,9 @@ std::expected<void, std::string> keep_fresh(RefreshFn refresh, WatchFn watch, St
         }
         while (!due) {
             auto timeout = debounce.wait(now());
+            if (const auto again = tick(now())) {
+                timeout = timeout ? std::min(*timeout, *again) : *again;
+            }
             if (retrying) {
                 const auto left =
                     std::max(milliseconds{0}, std::chrono::ceil<milliseconds>(retry - now()));

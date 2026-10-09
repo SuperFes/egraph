@@ -3,6 +3,11 @@ run's trace, log and vdb entries, and read back by egraph builds."""
 
 import json
 import os
+import queue
+import signal
+import subprocess
+import threading
+import time
 
 import pytest
 
@@ -224,4 +229,76 @@ def test_a_build_as_root_is_measured_in_its_own_cgroup(hungry):
         os.path.exists(f"/proc/{n[5:]}")
         for n in os.listdir(base)
         if n.startswith("exec-")
+    )
+
+
+# Its compile long enough for emerge's snapshots, which may each come 2 s late, to show it.
+SLOW = INSTALL + "src_compile() { sleep 6; }\n"
+
+
+@pytest.fixture
+def observed_emerge(gnupg_home, tmp_path):
+    config = {"make.conf": ('FEATURES="${FEATURES} observability"',)}
+    yield from over(
+        {"app-misc/slow-1": {**PLAIN, "IUSE": "doc", "MISC_CONTENT": SLOW}},
+        tmp_path,
+        user_config=config,
+    )
+
+
+def test_egraphd_records_emerges_builds_as_emerges(observed_emerge):
+    """Followed through emerge's snapshots, settled by the vdb entry, under emerge's pid."""
+    system, machine = observed_emerge
+    # Made by an earlier emerge, as /run/portage is on a system that ran one since it booted.
+    os.makedirs(os.path.join(system.playground.eprefix, "run", "portage"))
+    age(system.playground.eroot)
+    watch = subprocess.Popen(
+        system.command("watch"),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=dict(os.environ, EGRAPH_LOG="file"),
+    )
+    lines = queue.Queue()
+    threading.Thread(
+        target=lambda: [lines.put(line) for line in watch.stderr], daemon=True
+    ).start()
+    try:
+        assert "egraph: watch: watching " in lines.get(timeout=120)
+        ran = system.egraph("install", "--yes", "app-misc/slow")
+        assert ran.returncode == 0, ran.stdout + ran.stderr
+        path = os.path.join(
+            system.playground.eroot, "var", "lib", "egraph", "builds.jsonl"
+        )
+        deadline = time.monotonic() + 60
+        while not os.path.exists(path):
+            assert watch.poll() is None and time.monotonic() < deadline
+            time.sleep(0.2)
+        watch.send_signal(signal.SIGTERM)
+        assert watch.wait(timeout=30) == 0
+    finally:
+        if watch.poll() is None:
+            watch.kill()
+            watch.wait()
+    (record,) = history(system)
+    assert record["origin"] == "emerge"
+    assert record["run"].startswith("emerge-")
+    assert (record["cpv"], record["repo"], record["slot"]) == (
+        "app-misc/slow-1",
+        "test_repo",
+        "0",
+    )
+    assert record["outcome"] == "merged"
+    assert record["build_seconds"] >= 6
+    phases = {p["phase"]: p["seconds"] for p in record["phases"]}
+    assert phases.get("compile", 0) >= 3
+    assert sum(phases.values()) <= record["build_seconds"] + 0.01
+    assert record["merge_seconds"] >= 0
+    with open(os.path.join(vdb_path(system), "SIZE")) as f:
+        assert record["installed_size"] == int(f.read())
+
+
+def vdb_path(system):
+    return os.path.join(
+        system.playground.eroot, "var", "db", "pkg", "app-misc", "slow-1"
     )

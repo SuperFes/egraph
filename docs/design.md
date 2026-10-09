@@ -925,6 +925,19 @@ size is the merged vdb entry's `SIZE`. The fetch is timed as its own phase. Wher
 jobserver (`/dev/steve`), stevie's jobs and free tokens are sampled with the memory, for how
 starved of tokens the build was.
 
+emerge's builds come from egraphd, which watches `${EPREFIX}/run/portage` aside (its changes wake
+the wait without counting as a change to refresh for; `keep_fresh` runs a tick before each
+wait, which asks for another in 2 s while an emerge publishes or a build is followed, or while
+the directory exists but went unwatched for being made after the last refresh). `EmergeWatch`
+(`src/emerge_builds.hpp`) follows each build task of each live snapshot, by emerge pid and cpv:
+its phases as the snapshots show them change (at most a write a second, so a short phase can
+be missed; a first phase seen within 2.5 s of the start starts with it, a later one when seen),
+its end as emerge freezes `build_elapsed`, merge-wait and the merge, and its frozen cgroup
+counters. Once a build is gone from the snapshots, its vdb entry settles it: merged when its
+`BUILD_TIME` is since the build started (repository, slot, flags, compiler variables and SIZE
+from there), else failed while emerge runs on, else interrupted and left out. The records are
+`origin` "emerge", run `emerge-<pid>`; only builds into egraphd's own root are kept.
+
 Each append rewrites the file under its directory's lock (`os::rewrite_locked`, as the store
 history's log is appended) and keeps the last `build_keep` records of each cp (`egraph.conf`,
 20 by default; 0 records nothing), so the file stays a few MB at most and is read whole; lines it

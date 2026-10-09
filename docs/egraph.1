@@ -1274,7 +1274,11 @@ under
 .BR FILES ):
 each build
 .B exec
-ran, oldest first, a line each, with when it started, the cpv and repository, how it ended
+ran, and each
+.B emerge
+ran that
+.B watch
+saw, oldest first, a line each, with when it started, the cpv and repository, how it ended
 .RB ( merged " or " failed ,
 with the phase that failed), how long its build and merge took, and the CPU time and most memory
 its processes used. As lines, the fields are separated by tabs: the start in seconds since the
@@ -1579,6 +1583,23 @@ or
 Once its executable is replaced (an upgrade) and the new file has gone a second unchanged, it
 runs that in its own process between refreshes, with the same arguments; if it cannot, that is
 logged and the old one keeps running.
+While an
+.B emerge
+publishes its status (FEATURES=observability, in
+.IR ${EPREFIX}/run/portage ),
+each package it builds from source into the store's root is followed through its phases and
+recorded in the build history once it is gone from it (see
+.BR builds ),
+as
+.BR emerge 's,
+under
+.BI emerge\- pid :
+merged when its vdb entry was built since it started, failed when
+.B emerge
+went on without it; one whose
+.B emerge
+was stopped with it is not recorded. Its phases are timed as the status shows them change, a
+second apart at the finest; its CPU time, peak memory and IO are those FEATURES=cgroup gave it.
 .SS notify
 Keep a desktop notification summing up the notices up, until stopped (SIGTERM, SIGINT or
 SIGHUP), through the session bus's notification server: posted when a notice comes that the last
@@ -1684,7 +1705,11 @@ describes.
 .I ${EROOT}/var/lib/egraph/builds.jsonl
 The build history: a JSON object a line for each build
 .B exec
-ran, appended as it merges or fails, with its cpv, repository, slot, flags, package.env files, its
+ran, or
+.B watch
+saw
+.B emerge
+run, appended as it merges or fails, with its cpv, repository, slot, flags, package.env files, its
 environment's compiler variables, the toolchain's installed versions, each phase's seconds, its
 build's and merge's seconds, its outcome, and the run's jobs; kept to the last
 .B build_keep

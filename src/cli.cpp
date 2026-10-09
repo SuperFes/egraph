@@ -13,6 +13,7 @@
 #include "depclean.hpp"
 #include "elog.hpp"
 #include "emerge.hpp"
+#include "emerge_builds.hpp"
 #include "evaluated.hpp"
 #include "exec.hpp"
 #include "freshness.hpp"
@@ -352,8 +353,14 @@ watch_all(std::span<const std::filesystem::path> directories, std::size_t& unrea
     return std::move(*watcher);
 }
 
+// Appends the records of emerge's builds into the store's EROOT to its build history; told is
+// set once a failure to write it is logged.
+void record_emerge_builds(Session& session, const Invocation& invocation,
+                          const std::vector<EmergeBuild>& gone, bool& told, std::ostream& err);
 std::optional<std::string> refresh_status(Session& session, const Invocation& invocation);
 void refresh_notices(Session& session, const Invocation& invocation, std::ostream& err);
+bool same_root(const std::filesystem::path& a, const std::filesystem::path& b);
+std::filesystem::path vdb_of(const Store& store);
 
 Exit execute(const Watch&, Session& session, const Invocation& invocation, std::ostream&,
              std::ostream& err) {
@@ -396,8 +403,23 @@ Exit execute(const Watch&, Session& session, const Invocation& invocation, std::
         }
         return directories;
     };
+    // Where emerges publish, watched aside, or the nearest directory above it that exists until a
+    // refresh finds it made.
+    const auto emerges_dir = emerge::status_dir(invocation.eprefix.value_or(""));
+    bool emerges_watched = false;
     const auto watch = [&](const std::vector<std::filesystem::path>& directories) {
         auto watcher = watch_all(directories, unreadable, self.directory());
+        if (watcher) {
+            for (auto at = emerges_dir;; at = at.parent_path()) {
+                if (watcher->add_aside(at)) {
+                    emerges_watched = at == emerges_dir;
+                    break;
+                }
+                if (!at.has_relative_path()) {
+                    break;
+                }
+            }
+        }
         if (watcher && unreadable != reported) {
             err << std::format("egraph: watch: {} directories cannot be read, so go unwatched\n",
                                unreadable);
@@ -413,12 +435,68 @@ Exit execute(const Watch&, Session& session, const Invocation& invocation, std::
         os::release_memory();
         return went_stale;
     };
-    const auto kept = keep_fresh(refresh, watch, stale, [] { return Clock::now(); }, self, err);
+    // emerge's builds into the build history, followed through its snapshots while it publishes
+    // them, which wakes the wait; and every few seconds then, for one gone without a word, or
+    // while their directory is there but unwatched.
+    EmergeWatch emerges;
+    bool builds_told = false;
+    const auto record_emerges = [&](Clock::time_point) -> std::optional<std::chrono::milliseconds> {
+        const auto live = emerge::read_snapshots(emerges_dir);
+        const std::chrono::duration<double> epoch =
+            std::chrono::system_clock::now().time_since_epoch();
+        const auto gone = emerges.observe(live, epoch.count());
+        if (!gone.empty()) {
+            record_emerge_builds(session, invocation, gone, builds_told, err);
+        }
+        if (!live.empty() || emerges.following()) {
+            return std::chrono::seconds{2};
+        }
+        std::error_code error;
+        if (!emerges_watched && std::filesystem::is_directory(emerges_dir, error)) {
+            return std::chrono::seconds{2};
+        }
+        return std::nullopt;
+    };
+    const auto kept =
+        keep_fresh(refresh, watch, stale, [] { return Clock::now(); }, self, err, record_emerges);
     if (!kept) {
         err << "egraph: watch: " << kept.error() << '\n';
         return Exit::failure;
     }
     return Exit::ok;
+}
+
+void record_emerge_builds(Session& session, const Invocation& invocation,
+                          const std::vector<EmergeBuild>& gone, bool& told, std::ostream& err) {
+    const auto stores = session.stores();
+    if (!stores) {
+        err << "egraph: watch: emerge's builds go unrecorded: " << stores.error() << '\n';
+        return;
+    }
+    const auto& store = stores->get().installed;
+    const std::filesystem::path eroot{store.meta.eroot};
+    const auto toolchain = installed_toolchain(store);
+    const auto settings = read_settings(settings_path(config_root(invocation)));
+    const auto keep = settings && settings->build_keep > 0
+                          ? static_cast<std::size_t>(settings->build_keep)
+                          : std::size_t{0};
+    for (const auto& build : gone) {
+        if (!same_root(build.root, eroot)) {
+            continue;
+        }
+        const auto record =
+            emerge_record(build, read_vdb_entry(vdb_of(store), build.cpv), toolchain);
+        if (!record) {
+            continue;
+        }
+        if (const auto kept = append_build(builds_path(eroot), *record, keep); !kept && !told) {
+            err << std::format("egraph: watch: cannot record emerge's build in {}: {}\n",
+                               builds_path(eroot).string(), kept.error().message());
+            told = true;
+        }
+    }
+    // Nothing reads them until the next refresh.
+    session.reload();
 }
 
 // A path no other egraph check is using.
