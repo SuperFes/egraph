@@ -12,6 +12,7 @@
 #include <map>
 #include <ranges>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 
@@ -71,6 +72,34 @@ double distfile_scale(const BuildRecord& record, std::optional<std::uint64_t> wa
                       1 / distfile_scale_limit, distfile_scale_limit);
 }
 
+// The least-squares slope of ys over xs, none when xs do not vary.
+std::optional<double> slope(const std::vector<double>& xs, const std::vector<double>& ys) {
+    const auto n = static_cast<double>(xs.size());
+    const auto mean_x = std::ranges::fold_left(xs, 0.0, std::plus<>{}) / n;
+    const auto mean_y = std::ranges::fold_left(ys, 0.0, std::plus<>{}) / n;
+    double covariance = 0;
+    double variance = 0;
+    for (std::size_t i = 0; i < xs.size(); ++i) {
+        covariance += (xs.at(i) - mean_x) * (ys.at(i) - mean_y);
+        variance += (xs.at(i) - mean_x) * (xs.at(i) - mean_x);
+    }
+    if (variance <= 0) {
+        return std::nullopt;
+    }
+    return covariance / variance;
+}
+
+// Weighted geometric mean, each value held to at least floor so that one of none counts.
+double geometric_mean(const std::vector<std::pair<double, double>>& weighted, double floor) {
+    double logs = 0;
+    double weights = 0;
+    for (const auto& [value, weight] : weighted) {
+        logs += weight * std::log(std::max(value, floor));
+        weights += weight;
+    }
+    return std::exp(logs / weights);
+}
+
 } // namespace
 
 BuildKnowledge::BuildKnowledge(const std::vector<BuildRecord>& records) {
@@ -80,6 +109,150 @@ BuildKnowledge::BuildKnowledge(const std::vector<BuildRecord>& records) {
             found.push_back(record);
         }
     }
+    // Each package's latest build, sized, as a point of log seconds over log bytes.
+    std::vector<double> sizes;
+    std::vector<double> times;
+    for (const auto& [cp, builds] : by_cp_) {
+        const auto& latest = builds.back();
+        if (latest.distfiles_size.value_or(0) > 0 && built_in(latest) > 0) {
+            sizes.push_back(std::log(static_cast<double>(latest.distfiles_size.value_or(0))));
+            times.push_back(std::log(built_in(latest)));
+        }
+    }
+    if (sizes.size() >= guess_fit_packages) {
+        if (const auto fitted = slope(sizes, times)) {
+            size_exponent_ = std::clamp(*fitted, 0.0, 1.0);
+        }
+    }
+}
+
+void BuildKnowledge::learn(const RepositoryIndex& index) {
+    std::unordered_map<std::string_view, std::size_t> inheriting;
+    // By cp built here, the version of its latest build, else its last version.
+    std::map<std::string_view, std::reference_wrapper<const IndexVersion>> exact;
+    std::map<std::string_view, std::reference_wrapper<const IndexVersion>> last;
+    for (const auto& version : index.versions) {
+        for (const auto id : index.ids_in(version.inherited)) {
+            ++inheriting[index.string(id)];
+        }
+        const auto cp = index.string(version.cp);
+        const auto found = by_cp_.find(cp);
+        if (found == by_cp_.end()) {
+            continue;
+        }
+        last.insert_or_assign(cp, version);
+        const auto& latest = found->second.back();
+        if (index.string(version.cpv) == latest.cpv &&
+            (latest.repo.empty() ||
+             index.string(index.repositories.at(version.repository).name) == latest.repo)) {
+            exact.insert_or_assign(cp, version);
+        }
+    }
+    // The rarer an eclass among the versions, the more sharing it says; one in every version
+    // says nothing.
+    const auto versions = static_cast<double>(std::max<std::size_t>(index.versions.size(), 1));
+    rarity_.clear();
+    for (const auto& [eclass, count] : inheriting) {
+        rarity_.emplace(eclass, std::log(versions / static_cast<double>(count)));
+    }
+    unseen_rarity_ = std::log(versions);
+    eclasses_.clear();
+    for (const auto& [cp, version] : last) {
+        const auto chosen = exact.find(cp);
+        const IndexVersion& from = chosen != exact.end() ? chosen->second.get() : version.get();
+        std::vector<std::string> eclasses;
+        for (const auto id : index.ids_in(from.inherited)) {
+            eclasses.emplace_back(index.string(id));
+        }
+        std::ranges::sort(eclasses);
+        eclasses_.emplace(cp, std::move(eclasses));
+    }
+}
+
+std::optional<PackageEstimate> BuildKnowledge::guess(const BuildWanted& wanted,
+                                                     unsigned cores) const {
+    if (!wanted.eclasses || eclasses_.empty()) {
+        return std::nullopt;
+    }
+    const auto weight = [&](std::string_view eclass) {
+        const auto found = rarity_.find(eclass);
+        return found == rarity_.end() ? unseen_rarity_ : found->second;
+    };
+    const auto sum = [&](const std::vector<std::string_view>& eclasses) {
+        return std::ranges::fold_left(eclasses | std::views::transform(weight), 0.0, std::plus<>{});
+    };
+    // Shared eclasses' weight over all of both's; alike when both inherit nothing, or differ
+    // only in eclasses that say nothing.
+    const auto similarity = [&](const std::vector<std::string>& eclasses) {
+        if (wanted.eclasses->empty() || eclasses.empty()) {
+            return wanted.eclasses->empty() && eclasses.empty() ? 1.0 : 0.0;
+        }
+        std::vector<std::string_view> shared;
+        std::vector<std::string_view> either;
+        std::ranges::set_intersection(*wanted.eclasses, eclasses, std::back_inserter(shared));
+        std::ranges::set_union(*wanted.eclasses, eclasses, std::back_inserter(either));
+        const auto all = sum(either);
+        return all > 0 ? sum(shared) / all : (shared.empty() ? 0.0 : 1.0);
+    };
+    // How far apart two sizes are, for ties: none known counts as far.
+    const auto apart = [&](const BuildRecord& latest) {
+        if (wanted.distfiles.value_or(0) == 0 || latest.distfiles_size.value_or(0) == 0) {
+            return std::numeric_limits<double>::infinity();
+        }
+        return std::abs(std::log(static_cast<double>(*wanted.distfiles) /
+                                 static_cast<double>(*latest.distfiles_size)));
+    };
+    struct Alike {
+        double similarity;
+        double apart;
+        std::reference_wrapper<const BuildRecord> latest;
+    };
+    std::vector<Alike> alike;
+    for (const auto& [cp, eclasses] : eclasses_) {
+        if (const auto found = similarity(eclasses); found > 0) {
+            const auto& latest = by_cp_.find(cp)->second.back();
+            alike.push_back({.similarity = found, .apart = apart(latest), .latest = latest});
+        }
+    }
+    if (alike.empty()) {
+        return std::nullopt;
+    }
+    std::ranges::stable_sort(alike, [](const Alike& a, const Alike& b) {
+        return a.similarity != b.similarity ? a.similarity > b.similarity : a.apart < b.apart;
+    });
+    alike.resize(std::min(alike.size(), guess_neighbours), alike.front());
+    std::vector<std::pair<double, double>> seconds;
+    std::vector<std::pair<double, double>> peaks;
+    double parallelism = 0;
+    double merge = 0;
+    double weights = 0;
+    for (const auto& [similar, distance, latest] : alike) {
+        const auto own = estimate(latest.get().cpv, cores).value_or(PackageEstimate{});
+        double scale = 1;
+        if (std::isfinite(distance)) {
+            scale = std::clamp(
+                std::pow(static_cast<double>(wanted.distfiles.value_or(1)) /
+                             static_cast<double>(latest.get().distfiles_size.value_or(1)),
+                         size_exponent_),
+                1 / guess_scale_limit, guess_scale_limit);
+        }
+        seconds.emplace_back(own.seconds * scale, similar);
+        if (own.peak_memory) {
+            peaks.emplace_back(static_cast<double>(*own.peak_memory), similar);
+        }
+        parallelism += similar * own.parallelism;
+        merge += similar * own.merge_seconds;
+        weights += similar;
+    }
+    PackageEstimate guessed{.seconds = geometric_mean(seconds, 1),
+                            .parallelism = parallelism / weights,
+                            .merge_seconds = merge / weights,
+                            .builds = alike.size(),
+                            .guessed = true};
+    if (!peaks.empty()) {
+        guessed.peak_memory = static_cast<std::uint64_t>(std::llround(geometric_mean(peaks, 1)));
+    }
+    return guessed;
 }
 
 std::optional<PackageEstimate> BuildKnowledge::estimate(const BuildWanted& wanted,
@@ -157,7 +330,8 @@ PlanEstimate estimate_plan(Schedule schedule, std::span<const StepCost> costs, u
     for (std::size_t step = 0; step < steps; ++step) {
         if (std::holds_alternative<MergeStep>(schedule.step(step)) &&
             schedule.stage(step) != Schedule::Stage::done) {
-            ++(cost_of.at(step).known ? estimate.known : estimate.unknown);
+            const auto& cost = cost_of.at(step);
+            ++(cost.known ? estimate.known : cost.guessed ? estimate.guessed : estimate.unknown);
         }
     }
     std::vector<Going> going;
@@ -258,7 +432,13 @@ std::vector<StepFacts> step_facts(const RepositoryIndex& index, std::span<const 
             facts.emplace_back();
             continue;
         }
-        facts.push_back({.distfiles = distfiles_size(index, version->second, step.use)});
+        std::vector<std::string> eclasses;
+        for (const auto id : index.ids_in(version->second.get().inherited)) {
+            eclasses.emplace_back(index.string(id));
+        }
+        std::ranges::sort(eclasses);
+        facts.push_back({.distfiles = distfiles_size(index, version->second, step.use),
+                         .eclasses = std::move(eclasses)});
     }
     return facts;
 }
@@ -269,11 +449,15 @@ std::vector<StepCost> step_costs(const BuildKnowledge& knowledge, std::span<cons
     costs.reserve(steps.size());
     for (std::size_t i = 0; i < steps.size(); ++i) {
         const auto& step = steps.subspan(i).front();
+        const auto fact = i < facts.size() ? facts.subspan(i).front() : StepFacts{};
         const BuildWanted wanted{.cpv = step.cpv,
                                  .use = step.use,
-                                 .distfiles = i < facts.size() ? facts.subspan(i).front().distfiles
-                                                               : std::nullopt};
-        const auto estimate = step.uninstall ? std::nullopt : knowledge.estimate(wanted, cores);
+                                 .distfiles = fact.distfiles,
+                                 .eclasses = fact.eclasses};
+        auto estimate = step.uninstall ? std::nullopt : knowledge.estimate(wanted, cores);
+        if (!estimate && !step.uninstall) {
+            estimate = knowledge.guess(wanted, cores);
+        }
         if (!estimate) {
             costs.emplace_back();
             continue;
@@ -282,7 +466,8 @@ std::vector<StepCost> step_costs(const BuildKnowledge& knowledge, std::span<cons
                          .parallelism = estimate->parallelism,
                          .peak_memory = estimate->peak_memory,
                          .merge_seconds = estimate->merge_seconds,
-                         .known = true});
+                         .known = !estimate->guessed,
+                         .guessed = estimate->guessed});
     }
     return costs;
 }
@@ -292,9 +477,10 @@ std::optional<std::uint32_t> recorded_jobs(const std::vector<BuildRecord>& recor
 }
 
 std::string estimate_line(const PlanEstimate& estimate, std::optional<std::uint32_t> jobs) {
-    return std::format("\testimate\t{}\t{}\t{}\t{}\t{}", std::llround(estimate.seconds),
+    return std::format("\testimate\t{}\t{}\t{}\t{}\t{}\t{}", std::llround(estimate.seconds),
                        estimate.peak_memory ? std::to_string(*estimate.peak_memory) : "",
-                       estimate.known, estimate.unknown, jobs ? std::to_string(*jobs) : "");
+                       estimate.known, estimate.unknown, jobs ? std::to_string(*jobs) : "",
+                       estimate.guessed);
 }
 
 std::optional<EstimateLine> parse_estimate_line(std::string_view line) {
@@ -302,7 +488,8 @@ std::optional<EstimateLine> parse_estimate_line(std::string_view line) {
     for (const auto field : std::views::split(line, '\t')) {
         fields.emplace_back(field.begin(), field.end());
     }
-    if (fields.size() != 7 || !fields.at(0).empty() || fields.at(1) != "estimate") {
+    if ((fields.size() != 7 && fields.size() != 8) || !fields.at(0).empty() ||
+        fields.at(1) != "estimate") {
         return std::nullopt;
     }
     const auto number = [](std::string_view text, auto& value) {
@@ -318,6 +505,9 @@ std::optional<EstimateLine> parse_estimate_line(std::string_view line) {
         return std::nullopt;
     }
     if (!fields.at(6).empty() && !number(fields.at(6), read.jobs.emplace())) {
+        return std::nullopt;
+    }
+    if (fields.size() == 8 && !number(fields.at(7), read.guessed)) {
         return std::nullopt;
     }
     return read;
@@ -355,7 +545,8 @@ std::optional<double> Countdown::left(const Schedule& schedule, double now) {
                 {.step = step, .merging = since.merging, .elapsed = now - since.start});
         }
         const auto estimate = estimate_plan(schedule, costs_, cores_, tokens_, running);
-        estimated_ = estimate.known == 0 ? std::nullopt : std::optional{estimate.seconds};
+        estimated_ =
+            estimate.known + estimate.guessed == 0 ? std::nullopt : std::optional{estimate.seconds};
         estimated_at_ = now;
         stale_ = false;
     }

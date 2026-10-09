@@ -961,8 +961,17 @@ gate them), progress at their own pace while their parallelism together fits the
 slowed alike when it does not (processor sharing; a build keeping no core busy keeps its pace),
 and merges take their seconds one at a time, so merge-wait and the waits between merges give
 the critical path. Its peak memory is the most the builds running at once held, of those whose
-peaks are known. Merges of packages never built here cost nothing and are counted apart;
-uninstalls cost nothing. The same run starts from a schedule under way, its running steps
+peaks are known. A package never built here is guessed (`BuildKnowledge::guess`) once the
+knowledge has learned from the index each built cp's eclasses (its latest build's version's,
+else its last version's) and each eclass's weight, ln(versions / versions inheriting it), so
+that one every package inherits says nothing: the 5 built packages most like it by weighted
+Jaccard over the eclasses (alike when neither inherits any; ties to the nearest distfile size)
+give their own estimates, each one's seconds scaled by the distfiles' size ratio to a power
+fitted as the slope of log seconds over log bytes across the packages' latest builds (held to
+0..1, a half until 8 packages have sizes; the factor held within a tenth and ten times), joined
+as a geometric mean weighted by likeness (parallelism and merge as arithmetic means, the peak
+geometric). Guessed merges are counted apart from known ones; merges with nothing alike cost
+nothing and are counted as unknown; uninstalls cost nothing. The same run starts from a schedule under way, its running steps
 carried on from their elapsed seconds. The plan commands end with it as a line (`updates` at the latest
 build's jobs, `exec` at its `-j`); egraphd's status keeps it among the plan's lines, `status`
 shows it beside the counts, and a change in the estimate alone is no plan change. During a

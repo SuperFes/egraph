@@ -376,6 +376,14 @@ TEST_CASE("updates say how long the plan will take, from the build history") {
         std::vector<std::string>{"1\t\ta/b-1\tupgrade\ta/b-2\tr", "\testimate\t40\t\t1\t0\t1"},
         plain, true);
     CHECK(table.str().ends_with("\n1 upgrade\nEstimate: about 40 s at -j1\n"));
+    // Steps guessed from similar packages, counted apart.
+    std::ostringstream guessed;
+    egraph::human_updates(
+        guessed,
+        std::vector<std::string>{"a/b-1\tupgrade\ta/b-2\tr", "\testimate\t40\t\t1\t1\t2\t3"},
+        plain);
+    CHECK(guessed.str().ends_with("Estimate: about 40 s at -j2; 3 guessed from similar packages, "
+                                  "1 never built here\n"));
 }
 
 TEST_CASE("an estimate's seconds read as roughly as they are known") {

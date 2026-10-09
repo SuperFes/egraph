@@ -1590,8 +1590,15 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         if (estimate->peak_memory) {
             text += std::format(", {} at most", byte_size(*estimate->peak_memory));
         }
+        std::vector<std::string> apart;
+        if (estimate->guessed != 0) {
+            apart.push_back(std::format("{} guessed from similar packages", estimate->guessed));
+        }
         if (estimate->unknown != 0) {
-            text += std::format("; {} never built here", estimate->unknown);
+            apart.push_back(std::format("{} never built here", estimate->unknown));
+        }
+        for (std::size_t i = 0; i < apart.size(); ++i) {
+            text += (i == 0 ? "; " : ", ") + apart.at(i);
         }
         out << paint("Estimate:", Tone::heading) << ' ' << paint(text, Tone::note) << '\n';
     }

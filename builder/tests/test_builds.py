@@ -146,7 +146,7 @@ def test_egraph_builds_reads_the_history_back(machines):
 
 
 def estimate(printed):
-    """A plan's estimate line: seconds, peak, known, unknown and jobs."""
+    """A plan's estimate line: seconds, peak, known, unknown, jobs and guessed."""
     *_, last = printed.splitlines()
     fields = last.split("\t")
     assert fields[:2] == ["", "estimate"], printed
@@ -164,8 +164,8 @@ def test_a_plan_says_how_long_it_will_take_from_the_history(parallel, tmp_path):
     targets = ["=" + r["cpv"] for r in records]
     plan = system.egraph("plan", *targets)
     assert plan.returncode == 0, plan.stdout + plan.stderr
-    seconds, peak, known, unknown, jobs = estimate(plan.stdout)
-    assert (int(known), int(unknown), jobs) == (len(records), 0, "3")
+    seconds, peak, known, unknown, jobs, guessed = estimate(plan.stdout)
+    assert (int(known), int(unknown), jobs, guessed) == (len(records), 0, "3", "0")
     longest = max(r["build_seconds"] for r in records)
     together = sum(r["build_seconds"] + r["merge_seconds"] for r in records)
     assert longest - 1 <= int(seconds) <= together + 1
@@ -173,16 +173,53 @@ def test_a_plan_says_how_long_it_will_take_from_the_history(parallel, tmp_path):
         assert int(peak) >= max(r["peak_memory"] for r in records)
     human = system.egraph("--layout", "human", "plan", *targets)
     assert "Estimate: about " in human.stdout and " at -j3" in human.stdout
-    # exec at the jobs it is given; a package never built here counted apart.
+    # exec at the jobs it is given; a package never built here counted apart, guessed from
+    # those built, which inherit no eclass either.
     shown = subprocess.run(
         system.command("exec", "-j1", *targets, "app-misc/marked"),
         input="n\n",
         capture_output=True,
         text=True,
     )
-    seconds, peak, known, unknown, jobs = estimate(shown.stdout.split("egraph:")[0])
-    assert (int(known), int(unknown), jobs) == (len(records), 1, "1")
+    seconds, peak, known, unknown, jobs, guessed = estimate(
+        shown.stdout.split("egraph:")[0]
+    )
+    assert (int(known), int(unknown), jobs, guessed) == (len(records), 0, "1", "1")
     assert int(seconds) >= together - 1
+
+
+# built and fresh inherit the same eclass, and other none.
+SIMILAR_ECLASSES = {"slow": ['S="${WORKDIR}"', "src_compile() { sleep 2; }"]}
+SIMILAR = {
+    "app-misc/built-1": {**PLAIN, "MISC_CONTENT": "inherit slow\n"},
+    "app-misc/fresh-1": {**PLAIN, "MISC_CONTENT": "inherit slow\n"},
+    "app-misc/other-1": {**PLAIN, "MISC_CONTENT": INSTALL},
+}
+
+
+@pytest.fixture
+def similar(gnupg_home, tmp_path):
+    yield from over(SIMILAR, tmp_path, eclasses=SIMILAR_ECLASSES)
+
+
+def test_a_package_never_built_here_is_guessed_from_similar_ones(similar):
+    """From the repository index's eclasses: fresh as long as built took, other unknown."""
+    system, machine = similar
+    age(system.playground.eroot)
+    ran = system.egraph("exec", "--yes", "app-misc/built")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    (record,) = history(system)
+    indexed = system.egraph("search", "fresh")
+    assert indexed.returncode == 0, indexed.stdout + indexed.stderr
+    plan = system.egraph("plan", "app-misc/fresh", "app-misc/other")
+    assert plan.returncode == 0, plan.stdout + plan.stderr
+    seconds, peak, known, unknown, jobs, guessed = estimate(plan.stdout)
+    assert (known, unknown, guessed) == ("0", "1", "1")
+    assert abs(int(seconds) - record["build_seconds"] - record["merge_seconds"]) <= 1
+    human = system.egraph(
+        "--layout", "human", "plan", "app-misc/fresh", "app-misc/other"
+    )
+    assert "; 1 guessed from similar packages, 1 never built here" in human.stdout
 
 
 def test_exec_publishes_the_time_it_has_left(parallel):

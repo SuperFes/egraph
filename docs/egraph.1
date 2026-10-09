@@ -531,13 +531,16 @@ or else those of the latest build recorded (as many as there are cores for no li
 build taking what its package's builds took (the version's, else the package's, those built
 with the nearest USE first, then the latest; one starved of CPU beside others timed by its CPU
 seconds; each scaled by the size of the distfiles the build fetches against its own, up to
-twice either way, where the repository index and the build know both), the builds sharing the
-cores by how
+twice either way, where the repository index and the build know both; a package never built
+here guessed from the five built here most like it, those sharing most of its eclasses, the
+rarer an eclass the more it counts, each scaled by the distfiles' sizes as far as the history
+shows a build's time grows with them), the builds sharing the cores by how
 many each keeps busy; and the most memory the builds running at once would hold. For scripts,
 the last line is an empty field, then
-.IR "" estimate " seconds peak known unknown jobs" ,
-the peak in bytes (empty when no build's is known), jobs empty for no limit, and unknown the
-merges of packages never built here, which count for nothing.
+.IR "" estimate " seconds peak known unknown jobs guessed" ,
+the peak in bytes (empty when no build's is known), jobs empty for no limit, guessed the merges
+of packages never built here guessed from similar ones, and unknown those with nothing like
+them, which count for nothing.
 .TP
 .B \-\-dynamic\-deps
 .TP

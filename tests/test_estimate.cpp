@@ -4,6 +4,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
+#include <format>
 #include <optional>
 #include <string>
 #include <vector>
@@ -203,6 +205,78 @@ TEST_CASE("a build's time scales by the wanted distfiles against its own, within
           100);
 }
 
+TEST_CASE("a package never built here is guessed from those whose eclasses it shares") {
+    egraph::test::IndexBuilder builder;
+    builder.version({.cpv = "app-misc/cm-1", .inherited = "cmake"});
+    builder.version({.cpv = "app-misc/me-1", .inherited = "meson"});
+    builder.version({.cpv = "app-misc/pl-1"});
+    auto cm = build("app-misc/cm-1", 100, 400);
+    cm.distfiles_size = 1000;
+    cm.peak_memory = 900;
+    BuildKnowledge knowledge{{cm, build("app-misc/me-1", 20, 20), build("app-misc/pl-1", 5)}};
+    const auto guess = [&](std::vector<std::string> eclasses,
+                           std::optional<std::uint64_t> distfiles = std::nullopt) {
+        return knowledge.guess(
+            BuildWanted{.cpv = "app-misc/new-1", .distfiles = distfiles, .eclasses = eclasses}, 8);
+    };
+    // Nothing learned yet.
+    CHECK_FALSE(guess({"cmake"}));
+    knowledge.learn(builder.index());
+    const auto alone = *guess({"cmake"});
+    CHECK(alone.seconds == Approx(100));
+    CHECK(alone.parallelism == Approx(4));
+    CHECK(alone.peak_memory == 900U);
+    CHECK(alone.merge_seconds == Approx(2));
+    CHECK(alone.builds == 1);
+    CHECK(alone.guessed);
+    // Scaled by the distfiles to the power the history shows, too few for a fit: a half.
+    CHECK(knowledge.size_exponent() == egraph::guess_size_exponent);
+    CHECK(guess({"cmake"}, 4000)->seconds == Approx(200));
+    CHECK(guess({"cmake"}, 1000000)->seconds == Approx(1000));
+    // Two alike, as much: between them.
+    const auto both = *guess({"cmake", "meson"});
+    CHECK(both.seconds == Approx(std::sqrt(100.0 * 20.0)));
+    CHECK(both.parallelism == Approx(2.5));
+    CHECK(both.builds == 2);
+    // A package inheriting nothing is like the others that inherit nothing.
+    CHECK(guess({})->seconds == Approx(5));
+    CHECK_FALSE(guess({"go-module"}));
+    CHECK_FALSE(knowledge.guess(BuildWanted{.cpv = "app-misc/new-1"}, 8));
+}
+
+TEST_CASE("a guess leans to the packages sharing its rarer eclasses") {
+    egraph::test::IndexBuilder builder;
+    builder.version({.cpv = "app-misc/cm-1", .inherited = "cmake"});
+    builder.version({.cpv = "app-misc/me-1", .inherited = "meson"});
+    builder.version({.cpv = "app-misc/x-1", .inherited = "meson"});
+    builder.version({.cpv = "app-misc/y-1", .inherited = "meson"});
+    BuildKnowledge knowledge{{build("app-misc/cm-1", 100), build("app-misc/me-1", 20)}};
+    knowledge.learn(builder.index());
+    const auto leaning =
+        knowledge.guess(BuildWanted{.cpv = "app-misc/new-1", .eclasses = {{"cmake", "meson"}}}, 8);
+    CHECK(leaning->seconds > std::sqrt(100.0 * 20.0));
+    CHECK(leaning->seconds < 100);
+}
+
+TEST_CASE("the history shows how a package's time grows with its distfiles") {
+    const auto exponent = [](std::size_t packages, auto seconds_of) {
+        std::vector<BuildRecord> records;
+        for (std::size_t i = 1; i <= packages; ++i) {
+            const auto bytes = static_cast<double>(i * 1000);
+            auto record = build(std::format("app-misc/p{}-1", i), seconds_of(bytes));
+            record.distfiles_size = static_cast<std::uint64_t>(bytes);
+            records.push_back(record);
+        }
+        return BuildKnowledge{records}.size_exponent();
+    };
+    CHECK(exponent(8, [](double bytes) { return bytes / 10; }) == Approx(1));
+    CHECK(exponent(8, [](double bytes) { return std::sqrt(bytes); }) == Approx(0.5));
+    CHECK(exponent(8, [](double) { return 30.0; }) == Approx(0).margin(1e-9));
+    // No more than proportional.
+    CHECK(exponent(8, [](double bytes) { return bytes * bytes; }) == Approx(1));
+    CHECK(exponent(7, [](double bytes) { return bytes / 10; }) == egraph::guess_size_exponent);
+}
+
 TEST_CASE("a plan's builds that wait for each other add up, merges and all") {
     const auto [plan, steps] = planned({{}, {0}, {1}});
     const std::vector costs{cost(10), cost(20), cost(30)};
@@ -313,9 +387,28 @@ TEST_CASE("a plan's steps cost what their packages' builds foretell") {
         {.cpv = "app-misc/a-2", .repo = "overlay", .use = {"doc"}},
         {.cpv = "app-misc/a-2", .repo = "gentoo", .uninstall = true}};
     const auto facts = egraph::step_facts(builder.index(), wanted);
-    CHECK(facts == std::vector<egraph::StepFacts>{{.distfiles = 150}, {}, {}});
+    CHECK(facts == std::vector<egraph::StepFacts>{
+                       {.distfiles = 150, .eclasses = std::vector<std::string>{}}, {}, {}});
     CHECK(egraph::step_costs(BuildKnowledge{{sized}}, wanted, 8, facts).at(0).build_seconds ==
           Approx(150));
+    // A package never built here, guessed from one sharing its eclasses.
+    builder.version({.cpv = "app-misc/b-1", .inherited = "cmake"});
+    builder.version({.cpv = "app-misc/a-1", .inherited = "cmake"});
+    const std::vector<egraph::BuildStep> fresh{{.cpv = "app-misc/b-1", .repo = "gentoo"}};
+    const auto fresh_facts = egraph::step_facts(builder.index(), fresh);
+    CHECK(fresh_facts.at(0).eclasses == std::vector<std::string>{"cmake"});
+    BuildKnowledge learned{{known}};
+    learned.learn(builder.index());
+    const auto guessed = egraph::step_costs(learned, fresh, 8, fresh_facts);
+    REQUIRE(guessed.size() == 1);
+    CHECK(guessed.at(0).build_seconds == Approx(100));
+    CHECK(guessed.at(0).parallelism == Approx(2));
+    CHECK(guessed.at(0).peak_memory == 5U);
+    CHECK((guessed.at(0).guessed && !guessed.at(0).known));
+    const auto [plan, plan_steps] = planned({{}});
+    const auto plan_estimate = egraph::estimate_plan(Schedule{plan, plan_steps, 1}, guessed, 8);
+    CHECK(plan_estimate.seconds == Approx(102));
+    CHECK((plan_estimate.known == 0 && plan_estimate.unknown == 0 && plan_estimate.guessed == 1));
     CHECK_FALSE(egraph::recorded_jobs({known, last}));
     CHECK(egraph::recorded_jobs({last, known}) == 4U);
     CHECK_FALSE(egraph::recorded_jobs({}));
@@ -324,9 +417,9 @@ TEST_CASE("a plan's steps cost what their packages' builds foretell") {
 TEST_CASE("a plan's estimate is a line for scripts") {
     CHECK(egraph::estimate_line(
               {.seconds = 7810.4, .peak_memory = 6000000000, .known = 30, .unknown = 4}, 4) ==
-          "\testimate\t7810\t6000000000\t30\t4\t4");
-    CHECK(egraph::estimate_line({.seconds = 40.6, .known = 1}, std::nullopt) ==
-          "\testimate\t41\t\t1\t0\t");
+          "\testimate\t7810\t6000000000\t30\t4\t4\t0");
+    CHECK(egraph::estimate_line({.seconds = 40.6, .known = 1, .guessed = 2}, std::nullopt) ==
+          "\testimate\t41\t\t1\t0\t\t2");
 }
 
 TEST_CASE("an estimate line is read back") {
@@ -334,6 +427,9 @@ TEST_CASE("an estimate line is read back") {
     CHECK(egraph::parse_estimate_line(egraph::estimate_line(estimate, 4)) ==
           egraph::EstimateLine{
               .seconds = 7810, .peak_memory = 6, .known = 30, .unknown = 4, .jobs = 4});
+    CHECK(egraph::parse_estimate_line("\testimate\t41\t\t1\t0\t\t2") ==
+          egraph::EstimateLine{.seconds = 41, .known = 1, .guessed = 2});
+    // As egraph wrote it before guesses.
     CHECK(egraph::parse_estimate_line("\testimate\t41\t\t1\t0\t") ==
           egraph::EstimateLine{.seconds = 41, .known = 1});
     CHECK_FALSE(egraph::parse_estimate_line("\ttried\tnone"));
