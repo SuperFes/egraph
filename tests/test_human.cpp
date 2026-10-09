@@ -427,6 +427,33 @@ TEST_CASE("updates say what the plan's tests cost") {
                        "Tests: about 25 min of the building, a/b-2 20 min, a/c-1 40 s\n");
 }
 
+TEST_CASE("updates say when their builds would hold most of the memory") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{
+                              "a/b-1\tupgrade\ta/b-2\tr",
+                              "\testimate\t7810\t45097156608\t1\t0\t",
+                              "\tadvice\tmemory\t45097156608\t34359738368\t2\t9000\t23622320128\t"
+                              "a/b-2\t12884901888\t6554",
+                          },
+                          plain);
+    CHECK(out.str().ends_with("Memory: the builds at once may hold 42.0 GiB of the 32.0 GiB here; "
+                              "-j2 keeps them to 22.0 GiB, about 2 h 30 min in all, or steve "
+                              "--min-memory-avail=6554 holds its tokens back\n"));
+    std::ostringstream alone;
+    egraph::human_updates(alone,
+                          std::vector<std::string>{
+                              "a/b-1\tupgrade\ta/b-2\tr",
+                              "\testimate\t100\t32212254720\t1\t0\t1",
+                              "\tadvice\tmemory\t32212254720\t34359738368\t\t\t\ta/b-2\t"
+                              "32212254720\t",
+                          },
+                          plain);
+    CHECK(
+        alone.str().ends_with("Memory: the builds at once may hold 30.0 GiB of the 32.0 GiB here; "
+                              "a/b-2 alone holds 30.0 GiB\n"));
+}
+
 TEST_CASE("an estimate's seconds read as roughly as they are known") {
     CHECK(egraph::rough_duration(0.2) == "1 s");
     CHECK(egraph::rough_duration(40.4) == "40 s");

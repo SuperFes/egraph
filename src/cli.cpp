@@ -1814,7 +1814,19 @@ std::vector<std::string> estimate_of(const Session& session, const Invocation& i
         return {};
     }
     std::vector<std::string> lines{estimate_line(estimate, jobs)};
-    std::ranges::move(advice_lines(plan_advice(built, costs)), std::back_inserter(lines));
+    auto advice = plan_advice(built, costs);
+    if (const auto total = pressure::read_sample().mem_total) {
+        advice.memory = memory_advice(plan, steps, built, costs, cores, jobs, estimate, *total);
+        // Only then is steve looked for, through every process's command line.
+        if (advice.memory) {
+            if (const auto argv = steve::find_command_line()) {
+                if (const auto settings = steve::parse_command_line(*argv)) {
+                    advice.memory->steve_floor = steve_floor(*total, *settings);
+                }
+            }
+        }
+    }
+    std::ranges::move(advice_lines(advice), std::back_inserter(lines));
     return lines;
 }
 

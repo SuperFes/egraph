@@ -257,6 +257,35 @@ def test_a_plan_says_what_its_tests_cost(machines):
     assert "Tests: about " in human.stdout
 
 
+def test_a_plan_says_when_its_builds_would_hold_most_of_the_memory(machines):
+    """Builds that held nine tenths of this system's memory each fit at no jobs: the largest is
+    named."""
+    system, machine = machines
+    age(system.playground.eroot)
+    ran = system.egraph("exec", "--yes", "app-misc/needs")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    with open("/proc/meminfo") as f:
+        (total,) = [
+            int(line.split()[1]) * 1024 for line in f if line.startswith("MemTotal:")
+        ]
+    records = history(system)
+    path = os.path.join(system.playground.eroot, "var", "lib", "egraph", "builds.jsonl")
+    with open(path, "w") as f:
+        for i, record in enumerate(records):
+            record["peak_memory"] = total * 9 // 10 - i
+            f.write(json.dumps(record) + "\n")
+    targets = ["=" + r["cpv"] for r in records]
+    plan = system.egraph("plan", *targets)
+    assert plan.returncode == 0, plan.stdout + plan.stderr
+    (memory,) = [a for a in advice(plan.stdout) if a[0] == "memory"]
+    peak, size, jobs, seconds, jobs_peak, largest, largest_peak, floor = memory[1:]
+    assert int(size) == total and int(peak) >= total * 9 // 10
+    assert (jobs, seconds, jobs_peak) == ("", "", "")
+    assert (largest, int(largest_peak)) == (records[0]["cpv"], total * 9 // 10)
+    human = system.egraph("--layout", "human", "plan", *targets)
+    assert f"{records[0]['cpv']} alone holds" in human.stdout
+
+
 def test_a_plan_says_how_long_it_will_take_from_the_history(parallel, tmp_path):
     """Its packages' builds run ahead at the jobs of the latest build: no shorter than the
     longest build, no longer than all of them one after another."""

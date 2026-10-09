@@ -1274,9 +1274,9 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
   - 20f1 (done): a finish time for people, from the estimate and the local clock, and the
     tests' cost: each estimate foretells its test phase, and a plan whose tests take two minutes
     or more names their total and the three costliest (`advice` lines after the estimate's).
-  - 20f2 (planned): memory: a plan whose peak nears the system's memory is told the jobs that
-    keep it below, from the estimate run again at fewer, or steve's `--min-memory-avail` where
-    steve is the jobserver.
+  - 20f2 (done): memory: a plan whose peak passes four fifths of the system's memory is told
+    the jobs that keep it below, from the estimate run again at fewer, else the build too large
+    alone, and steve's `--min-memory-avail` where steve runs with a lower floor.
   - 20f3 (planned): tmpfs: each build records its `PORTAGE_TMPDIR`; a package whose build
     directory grew past the size of the tmpfs it builds on is offered a `notmpfs` env.
   - 20f4 (planned): binary packages: a long build a binary package could replace, from the

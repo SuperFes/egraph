@@ -1013,7 +1013,12 @@ seconds from the history (read again when the file changes).
 Advice (`src/advice.hpp`) follows the estimate as lines of its own, from the same step costs:
 each package's estimate also foretells its test phase (the median of its builds' test-phase
 seconds, scaled as the rest; a guess's the likeness-weighted mean), and once a plan's tests take
-two minutes or more in all, their total and the three costliest are named. A status keeps them
+two minutes or more in all, their total and the three costliest are named. Once the builds
+running at once would hold more than 80% of MemTotal, the plan is estimated again at one job
+fewer at a time until its peak fits, which names the jobs, their time and peak (none when even
+one at a time does not, the build holding the most alone named instead); only then is steve
+looked for (its command line, through /proc), and where its `--min-memory-avail` is below a
+fifth of the memory, that fifth is offered as its floor. A status keeps them
 among the plan's lines, and they are no plan change either. The finish time is no line: it is
 the estimate's seconds from now, which only the human layout says, in the local zone.
 

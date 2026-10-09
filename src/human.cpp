@@ -1091,6 +1091,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     // Its advice, taken off: the tests' seconds, and the costliest packages' in order.
     std::optional<double> test_seconds;
     std::vector<std::pair<std::string_view, double>> tested;
+    std::optional<Fields> memory;
     for (std::size_t i = rows.size(); i-- > 0;) {
         const auto& row = rows.at(i);
         if (row.size() < 3 || !row.at(0).empty() || row.at(1) != "advice") {
@@ -1102,6 +1103,8 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             if (const auto seconds = number_field(row.at(4))) {
                 tested.emplace(tested.begin(), row.at(3), *seconds);
             }
+        } else if (row.at(2) == "memory" && row.size() == 11) {
+            memory = Fields(row.begin() + 3, row.end());
         }
         rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
     }
@@ -1636,6 +1639,26 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             text += (i == 0 ? "; " : ", ") + apart.at(i);
         }
         out << paint("Estimate:", Tone::heading) << ' ' << paint(text, Tone::note) << '\n';
+    }
+    // peak, total, jobs, their seconds and peak, the largest build and its peak, steve's floor
+    if (memory) {
+        const auto bytes = [&](std::size_t field) {
+            return byte_size(
+                static_cast<std::uint64_t>(number_field(memory->at(field)).value_or(0)));
+        };
+        auto text =
+            std::format("the builds at once may hold {} of the {} here; ", bytes(0), bytes(1));
+        if (const auto seconds = number_field(memory->at(3)); !memory->at(2).empty() && seconds) {
+            text += std::format("-j{} keeps them to {}, about {} in all", memory->at(2), bytes(4),
+                                rough_duration(*seconds));
+        } else {
+            text += std::format("{} alone holds {}", memory->at(5), bytes(6));
+        }
+        if (!memory->at(7).empty()) {
+            text += std::format(", or steve --min-memory-avail={} holds its tokens back",
+                                memory->at(7));
+        }
+        out << paint("Memory:", Tone::heading) << ' ' << paint(text, Tone::note) << '\n';
     }
     if (test_seconds) {
         auto text = std::format("about {} of the building", rough_duration(*test_seconds));
