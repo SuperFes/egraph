@@ -1753,7 +1753,32 @@ unsigned build_cores() {
 
 // The plan's estimate from the build history, as a line after its others: at the jobs given,
 // else at the latest build's; none when no package in it was built here.
-std::optional<std::string> estimate_of(const Store& store, const Evaluated& evaluated,
+// The repository index an estimate reads: loaded, where a session has one, else the one on
+// disk, current or not; none without one. An estimate never builds it.
+std::shared_ptr<const RepositoryIndex> estimate_index(std::shared_ptr<const RepositoryIndex> loaded,
+                                                      const Invocation& invocation) {
+    if (loaded) {
+        return loaded;
+    }
+    std::filesystem::path used;
+    if (auto current = current_repository(invocation, used)) {
+        return std::make_shared<const RepositoryIndex>(std::move(*current));
+    }
+    if (auto stored = load_repository(repository_index_path(used))) {
+        return std::make_shared<const RepositoryIndex>(std::move(*stored));
+    }
+    return nullptr;
+}
+
+// What the index holds of each step, nothing without an index.
+std::vector<StepFacts> facts_of(std::shared_ptr<const RepositoryIndex> loaded,
+                                const Invocation& invocation, std::span<const BuildStep> steps) {
+    const auto index = estimate_index(std::move(loaded), invocation);
+    return index ? step_facts(*index, steps) : std::vector<StepFacts>{};
+}
+
+std::optional<std::string> estimate_of(const Session& session, const Invocation& invocation,
+                                       const Store& store, const Evaluated& evaluated,
                                        const Plan& plan, std::span<const Argument> arguments,
                                        std::optional<std::uint32_t> given_jobs) {
     const auto records = read_history(builds_path(store.meta.eroot));
@@ -1764,10 +1789,12 @@ std::optional<std::string> estimate_of(const Store& store, const Evaluated& eval
     const auto steps = run_steps(store, evaluated, plan, arguments, true);
     const auto cores = build_cores();
     const auto jobs = given_jobs ? given_jobs : recorded_jobs(records);
+    const auto built = build_steps(store, evaluated, plan, steps);
     // No limit: as many at once as a jobserver has tokens, one a core.
     const auto estimate =
         estimate_plan(Schedule{plan, steps, jobs},
-                      step_costs(knowledge, build_steps(store, evaluated, plan, steps), cores),
+                      step_costs(knowledge, built, cores,
+                                 facts_of(session.loaded_repository(), invocation, built)),
                       cores, jobs ? std::nullopt : std::optional{cores});
     if (estimate.known == 0) {
         return std::nullopt;
@@ -1928,7 +1955,8 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
     std::ranges::move(tried_changes(session, invocation, *store, evaluated, plan, command.rebuilds,
                                     targets, envs, "updates", command.table),
                       std::back_inserter(lines));
-    if (auto estimate = estimate_of(*store, evaluated, plan, {}, std::nullopt)) {
+    if (auto estimate =
+            estimate_of(session, invocation, *store, evaluated, plan, {}, std::nullopt)) {
         lines.push_back(std::move(*estimate));
     }
     if (const auto style = output(invocation); style.human) {
@@ -2314,7 +2342,8 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
     std::ranges::move(tried_changes(session, invocation, *store, evaluated, shown.plan,
                                     command.rebuilds, targets, envs, name, command.table),
                       std::back_inserter(lines));
-    if (auto estimate = estimate_of(*store, evaluated, shown.plan, shown.arguments, jobs)) {
+    if (auto estimate = estimate_of(session, invocation, *store, evaluated, shown.plan,
+                                    shown.arguments, jobs)) {
         lines.push_back(std::move(*estimate));
     }
     if (const auto style = output(invocation); style.human) {
@@ -3139,10 +3168,11 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     // The time the run has left, from the build history as it stood when the run started.
     const auto built = build_steps(shown.store.get(), shown.evaluated.get(), plan, steps);
     const auto cores = build_cores();
-    Countdown countdown{
-        step_costs(BuildKnowledge{read_history(builds_path(shown.store.get().meta.eroot))}, built,
-                   cores),
-        cores, jobs ? std::nullopt : std::optional{cores}};
+    const BuildKnowledge knowledge{read_history(builds_path(shown.store.get().meta.eroot))};
+    Countdown countdown{step_costs(knowledge, built, cores,
+                                   knowledge.empty() ? std::vector<StepFacts>{}
+                                                     : facts_of(nullptr, invocation, built)),
+                        cores, jobs ? std::nullopt : std::optional{cores}};
     StatusFile status{emerge::status_dir(invocation.eprefix.value_or(""), emerge::Publisher::exec) /
                           std::format("exec-{}.json", os::process_id()),
                       out};

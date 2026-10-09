@@ -5,6 +5,7 @@
 
 #include "builds.hpp"
 #include "emerge.hpp"
+#include "repository.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -33,8 +34,21 @@ struct PackageEstimate {
     bool operator==(const PackageEstimate&) const = default;
 };
 
-// The builds an estimate rests on: the latest merged ones of the version, else of the cp.
+// The builds an estimate rests on: the merged ones of the version, else of the cp, those of the
+// nearest USE first, then the latest.
 inline constexpr std::size_t estimate_builds = 5;
+
+// The most a build's distfiles, against an earlier build's, scale that one's time either way: a
+// version's sources rarely grow or shrink more, and a compression change alone moves them some.
+inline constexpr double distfile_scale_limit = 2;
+
+// What a build is estimated for: its cpv, the flags it is built with (sorted) where known, and
+// its distfiles' bytes where known.
+struct BuildWanted {
+    std::string cpv{};
+    std::optional<std::vector<std::string>> use{};
+    std::optional<std::uint64_t> distfiles{};
+};
 
 // A system's CPU busy share past which a build beside others got less than it asked for.
 inline constexpr double saturated_share = 0.9;
@@ -44,11 +58,16 @@ class BuildKnowledge {
   public:
     explicit BuildKnowledge(const std::vector<BuildRecord>& records);
 
-    // cpv's next build on a system of cores: none for a cp never built here. A build that ran
+    // The wanted build on a system of cores: none for a cp never built here. A build that ran
     // alone, or beside others on a system not saturated, took what it needed; one on a saturated
-    // system is timed from its CPU seconds and the most parallelism the package showed.
-    [[nodiscard]] std::optional<PackageEstimate> estimate(std::string_view cpv,
+    // system is timed from its CPU seconds and the most parallelism the package showed. Each
+    // build's time scales by the wanted distfiles' bytes against its own, where both are known.
+    [[nodiscard]] std::optional<PackageEstimate> estimate(const BuildWanted& wanted,
                                                           unsigned cores) const;
+    [[nodiscard]] std::optional<PackageEstimate> estimate(std::string_view cpv,
+                                                          unsigned cores) const {
+        return estimate(BuildWanted{.cpv = std::string{cpv}}, cores);
+    }
 
     [[nodiscard]] bool empty() const { return by_cp_.empty(); }
 
@@ -99,10 +118,22 @@ struct PlanEstimate {
                                          std::optional<std::uint32_t> tokens = std::nullopt,
                                          std::span<const RunningStep> running = {});
 
+// What the repository index says of a step's package: its distfiles' bytes under the step's USE.
+struct StepFacts {
+    std::optional<std::uint64_t> distfiles{};
+    bool operator==(const StepFacts&) const = default;
+};
+
+// By step, the facts index holds of its package; nothing for an uninstall or a version it lacks.
+[[nodiscard]] std::vector<StepFacts> step_facts(const RepositoryIndex& index,
+                                                std::span<const BuildStep> steps);
+
 // Each step's cost on a system of cores: a merge's from its package's estimate where it has
-// one, nothing otherwise; an uninstall's nothing.
+// one, built with the step's USE and with its facts where given, nothing otherwise; an
+// uninstall's nothing.
 [[nodiscard]] std::vector<StepCost> step_costs(const BuildKnowledge& knowledge,
-                                               std::span<const BuildStep> steps, unsigned cores);
+                                               std::span<const BuildStep> steps, unsigned cores,
+                                               std::span<const StepFacts> facts = {});
 
 // The jobs a plan is estimated at when none are given: those of the latest build recorded, none
 // for no limit.

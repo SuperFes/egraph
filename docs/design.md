@@ -943,13 +943,18 @@ history's log is appended) and keeps the last `build_keep` records of each cp (`
 20 by default; 0 records nothing), so the file stays a few MB at most and is read whole; lines it
 cannot read are kept as they are. `egraph builds` lists the records, as lines, JSON or CSV.
 
-Estimates (`src/estimate.hpp`) come from the history alone. A package's next build is foretold by
-its latest merged builds (5, the version's, else the cp's): each one's seconds without its fetch,
+Estimates (`src/estimate.hpp`) come from the history, and from the repository index's distfile
+sizes where it is there (loaded or on disk; an estimate never builds it). A package's next build
+is foretold by 5 of its merged builds (the version's, else the cp's), those whose USE differs
+from the build's by the fewest flags first, then the latest: each one's seconds without its fetch,
 except that one starved beside other builds on a saturated system (CPU busy at 90% or more, or
 any emerge build beside others, of which the system's load is unknown) is timed as its CPU
 seconds over the most cores the package kept busy in any of them; the median of those, the
 median CPU seconds over it for its parallelism (no more than the cores), the most memory any
-held and the median merge. A plan is then estimated by running its own `Schedule` ahead on a
+held and the median merge. Each build's seconds and CPU seconds scale by the bytes of the
+distfiles the wanted build fetches (the index's fetch groups under its USE) against those it
+fetched, the factor held between a half and two: a new version's sources rarely move more, and
+a change of compression alone moves them some. A plan is then estimated by running its own `Schedule` ahead on a
 clock of its own rather than summing: the builds it lets start, at the jobs given or else the
 latest build's (as many as there are cores when there is no limit, as a jobserver's tokens
 gate them), progress at their own pace while their parallelism together fits the cores and are

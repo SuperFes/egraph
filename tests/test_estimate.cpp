@@ -1,4 +1,5 @@
 #include "estimate.hpp"
+#include "index_builder.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -10,6 +11,7 @@
 using Catch::Approx;
 using egraph::BuildKnowledge;
 using egraph::BuildRecord;
+using egraph::BuildWanted;
 using egraph::PackageEstimate;
 using egraph::PlanEstimate;
 using egraph::Schedule;
@@ -157,6 +159,50 @@ TEST_CASE("a package's parallelism is no more than the system's cores") {
     CHECK(estimate->parallelism == 0);
 }
 
+TEST_CASE("the builds of the nearest USE come first, then the latest") {
+    std::vector<BuildRecord> records;
+    for (int i = 0; i < 3; ++i) {
+        auto record = build("app-misc/a-1", 100);
+        record.use = {"x"};
+        records.push_back(record);
+    }
+    for (int i = 0; i < 5; ++i) {
+        auto record = build("app-misc/a-1", 200);
+        record.use = {"x", "y"};
+        records.push_back(record);
+    }
+    const BuildKnowledge knowledge{records};
+    const auto seconds = [&](std::optional<std::vector<std::string>> use) {
+        return knowledge.estimate(BuildWanted{.cpv = "app-misc/a-1", .use = std::move(use)}, 8)
+            ->seconds;
+    };
+    // Three of the same USE and two a flag away.
+    CHECK(seconds(std::vector<std::string>{"x"}) == 100);
+    CHECK(seconds(std::vector<std::string>{"x", "y"}) == 200);
+    CHECK(seconds(std::vector<std::string>{"x", "z"}) == 100);
+    // No USE known: the latest.
+    CHECK(seconds(std::nullopt) == 200);
+}
+
+TEST_CASE("a build's time scales by the wanted distfiles against its own, within a limit") {
+    auto record = build("app-misc/a-1", 100, 200);
+    record.distfiles_size = 1000;
+    const BuildKnowledge knowledge{{record}};
+    const auto scaled = [&](std::optional<std::uint64_t> distfiles) {
+        return *knowledge.estimate(BuildWanted{.cpv = "app-misc/a-2", .distfiles = distfiles}, 8);
+    };
+    CHECK(scaled(1500).seconds == Approx(150));
+    // Its parallelism stays the package's.
+    CHECK(scaled(1500).parallelism == Approx(2));
+    CHECK(scaled(5000).seconds == Approx(200));
+    CHECK(scaled(100).seconds == Approx(50));
+    CHECK(scaled(std::nullopt).seconds == 100);
+    // Nor is a build that never said its distfiles' size scaled.
+    const BuildKnowledge unsized{{build("app-misc/a-1", 100)}};
+    CHECK(unsized.estimate(BuildWanted{.cpv = "app-misc/a-2", .distfiles = 1500}, 8)->seconds ==
+          100);
+}
+
 TEST_CASE("a plan's builds that wait for each other add up, merges and all") {
     const auto [plan, steps] = planned({{}, {0}, {1}});
     const std::vector costs{cost(10), cost(20), cost(30)};
@@ -256,6 +302,20 @@ TEST_CASE("a plan's steps cost what their packages' builds foretell") {
                                                                             .known = true},
                                                                            {},
                                                                            {}});
+    // With the index's facts, built with the step's USE.
+    auto sized = build("app-misc/a-1", 100);
+    sized.distfiles_size = 100;
+    egraph::test::IndexBuilder builder;
+    builder.version({.cpv = "app-misc/a-2",
+                     .fetch = {{.places = {""}, .bytes = 100}, {.places = {"doc?"}, .bytes = 50}}});
+    const std::vector<egraph::BuildStep> wanted{
+        {.cpv = "app-misc/a-2", .repo = "gentoo", .use = {"doc"}},
+        {.cpv = "app-misc/a-2", .repo = "overlay", .use = {"doc"}},
+        {.cpv = "app-misc/a-2", .repo = "gentoo", .uninstall = true}};
+    const auto facts = egraph::step_facts(builder.index(), wanted);
+    CHECK(facts == std::vector<egraph::StepFacts>{{.distfiles = 150}, {}, {}});
+    CHECK(egraph::step_costs(BuildKnowledge{{sized}}, wanted, 8, facts).at(0).build_seconds ==
+          Approx(150));
     CHECK_FALSE(egraph::recorded_jobs({known, last}));
     CHECK(egraph::recorded_jobs({last, known}) == 4U);
     CHECK_FALSE(egraph::recorded_jobs({}));

@@ -7,9 +7,12 @@
 #include <cmath>
 #include <format>
 #include <functional>
+#include <iterator>
 #include <limits>
+#include <map>
 #include <ranges>
 #include <system_error>
+#include <utility>
 #include <variant>
 
 namespace egraph {
@@ -51,6 +54,23 @@ bool starved(const BuildRecord& record) {
     return true;
 }
 
+// The flags one has that the other lacks, either way.
+std::size_t use_distance(const std::vector<std::string>& built,
+                         const std::vector<std::string>& wanted) {
+    std::vector<std::string_view> differing;
+    std::ranges::set_symmetric_difference(built, wanted, std::back_inserter(differing));
+    return differing.size();
+}
+
+// How much the wanted distfiles scale a build's time, where both sizes are known.
+double distfile_scale(const BuildRecord& record, std::optional<std::uint64_t> wanted) {
+    if (!wanted || *wanted == 0 || !record.distfiles_size || *record.distfiles_size == 0) {
+        return 1;
+    }
+    return std::clamp(static_cast<double>(*wanted) / static_cast<double>(*record.distfiles_size),
+                      1 / distfile_scale_limit, distfile_scale_limit);
+}
+
 } // namespace
 
 BuildKnowledge::BuildKnowledge(const std::vector<BuildRecord>& records) {
@@ -62,8 +82,9 @@ BuildKnowledge::BuildKnowledge(const std::vector<BuildRecord>& records) {
     }
 }
 
-std::optional<PackageEstimate> BuildKnowledge::estimate(std::string_view cpv,
+std::optional<PackageEstimate> BuildKnowledge::estimate(const BuildWanted& wanted,
                                                         unsigned cores) const {
+    const auto& cpv = wanted.cpv;
     const auto found = by_cp_.find(cp_of(cpv));
     if (found == by_cp_.end()) {
         return std::nullopt;
@@ -71,15 +92,19 @@ std::optional<PackageEstimate> BuildKnowledge::estimate(std::string_view cpv,
     const auto& all = found->second;
     const bool same_version =
         std::ranges::any_of(all, [&](const BuildRecord& record) { return record.cpv == cpv; });
-    std::vector<std::reference_wrapper<const BuildRecord>> chosen;
+    // The latest first, then those of the nearest USE, keeping that order among equals.
+    std::vector<std::reference_wrapper<const BuildRecord>> pool;
     for (const auto& record : all | std::views::reverse) {
-        if (chosen.size() == estimate_builds) {
-            break;
-        }
         if (!same_version || record.cpv == cpv) {
-            chosen.emplace_back(record);
+            pool.emplace_back(record);
         }
     }
+    if (wanted.use) {
+        std::ranges::stable_sort(pool, std::less<>{}, [&](const BuildRecord& record) {
+            return use_distance(record.use, *wanted.use);
+        });
+    }
+    const auto chosen = pool | std::views::take(estimate_builds) | std::ranges::to<std::vector>();
     // The most cores the package kept busy in any of them.
     double most_parallel = 0;
     for (const BuildRecord& record : chosen) {
@@ -94,9 +119,10 @@ std::optional<PackageEstimate> BuildKnowledge::estimate(std::string_view cpv,
     for (const BuildRecord& record : chosen) {
         const auto cpu_seconds = record.cpu_seconds.value_or(0);
         const bool timed = starved(record) && record.cpu_seconds && most_parallel > 0;
-        seconds.push_back(timed ? cpu_seconds / most_parallel : built_in(record));
+        const auto scale = distfile_scale(record, wanted.distfiles);
+        seconds.push_back(scale * (timed ? cpu_seconds / most_parallel : built_in(record)));
         if (record.cpu_seconds) {
-            cpu.push_back(*record.cpu_seconds);
+            cpu.push_back(scale * *record.cpu_seconds);
         }
         if (record.merge_seconds) {
             merges.push_back(*record.merge_seconds);
@@ -205,12 +231,49 @@ PlanEstimate estimate_plan(Schedule schedule, std::span<const StepCost> costs, u
     return estimate;
 }
 
+std::vector<StepFacts> step_facts(const RepositoryIndex& index, std::span<const BuildStep> steps) {
+    std::map<std::pair<std::string_view, std::string_view>, std::size_t> wanted;
+    for (std::size_t i = 0; i < steps.size(); ++i) {
+        const auto& step = steps.subspan(i).front();
+        if (!step.uninstall) {
+            wanted.emplace(std::pair{std::string_view{step.cpv}, std::string_view{step.repo}}, i);
+        }
+    }
+    std::map<std::pair<std::string_view, std::string_view>,
+             std::reference_wrapper<const IndexVersion>>
+        found;
+    for (const auto& version : index.versions) {
+        const std::pair key{index.string(version.cpv),
+                            index.string(index.repositories.at(version.repository).name)};
+        if (wanted.contains(key)) {
+            found.emplace(key, version);
+        }
+    }
+    std::vector<StepFacts> facts;
+    facts.reserve(steps.size());
+    for (const auto& step : steps) {
+        const auto version =
+            found.find(std::pair{std::string_view{step.cpv}, std::string_view{step.repo}});
+        if (step.uninstall || version == found.end()) {
+            facts.emplace_back();
+            continue;
+        }
+        facts.push_back({.distfiles = distfiles_size(index, version->second, step.use)});
+    }
+    return facts;
+}
+
 std::vector<StepCost> step_costs(const BuildKnowledge& knowledge, std::span<const BuildStep> steps,
-                                 unsigned cores) {
+                                 unsigned cores, std::span<const StepFacts> facts) {
     std::vector<StepCost> costs;
     costs.reserve(steps.size());
-    for (const auto& step : steps) {
-        const auto estimate = step.uninstall ? std::nullopt : knowledge.estimate(step.cpv, cores);
+    for (std::size_t i = 0; i < steps.size(); ++i) {
+        const auto& step = steps.subspan(i).front();
+        const BuildWanted wanted{.cpv = step.cpv,
+                                 .use = step.use,
+                                 .distfiles = i < facts.size() ? facts.subspan(i).front().distfiles
+                                                               : std::nullopt};
+        const auto estimate = step.uninstall ? std::nullopt : knowledge.estimate(wanted, cores);
         if (!estimate) {
             costs.emplace_back();
             continue;

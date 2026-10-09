@@ -528,8 +528,11 @@ would run it, under FEATURES=merge\-wait, at the jobs
 is given
 .RB ( \-j )
 or else those of the latest build recorded (as many as there are cores for no limit), each
-build taking what its package's latest builds took (the version's, else the package's; one
-starved of CPU beside others timed by its CPU seconds), the builds sharing the cores by how
+build taking what its package's builds took (the version's, else the package's, those built
+with the nearest USE first, then the latest; one starved of CPU beside others timed by its CPU
+seconds; each scaled by the size of the distfiles the build fetches against its own, up to
+twice either way, where the repository index and the build know both), the builds sharing the
+cores by how
 many each keeps busy; and the most memory the builds running at once would hold. For scripts,
 the last line is an empty field, then
 .IR "" estimate " seconds peak known unknown jobs" ,
