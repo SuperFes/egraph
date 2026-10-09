@@ -32,17 +32,6 @@ double median(std::vector<double> values) {
                                   : (values.at(middle - 1) + values.at(middle)) / 2;
 }
 
-// Its build's seconds without fetching.
-double built_in(const BuildRecord& record) {
-    double fetching = 0;
-    for (const auto& phase : record.phases) {
-        if (phase.phase == "fetch") {
-            fetching += phase.seconds;
-        }
-    }
-    return std::max(record.build_seconds - fetching, 0.0);
-}
-
 // Whether it got less of the system than it asked for: beside others on a saturated system, or
 // beside others on one that said nothing of itself.
 bool starved(const BuildRecord& record) {
@@ -114,9 +103,9 @@ BuildKnowledge::BuildKnowledge(const std::vector<BuildRecord>& records) {
     std::vector<double> times;
     for (const auto& [cp, builds] : by_cp_) {
         const auto& latest = builds.back();
-        if (latest.distfiles_size.value_or(0) > 0 && built_in(latest) > 0) {
+        if (latest.distfiles_size.value_or(0) > 0 && seconds_building(latest) > 0) {
             sizes.push_back(std::log(static_cast<double>(latest.distfiles_size.value_or(0))));
-            times.push_back(std::log(built_in(latest)));
+            times.push_back(std::log(seconds_building(latest)));
         }
     }
     if (sizes.size() >= guess_fit_packages) {
@@ -281,8 +270,8 @@ std::optional<PackageEstimate> BuildKnowledge::estimate(const BuildWanted& wante
     // The most cores the package kept busy in any of them.
     double most_parallel = 0;
     for (const BuildRecord& record : chosen) {
-        if (record.cpu_seconds && built_in(record) > 0) {
-            most_parallel = std::max(most_parallel, *record.cpu_seconds / built_in(record));
+        if (record.cpu_seconds && seconds_building(record) > 0) {
+            most_parallel = std::max(most_parallel, *record.cpu_seconds / seconds_building(record));
         }
     }
     PackageEstimate estimate{.builds = chosen.size(), .same_version = same_version};
@@ -293,7 +282,7 @@ std::optional<PackageEstimate> BuildKnowledge::estimate(const BuildWanted& wante
         const auto cpu_seconds = record.cpu_seconds.value_or(0);
         const bool timed = starved(record) && record.cpu_seconds && most_parallel > 0;
         const auto scale = distfile_scale(record, wanted.distfiles);
-        seconds.push_back(scale * (timed ? cpu_seconds / most_parallel : built_in(record)));
+        seconds.push_back(scale * (timed ? cpu_seconds / most_parallel : seconds_building(record)));
         if (record.cpu_seconds) {
             cpu.push_back(scale * *record.cpu_seconds);
         }

@@ -2,8 +2,6 @@
 
 #include "atom.hpp"
 #include "human.hpp"
-#include "log.hpp"
-#include "log_read.hpp"
 #include "os.hpp"
 #include "use_stack.hpp"
 #include "version.hpp"
@@ -134,6 +132,16 @@ std::optional<BuildReason> parse_build_reason(std::string_view name) {
 
 std::filesystem::path builds_path(const std::filesystem::path& eroot) {
     return eroot / "var/lib/egraph/builds.jsonl";
+}
+
+double seconds_building(const BuildRecord& record) {
+    double fetching = 0;
+    for (const auto& phase : record.phases) {
+        if (phase.phase == "fetch") {
+            fetching += phase.seconds;
+        }
+    }
+    return std::max(record.build_seconds - fetching, 0.0);
 }
 
 std::string build_record_json(const BuildRecord& record) {
@@ -555,36 +563,6 @@ matching_builds(std::vector<BuildRecord> records, std::span<const std::string> p
         });
     });
     return records;
-}
-
-std::string build_line(const BuildRecord& record, const std::chrono::time_zone& zone) {
-    auto line =
-        std::format("{}  {}::{}  ", log::local_time(record.start, zone), record.cpv, record.repo);
-    if (record.outcome == BuildRecord::Outcome::merged) {
-        line += "merged in " + log::duration(record.build_seconds);
-        if (record.merge_seconds) {
-            line += ", merge " + log::duration(*record.merge_seconds);
-        }
-        if (record.cpu_seconds) {
-            line += "; CPU " + log::duration(*record.cpu_seconds);
-            if (record.peak_memory) {
-                line += ", memory " + byte_size(*record.peak_memory);
-            }
-        } else if (record.peak_memory) {
-            line += "; memory " + byte_size(*record.peak_memory);
-        }
-        return line;
-    }
-    if (record.failed_phase) {
-        line += std::format("failed in {}", *record.failed_phase);
-    } else {
-        line += "failed";
-    }
-    line += " after " + log::duration(record.build_seconds);
-    if (record.error) {
-        line += ": " + *record.error;
-    }
-    return line;
 }
 
 std::string build_fields(const BuildRecord& record) {

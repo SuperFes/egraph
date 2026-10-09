@@ -1341,12 +1341,32 @@ do. Each record says which measured it.
 It also holds the space the build directory and image took up once installed, the size of the
 distfiles and of the installed package, and, where steve is the jobserver, its jobs and free
 tokens while it built, on average; the fetch is timed as a phase of its own.
+For people, the builds are a table, its columns left out where no build fills them; with
+packages given, a table under each cp in the order of its first build, headed by a sparkline of its
+merged builds' times (each placed between the shortest and the longest), how many builds it had
+and how long they took.
 .TP
 .I package
 Only the builds of the packages these atoms or cps match.
 .TP
 .BR \-\-format " json|csv"
 The records as the history holds them, a JSON object a line, or as CSV with a header line.
+.TP
+.B \-\-slowest
+In place of the builds, each package with a merged build, slowest first by the median of its merged
+builds' times without their fetch (as estimates count them), ties by cp: for people, with a
+sparkline of its last 12 builds; as lines, the cp, its merged and failed builds, the median seconds,
+the median CPU seconds and the peak memory in bytes (each empty when not measured), and its merged
+builds' seconds, oldest first, separated by spaces.
+.TP
+.BR \-\-by " week|month"
+In place of the builds, the time spent building and merging (failed builds included) in each week,
+from Monday, or month, local time, from the first build's to the last's, those without builds
+included: for people, with a bar against the busiest; as lines, the period's first day, its builds,
+those that failed, the seconds and the CPU seconds (empty when none was measured). The history keeps
+the last builds of each package only
+.RB ( build_keep ),
+so a package rebuilt often counts in the latest periods alone.
 .SS diff \fR[\fIwhen\fR]
 The installed packages and root sets now against the system as its history kept it (see
 .I ${ROOT}${EPREFIX}/var/lib/egraph

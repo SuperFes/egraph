@@ -1210,3 +1210,99 @@ TEST_CASE("history lines up its events after their times") {
     egraph::human_history(none, {}, plain);
     CHECK(none.str() == "+ Nothing in the history.\n");
 }
+
+TEST_CASE("builds read as a table, the columns nothing fills left out") {
+    const auto* utc = std::chrono::locate_zone("UTC");
+    std::ostringstream out;
+    egraph::human_builds(
+        out,
+        std::vector<std::string>{
+            "1759932131\tapp-misc/"
+            "a-1\tgentoo\tmerged\t123.0\t4.0\t\t4\t2\t842.0\t3221225472\tupgrade",
+            "1759932731\tapp-misc/b-2\tlocal\tfailed\t60.0\t\tcompile\t\t0\t\t\tnew"},
+        false, *utc, plain);
+    CHECK(
+        out.str() ==
+        "Started           Package               Outcome            Build      Merge  CPU         "
+        "Memory   Reason\n"
+        "2025-10-08 14:02  app-misc/a-1::gentoo  merged             2 min 3 s  4.0 s  14 min 2 s  "
+        "3.0 GiB  upgrade\n"
+        "2025-10-08 14:12  app-misc/b-2::local   failed in compile  1 min 0 s                     "
+        "         new\n");
+    std::ostringstream none;
+    egraph::human_builds(none, {}, false, *utc, plain);
+    CHECK(none.str() == "+ Nothing in the build history.\n");
+}
+
+TEST_CASE("a package's builds are a table under it, headed by a sparkline of their times") {
+    const auto* utc = std::chrono::locate_zone("UTC");
+    std::ostringstream out;
+    egraph::human_builds(out,
+                         std::vector<std::string>{
+                             "1759932131\tapp-misc/a-1\tgentoo\tmerged\t123.0\t4.0\t\t\t0\t\t\t",
+                             "1759932731\tapp-misc/b-2\tlocal\tfailed\t60.0\t\tcompile\t\t0\t\t\t",
+                             "1759933131\tapp-misc/a-2\tgentoo\tmerged\t300.0\t2.0\t\t\t0\t\t\t"},
+                         true, *utc, plain);
+    CHECK(out.str() == "app-misc/a  _#  2 builds, 2 min 3 s to 5 min 0 s\n"
+                       "  Started           Version    Outcome            Build      Merge\n"
+                       "  2025-10-08 14:02  1::gentoo  merged             2 min 3 s  4.0 s\n"
+                       "  2025-10-08 14:18  2::gentoo  merged             5 min 0 s  2.0 s\n"
+                       "\n"
+                       "app-misc/b  1 build, 1 failed\n"
+                       "  Started           Version    Outcome            Build      Merge\n"
+                       "  2025-10-08 14:12  2::local   failed in compile  1 min 0 s\n");
+    // One merged build: its time, the sparkline at its middle.
+    std::ostringstream one;
+    egraph::human_builds(one,
+                         std::vector<std::string>{
+                             "1759932131\tapp-misc/a-1\tgentoo\tmerged\t123.0\t4.0\t\t\t0\t\t\t"},
+                         true, *utc, plain);
+    CHECK(one.str().starts_with("app-misc/a  ~  1 build, 2 min 3 s\n"));
+}
+
+TEST_CASE("the slowest packages read as a table with a sparkline of each one's builds") {
+    std::ostringstream out;
+    egraph::human_slowest(out,
+                          std::vector<std::string>{
+                              "app-misc/y\t2\t0\t210.0\t400.0\t3000\t200.0 220.0",
+                              "app-misc/x\t2\t1\t70.0\t\t\t80.0 60.0",
+                          },
+                          plain);
+    CHECK(out.str() == "Package     Median  Trend  CPU    Memory   Builds\n"
+                       "app-misc/y  4 min   _#     7 min  2.9 KiB  2\n"
+                       "app-misc/x  1 min   #_                     3, 1 failed\n");
+    // The sparkline holds the last 12.
+    std::ostringstream many;
+    egraph::human_slowest(many,
+                          std::vector<std::string>{
+                              "a/b\t13\t0\t7.0\t\t\t1.0 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0 10.0 "
+                              "11.0 12.0"},
+                          plain);
+    CHECK(many.str().ends_with("a/b      7 s     _..-~~==+**#  13\n"));
+    std::ostringstream none;
+    egraph::human_slowest(none, {}, plain);
+    CHECK(none.str() == "+ Nothing in the build history.\n");
+}
+
+TEST_CASE("the time spent building reads as a bar per week or month") {
+    std::ostringstream weeks;
+    egraph::human_periods(weeks,
+                          std::vector<std::string>{"2025-10-06\t2\t1\t7200.0\t300.0",
+                                                   "2025-10-13\t0\t0\t0.0\t",
+                                                   "2025-10-20\t1\t0\t1800.0\t"},
+                          "week", plain);
+    CHECK(weeks.str() == "Week of                           Time    CPU    Builds\n"
+                         "2025-10-06  ####################  2 h     5 min  2, 1 failed\n"
+                         "2025-10-13                                       none\n"
+                         "2025-10-20  #####                 30 min         1\n");
+    std::ostringstream months;
+    egraph::human_periods(
+        months, std::vector<std::string>{"2025-09-01\t1\t0\t32.0\t", "2025-10-01\t1\t0\t12.0\t"},
+        "month", plain);
+    CHECK(months.str() == "Month                          Time  Builds\n"
+                          "2025-09  ####################  32 s  1\n"
+                          "2025-10  #######               12 s  1\n");
+    std::ostringstream none;
+    egraph::human_periods(none, {}, "week", plain);
+    CHECK(none.str() == "+ Nothing in the build history.\n");
+}

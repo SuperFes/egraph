@@ -160,6 +160,37 @@ def test_egraph_builds_reads_the_history_back(machines):
     assert bad.returncode == 2
 
 
+def test_egraph_builds_views_sum_the_history_up(machines):
+    """The slowest packages and the time by week, as lines and for people."""
+    system, machine = machines
+    age(system.playground.eroot)
+    ran = system.egraph("exec", "--yes", "app-misc/needs")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    records = history(system)
+    slowest = [
+        line.split("\t")
+        for line in system.egraph("builds", "--slowest").stdout.splitlines()
+    ]
+    assert sorted(row[0] for row in slowest) == sorted(
+        r["cpv"].rsplit("-", 1)[0] for r in records
+    )
+    medians = [float(row[3]) for row in slowest]
+    assert medians == sorted(medians, reverse=True)
+    (week,) = [
+        line.split("\t")
+        for line in system.egraph("builds", "--by", "week").stdout.splitlines()
+    ]
+    assert int(week[1]) == len(records)
+    spent = sum(r["build_seconds"] + r.get("merge_seconds", 0) for r in records)
+    assert float(week[3]) == pytest.approx(spent, abs=0.1 * len(records))
+    for view in (["--slowest"], ["--by", "month"], ["app-misc/needs"], []):
+        shown = system.egraph("--layout", "human", "builds", *view)
+        assert shown.returncode == 0, shown.stderr
+        assert "Nothing in the build history" not in shown.stdout
+    assert system.egraph("builds", "--slowest", "--format", "csv").returncode == 2
+    assert system.egraph("builds", "--slowest", "--by", "week").returncode == 2
+
+
 def estimate(printed):
     """A plan's estimate line: seconds, peak, known, unknown, jobs and guessed."""
     *_, last = printed.splitlines()

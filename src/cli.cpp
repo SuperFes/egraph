@@ -4039,6 +4039,14 @@ Exit execute(const LogCommand& command, Session&, const Invocation& invocation, 
 
 Exit execute(const BuildsCommand& command, Session&, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
+    if (command.format && (command.slowest || command.by)) {
+        err << "egraph: builds: --format lists the records, not --slowest or --by\n";
+        return Exit::usage;
+    }
+    if (command.slowest && command.by) {
+        err << "egraph: builds: --slowest and --by are views of their own; give one\n";
+        return Exit::usage;
+    }
     std::ostringstream text;
     if (std::ifstream in{
             builds_path(invocation.root / invocation.eprefix.value_or("").relative_path())};
@@ -4054,17 +4062,41 @@ Exit execute(const BuildsCommand& command, Session&, const Invocation& invocatio
         for (const auto& record : *records) {
             out << build_record_json(record) << '\n';
         }
-    } else if (command.format == BuildsFormat::csv) {
+        return Exit::ok;
+    }
+    if (command.format == BuildsFormat::csv) {
         out << builds_csv_header() << '\n';
         for (const auto& record : *records) {
             out << build_csv_row(record) << '\n';
         }
-    } else {
-        const auto* zone = &local_zone();
-        const bool human = output(invocation).human;
-        for (const auto& record : *records) {
-            out << (human ? build_line(record, *zone) : build_fields(record)) << '\n';
+        return Exit::ok;
+    }
+    const auto& zone = local_zone();
+    std::vector<std::string> lines;
+    if (command.slowest) {
+        for (const auto& times : slowest_packages(*records)) {
+            lines.push_back(package_times_fields(times));
         }
+    } else if (command.by) {
+        for (const auto& total : period_totals(*records, *command.by, zone)) {
+            lines.push_back(period_fields(total));
+        }
+    } else {
+        for (const auto& record : *records) {
+            lines.push_back(build_fields(record));
+        }
+    }
+    const auto style = output(invocation);
+    if (!style.human) {
+        for (const auto& line : lines) {
+            out << line << '\n';
+        }
+    } else if (command.slowest) {
+        human_slowest(out, lines, style.theme);
+    } else if (command.by) {
+        human_periods(out, lines, *command.by == BuildPeriod::week ? "week" : "month", style.theme);
+    } else {
+        human_builds(out, lines, !command.packages.empty(), zone, style.theme);
     }
     return Exit::ok;
 }
@@ -5160,6 +5192,14 @@ void configure(CLI::App& app, Invocation& invocation) {
               "The records as JSON lines, as the history holds them, or as CSV")
         ->transform(
             one_of<BuildsFormat>({{"json", BuildsFormat::json}, {"csv", BuildsFormat::csv}}, true));
+    builds_cmd->add_flag_callback(
+        "--slowest", [&invocation] { std::get<BuildsCommand>(invocation.command).slowest = true; },
+        "Each package's median build time, slowest first, in place of the builds");
+    add_field(builds_cmd, invocation, "--by", &BuildsCommand::by,
+              "The time spent building in each week or month, in place of the builds")
+        ->type_name("PERIOD")
+        ->transform(one_of<BuildPeriod>(
+            {{"week", BuildPeriod::week}, {"month", BuildPeriod::month}}, true));
     CLI::App* diff_cmd = add_command<Diff>(
         app, invocation,
         "The installed packages and root sets now against the system as the history kept it");

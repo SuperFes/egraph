@@ -1,5 +1,7 @@
 #include "human.hpp"
 #include "estimate.hpp"
+#include "log.hpp"
+#include "log_read.hpp"
 #include "required_use.hpp"
 #include "status.hpp"
 
@@ -13,7 +15,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <iterator>
 #include <map>
+#include <numeric>
 #include <optional>
 #include <ostream>
 #include <ranges>
@@ -2659,6 +2663,333 @@ std::string rough_duration(double seconds) {
     }
     return minutes % 60 == 0 ? std::format("{} h", minutes / 60)
                              : std::format("{} h {} min", minutes / 60, minutes % 60);
+}
+
+namespace {
+
+// A number field, none for an empty or malformed one.
+std::optional<double> number_field(std::string_view field) {
+    double value = 0;
+    const auto [end, error] = std::from_chars(field.begin(), field.end(), value);
+    if (field.empty() || error != std::errc{} || end != field.end()) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+std::vector<double> numbers_field(std::string_view field) {
+    std::vector<double> values;
+    for (const auto word : std::views::split(field, ' ')) {
+        if (const auto value = number_field(std::string_view{word.begin(), word.end()})) {
+            values.push_back(*value);
+        }
+    }
+    return values;
+}
+
+// The code point at index in text, empty past its end.
+std::string_view code_point_at(std::string_view text, std::size_t index) {
+    std::size_t start = 0;
+    while (start < text.size()) {
+        std::size_t end = start + 1;
+        while (end < text.size() && continues_code_point(text.at(end))) {
+            ++end;
+        }
+        if (index-- == 0) {
+            return text.substr(start, end - start);
+        }
+        start = end;
+    }
+    return {};
+}
+
+// The values as a sparkline, each placed between the least and the most; when all are alike, at
+// the middle level.
+std::string sparkline_text(std::span<const double> values, const Glyphs& glyph) {
+    const auto levels = columns_of(glyph.spark);
+    std::string line;
+    if (values.empty() || levels == 0) {
+        return line;
+    }
+    const auto [low, high] = std::ranges::minmax(values);
+    const auto top = static_cast<double>(levels - 1);
+    for (const auto value : values) {
+        const auto level = high > low ? std::lround((value - low) / (high - low) * top)
+                                      : std::lround(std::floor(top / 2));
+        line += code_point_at(glyph.spark, static_cast<std::size_t>(level));
+    }
+    return line;
+}
+
+// A bar of width columns filled to share, in eighths where the glyphs have them.
+std::string bar_text(double share, std::size_t width, const Glyphs& glyph) {
+    const auto eighths = columns_of(glyph.bar_eighths);
+    const auto steps = eighths == 0 ? 1 : eighths + 1;
+    const auto filled = static_cast<std::size_t>(
+        std::floor(std::clamp(share, 0.0, 1.0) * static_cast<double>(width * steps)));
+    std::string bar;
+    for (std::size_t i = 0; i < filled / steps; ++i) {
+        bar += glyph.bar_full;
+    }
+    if (const auto part = filled % steps; part > 0) {
+        bar += code_point_at(glyph.bar_eighths, part - 1);
+    }
+    return bar;
+}
+
+struct Cell {
+    std::string text;
+    Tone tone = Tone::note;
+};
+
+// Rows aligned in columns two apart under a header, the columns no row fills left out, each line
+// led by an indent and its trailing blanks dropped. The widths come from every row added, so
+// slices of the rows put apart still line up.
+class Table {
+  public:
+    explicit Table(std::vector<Cell> header) : header_(std::move(header)) {}
+
+    void add(std::vector<Cell> row) { rows_.push_back(std::move(row)); }
+    [[nodiscard]] std::size_t size() const { return rows_.size(); }
+
+    // The header, then the rows at the places given.
+    void put(std::ostream& out, const Painter& paint, std::string_view indent,
+             std::span<const std::size_t> places) const {
+        std::vector<std::size_t> widths(header_.size(), 0);
+        std::vector<bool> filled(header_.size(), false);
+        for (std::size_t i = 0; i < header_.size(); ++i) {
+            widths.at(i) = columns_of(header_.at(i).text);
+        }
+        for (const auto& row : rows_) {
+            for (std::size_t i = 0; i < row.size() && i < widths.size(); ++i) {
+                widths.at(i) = std::max(widths.at(i), columns_of(row.at(i).text));
+                filled.at(i) = filled.at(i) || !row.at(i).text.empty();
+            }
+        }
+        const auto line = [&](const std::vector<Cell>& row, bool heading) {
+            std::string text;
+            std::size_t pending = 0;
+            bool started = false;
+            for (std::size_t i = 0; i < row.size() && i < widths.size(); ++i) {
+                if (!filled.at(i)) {
+                    continue;
+                }
+                const auto& cell = row.at(i);
+                pending += started ? 2 : 0;
+                started = true;
+                if (!cell.text.empty()) {
+                    text += std::string(pending, ' ');
+                    text += paint(cell.text, heading ? Tone::heading : cell.tone);
+                    pending = 0;
+                }
+                pending += widths.at(i) - columns_of(cell.text);
+            }
+            out << indent << text << '\n';
+        };
+        line(header_, true);
+        for (const auto place : places) {
+            line(rows_.at(place), false);
+        }
+    }
+
+    // The header, then every row.
+    void put(std::ostream& out, const Painter& paint) const {
+        std::vector<std::size_t> all(rows_.size());
+        std::ranges::iota(all, std::size_t{0});
+        put(out, paint, "", all);
+    }
+
+  private:
+    std::vector<Cell> header_;
+    std::vector<std::vector<Cell>> rows_;
+};
+
+void put_nothing_built(std::ostream& out, const Theme& theme) {
+    out << theme.paint(theme.glyph().good, Tone::good) << ' '
+        << theme.paint("Nothing in the build history.", Tone::good) << '\n';
+}
+
+std::string field_or_empty(const Fields& row, std::size_t index) {
+    return index < row.size() ? std::string{row.at(index)} : std::string{};
+}
+
+std::string builds_count(std::size_t builds, std::size_t failed) {
+    auto text = std::format("{} build{}", builds, builds == 1 ? "" : "s");
+    if (failed > 0) {
+        text += std::format(", {} failed", failed);
+    }
+    return text;
+}
+
+} // namespace
+
+void human_builds(std::ostream& out, std::span<const std::string> records, bool by_package,
+                  const std::chrono::time_zone& zone, const Theme& theme) {
+    if (records.empty()) {
+        put_nothing_built(out, theme);
+        return;
+    }
+    Table table{{{.text = "Started"},
+                 {.text = by_package ? "Version" : "Package"},
+                 {.text = "Outcome"},
+                 {.text = "Build"},
+                 {.text = "Merge"},
+                 {.text = "CPU"},
+                 {.text = "Memory"},
+                 {.text = "Reason"}}};
+    // By cp in the order of its first build: its rows' places, its merged builds' seconds and
+    // its failures.
+    struct Group {
+        std::string cp;
+        std::vector<std::size_t> rows;
+        std::vector<double> seconds;
+        std::size_t failed = 0;
+    };
+    std::vector<Group> groups;
+    std::size_t place = 0;
+    for (const auto& row : split_all(records)) {
+        const auto cpv = field_or_empty(row, 1);
+        const auto parts = split_cpv(cpv);
+        const auto cp = std::format("{}/{}", parts.category, parts.name);
+        const bool merged = field_or_empty(row, 3) == "merged";
+        const auto seconds = number_field(field_or_empty(row, 4)).value_or(0);
+        const auto merge = number_field(field_or_empty(row, 5));
+        const auto cpu = number_field(field_or_empty(row, 9));
+        const auto memory = number_field(field_or_empty(row, 10));
+        const auto start = number_field(field_or_empty(row, 0)).value_or(0);
+        const auto phase = field_or_empty(row, 6);
+        const auto repo = field_or_empty(row, 2);
+        table.add({{.text = log::local_time(start, zone).substr(0, 16), .tone = Tone::note},
+                   {.text = by_package ? std::format("{}::{}", parts.version, repo)
+                                       : std::format("{}::{}", cpv, repo),
+                    .tone = by_package ? Tone::version : Tone::name},
+                   {.text = merged          ? std::string{"merged"}
+                            : phase.empty() ? std::string{"failed"}
+                                            : "failed in " + phase,
+                    .tone = merged ? Tone::good : Tone::bad},
+                   {.text = log::duration(seconds), .tone = Tone::count},
+                   {.text = merge ? log::duration(*merge) : std::string{}, .tone = Tone::count},
+                   {.text = cpu ? log::duration(*cpu) : std::string{}, .tone = Tone::count},
+                   {.text = memory ? byte_size(static_cast<std::uint64_t>(*memory)) : std::string{},
+                    .tone = Tone::count},
+                   {.text = field_or_empty(row, 11), .tone = Tone::note}});
+        auto group = std::ranges::find(groups, cp, &Group::cp);
+        if (group == groups.end()) {
+            groups.push_back({.cp = cp, .rows = {}, .seconds = {}, .failed = 0});
+            group = std::prev(groups.end());
+        }
+        group->rows.push_back(place++);
+        if (merged) {
+            group->seconds.push_back(seconds);
+        } else {
+            ++group->failed;
+        }
+    }
+    if (!by_package) {
+        table.put(out, theme.paint);
+        return;
+    }
+    bool first = true;
+    for (const auto& group : groups) {
+        if (!first) {
+            out << '\n';
+        }
+        first = false;
+        out << paint_cpv(group.cp, theme.paint);
+        if (!group.seconds.empty()) {
+            out << "  " << theme.paint(sparkline_text(group.seconds, theme.glyph()), Tone::choice);
+        }
+        auto summary = builds_count(group.rows.size(), group.failed);
+        if (!group.seconds.empty()) {
+            const auto [low, high] = std::ranges::minmax(group.seconds);
+            summary += ", " + (low == high ? log::duration(low)
+                                           : std::format("{} to {}", log::duration(low),
+                                                         log::duration(high)));
+        }
+        out << "  " << theme.paint(summary, Tone::note) << '\n';
+        table.put(out, theme.paint, "  ", group.rows);
+    }
+}
+
+void human_slowest(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    if (records.empty()) {
+        put_nothing_built(out, theme);
+        return;
+    }
+    // The sparkline's most builds.
+    constexpr std::size_t trend = 12;
+    Table table{{{.text = "Package"},
+                 {.text = "Median"},
+                 {.text = "Trend"},
+                 {.text = "CPU"},
+                 {.text = "Memory"},
+                 {.text = "Builds"}}};
+    for (const auto& row : split_all(records)) {
+        auto seconds = numbers_field(field_or_empty(row, 6));
+        if (seconds.size() > trend) {
+            seconds.erase(seconds.begin(), std::next(seconds.begin(), static_cast<std::ptrdiff_t>(
+                                                                          seconds.size() - trend)));
+        }
+        const auto cpu = number_field(field_or_empty(row, 4));
+        const auto memory = number_field(field_or_empty(row, 5));
+        const auto builds = number_field(field_or_empty(row, 1)).value_or(0);
+        const auto failed = number_field(field_or_empty(row, 2)).value_or(0);
+        auto count = std::format("{:.0f}", builds + failed);
+        if (failed > 0) {
+            count += std::format(", {:.0f} failed", failed);
+        }
+        table.add({{.text = field_or_empty(row, 0), .tone = Tone::name},
+                   {.text = rough_duration(number_field(field_or_empty(row, 3)).value_or(0)),
+                    .tone = Tone::count},
+                   {.text = sparkline_text(seconds, theme.glyph()), .tone = Tone::choice},
+                   {.text = cpu ? rough_duration(*cpu) : std::string{}, .tone = Tone::count},
+                   {.text = memory ? byte_size(static_cast<std::uint64_t>(*memory)) : std::string{},
+                    .tone = Tone::count},
+                   {.text = count, .tone = Tone::note}});
+    }
+    table.put(out, theme.paint);
+}
+
+void human_periods(std::ostream& out, std::span<const std::string> records, std::string_view period,
+                   const Theme& theme) {
+    if (records.empty()) {
+        put_nothing_built(out, theme);
+        return;
+    }
+    constexpr std::size_t bar_width = 20;
+    const bool months = period == "month";
+    const auto rows = split_all(records);
+    double most = 0;
+    for (const auto& row : rows) {
+        most = std::max(most, number_field(field_or_empty(row, 3)).value_or(0));
+    }
+    Table table{{{.text = months ? "Month" : "Week of"},
+                 {.text = ""},
+                 {.text = "Time"},
+                 {.text = "CPU"},
+                 {.text = "Builds"}}};
+    for (const auto& row : rows) {
+        const auto day = field_or_empty(row, 0);
+        const auto builds = number_field(field_or_empty(row, 1)).value_or(0);
+        const auto failed = number_field(field_or_empty(row, 2)).value_or(0);
+        const auto seconds = number_field(field_or_empty(row, 3)).value_or(0);
+        const auto cpu = number_field(field_or_empty(row, 4));
+        std::string count = "none";
+        if (builds > 0) {
+            count = std::format("{:.0f}", builds);
+            if (failed > 0) {
+                count += std::format(", {:.0f} failed", failed);
+            }
+        }
+        table.add(
+            {{.text = months ? day.substr(0, 7) : day, .tone = Tone::note},
+             {.text = most > 0 ? bar_text(seconds / most, bar_width, theme.glyph()) : std::string{},
+              .tone = Tone::choice},
+             {.text = builds > 0 ? rough_duration(seconds) : std::string{}, .tone = Tone::count},
+             {.text = cpu ? rough_duration(*cpu) : std::string{}, .tone = Tone::count},
+             {.text = count, .tone = Tone::note}});
+    }
+    table.put(out, theme.paint);
 }
 
 } // namespace egraph

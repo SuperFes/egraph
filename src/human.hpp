@@ -311,6 +311,22 @@ void human_use(std::ostream& out, std::span<const std::string> records,
 void human_use_steps(std::ostream& out, std::span<const std::string> records,
                      std::span<const std::string> groups, const Theme& theme);
 
+// build_fields' records as a table: when each started, the package, how it ended, its build's
+// and merge's times, CPU time, memory and why it ran. With by_package, a table under each cp in
+// the order of its first build, headed by a sparkline of its merged builds' times; zone is the
+// local time's.
+void human_builds(std::ostream& out, std::span<const std::string> records, bool by_package,
+                  const std::chrono::time_zone& zone, const Theme& theme);
+
+// package_times_fields' records, slowest first: each cp's median build time, a sparkline of its
+// builds, its median CPU time, its peak memory and its builds.
+void human_slowest(std::ostream& out, std::span<const std::string> records, const Theme& theme);
+
+// period_fields' records, a line per period: its first day, a bar of its time against the
+// busiest's, the time, and its builds; period names it ("week", "month").
+void human_periods(std::ostream& out, std::span<const std::string> records, std::string_view period,
+                   const Theme& theme);
+
 // The legend for the kind letters and the any-of marker, and with possible the toggles.
 void human_legend(std::ostream& out, const Theme& theme, bool possible = false);
 

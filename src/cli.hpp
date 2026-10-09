@@ -1,5 +1,6 @@
 #pragma once
 
+#include "build_views.hpp"
 #include "complete.hpp"
 #include "evaluated.hpp"
 #include "human.hpp"
@@ -291,6 +292,10 @@ struct BuildsCommand {
     std::vector<std::string> packages;
     // The records as the file holds them, or as CSV; else by the output's layout.
     std::optional<BuildsFormat> format;
+    // In place of the records: each package's typical build time, slowest first, or the time
+    // spent building by week or month.
+    bool slowest = false;
+    std::optional<BuildPeriod> by;
 };
 
 // The installed packages and root sets now against a generation of the system store's history.

@@ -1258,8 +1258,9 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
   - 20e1 (done): why each build ran, in its record: new, an upgrade or downgrade of the version
     it replaced, or a rebuild for USE (with the flags), for a sub-slot (with the merge it was
     for), or a reinstall; from exec's plan, none for emerge's builds.
-  - 20e2 (planned): `egraph builds` views: a package's builds as a table with a sparkline of
-    their times, the slowest packages, and the build time by week or month.
+  - 20e2 (done): `egraph builds` views: the builds as a table, a package's under a sparkline of
+    their times, the slowest packages (`--slowest`), and the time spent by week or month
+    (`--by`).
   - 20e3 (planned): what rebuilds most often and why, packages that fail now and then, and
     builds that got slower with what changed beside them (toolchain, flags, env files).
   - 20e4 (planned): the views as pages in the living app.

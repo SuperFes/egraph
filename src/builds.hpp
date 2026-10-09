@@ -151,6 +151,9 @@ struct BuildRecord {
 
 [[nodiscard]] std::filesystem::path builds_path(const std::filesystem::path& eroot);
 
+// Its build's seconds without its fetch phase.
+[[nodiscard]] double seconds_building(const BuildRecord& record);
+
 // The record as one line of JSON, without its newline.
 [[nodiscard]] std::string build_record_json(const BuildRecord& record);
 // A line back; an error for one that does not parse or is of another version.
@@ -173,10 +176,6 @@ std::expected<void, std::error_code> append_build(const std::filesystem::path& p
 // atom that does not parse.
 [[nodiscard]] std::expected<std::vector<BuildRecord>, std::string>
 matching_builds(std::vector<BuildRecord> records, std::span<const std::string> packages);
-
-// For people, in zone: "2026-10-08 14:02:11  app-misc/a-1::gentoo  merged in 2 min 3 s, merge
-// 4.0 s"; failed, "failed in compile after 1 min 2 s", or with the worker's error.
-[[nodiscard]] std::string build_line(const BuildRecord& record, const std::chrono::time_zone& zone);
 
 // For scripts, tab-separated: start, cpv, repo, outcome, build seconds, merge seconds (empty
 // when it failed), the phase that failed (empty when it merged), jobs (empty for no limit),

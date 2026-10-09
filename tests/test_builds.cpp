@@ -715,36 +715,6 @@ TEST_CASE("the builds shown are those the atoms or cps given match") {
     CHECK_FALSE(egraph::matching_builds(records, std::vector<std::string>{"not an atom"}));
 }
 
-TEST_CASE("a build reads as when, what, how it ended and how long it took") {
-    const auto* utc = std::chrono::locate_zone("UTC");
-    auto record = merged("app-misc/a-1", 1759932131);
-    record.build_seconds = 123;
-    record.merge_seconds = 4;
-    CHECK(egraph::build_line(record, *utc) ==
-          "2025-10-08 14:02:11  app-misc/a-1::gentoo  merged in 2 min 3 s, merge 4.0 s");
-    record.outcome = BuildRecord::Outcome::failed;
-    record.merge_seconds.reset();
-    record.failed_phase = "compile";
-    CHECK(egraph::build_line(record, *utc) ==
-          "2025-10-08 14:02:11  app-misc/a-1::gentoo  failed in compile after 2 min 3 s");
-    record.failed_phase.reset();
-    record.error = "no ebuild";
-    CHECK(egraph::build_line(record, *utc) ==
-          "2025-10-08 14:02:11  app-misc/a-1::gentoo  failed after 2 min 3 s: no ebuild");
-
-    // Measured: its CPU time and memory after.
-    record.error.reset();
-    record.outcome = BuildRecord::Outcome::merged;
-    record.merge_seconds = 4;
-    record.cpu_seconds = 842;
-    record.peak_memory = 3ULL << 30U;
-    CHECK(egraph::build_line(record, *utc) ==
-          "2025-10-08 14:02:11  app-misc/a-1::gentoo  merged in 2 min 3 s, merge 4.0 s; CPU "
-          "14 min 2 s, memory 3.0 GiB");
-    record.peak_memory.reset();
-    CHECK(egraph::build_line(record, *utc).ends_with("merge 4.0 s; CPU 14 min 2 s"));
-}
-
 TEST_CASE("for scripts, a build's fields are separated by tabs") {
     auto record = merged("app-misc/a-1", 1759932131.6);
     record.jobs = 4;

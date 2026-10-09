@@ -947,6 +947,14 @@ history's log is appended) and keeps the last `build_keep` records of each cp (`
 20 by default; 0 records nothing), so the file stays a few MB at most and is read whole; lines it
 cannot read are kept as they are. `egraph builds` lists the records, as lines, JSON or CSV.
 
+Its views (`src/build_views.hpp`) are plain values over the records, each with the tab-separated
+lines scripts read; the human layouts draw those lines (a table whose empty columns drop out,
+sparklines placed between a series' least and most, bars against the largest). `--slowest` ranks
+the cps by the median of their merged builds' seconds without fetching, as the estimates count
+them; `--by week|month` sums building and merging per local week (from Monday) or month, the
+empty periods between kept so the bars read as a timeline. The pruning to `build_keep` per cp
+makes older periods undercount packages rebuilt often; the views say so rather than keep more.
+
 Estimates (`src/estimate.hpp`) come from the history, and from the repository index's distfile
 sizes where it is there (loaded or on disk; an estimate never builds it). A package's next build
 is foretold by 5 of its merged builds (the version's, else the cp's), those whose USE differs
