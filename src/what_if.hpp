@@ -34,6 +34,28 @@ struct WhatIfLine {
 [[nodiscard]] std::filesystem::path what_if_path(const std::filesystem::path& user_config,
                                                  WhatIfLine::File file);
 
+// existing, the text of the file what_if_path gives for lines' kind, with lines saved: in
+// egraph's own file (own) one line per atom, each token replacing those naming the same flag
+// (USE_EXPAND prefixes written out) or env file, a line left without tokens dropped, comments
+// kept; in the user's single file, the lines appended as written.
+[[nodiscard]] std::string saved_text(std::string_view existing, std::span<const WhatIfLine> lines,
+                                     bool own);
+
+// A file saving lines writes, and its whole new text.
+struct SavedFile {
+    std::filesystem::path path;
+    std::string text;
+};
+
+// The files saving lines writes under user_config, package.use's first, as saved_text makes
+// them from what they hold now; why one could not be read.
+[[nodiscard]] std::expected<std::vector<SavedFile>, std::string>
+saved_files(const std::filesystem::path& user_config, std::span<const WhatIfLine> lines);
+
+// Writes each file through a file beside it renamed over it, keeping its permissions, its
+// directory made where missing; why one could not be written.
+[[nodiscard]] std::expected<void, std::string> write_saved(std::span<const SavedFile> files);
+
 // evaluated as if lines were saved to what_if_path: each line an entry of the USE ledger where
 // that file is read among the user's (a "*/*" line of package.use's among the conf layer's, as
 // portage folds it there; of package.env's, last), each candidate whose USE that changes

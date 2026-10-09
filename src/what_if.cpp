@@ -11,7 +11,9 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <ranges>
 #include <set>
+#include <sstream>
 #include <system_error>
 
 namespace egraph {
@@ -495,6 +497,167 @@ std::vector<std::string> newly_reached(const Evaluated& before, const Evaluated&
         }
     }
     return {found.begin(), found.end()};
+}
+
+std::string saved_text(std::string_view existing, std::span<const WhatIfLine> lines, bool own) {
+    const auto written = [](const std::string& atom, const std::vector<std::string>& tokens) {
+        std::string text = atom;
+        for (const auto& token : tokens) {
+            text += " " + token;
+        }
+        return text + "\n";
+    };
+    if (!own) {
+        std::string text{existing};
+        if (!text.empty() && !text.ends_with('\n')) {
+            text += '\n';
+        }
+        for (const auto& line : lines) {
+            text += written(line.atom, line.tokens);
+        }
+        return text;
+    }
+    // The file's lines: a comment or blank one as it is, another by its atom and tokens, those
+    // of a line saving touched rewritten.
+    struct Held {
+        std::string text;
+        std::optional<std::string> atom;
+        std::vector<std::string> tokens;
+        bool touched = false;
+    };
+    std::vector<Held> held;
+    for (const auto part : std::views::split(existing, '\n')) {
+        const std::string_view text{part};
+        std::vector<std::string> words;
+        for (const auto word : std::views::split(text, ' ')) {
+            for (const auto each : std::views::split(std::string_view{word}, '\t')) {
+                if (!std::string_view{each}.empty()) {
+                    words.emplace_back(std::string_view{each});
+                }
+            }
+        }
+        if (words.empty() || words.front().starts_with('#')) {
+            held.push_back({.text = std::string{text}, .atom = std::nullopt, .tokens = {}});
+        } else {
+            held.push_back({.text = std::string{text},
+                            .atom = words.front(),
+                            .tokens = {words.begin() + 1, words.end()}});
+        }
+    }
+    // What split leaves after the last newline.
+    if (!held.empty() && held.back().text.empty() && !held.back().atom) {
+        held.pop_back();
+    }
+    if (held.empty()) {
+        held.push_back(
+            {.text = "# Lines egraph tried and saved; egraph keeps one line per atom here.",
+             .atom = std::nullopt,
+             .tokens = {}});
+    }
+    const auto name = [](std::string_view token) {
+        return token.starts_with('-') ? token.substr(1) : token;
+    };
+    for (const auto& line : lines) {
+        const bool use = line.file == WhatIfLine::File::use;
+        const auto tokens = use ? expanded(line.tokens) : line.tokens;
+        const auto named = [&](const std::string& token) {
+            return std::ranges::any_of(
+                tokens, [&](const std::string& other) { return name(other) == name(token); });
+        };
+        std::optional<std::size_t> last;
+        for (std::size_t i = 0; i < held.size(); ++i) {
+            auto& each = held.at(i);
+            if (each.atom != line.atom) {
+                continue;
+            }
+            if (!each.touched && use) {
+                each.tokens = expanded(each.tokens);
+            }
+            each.touched = true;
+            std::erase_if(each.tokens, named);
+            last = i;
+        }
+        if (!last) {
+            held.push_back({.text = {}, .atom = line.atom, .tokens = {}, .touched = true});
+            last = held.size() - 1;
+        }
+        auto& into = held.at(*last).tokens;
+        for (const auto& token : tokens) {
+            std::erase_if(into, [&](const std::string& old) { return name(old) == name(token); });
+            into.push_back(token);
+        }
+    }
+    std::string text;
+    for (const auto& each : held) {
+        if (!each.atom || !each.touched) {
+            text += each.text + "\n";
+        } else if (!each.tokens.empty()) {
+            text += written(*each.atom, each.tokens);
+        }
+    }
+    return text;
+}
+
+std::expected<std::vector<SavedFile>, std::string>
+saved_files(const std::filesystem::path& user_config, std::span<const WhatIfLine> lines) {
+    std::vector<SavedFile> files;
+    for (const auto kind : {WhatIfLine::File::use, WhatIfLine::File::env}) {
+        std::vector<WhatIfLine> of_kind;
+        std::ranges::copy_if(lines, std::back_inserter(of_kind),
+                             [kind](const WhatIfLine& line) { return line.file == kind; });
+        if (of_kind.empty()) {
+            continue;
+        }
+        auto path = what_if_path(user_config, kind);
+        std::string existing;
+        std::error_code error;
+        if (std::filesystem::exists(path, error)) {
+            std::ifstream in(path, std::ios::binary);
+            std::stringstream read;
+            read << in.rdbuf();
+            if (!in) {
+                return std::unexpected(std::format("cannot read {}", path.string()));
+            }
+            existing = read.str();
+        }
+        const bool own = path.filename() == "egraph";
+        files.push_back({.path = std::move(path), .text = saved_text(existing, of_kind, own)});
+    }
+    return files;
+}
+
+std::expected<void, std::string> write_saved(std::span<const SavedFile> files) {
+    namespace fs = std::filesystem;
+    for (const auto& file : files) {
+        const auto cannot = [&file] {
+            return std::unexpected(std::format("cannot write {}", file.path.string()));
+        };
+        std::error_code error;
+        fs::create_directories(file.path.parent_path(), error);
+        if (error) {
+            return cannot();
+        }
+        // Hidden, so that portage passes over it while it is there.
+        const auto beside =
+            file.path.parent_path() / std::format(".{}.new", file.path.filename().string());
+        {
+            std::ofstream out(beside, std::ios::binary | std::ios::trunc);
+            out << file.text;
+            if (!out.flush()) {
+                fs::remove(beside, error);
+                return cannot();
+            }
+        }
+        if (const auto status = fs::status(file.path, error); !error && fs::exists(status)) {
+            fs::permissions(beside, status.permissions(), error);
+        }
+        fs::rename(beside, file.path, error);
+        if (error) {
+            fs::remove(beside, error);
+            return cannot();
+        }
+    }
+    return {};
 }
 
 std::vector<std::string> tried_lines(std::span<const std::string> before,

@@ -1165,7 +1165,7 @@ changes (undo, save) and takes typed lines.
   rebuilds them, as emerge `--reinstall-atoms` does (`Targets::reinstall`): emerge never
   rebuilds for an environment alone. Decided with the user (2026-10-08): an option rather than a
   printed command. Held to emerge with the atoms on the ledger and what-if scenarios.
-- 19e: the interface. Decided with the user (2026-10-08): the what-if page is a top-level page
+- 19e (done): the interface. Decided with the user (2026-10-08): the what-if page is a top-level page
   after the notices, shown while lines are pending (the first toggle turns to it); space on a
   flag of a package's USE table toggles it for the cp, `*` for every package (`*/*`); the
   installed packages env lines build otherwise are listed there, `r` planning their rebuild.
@@ -1182,7 +1182,16 @@ changes (undo, save) and takes typed lines.
   - 19e4 (done): the what-if page: the lines pending, dropped with `x`, undone with `u`, typed
     with `a` (package.use) or `e` (package.env), as they are on a package's page, there naming
     it; the set's plan's `tried:` count; the env rebuilds, `r` planning them.
-- 19f: saving to egraph's files.
+- 19f: saving to egraph's files. Decided with the user (2026-10-08): egraph's own files keep
+  one line per atom, a flag's new token replacing its old one (and an env file's), a line left
+  empty dropped; where `package.use` (`package.env`) is the user's single file, lines are only
+  appended. `egraph --use LINE --env LINE save` writes them, as the what-if page's `s` does
+  once its dialog (each file and the lines it gets) is confirmed; both need root, as actions do.
+  - 19f1 (done): the files' new text (`saved_text`), and writing them (`write_saved`), each
+    through a hidden file beside it, which portage passes over.
+  - 19f2: the `save` command; held to portage's USE and env files with the files saved being
+    the same as with the lines tried.
+  - 19f3: the what-if page's `s`.
 
 ## 20. Build knowledge
 

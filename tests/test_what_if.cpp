@@ -1,3 +1,4 @@
+#include "helpers.hpp"
 #include "system_builder.hpp"
 #include "use_ledger_builder.hpp"
 #include "use_stack.hpp"
@@ -5,6 +6,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -323,4 +327,103 @@ TEST_CASE("an env file tried changes how the installed packages it matches build
           Strings{"cat/b-1\tenv\tkeep.conf\tkeep.conf keep.conf"});
     CHECK(changes_of({env("*/*", {"clang.conf"})}) ==
           Strings{"cat/a-1\tenv\t\tclang.conf", "cat/b-1\tenv\tkeep.conf\tkeep.conf clang.conf"});
+}
+
+namespace {
+
+WhatIfLine use_line(std::string atom, Strings tokens) {
+    return {.file = WhatIfLine::File::use, .atom = std::move(atom), .tokens = std::move(tokens)};
+}
+
+std::string read_text(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    std::stringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
+} // namespace
+
+TEST_CASE("saving to egraph's file starts it, one line per atom") {
+    const std::vector<WhatIfLine> lines{use_line("media-video/mpv", {"-xv"}),
+                                        use_line("*/*", {"-nls"}),
+                                        use_line("media-video/mpv", {"vaapi"})};
+    CHECK(egraph::saved_text("", lines, true) ==
+          "# Lines egraph tried and saved; egraph keeps one line per atom here.\n"
+          "media-video/mpv -xv vaapi\n"
+          "*/* -nls\n");
+}
+
+TEST_CASE("saving merges per atom: a flag's token replaces its old one, an emptied line goes") {
+    const std::string existing = "# kept\n"
+                                 "media-video/mpv -xv vaapi\n"
+                                 "\n"
+                                 "app-misc/a x\n"
+                                 "dev-lang/python PYTHON_TARGETS: python3_13 -python3_12\n";
+    const std::vector<WhatIfLine> lines{use_line("media-video/mpv", {"xv", "-lua"}),
+                                        use_line("app-misc/a", {"-x"}),
+                                        use_line("dev-lang/python", {"-python_targets_python3_13"}),
+                                        use_line("app-misc/new", {"y"})};
+    CHECK(egraph::saved_text(existing, lines, true) ==
+          "# kept\n"
+          "media-video/mpv vaapi xv -lua\n"
+          "\n"
+          "app-misc/a -x\n"
+          "dev-lang/python -python_targets_python3_12 -python_targets_python3_13\n"
+          "app-misc/new y\n");
+    // A token taking back the only one leaves nothing: the line goes.
+    CHECK(egraph::saved_text("app-misc/a x\n", std::vector{use_line("app-misc/a", {})}, true) ==
+          "app-misc/a x\n");
+}
+
+TEST_CASE("saving env lines merges their files, and the user's own file is only appended to") {
+    const std::vector<WhatIfLine> env{{.file = WhatIfLine::File::env,
+                                       .atom = "sys-devel/gcc",
+                                       .tokens = {"lto.conf", "clang.conf"}}};
+    CHECK(egraph::saved_text("sys-devel/gcc clang.conf big.conf\n", env, true) ==
+          "sys-devel/gcc big.conf lto.conf clang.conf\n");
+    const std::vector<WhatIfLine> use{use_line("app-misc/a", {"PYTHON_TARGETS:", "python3_14"})};
+    CHECK(egraph::saved_text("app-misc/a x", use, false) ==
+          "app-misc/a x\napp-misc/a PYTHON_TARGETS: python3_14\n");
+    CHECK(egraph::saved_text("", use, false) == "app-misc/a PYTHON_TARGETS: python3_14\n");
+}
+
+TEST_CASE("the files saved: egraph's beside the user's, or the user's single file, written") {
+    const egraph::test::TempDir directory;
+    const auto& root = directory.path();
+    std::filesystem::create_directories(root / "package.use");
+    egraph::test::write_text(root / "package.use" / "egraph", "app-misc/a x\n");
+    egraph::test::write_text(root / "package.env", "sys-devel/gcc big.conf\n");
+    const std::vector<WhatIfLine> lines{
+        use_line("app-misc/a", {"-x"}),
+        {.file = WhatIfLine::File::env, .atom = "app-misc/a", .tokens = {"clang.conf"}}};
+    const auto files = egraph::saved_files(root, lines);
+    REQUIRE(files.has_value());
+    REQUIRE(files->size() == 2);
+    CHECK(files->front().path == root / "package.use" / "egraph");
+    CHECK(files->front().text == "app-misc/a -x\n");
+    CHECK(files->back().path == root / "package.env");
+    CHECK(files->back().text == "sys-devel/gcc big.conf\napp-misc/a clang.conf\n");
+    std::filesystem::permissions(root / "package.env", std::filesystem::perms::owner_read |
+                                                           std::filesystem::perms::owner_write);
+    REQUIRE(egraph::write_saved(*files).has_value());
+    CHECK(read_text(root / "package.use" / "egraph") == "app-misc/a -x\n");
+    CHECK(read_text(root / "package.env") == "sys-devel/gcc big.conf\napp-misc/a clang.conf\n");
+    CHECK(std::filesystem::status(root / "package.env").permissions() ==
+          (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write));
+    CHECK(std::ranges::distance(std::filesystem::directory_iterator(root)) == 2);
+
+    // Without package.use at all, its directory is made.
+    const egraph::test::TempDir bare;
+    const auto made = egraph::saved_files(bare.path(), std::vector{use_line("*/*", {"-nls"})});
+    REQUIRE(made.has_value());
+    REQUIRE(egraph::write_saved(*made).has_value());
+    CHECK(std::filesystem::is_directory(bare.path() / "package.use"));
+    CHECK(read_text(bare.path() / "package.use" / "egraph").ends_with("*/* -nls\n"));
+
+    // A file that cannot be written says so.
+    const egraph::SavedFile blocked{.path = root / "package.use" / "egraph" / "below", .text = ""};
+    const auto failed = egraph::write_saved(std::vector{blocked});
+    REQUIRE_FALSE(failed.has_value());
+    CHECK(failed.error().contains("package.use/egraph/below"));
 }
