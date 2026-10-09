@@ -1027,7 +1027,14 @@ most bytes it grew to among those builds, and the `PORTAGE_TMPDIR` and env files
 that said; each such tmpdir's filesystem is looked up once (`statfs`, through
 `os::filesystem_space`, at `${PORTAGE_TMPDIR}/portage` or what of it exists), and a package
 whose directory outgrew the tmpfs it would build on again is offered an env that builds it on
-disk, unless its env files have changed since, as a new one may already move it. A status keeps them
+disk, unless its env files have changed since, as a new one may already move it. A build of ten
+minutes or more is matched against the repository index's binaries of its cpv, PKGDIR's first:
+the first that the builder found nothing to refuse (changed deps, user patches) and whose USE
+matches as depgraph's `_reinstall_for_flags` decides under `--binpkg-respect-use`, the ebuild's
+IUSE and the profile's masks and forces from the candidate, is named. Flags in a binary's IUSE
+alone are compared without the profile's forces and masks, which the store keeps only for the
+ebuild's IUSE: where one such flag is masked, egraph names no binary where emerge would take it.
+`--usepkg-exclude`, `--binpkg-respect-use=n` and a binary's own visibility are not weighed. A status keeps them
 among the plan's lines, and they are no plan change either. The finish time is no line: it is
 the estimate's seconds from now, which only the human layout says, in the local zone.
 

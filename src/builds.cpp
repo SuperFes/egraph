@@ -468,6 +468,14 @@ std::vector<BuildStep> build_steps(const Store& store, const Evaluated& original
                 use.emplace_back(evaluated.string(id));
             }
             std::ranges::sort(use);
+            const auto strings = [&evaluated](Range range) {
+                std::vector<std::string> flags;
+                for (const auto id : evaluated.ids_in(range)) {
+                    flags.emplace_back(evaluated.string(id));
+                }
+                std::ranges::sort(flags);
+                return flags;
+            };
             auto& built =
                 found.emplace_back(BuildStep{.cpv = cpv,
                                              .cp = std::string{evaluated.string(candidate.cp)},
@@ -475,6 +483,8 @@ std::vector<BuildStep> build_steps(const Store& store, const Evaluated& original
                                              .repo = std::string{evaluated.string(candidate.repo)},
                                              .slot = std::string{evaluated.string(candidate.slot)},
                                              .use = std::move(use),
+                                             .iuse = strings(candidate.iuse),
+                                             .forced = strings(candidate.forced),
                                              .env_files = stacker.env_files(candidate),
                                              .uninstall = false});
             if (!planned.replaces) {

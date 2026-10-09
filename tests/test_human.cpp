@@ -469,6 +469,23 @@ TEST_CASE("updates offer the disk to a build too large for its tmpfs") {
         "PORTAGE_TMPDIR=\"/var/tmp/notmpfs\"\n"));
 }
 
+TEST_CASE("updates name the long builds a binary package could replace") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{
+                              "a/b-1\tupgrade\ta/b-2\tr",
+                              "a/c-1\tupgrade\ta/c-2\tr",
+                              "\testimate\t3000\t\t2\t0\t1",
+                              "\tadvice\tbinary\ta/b-2\t1500\tlocal\t/var/cache/binpkgs\t7",
+                              "\tadvice\tbinary\ta/c-2\t900\tbinhost\tgentoo\t12582912",
+                          },
+                          plain);
+    CHECK(out.str().ends_with("Binary: a/b-2 is in /var/cache/binpkgs, about 25 min of building "
+                              "that emerge --usepkg would skip\n"
+                              "Binary: a/c-2 is on the gentoo binhost, about 15 min of building "
+                              "that emerge --getbinpkg would skip for a 12.0 MiB download\n"));
+}
+
 TEST_CASE("an estimate's seconds read as roughly as they are known") {
     CHECK(egraph::rough_duration(0.2) == "1 s");
     CHECK(egraph::rough_duration(40.4) == "40 s");

@@ -323,6 +323,75 @@ def test_a_plan_offers_the_disk_to_builds_too_large_for_their_tmpfs(machines):
     assert "Tmpfs: " in human.stdout and "notmpfs.conf" in human.stdout
 
 
+BINARY_EBUILDS = {
+    "app-misc/same-1": {**PLAIN, "IUSE": "doc", "MISC_CONTENT": INSTALL},
+    "app-misc/flagged-1": {**PLAIN, "IUSE": "doc", "MISC_CONTENT": INSTALL},
+    "app-misc/grown-1": {**PLAIN, "IUSE": "doc extra", "MISC_CONTENT": INSTALL},
+    "app-misc/moved-1": {
+        **PLAIN,
+        "IUSE": "doc",
+        "RDEPEND": "app-misc/same",
+        "MISC_CONTENT": INSTALL,
+    },
+    "app-misc/remote-1": {**PLAIN, "IUSE": "doc", "MISC_CONTENT": INSTALL},
+}
+BINARIES = {
+    # Built as the ebuild would be now.
+    "app-misc/same-1": {"EAPI": "8", "IUSE": "doc", "USE": ""},
+    # With a flag the configuration leaves off.
+    "app-misc/flagged-1": {"EAPI": "8", "IUSE": "doc", "USE": "doc"},
+    # Before the ebuild's IUSE grew.
+    "app-misc/grown-1": {"EAPI": "8", "IUSE": "doc", "USE": ""},
+    # Before the ebuild gained a dependency.
+    "app-misc/moved-1": {"EAPI": "8", "IUSE": "doc", "USE": ""},
+}
+
+
+@pytest.fixture
+def binaried(gnupg_home, tmp_path):
+    """The binary ebuilds, with binary packages in PKGDIR and on a binhost."""
+    remote = {"app-misc/remote-1": {"EAPI": "8", "IUSE": "doc", "USE": ""}}
+    yield from over(
+        BINARY_EBUILDS, tmp_path, binpkgs=BINARIES, binrepos={"remote": remote}
+    )
+
+
+def test_a_plan_names_the_long_builds_emerge_would_take_binaries_for(binaried):
+    """The builds a plan names a binary package for are those emerge --getbinpkg takes one for:
+    of the matching USE, IUSE and deps, from PKGDIR or a binhost portage fetched the index of.
+    """
+    system, machine = binaried
+    targets = ["=" + cpv for cpv in sorted(BINARY_EBUILDS)]
+    ran = system.egraph("exec", "--yes", *targets)
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    records = history(system)
+    path = os.path.join(system.playground.eroot, "var", "lib", "egraph", "builds.jsonl")
+    with open(path, "w") as f:
+        for record in records:
+            record["build_seconds"] = 1000
+            f.write(json.dumps(record) + "\n")
+    # emerge fetches the binhost's index, and keeps its copy, as it plans.
+    pretended = machine.emerge("--pretend --getbinpkg " + " ".join(targets))
+    taken = sorted(
+        line.split("]")[1].split()[0].split("::")[0]
+        for line in pretended.stdout.splitlines()
+        if line.startswith("[binary")
+    )
+    assert taken == ["app-misc/remote-1", "app-misc/same-1"], pretended.stdout
+    age(system.playground.eroot)
+    refreshed = system.egraph("refresh")
+    assert refreshed.returncode == 0, refreshed.stdout + refreshed.stderr
+    plan = system.egraph("plan", *targets)
+    assert plan.returncode == 0, plan.stdout + plan.stderr
+    binaries = [a[1:] for a in advice(plan.stdout) if a[0] == "binary"]
+    assert sorted(b[0] for b in binaries) == taken
+    kinds = {b[0]: (b[1], b[2]) for b in binaries}
+    assert kinds["app-misc/same-1"][1] == "local"
+    assert kinds["app-misc/remote-1"] == ("1000", "binhost")
+    human = system.egraph("--layout", "human", "plan", *targets)
+    assert "Binary: app-misc/same-1 is in " in human.stdout
+
+
 def test_a_plan_says_how_long_it_will_take_from_the_history(parallel, tmp_path):
     """Its packages' builds run ahead at the jobs of the latest build: no shorter than the
     longest build, no longer than all of them one after another."""

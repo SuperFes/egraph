@@ -560,7 +560,18 @@ to keep a fifth free, else empty; and for each package whose build directory gre
 of the tmpfs its PORTAGE_TMPDIR is on, when it last built there with the package.env files it
 builds with now,
 .IR "" "tmpfs cpv bytes tmpdir size" ,
-which people are told to build on disk through an env setting PORTAGE_TMPDIR elsewhere.
+which people are told to build on disk through an env setting PORTAGE_TMPDIR elsewhere; and for
+each build of ten minutes or more that a binary package could replace,
+.IR "" "binary cpv seconds kind source bytes" :
+the first, PKGDIR's before the binhosts' by priority, whose USE matches as emerge's
+.B \-\-binpkg\-respect\-use
+matches it and that emerge would not refuse for changed dependencies or user patches, kind
+.B local
+for PKGDIR (the source its path) or
+.B binhost
+(the source its name in binrepos.conf, else its URI), and its size; people are told the emerge
+option that would take it. A binhost counts once portage has fetched its index, of which it
+keeps a copy; egraph never fetches one.
 .TP
 .B \-\-dynamic\-deps
 .TP

@@ -1781,10 +1781,8 @@ std::shared_ptr<const RepositoryIndex> estimate_index(std::shared_ptr<const Repo
 }
 
 // What the index holds of each step, nothing without an index; knowledge learns from it.
-std::vector<StepFacts> facts_of(std::shared_ptr<const RepositoryIndex> loaded,
-                                const Invocation& invocation, std::span<const BuildStep> steps,
-                                BuildKnowledge& knowledge) {
-    const auto index = estimate_index(std::move(loaded), invocation);
+std::vector<StepFacts> facts_of(const std::shared_ptr<const RepositoryIndex>& index,
+                                std::span<const BuildStep> steps, BuildKnowledge& knowledge) {
     if (!index) {
         return {};
     }
@@ -1805,7 +1803,8 @@ std::vector<std::string> estimate_of(const Session& session, const Invocation& i
     const auto cores = build_cores();
     const auto jobs = given_jobs ? given_jobs : recorded_jobs(records);
     const auto built = build_steps(store, evaluated, plan, steps);
-    const auto facts = facts_of(session.loaded_repository(), invocation, built, knowledge);
+    const auto index = estimate_index(session.loaded_repository(), invocation);
+    const auto facts = facts_of(index, built, knowledge);
     const auto costs = step_costs(knowledge, built, cores, facts);
     // No limit: as many at once as a jobserver has tokens, one a core.
     const auto estimate = estimate_plan(Schedule{plan, steps, jobs}, costs, cores,
@@ -1833,6 +1832,9 @@ std::vector<std::string> estimate_of(const Session& session, const Invocation& i
         }
     }
     advice.tmpfs = tmpfs_advice(built, costs, spaces);
+    if (index) {
+        advice.binaries = binary_advice(*index, built, costs);
+    }
     std::ranges::move(advice_lines(advice), std::back_inserter(lines));
     return lines;
 }
@@ -3210,8 +3212,9 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     const auto built = build_steps(shown.store.get(), shown.evaluated.get(), plan, steps);
     const auto cores = build_cores();
     BuildKnowledge knowledge{read_history(builds_path(shown.store.get().meta.eroot))};
-    const auto facts = knowledge.empty() ? std::vector<StepFacts>{}
-                                         : facts_of(nullptr, invocation, built, knowledge);
+    const auto facts = knowledge.empty()
+                           ? std::vector<StepFacts>{}
+                           : facts_of(estimate_index(nullptr, invocation), built, knowledge);
     Countdown countdown{step_costs(knowledge, built, cores, facts), cores,
                         jobs ? std::nullopt : std::optional{cores}};
     StatusFile status{emerge::status_dir(invocation.eprefix.value_or(""), emerge::Publisher::exec) /

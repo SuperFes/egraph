@@ -1267,7 +1267,7 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
     got slower (`--slower`, by CPU time) with what changed under them.
   - 20e4 (done): the views as pages in the living app: `B` opens the build history, a page per
     view, a line opening its package's builds and then its page.
-- 20f (planned): advice: a build whose directory will not fit a tmpfs `PORTAGE_TMPDIR` (offer a
+- 20f (done): advice: a build whose directory will not fit a tmpfs `PORTAGE_TMPDIR` (offer a
   `notmpfs` env), one whose peak memory at these jobs nears what the system has (fewer jobs,
   or steve's memory floor), FEATURES=test's cost per package, a binary package offered when a
   build is long and a binhost has it, a finish time for a run started now.
@@ -1280,16 +1280,16 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
   - 20f3 (done): tmpfs: each build records its `PORTAGE_TMPDIR`; a package whose build
     directory grew past the size of the tmpfs it builds on, with the env files it builds with
     now, is offered a `notmpfs` env.
-  - 20f4 (planned): binary packages: a long build a binary package could replace, from the
+  - 20f4 (done): binary packages: a long build a binary package could replace, from the
     local `PKGDIR` and the binhost indexes portage keeps cached (never fetched by egraph), the
     USE matched as portage's binpkg-respect-use matches it.
     - 20f4a (done): the repository index (format 8) lists the binaries those indexes hold,
       read with portage's `PackageIndex`, each with its USE and IUSE and what emerge would
       refuse it for apart from them (changed deps, user patches); a changed index reads its
       source's binaries again alone, and a cp read again its binaries.
-    - 20f4b (planned): the advice: a planned build long enough, with a binary whose USE
-      matches as binpkg-respect-use matches it and that nothing else refuses, held to what
-      `emerge --pretend --usepkg` picks.
+    - 20f4b (done): the advice: a planned build of ten minutes or more, with a binary whose
+      USE matches as binpkg-respect-use matches it and that nothing else refuses, held to what
+      `emerge --pretend --getbinpkg` takes.
 - 20g (planned): scheduling: among the builds ready at once, the longest first or the critical
   path first, beside emerge's order; a divergence from emerge, so behind an option and
   recorded in `docs/upstream-notes.md`.

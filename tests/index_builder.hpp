@@ -31,6 +31,17 @@ struct FetchSpec {
     std::uint64_t bytes = 0;
 };
 
+// A binary package; use and iuse space-separated and sorted.
+struct BinarySpec {
+    std::string cpv;
+    std::string use = {};
+    std::string iuse = {};
+    std::uint32_t source = 0;
+    std::uint64_t size = 0;
+    std::uint32_t ignored = 0;
+    std::string slot = "0";
+};
+
 struct VersionSpec {
     std::string cpv;
     std::string keywords = "x86";
@@ -159,6 +170,25 @@ class IndexBuilder {
         advisory.packages.count =
             static_cast<std::uint32_t>(index_.advisory_packages.size()) - advisory.packages.first;
         index_.advisories.push_back(advisory);
+    }
+
+    // A binary source, appended after the others.
+    void source(egraph::BinarySourceKind kind, std::string_view name, std::string_view location) {
+        index_.binary_sources.push_back(
+            {.kind = kind, .name = intern(name), .location = intern(location)});
+    }
+
+    // A binary package, appended: binaries go in by cpv, then by source.
+    void binary(const BinarySpec& spec) {
+        egraph::Binary binary;
+        binary.cpv = intern(spec.cpv);
+        binary.slot = intern(spec.slot);
+        binary.source = spec.source;
+        binary.size = spec.size;
+        binary.use = ids(spec.use);
+        binary.iuse = ids(spec.iuse);
+        binary.ignored = spec.ignored;
+        index_.binaries.push_back(binary);
     }
 
     egraph::VisibilityConfig& config() { return index_.visibility; }

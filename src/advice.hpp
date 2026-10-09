@@ -1,12 +1,14 @@
 #pragma once
 
 // Advice on a plan before it runs, from its estimate and the build history: what its tests cost,
-// the jobs its builds' memory allows, and the builds too large for the tmpfs they build on.
+// the jobs its builds' memory allows, the builds too large for the tmpfs they build on, and the
+// long builds a binary package could replace.
 
 #include "builds.hpp"
 #include "estimate.hpp"
 #include "exec.hpp"
 #include "os.hpp"
+#include "repository.hpp"
 #include "steve.hpp"
 
 #include <cstddef>
@@ -64,6 +66,22 @@ struct TmpfsAdvice {
     bool operator==(const TmpfsAdvice&) const = default;
 };
 
+// A planned build long enough that a binary package matching it is worth naming: binary
+// advice is given from this many seconds of building.
+inline constexpr double binary_advice_seconds = 600;
+
+// A planned build a binary package could replace.
+struct BinaryAdvice {
+    std::string cpv{};
+    // The building it saves.
+    double seconds = 0;
+    BinarySourceKind kind = BinarySourceKind::local;
+    // PKGDIR, or the binhost's name (its URI without one).
+    std::string source{};
+    std::uint64_t size = 0;
+    bool operator==(const BinaryAdvice&) const = default;
+};
+
 struct PlanAdvice {
     // The seconds the builds' tests take, summed, and the costliest of them first; none when
     // they take less than test_advice_seconds.
@@ -71,6 +89,7 @@ struct PlanAdvice {
     std::vector<TestCost> tests{};
     std::optional<MemoryAdvice> memory{};
     std::vector<TmpfsAdvice> tmpfs{};
+    std::vector<BinaryAdvice> binaries{};
     bool operator==(const PlanAdvice&) const = default;
 };
 
@@ -103,12 +122,27 @@ memory_advice(const Plan& plan, std::span<const Step> steps, std::span<const Bui
 tmpfs_advice(std::span<const BuildStep> built, std::span<const StepCost> costs,
              const std::map<std::string, os::FilesystemSpace, std::less<>>& spaces);
 
+// Whether emerge would take binary for step under --binpkg-respect-use, as depgraph's
+// _reinstall_for_flags decides it (as --newuse does): no flag of either IUSE missing from the
+// other but those the profile masks or forces, and the same of the IUSE enabled.
+[[nodiscard]] bool binary_use_matches(const RepositoryIndex& index, const Binary& binary,
+                                      const BuildStep& step);
+
+// The steps (by step, built for their packages, costs as step_costs gives them) of
+// binary_advice_seconds or more of building that a binary in index could replace: the first of
+// their cpv, by source, that nothing refuses and whose USE matches.
+[[nodiscard]] std::vector<BinaryAdvice> binary_advice(const RepositoryIndex& index,
+                                                      std::span<const BuildStep> built,
+                                                      std::span<const StepCost> costs);
+
 // For scripts, after a plan's estimate line, where advised: "<TAB>advice<TAB>tests<TAB>seconds",
 // then "<TAB>advice<TAB>test<TAB>cpv<TAB>seconds" for each package named, seconds whole;
 // "<TAB>advice<TAB>memory<TAB>peak<TAB>total<TAB>jobs<TAB>seconds<TAB>jobs peak<TAB>largest
 // cpv<TAB>its peak<TAB>steve floor", bytes but the floor's MiB, jobs, its seconds and peak empty
 // when there are none, as is the floor; and "<TAB>advice<TAB>tmpfs<TAB>cpv<TAB>bytes<TAB>tmpdir
-// <TAB>its size" for each build too large for its tmpfs.
+// <TAB>its size" for each build too large for its tmpfs; and "<TAB>advice<TAB>binary<TAB>cpv
+// <TAB>seconds<TAB>local or binhost<TAB>source<TAB>bytes" for each build a binary could replace,
+// seconds whole.
 [[nodiscard]] std::vector<std::string> advice_lines(const PlanAdvice& advice);
 
 // Whether a plan's line is one of advice_lines'.

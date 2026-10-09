@@ -1,5 +1,7 @@
 #include "advice.hpp"
 
+#include "index_builder.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <format>
@@ -183,4 +185,99 @@ TEST_CASE("a build too large for the tmpfs it builds on is offered the disk") {
     const auto lines = egraph::advice_lines(PlanAdvice{
         .tmpfs = {{.cpv = "app-misc/big-1", .bytes = 9, .tmpdir = "/var/tmp", .size = 8}}});
     CHECK(lines == std::vector<std::string>{"\tadvice\ttmpfs\tapp-misc/big-1\t9\t/var/tmp\t8"});
+}
+
+namespace {
+
+std::vector<std::string> flags(std::string_view text) {
+    return egraph::test::words(text);
+}
+
+// A merge of cpv built with use, of iuse, forced those of it the profile masks or forces.
+BuildStep merging(std::string cpv, std::string_view use, std::string_view iuse,
+                  std::string_view forced = {}) {
+    return {.cpv = std::move(cpv), .use = flags(use), .iuse = flags(iuse), .forced = flags(forced)};
+}
+
+} // namespace
+
+TEST_CASE("a binary's USE matches as binpkg-respect-use matches it") {
+    egraph::test::IndexBuilder builder;
+    builder.source(egraph::BinarySourceKind::local, "", "/var/cache/binpkgs");
+    const auto binary = [&](std::string_view use, std::string_view iuse) {
+        builder.binary({.cpv = "app-misc/a-1", .use = std::string{use}, .iuse = std::string{iuse}});
+        return builder.index().binaries.back();
+    };
+    const auto step = merging("app-misc/a-1", "amd64 bar foo", "bar foo");
+    // Flags outside IUSE, as the arch, are not compared.
+    CHECK(egraph::binary_use_matches(builder.index(), binary("bar elibc_glibc foo", "bar foo"),
+                                     step));
+    CHECK_FALSE(egraph::binary_use_matches(builder.index(), binary("bar", "bar foo"), step));
+    // A flag the ebuild's IUSE lacks, though disabled.
+    CHECK_FALSE(
+        egraph::binary_use_matches(builder.index(), binary("bar foo", "bar extra foo"), step));
+    // One the profile masks is no difference while disabled in both.
+    const auto masked = merging("app-misc/a-1", "bar foo", "bar extra foo", "extra");
+    CHECK(egraph::binary_use_matches(builder.index(), binary("bar foo", "bar foo"), masked));
+    // One it forces still differs in what is enabled.
+    const auto forced = merging("app-misc/a-1", "bar extra foo", "bar extra foo", "extra");
+    CHECK_FALSE(egraph::binary_use_matches(builder.index(), binary("bar foo", "bar foo"), forced));
+}
+
+TEST_CASE("a long build a binary could replace is named, with the binary's source") {
+    egraph::test::IndexBuilder builder;
+    builder.source(egraph::BinarySourceKind::local, "", "/var/cache/binpkgs");
+    builder.source(egraph::BinarySourceKind::binhost, "gentoo", "https://binhost/amd64");
+    builder.source(egraph::BinarySourceKind::binhost, "", "https://other/amd64");
+    // a's local binary was built without foo; the binhost's matches.
+    builder.binary({.cpv = "app-misc/a-1", .use = "bar", .iuse = "bar foo", .source = 0});
+    builder.binary(
+        {.cpv = "app-misc/a-1", .use = "bar foo", .iuse = "bar foo", .source = 1, .size = 100});
+    // b's deps changed since.
+    builder.binary({.cpv = "app-misc/b-1", .source = 0, .ignored = egraph::binary_changed_deps});
+    builder.binary({.cpv = "app-misc/c-1", .source = 0});
+    builder.binary({.cpv = "app-misc/d-1", .source = 0, .size = 7});
+    builder.binary({.cpv = "app-misc/e-1", .source = 0});
+    builder.binary({.cpv = "app-misc/f-1", .source = 2, .size = 9});
+    const std::vector<BuildStep> built{merging("app-misc/a-1", "bar foo", "bar foo"),
+                                       merging("app-misc/b-1", "", ""),
+                                       merging("app-misc/c-1", "", ""),
+                                       merging("app-misc/d-1", "", ""),
+                                       {.cpv = "app-misc/e-1", .uninstall = true},
+                                       merging("app-misc/f-1", "", ""),
+                                       merging("app-misc/g-1", "", "")};
+    const std::vector<StepCost> costs{tested(900, 0), tested(900, 0), tested(100, 0),
+                                      tested(600, 0), tested(900, 0), tested(700, 0),
+                                      tested(900, 0)};
+    using egraph::BinaryAdvice;
+    using egraph::BinarySourceKind;
+    CHECK(egraph::binary_advice(builder.index(), built, costs) ==
+          std::vector<BinaryAdvice>{{.cpv = "app-misc/a-1",
+                                     .seconds = 900,
+                                     .kind = BinarySourceKind::binhost,
+                                     .source = "gentoo",
+                                     .size = 100},
+                                    {.cpv = "app-misc/d-1",
+                                     .seconds = 600,
+                                     .kind = BinarySourceKind::local,
+                                     .source = "/var/cache/binpkgs",
+                                     .size = 7},
+                                    {.cpv = "app-misc/f-1",
+                                     .seconds = 700,
+                                     .kind = BinarySourceKind::binhost,
+                                     .source = "https://other/amd64",
+                                     .size = 9}});
+    CHECK(egraph::advice_lines(PlanAdvice{.binaries = {{.cpv = "app-misc/a-1",
+                                                        .seconds = 900.4,
+                                                        .kind = BinarySourceKind::binhost,
+                                                        .source = "gentoo",
+                                                        .size = 100},
+                                                       {.cpv = "app-misc/d-1",
+                                                        .seconds = 600,
+                                                        .kind = BinarySourceKind::local,
+                                                        .source = "/var/cache/binpkgs",
+                                                        .size = 7}}}) ==
+          std::vector<std::string>{"\tadvice\tbinary\tapp-misc/a-1\t900\tbinhost\tgentoo\t100",
+                                   "\tadvice\tbinary\tapp-misc/d-1\t600\tlocal\t/var/cache/"
+                                   "binpkgs\t7"});
 }

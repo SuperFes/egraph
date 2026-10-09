@@ -4,6 +4,7 @@
 #include <cmath>
 #include <format>
 #include <functional>
+#include <iterator>
 #include <ranges>
 #include <utility>
 
@@ -104,6 +105,79 @@ tmpfs_advice(std::span<const BuildStep> built, std::span<const StepCost> costs,
     return advice;
 }
 
+namespace {
+
+using Flags = std::vector<std::string_view>;
+
+Flags sorted_flags(const RepositoryIndex& index, Range range) {
+    Flags found;
+    for (const auto id : index.ids_in(range)) {
+        found.push_back(index.string(id));
+    }
+    std::ranges::sort(found);
+    return found;
+}
+
+Flags sorted_flags(std::span<const std::string> flags) {
+    Flags found(flags.begin(), flags.end());
+    std::ranges::sort(found);
+    return found;
+}
+
+Flags enabled(const Flags& use, const Flags& iuse) {
+    Flags found;
+    std::ranges::set_intersection(use, iuse, std::back_inserter(found));
+    return found;
+}
+
+Flags differing(const Flags& one, const Flags& other) {
+    Flags found;
+    std::ranges::set_symmetric_difference(one, other, std::back_inserter(found));
+    return found;
+}
+
+} // namespace
+
+bool binary_use_matches(const RepositoryIndex& index, const Binary& binary, const BuildStep& step) {
+    const auto built_iuse = sorted_flags(index, binary.iuse);
+    const auto iuse = sorted_flags(step.iuse);
+    Flags added;
+    std::ranges::set_difference(differing(built_iuse, iuse), sorted_flags(step.forced),
+                                std::back_inserter(added));
+    return added.empty() && differing(enabled(sorted_flags(index, binary.use), built_iuse),
+                                      enabled(sorted_flags(step.use), iuse))
+                                .empty();
+}
+
+std::vector<BinaryAdvice> binary_advice(const RepositoryIndex& index,
+                                        std::span<const BuildStep> built,
+                                        std::span<const StepCost> costs) {
+    std::vector<BinaryAdvice> advice;
+    const auto cpv_of = [&index](const Binary& binary) { return index.string(binary.cpv); };
+    for (const auto& [step, cost] : std::views::zip(built, costs)) {
+        if (step.uninstall || cost.build_seconds < binary_advice_seconds) {
+            continue;
+        }
+        const auto same = std::ranges::equal_range(index.binaries, std::string_view{step.cpv},
+                                                   std::less<>{}, cpv_of);
+        const auto found = std::ranges::find_if(same, [&](const Binary& binary) {
+            return binary.ignored == 0 && binary_use_matches(index, binary, step);
+        });
+        if (found == same.end()) {
+            continue;
+        }
+        const auto& source = index.binary_sources.at(found->source);
+        const auto name = index.string(source.name);
+        advice.push_back(
+            {.cpv = step.cpv,
+             .seconds = cost.build_seconds,
+             .kind = source.kind,
+             .source = std::string{name.empty() ? index.string(source.location) : name},
+             .size = found->size});
+    }
+    return advice;
+}
+
 std::vector<std::string> advice_lines(const PlanAdvice& advice) {
     std::vector<std::string> lines;
     if (!advice.tests.empty()) {
@@ -127,6 +201,12 @@ std::vector<std::string> advice_lines(const PlanAdvice& advice) {
     for (const auto& tmpfs : advice.tmpfs) {
         lines.push_back(std::format("\tadvice\ttmpfs\t{}\t{}\t{}\t{}", tmpfs.cpv, tmpfs.bytes,
                                     tmpfs.tmpdir, tmpfs.size));
+    }
+    for (const auto& binary : advice.binaries) {
+        lines.push_back(std::format("\tadvice\tbinary\t{}\t{}\t{}\t{}\t{}", binary.cpv,
+                                    std::llround(binary.seconds),
+                                    binary.kind == BinarySourceKind::local ? "local" : "binhost",
+                                    binary.source, binary.size));
     }
     return lines;
 }

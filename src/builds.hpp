@@ -197,6 +197,9 @@ struct BuildStep {
     std::string repo{};
     std::string slot{};
     std::vector<std::string> use{};
+    // A merge's IUSE without defaults, and those of it the profile masks or forces, sorted.
+    std::vector<std::string> iuse{};
+    std::vector<std::string> forced{};
     std::vector<std::string> env_files{};
     bool uninstall = false;
     // A merge's: why it builds, what it replaces, the merge a sub-slot rebuild is for, and a USE

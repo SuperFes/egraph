@@ -1093,6 +1093,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     std::vector<std::pair<std::string_view, double>> tested;
     std::optional<Fields> memory;
     std::vector<Fields> tmpfs;
+    std::vector<Fields> binaries;
     for (std::size_t i = rows.size(); i-- > 0;) {
         const auto& row = rows.at(i);
         if (row.size() < 3 || !row.at(0).empty() || row.at(1) != "advice") {
@@ -1108,6 +1109,8 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             memory = Fields(row.begin() + 3, row.end());
         } else if (row.at(2) == "tmpfs" && row.size() == 7) {
             tmpfs.emplace(tmpfs.begin(), row.begin() + 3, row.end());
+        } else if (row.at(2) == "binary" && row.size() == 8) {
+            binaries.emplace(binaries.begin(), row.begin() + 3, row.end());
         }
         rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
     }
@@ -1676,6 +1679,20 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             "to package.env, with env/notmpfs.conf setting PORTAGE_TMPDIR=\"/var/tmp/notmpfs\"",
             too_large.at(0), bytes(1), bytes(3), too_large.at(2), parts.category, parts.name);
         out << paint("Tmpfs:", Tone::heading) << ' ' << paint(text, Tone::note) << '\n';
+    }
+    // cpv, seconds, kind, source, bytes
+    for (const auto& binary : binaries) {
+        const auto seconds = rough_duration(number_field(binary.at(1)).value_or(0));
+        const auto text =
+            binary.at(2) == "local"
+                ? std::format("{} is in {}, about {} of building that emerge --usepkg would skip",
+                              binary.at(0), binary.at(3), seconds)
+                : std::format("{} is on the {} binhost, about {} of building that emerge "
+                              "--getbinpkg would skip for a {} download",
+                              binary.at(0), binary.at(3), seconds,
+                              byte_size(static_cast<std::uint64_t>(
+                                  number_field(binary.at(4)).value_or(0))));
+        out << paint("Binary:", Tone::heading) << ' ' << paint(text, Tone::note) << '\n';
     }
     if (test_seconds) {
         auto text = std::format("about {} of the building", rough_duration(*test_seconds));
