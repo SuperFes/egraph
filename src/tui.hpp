@@ -23,6 +23,7 @@
 #include "store.hpp"
 #include "use_stack.hpp"
 #include "visibility.hpp"
+#include "what_if.hpp"
 
 #include <algorithm>
 #include <array>
@@ -125,6 +126,8 @@ struct Row {
     std::optional<RemedyLine> remedy;
     std::optional<PackageVersion> version;
     std::optional<FlagState> flag;
+    // For a flag row whose state the lines tried change, its state without them.
+    std::optional<bool> was;
     // For a flag row, the width its flag is padded to.
     std::size_t column = 0;
 };
@@ -310,6 +313,23 @@ using Runner = std::function<Job<RunResult>(const Action&)>;
 // control characters dropped, each line what its last carriage return left.
 [[nodiscard]] std::vector<std::string> plain_tail(std::string_view text, std::size_t count);
 
+// Lines to try on stores, untried.
+struct TryRequest {
+    std::shared_ptr<const Stores> stores;
+    std::vector<WhatIfLine> lines;
+};
+struct Tried {
+    // The stores the lines were tried on: those asked for, or new ones where the cps the lines
+    // newly reach were evaluated first.
+    std::shared_ptr<const Stores> untried;
+    std::shared_ptr<const Stores> tried;
+    // Cps the lines newly reach, not evaluated (--no-refresh).
+    std::vector<std::string> unevaluated{};
+};
+using TryResult = std::expected<Tried, std::string>;
+// Tries lines as with_what_if does, evaluating the cps they newly reach.
+using Trier = std::function<Job<TryResult>(const TryRequest&)>;
+
 // What the interface asks of the world outside it: run() calls these, the app never does.
 struct Services {
     Checker check{};
@@ -337,6 +357,7 @@ struct Services {
     NewsText news_text{};
     NewsMarker mark_read{};
     TerminalProgram dispatch_conf{};
+    Trier try_lines{};
 };
 
 struct Watched;
@@ -641,8 +662,24 @@ class App {
     // A change to steve waiting for run() to make it.
     [[nodiscard]] std::optional<SteveChange> steve_change_requested() const;
     void finish_steve_change(const std::expected<void, std::string>& result);
-    // The stores shown, shared; empty for an app over an installed store alone.
+    // The stores shown, shared, without the lines tried; empty for an app over an installed
+    // store alone.
     [[nodiscard]] std::shared_ptr<const Stores> shared() const;
+    // What-if lines toggled, in the order first toggled; the stores shown are tried with them
+    // once run() has made them.
+    [[nodiscard]] const std::vector<WhatIfLine>& what_if() const { return lines_; }
+    // The evaluated store without the lines: the one shown while none is tried.
+    [[nodiscard]] const Evaluated& untried() const {
+        return untried_ ? untried_->evaluated : evaluated();
+    }
+    // Whether run() is to try the lines in the background: missing, or a try being made.
+    [[nodiscard]] bool try_requested() const {
+        return owned_ && !lines_.empty() && (trying_ || tried_version_ != version_);
+    }
+    [[nodiscard]] bool trying() const { return trying_; }
+    [[nodiscard]] TryRequest start_try();
+    // Shows the stores tried, each view where it was, unless the lines changed meanwhile.
+    void finish_try(TryResult result);
     // Whether the stores shown still describe the system: a reason asks for a refresh.
     void finish_stale_check(std::optional<std::string> reason);
     // Whether a refresh is asked for, and not yet made.
@@ -736,6 +773,10 @@ class App {
     [[nodiscard]] std::optional<std::uint32_t>
     link_of(const std::vector<std::string>& fields) const;
     void own(std::shared_ptr<const Loaded> loaded);
+    // Stores to try the lines on from now on, if there are lines.
+    void rebase(const std::shared_ptr<const Stores>& stores);
+    // Toggles the flag for atom: takes back the line's token for it, or adds one turning it.
+    void toggle(const FlagState& flag, const std::string& atom);
     // The page's plan, or none yet.
     [[nodiscard]] const ScopePlan& current() const;
     // Moves the list to the page step pages on, the first and last staying put.
@@ -811,6 +852,15 @@ class App {
     std::optional<Scope> planning_;
     // Counts the stores shown, so that a plan made for others is dropped.
     std::size_t generation_ = 0;
+    std::vector<WhatIfLine> lines_;
+    // The stores shown without the lines, while a try is shown.
+    std::shared_ptr<const Stores> untried_;
+    // Counts changes to the lines and to the stores they are tried on; tried_version_ is the
+    // count the stores shown were tried at, try_version_ that of the try being made.
+    std::uint64_t version_ = 0;
+    std::uint64_t tried_version_ = 0;
+    std::uint64_t try_version_ = 0;
+    bool trying_ = false;
     std::optional<StatusShown> status_;
     std::optional<NoticesShown> notices_;
     bool on_notices_ = false;
@@ -928,6 +978,10 @@ void draw_title(S& screen, const App& app, unsigned width, const std::vector<Spa
         badges.push_back({std::format(" {} egraph {} ", spinner_frame(app.frame(), glyph),
                                       action_arguments(*action).front()),
                           {.fg = palette::crust, .bg = palette::mauve, .bold = true}});
+    }
+    if (app.trying()) {
+        badges.push_back({.text = std::format(" {} trying ", spinner_frame(app.frame(), glyph)),
+                          .pen = {.fg = palette::overlay, .bg = palette::crust}});
     }
     if (app.refresh_requested()) {
         badges.push_back({std::format(" {} refreshing ", spinner_frame(app.frame(), glyph)),
@@ -1393,14 +1447,16 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
                 const auto spelled =
                     std::format("{}{}{}{}", flag.fixed ? "(" : "", flag.enabled ? "" : "-",
                                 flag.flag, flag.fixed ? ")" : "");
-                put_spans(screen, at, 0,
-                          {marker(selected, glyph),
-                           {spelled, tone_pen(flag.enabled ? Tone::use : Tone::note)},
-                           {std::string(
-                                row.column > spelled.size() ? row.column - spelled.size() : 2, ' '),
-                            {}},
-                           {row.text, tone_pen(Tone::note)}},
-                          size.cols, bg);
+                put_spans(
+                    screen, at, 0,
+                    {marker(selected, glyph),
+                     {spelled, tone_pen(flag.enabled ? Tone::use : Tone::note)},
+                     {std::string(row.column > spelled.size() ? row.column - spelled.size() : 2,
+                                  ' '),
+                      {}},
+                     {row.text, tone_pen(Tone::note)},
+                     {row.was ? (*row.was ? "  was on" : "  was off") : "", tone_pen(Tone::count)}},
+                    size.cols, bg);
             }
             break;
         case RowType::version:
@@ -2225,6 +2281,7 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
     std::optional<Job<IndexResult>> index;
     std::optional<Job<RunResult>> running;
     std::optional<Job<ScopePlan>> scoped;
+    std::optional<Job<TryResult>> tried;
     const auto read_status = [&] {
         if (services.status) {
             app.finish_status(services.status());
@@ -2263,6 +2320,15 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
         const auto planned = poll(
             scoped, app.scope_plan_requested(), [&] { return app.start_scope_plan(); },
             [&](ScopePlan plan) { app.finish_scope_plan(std::move(plan)); });
+        const auto tried_lines = poll(
+            tried, app.try_requested(),
+            [&] {
+                auto request = app.start_try();
+                return services.try_lines ? services.try_lines(request)
+                                          : ready(TryResult{std::unexpected(std::string{
+                                                "this egraph has no way to try configuration"})});
+            },
+            [&](TryResult result) { app.finish_try(std::move(result)); });
         if (now() >= next_status) {
             next_status = now() + stale_interval;
             read_status();
@@ -2291,7 +2357,8 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
             [&](RebuildResult result) { app.finish_rebuild(std::move(result)); });
         if (checked == Polled::finished || rebuilt == Polled::finished ||
             refreshed == Polled::finished || indexed == Polled::finished ||
-            ran == Polled::finished || planned == Polled::finished || found_stale) {
+            ran == Polled::finished || planned == Polled::finished ||
+            tried_lines == Polled::finished || found_stale) {
             // Drawn below before any key is read.
         } else if (const auto change = app.steve_change_requested()) {
             app.finish_steve_change(services.set_steve

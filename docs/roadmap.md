@@ -1171,9 +1171,10 @@ changes (undo, save) and takes typed lines.
   installed packages env lines build otherwise are listed there, `r` planning their rebuild.
   - 19e1 (done): a USE section on the package page: each flag of the installed version's IUSE, its
     state, and the ledger entry that last sets it; the env files its own version gets.
-  - 19e2: toggles: space and `*` add or drop what-if lines, the stores tried made in the
-    background (the cps newly reached evaluated there too), the USE section marking what they
-    change.
+  - 19e2 (done): toggles: space and `*` add or drop what-if lines, the stores tried made in
+    the background (the cps newly reached evaluated there too, `tui::Trier`) and shown in place
+    of the untried, so the sets' plans follow them already; the USE section says what a flag
+    was. 2 s here for mpv's flag, with its cps evaluated.
   - 19e3: the set pages plan with the lines tried, marked as 19c's plan.
   - 19e4: the what-if page: the lines pending, dropped with `x`, undone with `u`, typed with
     `a`; the plan's `Tried:` count; the env rebuilds, `r` planning them.

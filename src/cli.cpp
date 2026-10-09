@@ -55,6 +55,7 @@
 #include <expected>
 #include <format>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <iterator>
 #include <map>
@@ -63,6 +64,7 @@
 #include <ostream>
 #include <random>
 #include <ranges>
+#include <set>
 #include <span>
 #include <sstream>
 #include <string_view>
@@ -560,9 +562,10 @@ class ScratchFile {
 // nothing once the build succeeded.
 Job<std::optional<std::string>> background_build(const Invocation& invocation,
                                                  std::string_view mode,
-                                                 const std::filesystem::path& path) {
+                                                 const std::filesystem::path& path,
+                                                 std::span<const std::string> cps = {}) {
     ScratchFile log{std::filesystem::path{scratch_store()}.replace_extension(".log")};
-    auto child = os::start(builder_command(invocation, mode, path), log.path());
+    auto child = os::start(builder_command(invocation, mode, path, cps), log.path());
     if (!child) {
         return ready(builder_error(invocation, std::unexpected(child.error())));
     }
@@ -715,6 +718,79 @@ Job<tui::RefreshResult> background_refresh(const Invocation& invocation, Session
             return tui::RefreshResult{std::unexpected(built_store_error(builder, loaded.error()))};
         }
         return share(session, std::move(*loaded), used);
+    };
+}
+
+// Lines tried in the background, as a session tries them: the cps they newly reach evaluated
+// by the builder, the session answering from the stores it writes, until they reach nothing more;
+// under --no-refresh, left unevaluated.
+Job<tui::TryResult> background_try(const Invocation& invocation, Session& session,
+                                   const tui::TryRequest& request) {
+    using Made = std::expected<std::pair<Evaluated, std::vector<std::string>>, std::string>;
+    const auto start = [user_config = config_root(invocation) / "etc/portage"](
+                           std::shared_ptr<const Stores> base, std::vector<WhatIfLine> lines) {
+        return std::async(
+            std::launch::async,
+            [base = std::move(base), lines = std::move(lines), user_config]() -> Made {
+                auto evaluated = with_what_if(base->evaluated, base->installed, lines, user_config);
+                if (!evaluated) {
+                    return std::unexpected(std::move(evaluated.error()));
+                }
+                auto reached = newly_reached(base->evaluated, *evaluated);
+                return std::pair{std::move(*evaluated), std::move(reached)};
+            });
+    };
+    struct State {
+        std::shared_ptr<const Stores> base;
+        std::vector<WhatIfLine> lines;
+        std::set<std::string> asked;
+        std::future<Made> made;
+        std::optional<Job<std::optional<std::string>>> build;
+    };
+    State state{.base = request.stores,
+                .lines = request.lines,
+                .asked = {},
+                .made = start(request.stores, request.lines),
+                .build = std::nullopt};
+    return [state = std::move(state), start, &invocation, &session,
+            path = store_path(invocation)]() mutable -> std::optional<tui::TryResult> {
+        if (state.build) {
+            auto ended = (*state.build)();
+            if (!ended) {
+                return std::nullopt;
+            }
+            state.build.reset();
+            if (*ended) {
+                return tui::TryResult{std::unexpected(std::move(**ended))};
+            }
+            auto loaded = load_stores(path);
+            if (!loaded) {
+                return tui::TryResult{std::unexpected(
+                    built_store_error(builder_program(invocation), loaded.error()))};
+            }
+            state.base = share(session, std::move(*loaded), path);
+            state.made = start(state.base, state.lines);
+            return std::nullopt;
+        }
+        if (state.made.wait_for(std::chrono::seconds{0}) != std::future_status::ready) {
+            return std::nullopt;
+        }
+        auto made = state.made.get();
+        if (!made) {
+            return tui::TryResult{std::unexpected(std::move(made.error()))};
+        }
+        auto& [evaluated, reached] = *made;
+        std::erase_if(reached,
+                      [&state](const std::string& cp) { return state.asked.contains(cp); });
+        if (!reached.empty() && !invocation.no_refresh) {
+            state.asked.insert(reached.begin(), reached.end());
+            state.build = background_build(invocation, "--evaluate", path, reached);
+            return std::nullopt;
+        }
+        auto tried = std::make_shared<const Stores>(
+            Stores{.installed = state.base->installed, .evaluated = std::move(evaluated)});
+        return tui::TryResult{
+            tui::Tried{.untried = state.base, .tried = std::move(tried), .unevaluated = reached}};
     };
 }
 
@@ -3437,6 +3513,10 @@ Exit execute(const Tui& tui_command, Session& session, const Invocation& invocat
              [&invocation] {
                  return os::run(dispatch_conf_command(invocation))
                      .transform_error([](const os::SpawnError& e) { return e.message; });
+             },
+         .try_lines =
+             [&invocation, &session](const tui::TryRequest& request) {
+                 return background_try(invocation, session, request);
              }},
         warnings, tui_command.notices, err);
 }

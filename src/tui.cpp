@@ -370,7 +370,7 @@ std::string toggles(const Evaluated& evaluated, const Possible& entry) {
 // The USE of the package's own version as its ebuild stacks: its explicit IUSE, each flag with
 // where it was last set, and the files package.env gives it; nothing without the ebuild.
 std::vector<Row> use_rows(const Store& installed, const Evaluated& evaluated,
-                          std::uint32_t package) {
+                          const Evaluated& untried, std::uint32_t package) {
     const auto own = evaluated.packages.at(package).own;
     if (!own) {
         return {};
@@ -382,6 +382,12 @@ std::vector<Row> use_rows(const Store& installed, const Evaluated& evaluated,
         if (state.explicit_iuse) {
             states.push_back(std::move(state));
         }
+    }
+    // Without the lines tried: the same candidates, as with_what_if keeps them.
+    std::vector<std::string> before;
+    if (&untried != &evaluated && *own < untried.candidates.size()) {
+        const UseStacker untried_stacker(installed, untried);
+        before = untried_stacker.stack(untried.candidates.at(*own)).use;
     }
     const auto env = stacker.env_files(candidate);
     if (states.empty() && env.empty()) {
@@ -406,6 +412,12 @@ std::vector<Row> use_rows(const Store& installed, const Evaluated& evaluated,
         auto row = text_row(RowType::flag, use_place(last ? layer_name(last->layer) : "",
                                                      last ? step_place(evaluated, *last) : "",
                                                      last ? std::string_view{last->token} : ""));
+        if (&untried != &evaluated) {
+            if (const bool was = std::ranges::binary_search(before, state.flag);
+                was != state.enabled) {
+                row.was = was;
+            }
+        }
         row.flag = std::move(state);
         row.column = width + 2;
         rows.push_back(std::move(row));
@@ -855,6 +867,7 @@ void App::index() {
 }
 
 void App::adopt(std::shared_ptr<const Stores> stores, Source source) {
+    rebase(stores);
     own(std::make_shared<const Loaded>(std::move(stores), dynamic_deps_));
     source_ = source;
     // They were built after any refresh asked for.
@@ -866,7 +879,77 @@ void App::adopt(std::shared_ptr<const Stores> stores, Source source) {
 }
 
 std::shared_ptr<const Stores> App::shared() const {
+    if (untried_) {
+        return untried_;
+    }
     return owned_ ? owned_->stores : nullptr;
+}
+
+void App::rebase(const std::shared_ptr<const Stores>& stores) {
+    if (lines_.empty()) {
+        return;
+    }
+    untried_ = stores;
+    ++version_;
+}
+
+TryRequest App::start_try() {
+    trying_ = true;
+    try_version_ = version_;
+    return {.stores = shared(), .lines = lines_};
+}
+
+void App::finish_try(TryResult result) {
+    trying_ = false;
+    if (try_version_ != version_) {
+        return;
+    }
+    tried_version_ = try_version_;
+    if (!result) {
+        show({.error = true, .title = "Not tried", .lines = {std::move(result.error())}});
+        return;
+    }
+    if (!result->unevaluated.empty()) {
+        std::string cps;
+        for (const auto& cp : result->unevaluated) {
+            cps += (cps.empty() ? "" : ", ") + cp;
+        }
+        show({.error = true,
+              .title = "Not evaluated",
+              .lines = {std::format("{}: reached by what is tried, but not evaluated "
+                                    "(--no-refresh)",
+                                    cps)}});
+    }
+    untried_ = std::move(result->untried);
+    replace(std::move(result->tried));
+}
+
+void App::toggle(const FlagState& flag, const std::string& atom) {
+    auto line = std::ranges::find_if(lines_, [&](const WhatIfLine& each) {
+        return each.file == WhatIfLine::File::use && each.atom == atom;
+    });
+    const auto off = "-" + flag.flag;
+    if (line != lines_.end() &&
+        (std::erase(line->tokens, flag.flag) + std::erase(line->tokens, off)) > 0) {
+        if (line->tokens.empty()) {
+            lines_.erase(line);
+        }
+    } else if (line != lines_.end()) {
+        line->tokens.push_back(flag.enabled ? off : flag.flag);
+    } else {
+        lines_.push_back({.file = WhatIfLine::File::use,
+                          .atom = atom,
+                          .tokens = {flag.enabled ? off : flag.flag}});
+    }
+    ++version_;
+    // run() drops a try made for no lines.
+    trying_ = trying_ && !lines_.empty();
+    if (lines_.empty() && untried_) {
+        auto untried = std::move(untried_);
+        untried_.reset();
+        tried_version_ = version_;
+        replace(std::move(untried));
+    }
 }
 
 void App::finish_stale_check(std::optional<std::string> reason) {
@@ -880,6 +963,7 @@ void App::finish_refresh(RefreshResult result) {
         return;
     }
     refresh_error_.reset();
+    rebase(*result);
     replace(std::move(*result));
 }
 
@@ -924,6 +1008,8 @@ void App::replace(std::shared_ptr<const Stores> stores) {
         RowType type = RowType::note;
         std::size_t depth = 0;
         bool reverse = false;
+        // The selected row's flag, on a flag row.
+        std::optional<std::string> flag{};
     };
     const auto list_cursor = list_.cursor;
     const auto plan_cursor = planned_ ? planned_->cursor : Cursor{};
@@ -943,6 +1029,9 @@ void App::replace(std::shared_ptr<const Stores> stores) {
             entry.reverse = row.reverse;
             if (selectable(row)) {
                 entry.row = place_of(row.link.package);
+            }
+            if (row.flag) {
+                entry.flag = row.flag->flag;
             }
         }
         opened.push_back(std::move(entry));
@@ -1000,8 +1089,13 @@ void App::replace(std::shared_ptr<const Stores> stores) {
                    candidate.depth == entry.depth && candidate.reverse == entry.reverse &&
                    candidate.link.package == *row;
         });
+        const auto flag = std::ranges::find_if(page.rows, [&](const Row& candidate) {
+            return entry.flag && candidate.flag && candidate.flag->flag == *entry.flag;
+        });
         if (same != page.rows.end()) {
             restore(page.cursor, entry.cursor, static_cast<std::size_t>(same - page.rows.begin()));
+        } else if (flag != page.rows.end()) {
+            restore(page.cursor, entry.cursor, static_cast<std::size_t>(flag - page.rows.begin()));
         } else if (!row && !page.rows.empty()) {
             restore(page.cursor, entry.cursor, std::min(entry.cursor.at, page.rows.size() - 1));
         }
@@ -1301,7 +1395,7 @@ void App::open(std::uint32_t package) {
         }
     }
     if (has_evaluated()) {
-        std::ranges::move(use_rows(installed(), evaluated(), package),
+        std::ranges::move(use_rows(installed(), evaluated(), untried(), package),
                           std::back_inserter(page.rows));
     }
     // Last, so that what keeps the package and its dependencies open in view.
@@ -1347,7 +1441,7 @@ void App::handle(const Key& key) {
                          checked_->stage == Checked::Stage::rebuilding)) {
             ++checked_->frame;
         }
-        if (refresh_requested() || index_requested() || running_ || planning_) {
+        if (refresh_requested() || index_requested() || running_ || planning_ || trying_) {
             ++frame_;
         }
     } else if (keys_shown_) {
@@ -1819,7 +1913,7 @@ void App::handle_steve(const Key& key) {
 
 std::optional<std::chrono::milliseconds> App::refresh() const {
     if (check_requested() || rebuild_requested() || refresh_requested() || index_requested() ||
-        running_ || planning_) {
+        running_ || planning_ || trying_) {
         return wait_interval;
     }
     if (watched_ && pages_.empty()) {
@@ -2364,6 +2458,22 @@ void App::handle_page(const Key& key) {
             open(*installed);
         } else if (is(key, U'i') && version) {
             install(store().string(store().packages.at(page.package).cp), *version);
+        } else if (const auto& flagged = page.cursor.at < page.rows.size()
+                                             ? page.rows.at(page.cursor.at).flag
+                                             : std::nullopt;
+                   (is(key, U' ') || is(key, U'*')) && flagged) {
+            const auto flag = *flagged;
+            if (flag.fixed) {
+                show({.error = true,
+                      .title = std::format("{} is fixed", flag.flag),
+                      .lines = {"The profile forces or masks it (use.force, use.mask), which "
+                                "package.use cannot change."}});
+            } else {
+                toggle(flag,
+                       is(key, U'*')
+                           ? std::string{"*/*"}
+                           : std::string{store().string(store().packages.at(page.package).cp)});
+            }
         } else if (is_move(key)) {
             move_on_page(page, key, height_);
         }
@@ -3004,12 +3114,16 @@ std::vector<Hint> page_keys(const App& app, const Glyphs& glyph) {
     const auto installed = row && row->version ? row->version->installed : std::nullopt;
     const bool opens =
         on_link ? row->link.package != page.package : installed && *installed != page.package;
+    const bool on_flag = row && row->flag && !row->flag->fixed;
     std::vector<Hint> keys{
         {.key = std::string{glyph.move}, .meaning = "move"},
         {.key = std::string{glyph.enter}, .meaning = "open", .bar = opens},
         {.key = "space",
-         .meaning = unfolded ? "fold" : "unfold",
-         .bar = unfolded || (on_link && app.can_unfold(*row))},
+         .meaning = on_flag    ? "toggle"
+                    : unfolded ? "fold"
+                               : "unfold",
+         .bar = on_flag || unfolded || (on_link && app.can_unfold(*row))},
+        {.key = "*", .meaning = "toggle for every package", .bar = on_flag},
         {.key = "i", .meaning = "install", .bar = row && row->version.has_value()},
         {.key = "esc", .meaning = "back", .bar = true}};
     add_common(keys);

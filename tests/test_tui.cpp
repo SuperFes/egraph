@@ -1638,6 +1638,197 @@ TEST_CASE("a page lists its package's USE, each flag with where it was last set"
     CHECK(page.rows.at(page.cursor.at).type == RowType::flag);
 }
 
+namespace {
+
+// app-misc/a-1, its IUSE x y z, make.conf enabling x and y and the profile forcing z.
+egraph::Stores flagged() {
+    auto system = egraph::test::make_system({{.cpv = "app-misc/a-1"}},
+                                            {{.cpv = "app-misc/a-1", .iuse = "x y z"}});
+    egraph::test::set_ledger(system.evaluated,
+                             {.profiles = {{{"use.force", {{.file = "f", .tokens = "z"}}}}},
+                              .conf = {{.file = "mc", .line = 3, .tokens = "x y"}}});
+    return {.installed = std::move(system.store), .evaluated = std::move(system.evaluated)};
+}
+
+// Tries lines as egraph's configuration under config would, at once.
+egraph::tui::Trier trying_under(const std::filesystem::path& config) {
+    return [config](const egraph::tui::TryRequest& request) {
+        auto evaluated = egraph::with_what_if(request.stores->evaluated, request.stores->installed,
+                                              request.lines, config);
+        if (!evaluated) {
+            return egraph::ready(egraph::tui::TryResult{std::unexpected(evaluated.error())});
+        }
+        return egraph::ready(egraph::tui::TryResult{egraph::tui::Tried{
+            .untried = request.stores,
+            .tried = std::make_shared<const egraph::Stores>(egraph::Stores{
+                .installed = request.stores->installed, .evaluated = std::move(*evaluated)})}});
+    };
+}
+
+// The page's flag rows, as "flag on|off[ was on|off]".
+std::vector<std::string> flag_rows(const egraph::tui::App& app) {
+    std::vector<std::string> rows;
+    for (const auto& row : app.pages().back().rows) {
+        if (row.flag) {
+            rows.push_back(std::format("{} {}{}", row.flag->flag, row.flag->enabled ? "on" : "off",
+                                       row.was ? (*row.was ? " was on" : " was off") : ""));
+        }
+    }
+    return rows;
+}
+
+// Puts the page's cursor on flag.
+void select_flag(egraph::tui::App& app, std::string_view flag) {
+    for (int step = 0; step < 50; ++step) {
+        const auto& page = app.pages().back();
+        if (const auto& row = page.rows.at(page.cursor.at); row.flag && row.flag->flag == flag) {
+            return;
+        }
+        app.handle(key(step == 0 ? KeyKind::home : KeyKind::down));
+    }
+    FAIL("no flag " << flag);
+}
+
+} // namespace
+
+TEST_CASE("space toggles a flag for the package, tried in the background, and again takes it "
+          "back") {
+    const egraph::test::TempDir config;
+    egraph::tui::App app{flagged(), true};
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    select_flag(app, "x");
+    FakeScreen screen{20, 80, {character(U' ')}};
+    egraph::tui::run(screen, app, ascii,
+                     {.check = no_check, .try_lines = trying_under(config.path())});
+    REQUIRE(app.what_if().size() == 1);
+    CHECK(app.what_if().front() == egraph::WhatIfLine{.file = egraph::WhatIfLine::File::use,
+                                                      .atom = "app-misc/a",
+                                                      .tokens = {"-x"}});
+    CHECK_FALSE(app.try_requested());
+    CHECK(flag_rows(app) == std::vector<std::string>{"x off was on", "y on", "z on"});
+    // The cursor stays on the flag, rows having come above it.
+    const auto& page = app.pages().back();
+    CHECK(page.rows.at(page.cursor.at).flag->flag == "x");
+    CHECK(contains(screen.text(), "package.use/egraph"));
+    CHECK(contains(screen.text(), "was on"));
+    // The stores the lines are tried on stay the ones shared.
+    CHECK(app.shared()->evaluated.ledger_entries.size() == app.untried().ledger_entries.size());
+    CHECK(app.evaluated().ledger_entries.size() == app.untried().ledger_entries.size() + 1);
+
+    // Again: the line is gone, and the stores shown are untried.
+    select_flag(app, "x");
+    app.handle(character(U' '));
+    CHECK(app.what_if().empty());
+    CHECK_FALSE(app.try_requested());
+    CHECK(flag_rows(app) == std::vector<std::string>{"x on", "y on", "z on"});
+    CHECK(&app.evaluated() == &app.untried());
+}
+
+TEST_CASE("a try that takes a while is polled until it ends") {
+    const egraph::test::TempDir config;
+    egraph::tui::App app{flagged(), true};
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    select_flag(app, "x");
+    int polls = 0;
+    const auto at_once = trying_under(config.path());
+    const egraph::tui::Trier slow = [&](const egraph::tui::TryRequest& request) {
+        return egraph::Job<egraph::tui::TryResult>{
+            [&polls, job = at_once(request)]() mutable -> std::optional<egraph::tui::TryResult> {
+                return ++polls < 3 ? std::nullopt : job();
+            }};
+    };
+    FakeScreen screen{20, 80, {character(U' '), key(KeyKind::tick), key(KeyKind::tick)}};
+    egraph::tui::run(screen, app, ascii, {.check = no_check, .try_lines = slow});
+    CHECK(polls == 3);
+    CHECK_FALSE(app.trying());
+    CHECK(flag_rows(app) == std::vector<std::string>{"x off was on", "y on", "z on"});
+}
+
+TEST_CASE("taking back the last line while it is tried stops trying") {
+    const egraph::test::TempDir config;
+    egraph::tui::App app{flagged(), true};
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    select_flag(app, "x");
+    app.handle(character(U' '));
+    const auto request = app.start_try();
+    app.handle(character(U' '));
+    CHECK_FALSE(app.trying());
+    CHECK_FALSE(app.try_requested());
+}
+
+TEST_CASE("* toggles a flag for every package; a fixed flag says why it cannot be") {
+    const egraph::test::TempDir config;
+    egraph::tui::App app{flagged(), true};
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    select_flag(app, "y");
+    app.handle(character(U'*'));
+    REQUIRE(app.try_requested());
+    const auto request = app.start_try();
+    CHECK(app.trying());
+    app.finish_try(trying_under(config.path())(request)().value());
+    CHECK(app.what_if() ==
+          std::vector<egraph::WhatIfLine>{
+              {.file = egraph::WhatIfLine::File::use, .atom = "*/*", .tokens = {"-y"}}});
+    CHECK(flag_rows(app) == std::vector<std::string>{"x on", "y off was on", "z on"});
+
+    // Toggled again for the package, after the global line: the package's turns it back on.
+    select_flag(app, "y");
+    app.handle(character(U' '));
+    app.finish_try(trying_under(config.path())(app.start_try())().value());
+    CHECK(app.what_if().size() == 2);
+    CHECK(flag_rows(app) == std::vector<std::string>{"x on", "y on", "z on"});
+
+    select_flag(app, "z");
+    app.handle(character(U' '));
+    CHECK(app.what_if().size() == 2);
+    CHECK_FALSE(app.try_requested());
+    FakeScreen screen{20, 100, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "z is fixed"));
+}
+
+TEST_CASE("a try made for lines since changed is dropped, and made again") {
+    const egraph::test::TempDir config;
+    egraph::tui::App app{flagged(), true};
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    select_flag(app, "x");
+    app.handle(character(U' '));
+    const auto first = app.start_try();
+    select_flag(app, "y");
+    app.handle(character(U' '));
+    app.finish_try(trying_under(config.path())(first)().value());
+    CHECK(flag_rows(app) == std::vector<std::string>{"x on", "y on", "z on"});
+    REQUIRE(app.try_requested());
+    app.finish_try(trying_under(config.path())(app.start_try())().value());
+    CHECK(flag_rows(app) == std::vector<std::string>{"x off was on", "y off was on", "z on"});
+}
+
+TEST_CASE("refreshed stores keep the lines, tried again on them") {
+    const egraph::test::TempDir config;
+    egraph::tui::App app{flagged(), true};
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    select_flag(app, "x");
+    app.handle(character(U' '));
+    app.finish_try(trying_under(config.path())(app.start_try())().value());
+    REQUIRE_FALSE(app.try_requested());
+    auto fresh = std::make_shared<const egraph::Stores>(flagged());
+    app.finish_refresh(fresh);
+    CHECK(app.shared() == fresh);
+    REQUIRE(app.try_requested());
+    CHECK(flag_rows(app) == std::vector<std::string>{"x on", "y on", "z on"});
+    const auto request = app.start_try();
+    CHECK(request.stores == fresh);
+    app.finish_try(trying_under(config.path())(request)().value());
+    CHECK(flag_rows(app) == std::vector<std::string>{"x off was on", "y on", "z on"});
+}
+
 TEST_CASE("the check compares installed stores, and a preview keeps the evaluated one") {
     egraph::tui::App app{both(), true};
     std::size_t checked_nodes = 0;
