@@ -104,6 +104,34 @@ std::optional<std::string> record_cp(std::string_view line) {
 
 } // namespace
 
+namespace {
+
+constexpr std::array<std::pair<BuildReason, std::string_view>, 6> reason_names{{
+    {BuildReason::added, "new"},
+    {BuildReason::upgrade, "upgrade"},
+    {BuildReason::downgrade, "downgrade"},
+    {BuildReason::use, "use"},
+    {BuildReason::subslot, "subslot"},
+    {BuildReason::reinstall, "reinstall"},
+}};
+
+} // namespace
+
+std::string_view build_reason_name(BuildReason reason) {
+    const auto* found =
+        std::ranges::find(reason_names, reason, &std::pair<BuildReason, std::string_view>::first);
+    return found == reason_names.end() ? "" : found->second;
+}
+
+std::optional<BuildReason> parse_build_reason(std::string_view name) {
+    const auto* found =
+        std::ranges::find(reason_names, name, &std::pair<BuildReason, std::string_view>::second);
+    if (found == reason_names.end()) {
+        return std::nullopt;
+    }
+    return found->first;
+}
+
 std::filesystem::path builds_path(const std::filesystem::path& eroot) {
     return eroot / "var/lib/egraph/builds.jsonl";
 }
@@ -207,6 +235,17 @@ std::string build_record_json(const BuildRecord& record) {
         share("stall_io", record.system->stall_io);
         json.emplace("system", std::move(system));
     }
+    if (record.reason) {
+        json.emplace("reason", build_reason_name(*record.reason));
+    }
+    const auto text = [&](std::string_view key, const std::optional<std::string>& value) {
+        if (value) {
+            json.emplace(key, *value);
+        }
+    };
+    text("replaced", record.replaced);
+    text("rebuilt_for", record.rebuilt_for);
+    text("use_changed", record.use_changed);
     return json.dump();
 }
 
@@ -344,6 +383,15 @@ std::expected<BuildRecord, std::string> parse_build_record(std::string_view line
         }
         record.jobserver = JobserverShare{.jobs = *jobs, .free = *free};
     }
+    if (const auto reason = string_at(json, "reason")) {
+        record.reason = parse_build_reason(*reason);
+        if (!record.reason) {
+            return std::unexpected("an unknown reason: " + *reason);
+        }
+    }
+    record.replaced = string_at(json, "replaced");
+    record.rebuilt_for = string_at(json, "rebuilt_for");
+    record.use_changed = string_at(json, "use_changed");
     return record;
 }
 
@@ -404,21 +452,42 @@ std::vector<BuildStep> build_steps(const Store& store, const Evaluated& original
     found.reserve(steps.size());
     for (const auto& step : steps) {
         if (const auto* merge = std::get_if<MergeStep>(&step)) {
-            const auto& candidate = evaluated.candidates.at(plan.merges.at(merge->merge).candidate);
+            const auto& planned = plan.merges.at(merge->merge);
+            const auto& candidate = evaluated.candidates.at(planned.candidate);
             const std::string cpv{evaluated.string(candidate.cpv)};
             std::vector<std::string> use;
             for (const auto id : evaluated.ids_in(candidate.use)) {
                 use.emplace_back(evaluated.string(id));
             }
             std::ranges::sort(use);
-            found.push_back({.cpv = cpv,
-                             .cp = std::string{evaluated.string(candidate.cp)},
-                             .version = std::string{split_cpv(cpv).version},
-                             .repo = std::string{evaluated.string(candidate.repo)},
-                             .slot = std::string{evaluated.string(candidate.slot)},
-                             .use = std::move(use),
-                             .env_files = stacker.env_files(candidate),
-                             .uninstall = false});
+            auto& built =
+                found.emplace_back(BuildStep{.cpv = cpv,
+                                             .cp = std::string{evaluated.string(candidate.cp)},
+                                             .version = std::string{split_cpv(cpv).version},
+                                             .repo = std::string{evaluated.string(candidate.repo)},
+                                             .slot = std::string{evaluated.string(candidate.slot)},
+                                             .use = std::move(use),
+                                             .env_files = stacker.env_files(candidate),
+                                             .uninstall = false});
+            if (!planned.replaces) {
+                continue;
+            }
+            built.replaced = std::string{store.string(store.packages.at(*planned.replaces).cpv)};
+            if (planned.kind != UpdateKind::rebuild) {
+                built.reason = planned.kind == UpdateKind::upgrade ? BuildReason::upgrade
+                                                                   : BuildReason::downgrade;
+            } else if (const auto& bound = planned.rebuilt_for) {
+                built.reason = BuildReason::subslot;
+                built.rebuilt_for = std::string{
+                    bound->member.candidate
+                        ? evaluated.string(evaluated.candidates.at(bound->member.index).cpv)
+                        : store.string(store.packages.at(bound->member.index).cpv)};
+            } else if (!planned.flags.empty()) {
+                built.reason = BuildReason::use;
+                built.use_changed = planned.flags;
+            } else {
+                built.reason = BuildReason::reinstall;
+            }
         } else {
             const auto& pkg = store.packages.at(
                 plan.uninstalls.at(std::get<UninstallStep>(step).uninstall).package);
@@ -520,13 +589,14 @@ std::string build_line(const BuildRecord& record, const std::chrono::time_zone& 
 
 std::string build_fields(const BuildRecord& record) {
     return std::format(
-        "{:.0f}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{}\t{}\t{}", record.start, record.cpv, record.repo,
-        outcome_name(record.outcome), record.build_seconds,
+        "{:.0f}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", record.start, record.cpv,
+        record.repo, outcome_name(record.outcome), record.build_seconds,
         record.merge_seconds ? std::format("{:.1f}", *record.merge_seconds) : std::string{},
         record.failed_phase.value_or(""),
         record.jobs ? std::to_string(*record.jobs) : std::string{}, record.beside,
         record.cpu_seconds ? std::format("{:.1f}", *record.cpu_seconds) : std::string{},
-        record.peak_memory ? std::to_string(*record.peak_memory) : std::string{});
+        record.peak_memory ? std::to_string(*record.peak_memory) : std::string{},
+        record.reason ? build_reason_name(*record.reason) : std::string_view{});
 }
 
 namespace {
@@ -574,7 +644,8 @@ std::string_view builds_csv_header() {
            "failed_phase,status,error,jobs,beside,cpu_seconds,peak_memory,read_bytes,write_bytes,"
            "measured,cpu_busy,load,stall_cpu,stall_memory,stall_io,build_stall_cpu,"
            "build_stall_memory,build_stall_io,build_dir_size,image_size,distfiles_size,"
-           "installed_size,jobserver_jobs,jobserver_free,use,env_files,log";
+           "installed_size,jobserver_jobs,jobserver_free,use,env_files,log,reason,replaced,"
+           "rebuilt_for,use_changed";
 }
 
 std::string build_csv_row(const BuildRecord& record) {
@@ -619,7 +690,11 @@ std::string build_csv_row(const BuildRecord& record) {
         record.jobserver ? std::format("{:.2f}", record.jobserver->free) : std::string{},
         joined(record.use),
         joined(record.env_files),
-        record.log.value_or("")};
+        record.log.value_or(""),
+        record.reason ? std::string{build_reason_name(*record.reason)} : std::string{},
+        record.replaced.value_or(""),
+        record.rebuilt_for.value_or(""),
+        record.use_changed.value_or("")};
     std::string row;
     for (std::size_t i = 0; i < fields.size(); ++i) {
         if (i > 0) {
@@ -747,7 +822,11 @@ BuildRecord BuildRecorder::record(std::size_t step, BuildRecord::Outcome outcome
                       .log = std::nullopt,
                       .error = std::nullopt,
                       .jobs = jobs_,
-                      .beside = times.beside};
+                      .beside = times.beside,
+                      .reason = built.reason,
+                      .replaced = built.replaced,
+                      .rebuilt_for = built.rebuilt_for,
+                      .use_changed = built.use_changed};
     if (times.build_start && times.built) {
         found.build_seconds = *times.built - *times.build_start;
     }

@@ -77,6 +77,15 @@ struct JobserverShare {
 // it, or its own cgroup, exact.
 enum class Measured : std::uint8_t { proc, cgroup };
 
+// Why a build ran: its package new in its slot, a version up or down from the one it replaces,
+// or the same version again, for changed USE, for a slot or sub-slot it binds to, or otherwise
+// (asked for, or the installed one masked).
+enum class BuildReason : std::uint8_t { added, upgrade, downgrade, use, subslot, reinstall };
+
+// As records and scripts name it: "new", "upgrade", "downgrade", "use", "subslot", "reinstall".
+[[nodiscard]] std::string_view build_reason_name(BuildReason reason);
+[[nodiscard]] std::optional<BuildReason> parse_build_reason(std::string_view name);
+
 struct BuildRecord {
     enum class Outcome : std::uint8_t { merged, failed };
     // Who ran it: "exec".
@@ -131,6 +140,12 @@ struct BuildRecord {
     std::optional<std::uint64_t> installed_size{};
     // Where steve was the jobserver: its jobs and free tokens while it built, on average.
     std::optional<JobserverShare> jobserver{};
+    // Why it ran, the installed cpv it replaced, the merge a sub-slot rebuild was for, and a USE
+    // rebuild's flags as emerge shows them; unset where not known, as for emerge's builds.
+    std::optional<BuildReason> reason{};
+    std::optional<std::string> replaced{};
+    std::optional<std::string> rebuilt_for{};
+    std::optional<std::string> use_changed{};
     bool operator==(const BuildRecord&) const = default;
 };
 
@@ -164,8 +179,9 @@ matching_builds(std::vector<BuildRecord> records, std::span<const std::string> p
 [[nodiscard]] std::string build_line(const BuildRecord& record, const std::chrono::time_zone& zone);
 
 // For scripts, tab-separated: start, cpv, repo, outcome, build seconds, merge seconds (empty
-// when it failed), the phase that failed (empty when it merged), jobs (empty for no limit) and
-// beside.
+// when it failed), the phase that failed (empty when it merged), jobs (empty for no limit),
+// beside, CPU seconds and peak memory (empty where not measured), and why it ran (empty where
+// not known).
 [[nodiscard]] std::string build_fields(const BuildRecord& record);
 
 // As CSV: a header line, then a row per record.
@@ -182,14 +198,20 @@ struct BuildStep {
     std::vector<std::string> use{};
     std::vector<std::string> env_files{};
     bool uninstall = false;
+    // A merge's: why it builds, what it replaces, the merge a sub-slot rebuild is for, and a USE
+    // rebuild's flags.
+    BuildReason reason = BuildReason::added;
+    std::optional<std::string> replaced{};
+    std::optional<std::string> rebuilt_for{};
+    std::optional<std::string> use_changed{};
 };
 
 // By toolchain cp, by slot, the version installed.
 using Toolchain = std::map<std::string, std::map<std::string, std::string>>;
 
 // What each step builds, as its record names it: a merge's candidate (in the plan's evaluated
-// store) with the flags it is built with, sorted, and the env files package.env applies to it;
-// an uninstall's installed package.
+// store) with the flags it is built with, sorted, the env files package.env applies to it, and
+// why the plan merges it; an uninstall's installed package.
 [[nodiscard]] std::vector<BuildStep> build_steps(const Store& store, const Evaluated& evaluated,
                                                  const Plan& plan, std::span<const Step> steps);
 

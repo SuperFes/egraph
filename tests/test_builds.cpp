@@ -139,6 +139,10 @@ TEST_CASE("a build record reads back as written") {
     record.distfiles_size = 0;
     record.installed_size = 10000;
     record.jobserver = egraph::JobserverShare{.jobs = 16, .free = 2.5};
+    record.reason = egraph::BuildReason::subslot;
+    record.replaced = "app-misc/a-1";
+    record.rebuilt_for = "dev-libs/openssl-3.6.0";
+    record.use_changed = "-gtk* qt%";
     const auto line = egraph::build_record_json(record);
     CHECK(line.find('\n') == std::string::npos);
     CHECK(egraph::parse_build_record(line) == record);
@@ -158,6 +162,29 @@ TEST_CASE("a build record reads back as written") {
     refused.log.reset();
     refused.error = "no ebuild of app-misc/b-2::gentoo";
     CHECK(egraph::parse_build_record(egraph::build_record_json(refused)) == refused);
+}
+
+TEST_CASE("a build's reason reads back by its name, an unknown one not at all") {
+    using egraph::BuildReason;
+    for (const auto reason : {BuildReason::added, BuildReason::upgrade, BuildReason::downgrade,
+                              BuildReason::use, BuildReason::subslot, BuildReason::reinstall}) {
+        CHECK(egraph::parse_build_reason(egraph::build_reason_name(reason)) == reason);
+    }
+    CHECK(egraph::build_reason_name(BuildReason::added) == "new");
+    CHECK(egraph::build_reason_name(BuildReason::subslot) == "subslot");
+    CHECK_FALSE(egraph::parse_build_reason("sideways"));
+
+    auto record = merged("app-misc/a-1", 1);
+    record.reason = BuildReason::upgrade;
+    auto line = egraph::build_record_json(record);
+    CHECK(line.find(R"("reason":"upgrade")") != std::string::npos);
+    const auto at = line.find("upgrade");
+    line.replace(at, 7, "sideways");
+    CHECK_FALSE(egraph::parse_build_record(line));
+    // Records from before reasons were kept read without one.
+    CHECK(
+        egraph::parse_build_record(egraph::build_record_json(merged("app-misc/a-1", 1)))->reason ==
+        std::nullopt);
 }
 
 TEST_CASE("a line that is not a build record, or of another version, does not parse") {
@@ -250,6 +277,36 @@ TEST_CASE("a merged build's record has its phases, times, environment and toolch
     CHECK(record->outcome == BuildRecord::Outcome::merged);
     CHECK(record->jobs == 4);
     CHECK(record->beside == 1);
+    CHECK(record->reason == egraph::BuildReason::added);
+    CHECK_FALSE(record->replaced);
+}
+
+TEST_CASE("a build's record says why the plan merged it") {
+    auto built = steps();
+    built.at(0).reason = egraph::BuildReason::use;
+    built.at(0).replaced = "app-misc/a-1";
+    built.at(0).use_changed = "zstd*";
+    built.at(3).reason = egraph::BuildReason::subslot;
+    built.at(3).replaced = "app-misc/b-2";
+    built.at(3).rebuilt_for = "sys-devel/gcc-16.2.1";
+    BuildRecorder recorder{"exec", "run1", built, toolchain(), 4};
+    const auto merge = [&](std::size_t step) {
+        CHECK_FALSE(recorder.traced(step, Traced::build_started, 100));
+        CHECK_FALSE(recorder.traced(step, Traced::built, 110));
+        CHECK_FALSE(recorder.traced(step, Traced::merge_started, 110));
+        return recorder.traced(step, Traced::merged, 111);
+    };
+    const auto use = merge(0);
+    REQUIRE(use);
+    CHECK(use->reason == egraph::BuildReason::use);
+    CHECK(use->replaced == "app-misc/a-1");
+    CHECK(use->use_changed == "zstd*");
+    CHECK_FALSE(use->rebuilt_for);
+    const auto subslot = merge(3);
+    REQUIRE(subslot);
+    CHECK(subslot->reason == egraph::BuildReason::subslot);
+    CHECK(subslot->rebuilt_for == "sys-devel/gcc-16.2.1");
+    CHECK_FALSE(subslot->use_changed);
 }
 
 namespace {
@@ -581,11 +638,62 @@ TEST_CASE("a step's record names the candidate it builds with its flags, or what
     CHECK(found.at(0).slot == "2");
     CHECK(found.at(0).use == std::vector<std::string>{"ssl", "zstd"});
     CHECK_FALSE(found.at(0).uninstall);
+    CHECK(found.at(0).reason == egraph::BuildReason::added);
+    CHECK_FALSE(found.at(0).replaced);
     CHECK(found.at(1).cpv == "app-misc/old-1");
     CHECK(found.at(1).uninstall);
 
     CHECK(egraph::installed_toolchain(system.store) ==
           egraph::Toolchain{{"sys-devel/gcc", {{"15", "15.2.1"}}}});
+}
+
+TEST_CASE("a step says why the plan merges it, and what it replaces") {
+    using egraph::BuildReason;
+    using egraph::UpdateKind;
+    const auto system = egraph::test::make_system(
+        {{.cpv = "app-misc/a-1"}, {.cpv = "app-misc/b-2"}, {.cpv = "dev-libs/c-1"}},
+        {{.cpv = "app-misc/a-2"},
+         {.cpv = "app-misc/b-1"},
+         {.cpv = "dev-libs/c-1"},
+         {.cpv = "dev-libs/c-1"},
+         {.cpv = "dev-libs/c-1"},
+         {.cpv = "dev-libs/d-1"}});
+    egraph::Plan plan;
+    const auto merge = [&](std::uint32_t candidate, std::optional<std::uint32_t> replaces,
+                           UpdateKind kind, std::string flags = {}) {
+        plan.merges.push_back({});
+        plan.merges.back().candidate = candidate;
+        plan.merges.back().replaces = replaces;
+        plan.merges.back().kind = kind;
+        plan.merges.back().flags = std::move(flags);
+    };
+    merge(0, 0, UpdateKind::upgrade);
+    merge(1, 1, UpdateKind::downgrade);
+    merge(2, 2, UpdateKind::rebuild, "-gtk* qt%");
+    merge(3, 2, UpdateKind::rebuild);
+    plan.merges.back().rebuilt_for =
+        egraph::Reason{.member = {.candidate = true, .index = 5}, .atom = "dev-libs/d:="};
+    merge(4, 2, UpdateKind::rebuild);
+    merge(5, std::nullopt, UpdateKind::upgrade);
+    std::vector<egraph::Step> steps;
+    for (std::uint32_t i = 0; i < plan.merges.size(); ++i) {
+        steps.emplace_back(egraph::MergeStep{.merge = i, .blockers = {}, .world = {}});
+    }
+    const auto found = egraph::build_steps(system.store, system.evaluated, plan, steps);
+    REQUIRE(found.size() == 6);
+    CHECK(found.at(0).reason == BuildReason::upgrade);
+    CHECK(found.at(0).replaced == "app-misc/a-1");
+    CHECK(found.at(1).reason == BuildReason::downgrade);
+    CHECK(found.at(1).replaced == "app-misc/b-2");
+    CHECK(found.at(2).reason == BuildReason::use);
+    CHECK(found.at(2).use_changed == "-gtk* qt%");
+    CHECK(found.at(3).reason == BuildReason::subslot);
+    CHECK(found.at(3).rebuilt_for == "dev-libs/d-1");
+    CHECK_FALSE(found.at(3).use_changed);
+    CHECK(found.at(4).reason == BuildReason::reinstall);
+    CHECK(found.at(4).replaced == "dev-libs/c-1");
+    CHECK(found.at(5).reason == BuildReason::added);
+    CHECK_FALSE(found.at(5).replaced);
 }
 
 TEST_CASE("the builds shown are those the atoms or cps given match") {
@@ -642,11 +750,13 @@ TEST_CASE("for scripts, a build's fields are separated by tabs") {
     record.jobs = 4;
     record.beside = 2;
     CHECK(egraph::build_fields(record) ==
-          "1759932132\tapp-misc/a-1\tgentoo\tmerged\t10.0\t2.0\t\t4\t2\t\t");
+          "1759932132\tapp-misc/a-1\tgentoo\tmerged\t10.0\t2.0\t\t4\t2\t\t\t");
     record.cpu_seconds = 61.25;
     record.peak_memory = 1048576;
-    CHECK(egraph::build_fields(record) ==
-          "1759932132\tapp-misc/a-1\tgentoo\tmerged\t10.0\t2.0\t\t4\t2\t61.2\t1048576");
+    record.reason = egraph::BuildReason::upgrade;
+    CHECK(egraph::build_fields(record) == "1759932132\tapp-misc/a-1\tgentoo\tmerged\t10.0\t2."
+                                          "0\t\t4\t2\t61.2\t1048576\tupgrade");
+    record.reason.reset();
     record.cpu_seconds.reset();
     record.peak_memory.reset();
     record.outcome = BuildRecord::Outcome::failed;
@@ -654,7 +764,7 @@ TEST_CASE("for scripts, a build's fields are separated by tabs") {
     record.failed_phase = "compile";
     record.jobs.reset();
     CHECK(egraph::build_fields(record) ==
-          "1759932132\tapp-misc/a-1\tgentoo\tfailed\t10.0\t\tcompile\t\t2\t\t");
+          "1759932132\tapp-misc/a-1\tgentoo\tfailed\t10.0\t\tcompile\t\t2\t\t\t");
 }
 
 TEST_CASE("as CSV, a header and a row per build, quoted where it must be") {
@@ -664,7 +774,7 @@ TEST_CASE("as CSV, a header and a row per build, quoted where it must be") {
     record.error = R"(said "no", twice)";
     CHECK(egraph::build_csv_row(record) ==
           R"(2025-10-08T14:02:11Z,exec,run1,app-misc/a-1,gentoo,0,merged,10.0,2.0,0.0,,,)"
-          R"("said ""no"", twice",,0,,,,,,,,,,,,,,,,,,,,ssl zstd,,)");
+          R"("said ""no"", twice",,0,,,,,,,,,,,,,,,,,,,,ssl zstd,,,,,,)");
     record.error.reset();
     record.cpu_seconds = 61.25;
     record.peak_memory = 1048576;
@@ -681,7 +791,12 @@ TEST_CASE("as CSV, a header and a row per build, quoted where it must be") {
     CHECK(egraph::build_csv_row(record) ==
           R"(2025-10-08T14:02:11Z,exec,run1,app-misc/a-1,gentoo,0,merged,10.0,2.0,0.0,,,,,0,)"
           R"(61.2,1048576,4096,0,cgroup,0.500,3.25,0.125,0.000,0.500,0.250,0.000,,)"
-          R"(40960,4096,,1000,16.0,0.25,ssl zstd,,)");
+          R"(40960,4096,,1000,16.0,0.25,ssl zstd,,,,,,)");
+    record.reason = egraph::BuildReason::use;
+    record.replaced = "app-misc/a-1";
+    record.use_changed = "-gtk* qt%";
+    CHECK(egraph::build_csv_row(record).ends_with(",ssl zstd,,,use,app-misc/a-1,,-gtk* qt%"));
     const auto header = egraph::builds_csv_header();
-    CHECK(std::ranges::count(header, ',') == 36);
+    CHECK(header.ends_with(",log,reason,replaced,rebuilt_for,use_changed"));
+    CHECK(std::ranges::count(header, ',') == 40);
 }

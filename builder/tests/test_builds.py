@@ -118,6 +118,21 @@ def test_the_history_keeps_build_keep_builds_of_each_package(machines):
     assert records[0]["run"] == logged(system)[-1]["run"]
 
 
+def test_a_build_records_why_the_plan_merged_it(machines):
+    """New the first time; asked for again, a reinstall of the version it replaces."""
+    system, machine = machines
+    for _ in range(2):
+        age(system.playground.eroot)
+        ran = system.egraph("exec", "--yes", "-1", "app-misc/lib")
+        assert ran.returncode == 0, ran.stdout + ran.stderr
+    first, again = history(system)
+    assert first["reason"] == "new" and "replaced" not in first
+    assert again["reason"] == "reinstall"
+    assert again["replaced"] == "app-misc/lib-1"
+    listed = system.egraph("builds").stdout.splitlines()
+    assert [line.split("\t")[-1] for line in listed] == ["new", "reinstall"]
+
+
 def test_egraph_builds_reads_the_history_back(machines):
     """As lines, for the packages given, as the file holds them and as CSV."""
     system, machine = machines

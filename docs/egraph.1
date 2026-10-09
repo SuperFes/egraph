@@ -1312,7 +1312,21 @@ its processes used. As lines, the fields are separated by tabs: the start in sec
 epoch, the cpv, the repository, the outcome, the build's seconds, the merge's seconds (empty when it
 failed), the phase that failed (empty when it merged), the jobs the run allowed (empty for no
 limit), the most other builds beside it, its CPU seconds and its peak memory in bytes (each empty
-when not measured).
+when not measured), and why it ran (empty where not known, as for
+.BR emerge 's
+builds):
+.B new
+in its slot,
+.BR upgrade " or " downgrade
+from the version it replaced, or the same version again,
+.B use
+for changed flags,
+.B subslot
+for the slot or sub-slot of a package it binds to, or
+.B reinstall
+otherwise (asked for, or the installed version masked).
+A record also names the version it replaced, the merge a sub-slot rebuild was for and a USE
+rebuild's flags.
 A record also holds each phase's seconds and CPU seconds, the bytes the build read from and wrote
 to storage, and how busy the system was over it: the share of CPU time busy, the mean load, and the
 shares of the time some tasks stalled on CPU, memory and IO, where the kernel keeps pressure stall

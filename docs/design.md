@@ -895,7 +895,11 @@ the env files `package.env` applies to it (the USE ledger's stacker), the build 
 compiler variables (the worker reports them from the build's configuration before its first
 phase, an `environment` event), the toolchain cps' versions installed when the build started
 (the installed store's, changed by the run's own merges of them), each build phase's seconds,
-the run's jobs and the most builds that ran beside it.
+the run's jobs and the most builds that ran beside it, and why the plan merged it (`reason`): new
+in its slot, an upgrade or downgrade of the version it replaced, or the same version again for
+changed USE (with the flags emerge would show), for the slot or sub-slot of a merge it binds to
+(that merge's cpv), or otherwise a reinstall. emerge's builds carry no reason; the views infer
+one from the cp's previous build where they need it.
 
 What a build used comes from /proc without root (`src/usage.hpp`), probed at its start, at each
 phase and at its end: CPU seconds from the worker's `cutime` and `cstime`, which hold the time of
