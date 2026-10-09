@@ -546,7 +546,32 @@ void write_repository_json(std::ostream& out, const RepositoryIndex& index) {
         write_string(out, index, advisory.title);
         out << '}';
     }
-    out << R"(],"format":7,"ledger":)";
+    out << R"(],"binaries":[)";
+    first = true;
+    for (const auto& binary : index.binaries) {
+        out << (first ? "{\"build_id\":" : ",{\"build_id\":") << binary.build_id << ",\"cpv\":";
+        first = false;
+        write_string(out, index, binary.cpv);
+        out << ",\"ignored\":" << binary.ignored << ",\"iuse\":";
+        write_string_list(out, index, binary.iuse);
+        out << ",\"size\":" << binary.size << ",\"slot\":";
+        write_string(out, index, binary.slot);
+        out << ",\"source\":" << binary.source << ",\"use\":";
+        write_string_list(out, index, binary.use);
+        out << '}';
+    }
+    out << R"(],"binary_sources":[)";
+    first = true;
+    for (const auto& source : index.binary_sources) {
+        out << (first ? "{\"kind\":" : ",{\"kind\":") << static_cast<int>(source.kind)
+            << ",\"location\":";
+        first = false;
+        write_string(out, index, source.location);
+        out << ",\"name\":";
+        write_string(out, index, source.name);
+        out << '}';
+    }
+    out << R"(],"format":8,"ledger":)";
     write_visibility_ledger(out, index);
     out << R"(,"repositories":[)";
     first = true;

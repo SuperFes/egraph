@@ -9,7 +9,7 @@ import portage
 from portage.dep import Atom
 from portage.versions import cpv_getkey
 
-from egraph_build import __version__, evaluated, installed, repository, roots
+from egraph_build import __version__, binaries, evaluated, installed, repository, roots
 from egraph_build.installed import ATOM, STRONG_BLOCKER, WEAK_BLOCKER, InstalledLayer
 from egraph_build.store import (
     INPUT_DIRECTORY,
@@ -189,11 +189,12 @@ def evaluated_inputs(settings, portdb, cps):
 
 def repository_inputs(portdb):
     """The inputs of the repository index: every cp's, the configuration, the advisories'
-    directory (a sync replaces its files) and the builder."""
+    directory (a sync replaces its files), the binaries' and the builder."""
     paths = _evaluated_paths(portdb.settings, portdb, portdb.cp_all())
     advisories = repository.advisory_directory(portdb.settings)
     if advisories is not None:
         paths.append(advisories)
+    paths.extend(binaries.input_paths(portdb.settings))
     paths.extend(builder_paths())
     return tuple(sorted({stat_input(path) for path in paths}))
 
@@ -338,6 +339,8 @@ def index_incremental(portdb, previous):
     scopes = set()
     reconfigured = False
     readvised = False
+    # The binary sources whose indexes changed, or binaries.ALL.
+    rebinned = set()
     for path in recorded.keys() | by_path.keys():
         before, after = recorded.get(path), by_path.get(path)
         if before is not None and after is not None:
@@ -347,6 +350,10 @@ def index_incremental(portdb, previous):
                 continue
         if path in full_rebuild:
             return index(portdb)
+        binary_scope = binaries.input_scope(settings, path)
+        if binary_scope is not None:
+            rebinned.add(binary_scope)
+            continue
         scope = (
             _CONFIGURATION
             if path in configuration
@@ -386,8 +393,18 @@ def index_incremental(portdb, previous):
                 version = repository.with_use(version, settings_holder)
             kept.setdefault(version.cp, []).append(version)
     versions = [v for cp in sorted(cps) for v in kept.get(cp) or read.get(cp, ())]
+    if binaries.ALL in rebinned:
+        binary = binaries.read(portdb)
+    elif dirty or rebinned:
+        binary = binaries.read(
+            portdb, previous=old.binaries, cps=dirty, sources=frozenset(rebinned)
+        )
+    else:
+        binary = (old.binary_sources, old.binaries)
     return RepositoryBuild(
-        repository.assemble(portdb, versions, None if readvised else old.advisories),
+        repository.assemble(
+            portdb, versions, None if readvised else old.advisories, binary
+        ),
         current,
         started,
         dirty,

@@ -8,7 +8,7 @@ import json
 import os
 from typing import NamedTuple
 
-from egraph_build import ebuild, evaluated, ledger, masks
+from egraph_build import binaries, ebuild, evaluated, ledger, masks
 from egraph_build.ledger import VisibilityLedger
 
 # What a version record holds of the ebuild's metadata, and what its validity is checked on.
@@ -112,6 +112,10 @@ class RepositoryIndex(NamedTuple):
     advisories: tuple = ()
     # Where each source of visibility was read from, entry by entry.
     ledger: VisibilityLedger = VisibilityLedger()
+    # The binary packages' sources, PKGDIR first, and the binaries, sorted by cpv, source and
+    # build id.
+    binary_sources: tuple = ()
+    binaries: tuple = ()
 
 
 def _tokens(text):
@@ -315,9 +319,10 @@ def read_advisories(settings):
     return tuple(found)
 
 
-def assemble(portdb, versions, advisories=None):
+def assemble(portdb, versions, advisories=None, binary=None):
     """The index of versions, with the repositories, the visibility configuration and, unless
-    given, the advisories now."""
+    given, the advisories and the (sources, binaries) now."""
+    sources, found = binaries.read(portdb) if binary is None else binary
     return RepositoryIndex(
         repositories=repositories(portdb),
         versions=tuple(versions),
@@ -326,6 +331,8 @@ def assemble(portdb, versions, advisories=None):
             read_advisories(portdb.settings) if advisories is None else advisories
         ),
         ledger=ledger.read_visibility(portdb.settings),
+        binary_sources=sources,
+        binaries=found,
     )
 
 
@@ -350,7 +357,24 @@ def to_json(index):
     """The index as canonical JSON: sorted keys, everything in the store's order."""
     v = index.visibility
     document = {
-        "format": 7,
+        "format": 8,
+        "binaries": [
+            {
+                "cpv": b.cpv,
+                "slot": b.slot,
+                "source": b.source,
+                "build_id": b.build_id,
+                "size": b.size,
+                "use": list(b.use),
+                "iuse": list(b.iuse),
+                "ignored": b.ignored,
+            }
+            for b in index.binaries
+        ],
+        "binary_sources": [
+            {"kind": s.kind, "name": s.name, "location": s.location}
+            for s in index.binary_sources
+        ],
         "advisories": [
             {
                 "id": a.id,

@@ -1,6 +1,6 @@
 # Store format
 
-Status: format version 6 (evaluated store: 11, repository index: 3), implemented by `builder/egraph_build/store.py`
+Status: format version 6 (evaluated store: 12, repository index: 8), implemented by `builder/egraph_build/store.py`
 (writer and a Python reader) and `src/store.cpp`, `src/evaluated.cpp` and `src/repository.cpp` (C++ readers). Any
 layout change bumps the version.
 
@@ -301,7 +301,7 @@ beside the installed store, named after it (`installed.egraph` → `installed.re
 and is written by its own builder run (`egraph-build --repository`), as it changes with the
 repositories and the configuration rather than with the installed packages.
 
-It uses the installed store's framing with magic `EGRAPHRI` and its own format version, now 7.
+It uses the installed store's framing with magic `EGRAPHRI` and its own format version, now 8.
 
 | Id | Section | Contents |
 |---|---|---|
@@ -313,8 +313,9 @@ It uses the installed store's framing with magic `EGRAPHRI` and its own format v
 | 6 | Visibility | what the ledger leaves to portage, below |
 | 7 | Advisories | count, then the GLSA records below, sorted by id |
 | 8 | Visibility ledger | where each source of visibility was read from, below |
+| 9 | Binaries | the binary packages emerge could use instead of building, below |
 
-All eight sections are required.
+All nine sections are required.
 
 A version record, for each ebuild whose metadata portage could read:
 
@@ -389,9 +390,37 @@ left out):
    module makes them atoms (`vul_atoms`, `unaff_atoms`), leading space stripped: plain atoms,
    or `>=~`, `>~`, `<=~` and `<~` for a range over the revisions of one version.
 
+The binaries section holds the binary packages portage's indexes list, read with portage's own
+`PackageIndex` and never fetched: `${PKGDIR}/Packages`, and for each binhost `binrepos.conf` (or
+`PORTAGE_BINHOST`) names, the copy of its index portage keeps under
+`${EROOT}/var/cache/edb/binhost/<host>/<path>/Packages` (a binhost portage never fetched from has
+none, and lists nothing).
+
+1. Sources: count, then `(kind, name, location)`: 0 for `PKGDIR` or 1 for a binhost, then string
+   ids, the binhost's name in `binrepos.conf` (empty for `PKGDIR`) and `PKGDIR` or its URI; `PKGDIR`
+   first, then the binhosts by descending priority, as emerge reads them.
+2. Binaries: count, then the records below, sorted by cpv, then by source, then by build id.
+   Those of a binhost emerge would leave out are: its `getbinpkg-include` and `getbinpkg-exclude`,
+   and with `verify-signature` or `FEATURES=binpkg-request-signature`, any not in the gpkg format.
+
+A binary record:
+
+1. String ids: cpv, slot (the slot without its sub-slot); then its source's index in item 1, its
+   `BUILD_ID` (0 without one), and its `SIZE` in bytes (0 without one).
+2. USE: list of string ids, sorted: the flags it was built with, as its index lists them.
+3. IUSE: list of string ids, sorted: its IUSE, defaults' `+` and `-` stripped.
+4. Ignored: a bit field of what emerge, with `--usepkg` and its default options, would refuse it
+   for apart from its USE: 1 where its dependencies changed (`--binpkg-changed-deps`: its
+   IDEPEND, PDEPEND and RDEPEND under its USE, against the ebuild of its cpv under the same, its
+   slot operators' slots and the libc's packages left out; nothing where no ebuild has its cpv);
+   2 where the user patches for it changed (`--binpkg-respect-user-patches`: its
+   `USER_PATCHES` against the digest of those under `${PORTAGE_CONFIGROOT}/etc/portage/patches`).
+
 Inputs are the evaluated store's configuration inputs, and per repository its root, layout,
 repository-wide masks and unmasks, license groups, categories and eclass directory, every category
 directory, the metadata cache directory of every category, and outside the main repository
-every package directory and ebuild; and the GLSAs' directory, which a change reads again alone.
-A Manifest is read with its cp's versions: a change to it alone, which a sync makes only with
+every package directory and ebuild; the GLSAs' directory, which a change reads again alone; and
+the binaries' (each index above, `binrepos.conf`, the user patches, and the installed virtuals'
+category, which names the libc), which a change reads again alone, as reading a cp's versions
+again does its binaries. A Manifest is read with its cp's versions: a change to it alone, which a sync makes only with
 the ebuilds that fetch its files, waits for the cp to be read again.

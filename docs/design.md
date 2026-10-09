@@ -40,7 +40,11 @@ its own builder run (`egraph-build --repository`) and refreshed on its own input
 with syncs and configuration edits rather than with merges. A refresh reads again only the
 categories and cps whose metadata cache or package directories changed, and after a
 configuration change only the configuration; an overlay's eclasses, the category list or the
-repositories changing mean a full build. It holds no visibility verdicts:
+repositories changing mean a full build. It also lists the binary packages emerge could use
+instead of building, from `PKGDIR`'s index and the copies portage keeps of its binhosts' (egraph
+never fetches one), each with what emerge would refuse it for apart from its USE, which
+egraph matches itself; a changed index reads its source's binaries again alone. It holds no
+visibility verdicts:
 egraph evaluates keywords, licenses, masks, properties and restrictions from the files portage
 parsed, stacking them as its managers do (`src/visibility_stack.cpp`, held to the managers' own
 lists), and the shadow tests hold that to portdb's match-visible.

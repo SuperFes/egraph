@@ -1283,6 +1283,13 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
   - 20f4 (planned): binary packages: a long build a binary package could replace, from the
     local `PKGDIR` and the binhost indexes portage keeps cached (never fetched by egraph), the
     USE matched as portage's binpkg-respect-use matches it.
+    - 20f4a (done): the repository index (format 8) lists the binaries those indexes hold,
+      read with portage's `PackageIndex`, each with its USE and IUSE and what emerge would
+      refuse it for apart from them (changed deps, user patches); a changed index reads its
+      source's binaries again alone, and a cp read again its binaries.
+    - 20f4b (planned): the advice: a planned build long enough, with a binary whose USE
+      matches as binpkg-respect-use matches it and that nothing else refuses, held to what
+      `emerge --pretend --usepkg` picks.
 - 20g (planned): scheduling: among the builds ready at once, the longest first or the critical
   path first, beside emerge's order; a divergence from emerge, so behind an option and
   recorded in `docs/upstream-notes.md`.

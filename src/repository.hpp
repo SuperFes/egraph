@@ -14,7 +14,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t repository_format_version = 7;
+inline constexpr std::uint32_t repository_format_version = 8;
 
 struct RepositoryMeta {
     std::string egraph_version;
@@ -142,6 +142,37 @@ struct Advisory {
     Range packages;
 };
 
+// Where binary packages are listed: PKGDIR, or a binhost portage keeps a copy of the index of.
+enum class BinarySourceKind : std::uint8_t { local = 0, binhost = 1 };
+
+struct BinarySource {
+    BinarySourceKind kind = BinarySourceKind::local;
+    // String ids: the binhost's name in binrepos.conf (empty for PKGDIR), and PKGDIR or its URI.
+    std::uint32_t name = 0;
+    std::uint32_t location = 0;
+};
+
+// What emerge would refuse a binary package for apart from its USE, as bits.
+inline constexpr std::uint32_t binary_changed_deps = 1;
+inline constexpr std::uint32_t binary_user_patches = 2;
+
+// A binary package one of the binary sources lists.
+struct Binary {
+    // String ids.
+    std::uint32_t cpv = 0;
+    std::uint32_t slot = 0;
+    // Into RepositoryIndex::binary_sources.
+    std::uint32_t source = 0;
+    // 0 without one.
+    std::uint64_t build_id = 0;
+    std::uint64_t size = 0;
+    // String ids, sorted: the flags it was built with, and its IUSE without defaults.
+    Range use;
+    Range iuse;
+    // binary_changed_deps and binary_user_patches.
+    std::uint32_t ignored = 0;
+};
+
 // A decoded repository index. Every id and Range in it was checked against its table.
 struct RepositoryIndex : Tables {
     RepositoryMeta meta;
@@ -156,6 +187,10 @@ struct RepositoryIndex : Tables {
     std::vector<AdvisoryPackage> advisory_packages;
     std::vector<LedgerEntry> ledger_entries;
     VisibilityLedger ledger;
+    // PKGDIR first, then the binhosts by descending priority.
+    std::vector<BinarySource> binary_sources;
+    // Sorted by cpv, then by source, then by build id.
+    std::vector<Binary> binaries;
 
     [[nodiscard]] std::span<const LedgerEntry>
     ledger_entries_in(Range range) const EGRAPH_LIFETIMEBOUND;

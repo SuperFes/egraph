@@ -207,6 +207,7 @@ python.install_sources(
   files(
     'builder/egraph_build/__init__.py',
     'builder/egraph_build/__main__.py',
+    'builder/egraph_build/binaries.py',
     'builder/egraph_build/build.py',
     'builder/egraph_build/cli.py',
     'builder/egraph_build/dynamic.py',

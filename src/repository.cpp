@@ -22,7 +22,8 @@ constexpr std::uint32_t section_versions = 5;
 constexpr std::uint32_t section_visibility = 6;
 constexpr std::uint32_t section_advisories = 7;
 constexpr std::uint32_t section_visibility_ledger = 8;
-constexpr std::size_t section_count = 8;
+constexpr std::uint32_t section_binaries = 9;
+constexpr std::size_t section_count = 9;
 
 std::optional<StoreError> read_meta(std::span<const std::byte> section, RepositoryIndex& index) {
     Reader r(section, "meta");
@@ -189,6 +190,36 @@ std::optional<StoreError> read_visibility_ledger(std::span<const std::byte> sect
     return r.error();
 }
 
+std::optional<StoreError> read_binaries(std::span<const std::byte> section,
+                                        RepositoryIndex& index) {
+    Reader r(section, "binaries");
+    const auto strings = size32(index.strings.size());
+    const auto sources = r.count();
+    for (std::uint32_t i = 0; i < sources && r.ok(); ++i) {
+        BinarySource source{.kind = static_cast<BinarySourceKind>(r.index(2, "source kind"))};
+        source.name = r.index(strings, "string");
+        source.location = r.index(strings, "string");
+        index.binary_sources.push_back(source);
+    }
+    const auto count = r.count();
+    const auto known = size32(index.binary_sources.size());
+    index.binaries.reserve(count);
+    for (std::uint32_t i = 0; i < count && r.ok(); ++i) {
+        Binary binary;
+        binary.cpv = r.index(strings, "string");
+        binary.slot = r.index(strings, "string");
+        binary.source = r.index(known, "binary source");
+        binary.build_id = r.varint();
+        binary.size = r.varint();
+        binary.use = read_ids(r, index.ids, strings, "string");
+        binary.iuse = read_ids(r, index.ids, strings, "string");
+        binary.ignored = r.index((binary_changed_deps | binary_user_patches) + 1, "ignored");
+        index.binaries.push_back(binary);
+    }
+    r.finish();
+    return r.error();
+}
+
 } // namespace
 
 std::span<const LedgerEntry> RepositoryIndex::ledger_entries_in(Range range) const {
@@ -251,7 +282,8 @@ std::expected<RepositoryIndex, StoreError> decode_repository(std::span<const std
                               read_versions(section(section_versions), index),
                               read_visibility(section(section_visibility), index),
                               read_advisories(section(section_advisories), index),
-                              read_visibility_ledger(section(section_visibility_ledger), index)}) {
+                              read_visibility_ledger(section(section_visibility_ledger), index),
+                              read_binaries(section(section_binaries), index)}) {
         if (error) {
             return std::unexpected(*error);
         }

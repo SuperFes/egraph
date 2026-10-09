@@ -513,3 +513,11 @@ process including load and the freshness check of 2,575 inputs.
 - A generated corpus of 240 GLSAs on each of the 27 scenarios (every range kind, slots, arch
   rules, applied ones) finds 30 to 605 affected packages each; egraph and the module agree on
   all.
+
+## Binary packages in the repository index (2026-10-09, roadmap step 20f4a)
+
+- The Gentoo amd64 binhost's index (23.0/x86-64): 17,586 binaries in 21.8 MB. Reading them all,
+  with each one's deps compared to its ebuild's as `--binpkg-changed-deps` does, takes 6.9 to
+  11.8 s, most of it `aux_get` and `use_reduce` for the comparison; 383 have changed deps. A
+  change to `PKGDIR`'s index alone reads only its binaries again: 0.75 s, nearly all of it
+  parsing the binhost's index to carry its records over. They take 0.87 MB of the index.

@@ -6,6 +6,7 @@ import tempfile
 from typing import NamedTuple
 
 from egraph_build import ledger
+from egraph_build.binaries import Binary, Source
 from egraph_build.evaluated import Candidate, Dependencies, EvaluatedLayer, Possible
 from egraph_build.installed import InstalledLayer, Node, Package
 from egraph_build.model import DEP_KINDS
@@ -66,14 +67,15 @@ EVALUATED_SECTIONS = (
 )
 
 REPOSITORY_MAGIC = b"EGRAPHRI"
-REPOSITORY_FORMAT_VERSION = 7
+REPOSITORY_FORMAT_VERSION = 8
 (
     SECTION_REPOSITORIES,
     SECTION_VERSIONS,
     SECTION_VISIBILITY,
     SECTION_ADVISORIES,
     SECTION_VISIBILITY_LEDGER,
-) = range(4, 9)
+    SECTION_BINARIES,
+) = range(4, 10)
 REPOSITORY_SECTIONS = (
     SECTION_META,
     SECTION_INPUTS,
@@ -83,6 +85,7 @@ REPOSITORY_SECTIONS = (
     SECTION_VISIBILITY,
     SECTION_ADVISORIES,
     SECTION_VISIBILITY_LEDGER,
+    SECTION_BINARIES,
 )
 
 _HEADER = struct.Struct("<8sII")
@@ -603,6 +606,24 @@ def encode_repository(index, meta, inputs=()):
         index.ledger, strings
     )
 
+    w = _Writer()
+    w.varint(len(index.binary_sources))
+    for source in index.binary_sources:
+        w.varint(source.kind)
+        w.varint(strings(source.name))
+        w.varint(strings(source.location))
+    w.varint(len(index.binaries))
+    for b in index.binaries:
+        w.varint(strings(b.cpv))
+        w.varint(strings(b.slot))
+        w.varint(b.source)
+        w.varint(b.build_id)
+        w.varint(b.size)
+        w.ids([strings(flag) for flag in b.use])
+        w.ids([strings(flag) for flag in b.iuse])
+        w.varint(b.ignored)
+    sections[SECTION_BINARIES] = w.out
+
     sections[SECTION_STRINGS] = _write_strings(strings)
     return _frame(
         REPOSITORY_MAGIC, REPOSITORY_FORMAT_VERSION, REPOSITORY_SECTIONS, sections
@@ -1031,11 +1052,28 @@ def decode_repository(data):
         advisories.append(Advisory(nr, title, synopsis, revision, packages))
     r.done()
     vis_ledger = _read_visibility_ledger(sections[SECTION_VISIBILITY_LEDGER], strings)
+
+    r, s, listed = reader(SECTION_BINARIES, "binaries")
+    sources = tuple(Source(r.varint(2), s(), s()) for _ in range(r.count()))
+    found = []
+    for _ in range(r.count()):
+        cpv, slot = s(), s()
+        source = r.varint(len(sources))
+        build_id, size = r.varint(), r.varint()
+        use, iuse = listed(), listed()
+        found.append(Binary(cpv, slot, source, build_id, size, use, iuse, r.varint(4)))
+    r.done()
     return (
         meta,
         inputs,
         RepositoryIndex(
-            repositories, tuple(versions), visibility, tuple(advisories), vis_ledger
+            repositories,
+            tuple(versions),
+            visibility,
+            tuple(advisories),
+            vis_ledger,
+            sources,
+            tuple(found),
         ),
     )
 
