@@ -759,8 +759,9 @@ dependency of its own.
 package at a time: JSON requests on stdin, JSON events (each phase, then merged or uninstalled,
 failed with the phase and its build log, or an error for a request it cannot try) on stdout,
 which it keeps to itself by pointing fd 1 at stderr. A merge does what emerge's `EbuildBuild`
-does for one package from source, through portage's public `doebuild` (a clean, then setup to
-install, pkg_pretend and the fetch coming with them) and `merge` (with env-update's library
+does for one package from source, through portage's public `doebuild` (a clean, the fetch as a
+phase of its own, as emerge fetches before it builds, then setup to install, pkg_pretend coming
+with setup) and `merge` (with env-update's library
 mtimes from mtimedb), the configuration set up as emerge's Package sets it (the cpv's own
 repository, its database on the cpv for the repositories' revisions, `EMERGE_FROM` and
 `MERGE_TYPE`), and the ebuilds' `has_version` answered from its own trees as emerge answers
@@ -916,6 +917,13 @@ build's start, its end and its merge's end, so it counts from nothing: `cpu.stat
 phase and in all, `memory.peak`, `io.stat` and the leaf's own PSI totals replace the /proc
 measures where the kernel keeps them, and the record's `measured` says which. Without
 `--cgroup` the worker turns FEATURES=cgroup off, since nothing would read or remove the leaves.
+
+Sizes come from the worker once the install phase ends, before it reports the build done (a
+`sizes` event): its build directory and image as the space their files take up (blocks, each
+inode once; what a tmpfs `PORTAGE_TMPDIR` must hold), and its distfiles' sizes. The installed
+size is the merged vdb entry's `SIZE`. The fetch is timed as its own phase. Where steve is the
+jobserver (`/dev/steve`), stevie's jobs and free tokens are sampled with the memory, for how
+starved of tokens the build was.
 
 Each append rewrites the file under its directory's lock (`os::rewrite_locked`, as the store
 history's log is appended) and keeps the last `build_keep` records of each cp (`egraph.conf`,

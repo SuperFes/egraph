@@ -1223,8 +1223,8 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
   - 20b2 (done): a cgroup leaf per build where egraph runs as root on cgroup2, for an exact
     `memory.peak`, `cpu.stat`, `io.stat` and the build's own pressure, through portage's own
     FEATURES=cgroup pointed at egraph's hierarchy (its test needs root, and skips without it).
-  - 20b3 (planned): sizes: the build directory at the end of install, the installed size,
-    distfile sizes and fetch time, and steve's tokens.
+  - 20b3 (done): sizes: the build directory and image at the end of install, the installed
+    size, distfile sizes, fetch time (a phase of its own), and steve's jobs and free tokens.
   - 20b4 (planned): emerge's builds, as the monitor or egraphd sees them, marked as emerge's.
 - 20c (planned): estimates. A package's time from its own builds, scaled for the parallelism it
   gets; a plan's wall time from the schedule run ahead with those times and the jobs (the

@@ -168,10 +168,10 @@ class Machine:
         assert result.returncode == 0, result.stdout + result.stderr
         return result
 
-    def worker(self, *lines, options=(), environments=None):
+    def worker(self, *lines, options=(), environments=None, sizes=None):
         """The worker's events for lines, each request's in turn, its exit status and what it
-        wrote to stderr; the environments builds start in go to environments, if given, and
-        are left out."""
+        wrote to stderr; the environments builds start in go to environments, and their sizes
+        to sizes, if given, and both are left out."""
         result = subprocess.run(
             [sys.executable, "-m", "egraph_build", "--worker", *options],
             input="".join(line + "\n" for line in lines),
@@ -182,7 +182,9 @@ class Machine:
         events = [json.loads(line) for line in result.stdout.splitlines()]
         if environments is not None:
             environments.extend(e["environment"] for e in events if "environment" in e)
-        events = [e for e in events if "environment" not in e]
+        if sizes is not None:
+            sizes.extend(e["sizes"] for e in events if "sizes" in e)
+        events = [e for e in events if "environment" not in e and "sizes" not in e]
         return events, result.returncode, result.stderr
 
     def talk(self):
@@ -480,7 +482,7 @@ def until_final(process):
     events = []
     while True:
         events.append(json.loads(process.stdout.readline()))
-        if "environment" in events[-1]:
+        if "environment" in events[-1] or "sizes" in events[-1]:
             events.pop()
         elif "phase" not in events[-1]:
             return events
@@ -808,3 +810,48 @@ def test_builds_go_in_a_cgroup_leaf_only_under_egraphs_hierarchy(machine):
     asked.features.add("cgroup")
     worker.use_cgroup(asked, None)
     assert "cgroup" not in portage.config(clone=asked).features
+
+
+def test_a_build_reports_its_sizes_once_installed(machine):
+    """Its build directory and image as they take up space then, and its distfiles."""
+    sizes = []
+    events, status, stderr = machine.worker(
+        build("app-misc/files-1"), request("app-misc/lib-1"), sizes=sizes
+    )
+    assert status == 0, stderr
+    assert len(sizes) == 2
+    for each in sizes:
+        assert set(each) == {"build", "image", "distfiles"}
+        assert each["build"] > each["image"] > 0
+        assert each["distfiles"] == 0
+
+
+def test_disk_usage_counts_each_file_once_as_it_takes_up_space(tmp_path):
+    with open(tmp_path / "a", "wb") as f:
+        f.write(b"x" * 10000)
+    os.link(tmp_path / "a", tmp_path / "b")
+    os.symlink("a", tmp_path / "c")
+    os.mkdir(tmp_path / "d")
+    with open(tmp_path / "d" / "e", "wb") as f:
+        f.truncate(1 << 20)
+    found = worker.disk_usage(str(tmp_path))
+    parts = [
+        tmp_path / "a",
+        tmp_path / "c",
+        tmp_path / "d",
+        tmp_path / "d" / "e",
+        tmp_path,
+    ]
+    assert found == sum(os.lstat(p).st_blocks * 512 for p in parts)
+    assert worker.disk_usage(str(tmp_path / "missing")) == 0
+
+
+def test_distfile_bytes_sums_the_files_a_build_fetched(tmp_path):
+    (tmp_path / "foo-1.tar.gz").write_bytes(b"x" * 300)
+    (tmp_path / "foo-1.patch").write_bytes(b"x" * 20)
+    settings = {
+        "A": "foo-1.tar.gz foo-1.patch gone.tar",
+        "PORTAGE_ACTUAL_DISTDIR": str(tmp_path),
+    }
+    assert worker.distfile_bytes(settings) == 320
+    assert worker.distfile_bytes({"A": "", "DISTDIR": str(tmp_path)}) == 0

@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <format>
+#include <fstream>
 #include <ranges>
 #include <utility>
 
@@ -179,6 +180,19 @@ std::string build_record_json(const BuildRecord& record) {
         share("io", record.build_stall->io);
         json.emplace("build_stall", std::move(stall));
     }
+    const auto size = [&](std::string_view key, std::optional<std::uint64_t> value) {
+        if (value) {
+            json.emplace(key, *value);
+        }
+    };
+    size("build_dir_size", record.build_dir_size);
+    size("image_size", record.image_size);
+    size("distfiles_size", record.distfiles_size);
+    size("installed_size", record.installed_size);
+    if (record.jobserver) {
+        json.emplace("jobserver",
+                     Json{{"jobs", record.jobserver->jobs}, {"free", record.jobserver->free}});
+    }
     if (record.system) {
         auto system = Json::object();
         const auto share = [&](std::string_view key, std::optional<double> value) {
@@ -318,6 +332,18 @@ std::expected<BuildRecord, std::string> parse_build_record(std::string_view line
                                         .memory = number_at(*found, "memory"),
                                         .io = number_at(*found, "io")};
     }
+    record.build_dir_size = unsigned_at(json, "build_dir_size");
+    record.image_size = unsigned_at(json, "image_size");
+    record.distfiles_size = unsigned_at(json, "distfiles_size");
+    record.installed_size = unsigned_at(json, "installed_size");
+    if (const auto found = json.find("jobserver"); found != json.end()) {
+        const auto jobs = found->is_object() ? number_at(*found, "jobs") : std::nullopt;
+        const auto free = found->is_object() ? number_at(*found, "free") : std::nullopt;
+        if (!jobs || !free) {
+            return std::unexpected("jobserver is not jobs and free tokens");
+        }
+        record.jobserver = JobserverShare{.jobs = *jobs, .free = *free};
+    }
     return record;
 }
 
@@ -408,6 +434,16 @@ std::vector<BuildStep> build_steps(const Store& store, const Evaluated& original
         }
     }
     return found;
+}
+
+std::optional<std::uint64_t> installed_size(const std::filesystem::path& vdb,
+                                            std::string_view cpv) {
+    std::ifstream in{vdb / std::filesystem::path{std::string{cpv}} / "SIZE"};
+    std::uint64_t size = 0;
+    if (!(in >> size)) {
+        return std::nullopt;
+    }
+    return size;
 }
 
 Toolchain installed_toolchain(const Store& store) {
@@ -537,7 +573,8 @@ std::string_view builds_csv_header() {
     return "start,origin,run,cpv,repo,slot,outcome,build_seconds,merge_seconds,waited,"
            "failed_phase,status,error,jobs,beside,cpu_seconds,peak_memory,read_bytes,write_bytes,"
            "measured,cpu_busy,load,stall_cpu,stall_memory,stall_io,build_stall_cpu,"
-           "build_stall_memory,build_stall_io,use,env_files,log";
+           "build_stall_memory,build_stall_io,build_dir_size,image_size,distfiles_size,"
+           "installed_size,jobserver_jobs,jobserver_free,use,env_files,log";
 }
 
 std::string build_csv_row(const BuildRecord& record) {
@@ -574,6 +611,12 @@ std::string build_csv_row(const BuildRecord& record) {
         share_or_empty(stall.cpu),
         share_or_empty(stall.memory),
         share_or_empty(stall.io),
+        count_or_empty(record.build_dir_size),
+        count_or_empty(record.image_size),
+        count_or_empty(record.distfiles_size),
+        count_or_empty(record.installed_size),
+        record.jobserver ? std::format("{:.1f}", record.jobserver->jobs) : std::string{},
+        record.jobserver ? std::format("{:.2f}", record.jobserver->free) : std::string{},
         joined(record.use),
         joined(record.env_files),
         record.log.value_or("")};
@@ -653,10 +696,16 @@ BuildRecorder::BuildRecorder(std::string origin, std::string run, std::vector<Bu
     : origin_{std::move(origin)}, run_{std::move(run)}, steps_{std::move(steps)},
       toolchain_{std::move(toolchain)}, jobs_{jobs}, times_(steps_.size()) {}
 
-void BuildRecorder::sampled(std::size_t step, std::uint64_t memory, std::optional<double> load) {
+void BuildRecorder::sampled(std::size_t step, std::uint64_t memory, std::optional<double> load,
+                            std::optional<JobserverShare> tokens) {
     auto& times = times_.at(step);
     if (!times.building) {
         return;
+    }
+    if (tokens) {
+        times.tokens.jobs += tokens->jobs;
+        times.tokens.free += tokens->free;
+        ++times.token_samples;
     }
     times.peak_memory = std::max(times.peak_memory.value_or(0), memory);
     if (load) {
@@ -735,6 +784,18 @@ BuildRecord BuildRecorder::record(std::size_t step, BuildRecord::Outcome outcome
     }
     found.system = system_share(before.system, after.system, times.loads, times.load_samples,
                                 found.build_seconds);
+    const auto size = [&](std::string_view name) -> std::optional<std::uint64_t> {
+        const auto found_size = times.sizes.find(std::string{name});
+        return found_size != times.sizes.end() ? std::optional{found_size->second} : std::nullopt;
+    };
+    found.build_dir_size = size("build");
+    found.image_size = size("image");
+    found.distfiles_size = size("distfiles");
+    if (times.token_samples > 0) {
+        const auto samples = static_cast<double>(times.token_samples);
+        found.jobserver = JobserverShare{.jobs = times.tokens.jobs / samples,
+                                         .free = times.tokens.free / samples};
+    }
     if (outcome == BuildRecord::Outcome::failed && times.failure) {
         if (times.failure->kind == WorkerEvent::Kind::failed) {
             found.failed_phase = times.failure->text;
@@ -759,6 +820,9 @@ std::optional<BuildRecord> BuildRecorder::traced(std::size_t step, Traced what, 
         times.peak_memory.reset();
         times.loads = 0;
         times.load_samples = 0;
+        times.tokens = {};
+        times.token_samples = 0;
+        times.sizes.clear();
         times.toolchain.clear();
         for (const auto& [cp, slots] : toolchain_) {
             auto& versions = times.toolchain.try_emplace(cp).first->second;
@@ -830,6 +894,9 @@ void BuildRecorder::reported(std::size_t step, const WorkerEvent& event, double 
     switch (event.kind) {
     case Kind::environment:
         times.environment = event.values;
+        break;
+    case Kind::sizes:
+        times.sizes = event.sizes;
         break;
     case Kind::phase:
         // The merge's phase is the merge's time, not the build's.

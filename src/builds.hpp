@@ -66,6 +66,13 @@ struct StallShare {
     bool operator==(const StallShare&) const = default;
 };
 
+// steve's jobs and the tokens it had free: as sampled, or their means over a build.
+struct JobserverShare {
+    double jobs = 0;
+    double free = 0;
+    bool operator==(const JobserverShare&) const = default;
+};
+
 // Where a build's measures came from: its worker's counters and samples of the processes under
 // it, or its own cgroup, exact.
 enum class Measured : std::uint8_t { proc, cgroup };
@@ -116,6 +123,14 @@ struct BuildRecord {
     std::optional<SystemShare> system{};
     // Its own stalls, from its cgroup.
     std::optional<StallShare> build_stall{};
+    // The bytes its build directory and image took up once it installed, the size of its
+    // distfiles, and the size its vdb entry records once merged.
+    std::optional<std::uint64_t> build_dir_size{};
+    std::optional<std::uint64_t> image_size{};
+    std::optional<std::uint64_t> distfiles_size{};
+    std::optional<std::uint64_t> installed_size{};
+    // Where steve was the jobserver: its jobs and free tokens while it built, on average.
+    std::optional<JobserverShare> jobserver{};
     bool operator==(const BuildRecord&) const = default;
 };
 
@@ -181,6 +196,10 @@ using Toolchain = std::map<std::string, std::map<std::string, std::string>>;
 // The toolchain cps' versions installed, by slot.
 [[nodiscard]] Toolchain installed_toolchain(const Store& store);
 
+// The SIZE the vdb entry of an installed cpv records.
+[[nodiscard]] std::optional<std::uint64_t> installed_size(const std::filesystem::path& vdb,
+                                                          std::string_view cpv);
+
 // What /proc said at one of a build's events: its worker's counters, and the system's; and its
 // cgroup leaf's counters, once its processes made it.
 struct Probe {
@@ -203,8 +222,9 @@ class BuildRecorder {
     [[nodiscard]] std::optional<BuildRecord> traced(std::size_t step, Traced what, double now,
                                                     const Probe& probe = {});
     void reported(std::size_t step, const WorkerEvent& event, double now, const Probe& probe = {});
-    // While step builds: the memory its processes hold, and the load.
-    void sampled(std::size_t step, std::uint64_t memory, std::optional<double> load);
+    // While step builds: the memory its processes hold, the load, and steve's tokens.
+    void sampled(std::size_t step, std::uint64_t memory, std::optional<double> load,
+                 std::optional<JobserverShare> tokens = std::nullopt);
 
   private:
     struct Times {
@@ -225,9 +245,12 @@ class BuildRecorder {
         Probe phase_started;
         Probe ended;
         std::optional<std::uint64_t> peak_memory;
-        // The loads sampled while it built, summed.
+        // The loads and steve's tokens sampled while it built, summed.
         double loads = 0;
         std::size_t load_samples = 0;
+        JobserverShare tokens;
+        std::size_t token_samples = 0;
+        std::map<std::string, std::uint64_t> sizes;
     };
 
     static void end_phase(Times& times, double now, const Probe& probe);

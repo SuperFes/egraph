@@ -1293,6 +1293,9 @@ runs as root on cgroup v2, each build's phases run in a cgroup of their own (und
 through portage's FEATURES=cgroup), whose counters measure them exactly, with the shares of the
 build's time its own tasks stalled; otherwise its worker's counters and samples of its processes
 do. Each record says which measured it.
+It also holds the space the build directory and image took up once installed, the size of the
+distfiles and of the installed package, and, where steve is the jobserver, its jobs and free
+tokens while it built, on average; the fetch is timed as a phase of its own.
 .TP
 .I package
 Only the builds of the packages these atoms or cps match.

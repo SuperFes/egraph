@@ -13,7 +13,9 @@ Requests come one per line on stdin, as JSON objects:
 For each, events go to stdout one per line: {"phase": name} as each phase starts (a merge's
 build phases, then "merge"; an uninstall's "unmerge"), then {"built": cpv}, {"merged": cpv} or
 {"uninstalled": cpv}, or {"failed": phase, "status": n, "log": path} when a phase fails, or
-{"error": message} for a request that cannot be tried. Whatever portage or an ebuild prints goes
+{"error": message} for a request that cannot be tried. A build also reports the environment it
+starts in, {"environment": {name: value}}, and once installed its sizes in bytes, {"sizes":
+{"build": n, "image": n, "distfiles": n}}. Whatever portage or an ebuild prints goes
 to stderr or the build log, never among the events.
 """
 
@@ -23,10 +25,12 @@ import os
 import sys
 from typing import NamedTuple, Optional
 
-# emerge's EbuildExecuter's, after the clean before a build. pkg_pretend runs with setup, and
-# the fetch with unpack, as doebuild runs what a phase needs first.
+# emerge's EbuildExecuter's, after the clean before a build, with its fetch first, as emerge
+# fetches before it builds. pkg_pretend runs with setup, as doebuild runs what a phase needs
+# first.
 PHASES = (
     "clean",
+    "fetch",
     "setup",
     "unpack",
     "prepare",
@@ -222,6 +226,43 @@ def _edit_world(eroot, edit):
         world.unlock()
 
 
+def disk_usage(path):
+    """The bytes the files under path take up, each counted once however many its links,
+    none for a path that is gone."""
+    seen = set()
+    total = 0
+
+    def add(st):
+        nonlocal total
+        if (st.st_dev, st.st_ino) not in seen:
+            seen.add((st.st_dev, st.st_ino))
+            total += st.st_blocks * 512
+
+    try:
+        add(os.lstat(path))
+    except OSError:
+        return 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        for name in dirnames + filenames:
+            try:
+                add(os.lstat(os.path.join(dirpath, name)))
+            except OSError:
+                pass
+    return total
+
+
+def distfile_bytes(settings):
+    """The size of the build's distfiles, as fetched; those missing left out."""
+    distdir = settings.get("PORTAGE_ACTUAL_DISTDIR") or settings.get("DISTDIR", "")
+    total = 0
+    for name in set(settings.get("A", "").split()):
+        try:
+            total += os.stat(os.path.join(distdir, name)).st_size
+        except OSError:
+            pass
+    return total
+
+
 def _unprepared_workdir(settings):
     """Drops the empty WORKDIR the phases before unpack left: doebuild cleans one that exists
     unmarked as unpacked, setup's state with it, and runs pretend and setup again, which emerge's
@@ -352,6 +393,15 @@ class Worker:
             if status != os.EX_OK:
                 lock.unlock()
                 return self._failed(emit, phase, status, settings)
+        emit(
+            event(
+                sizes={
+                    "build": disk_usage(settings["PORTAGE_BUILDDIR"]),
+                    "image": disk_usage(settings["D"]),
+                    "distfiles": distfile_bytes(settings),
+                }
+            )
+        )
         self._built[request.cpv] = _Built(request.cpv, ebuild, settings, lock)
         if announce:
             emit(event(built=request.cpv))

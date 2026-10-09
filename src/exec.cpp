@@ -437,6 +437,19 @@ std::expected<WorkerEvent, std::string> parse_event(std::string_view line) {
         }
         return event;
     }
+    if (const auto found = fields.find("sizes"); found != fields.end()) {
+        WorkerEvent event{.kind = Kind::sizes, .text = "", .status = 0, .log = "", .values = {}};
+        if (!found->is_object()) {
+            return std::unexpected(std::format("not an event: {}", line));
+        }
+        for (const auto& [name, value] : found->items()) {
+            if (!value.is_number_unsigned()) {
+                return std::unexpected(std::format("not an event: {}", line));
+            }
+            event.sizes.emplace(name, value.get<std::uint64_t>());
+        }
+        return event;
+    }
     for (const auto& [name, kind] : {std::pair{"phase", Kind::phase},
                                      {"built", Kind::built},
                                      {"merged", Kind::merged},
@@ -468,7 +481,8 @@ std::expected<WorkerEvent, std::string> parse_event(std::string_view line) {
 }
 
 bool final_event(const WorkerEvent& event) {
-    return event.kind != WorkerEvent::Kind::phase && event.kind != WorkerEvent::Kind::environment;
+    return event.kind != WorkerEvent::Kind::phase && event.kind != WorkerEvent::Kind::environment &&
+           event.kind != WorkerEvent::Kind::sizes;
 }
 
 bool merges_cp(const Plan& plan, const Evaluated& original, std::string_view cp) {
@@ -492,6 +506,7 @@ std::string describe_event(const WorkerEvent& event) {
                            event.log);
     case Kind::phase:
     case Kind::environment:
+    case Kind::sizes:
     case Kind::error:
         break;
     }

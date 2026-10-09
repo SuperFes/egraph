@@ -170,6 +170,15 @@ def test_a_build_is_measured_by_what_its_processes_used(hungry):
     )
     assert record["peak_memory"] >= 100_000_000
     assert record["measured"] in ("proc", "cgroup")
+    # Its 100 MB were held in memory, not in its build directory.
+    assert record["build_dir_size"] > record["image_size"] > 0
+    assert record["distfiles_size"] == 0
+    vdb = os.path.join(
+        system.playground.eroot, "var", "db", "pkg", "app-misc", "hungry-1"
+    )
+    with open(os.path.join(vdb, "SIZE")) as f:
+        assert record["installed_size"] == int(f.read())
+    assert "fetch" in phases
     if os.path.exists("/proc/self/io"):
         assert record["read_bytes"] >= 0 and record["write_bytes"] >= 0
     shares = record["system"]

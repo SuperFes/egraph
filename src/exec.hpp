@@ -138,7 +138,8 @@ struct WorkerEvent {
         merged,
         uninstalled,
         failed,
-        error
+        error,
+        sizes
     };
     Kind kind = Kind::phase;
     // The phase starting, the cpv built or done, the phase that failed, or the error's
@@ -149,6 +150,9 @@ struct WorkerEvent {
     std::string log{};
     // For the environment a build starts in: its variables, by name.
     std::map<std::string, std::string> values{};
+    // For a build once installed: the bytes its build directory, image and distfiles take up,
+    // by name ("build", "image", "distfiles").
+    std::map<std::string, std::uint64_t> sizes{};
     auto operator<=>(const WorkerEvent&) const = default;
 };
 

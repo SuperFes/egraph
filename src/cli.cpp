@@ -3057,6 +3057,20 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                      .cgroup = path ? cgroup::read_counters(*path) : std::nullopt};
     };
     auto sampled_at = std::chrono::steady_clock::now();
+    // Under steve, its tokens as stevie reads them, until it cannot.
+    bool steve_tokens = settings.jobserver == "/dev/steve";
+    const auto tokens = [&]() -> std::optional<JobserverShare> {
+        if (!steve_tokens) {
+            return std::nullopt;
+        }
+        const auto read = output_of(steve::get_arguments()).and_then(steve::parse_get);
+        if (!read || !read->tokens || !read->jobs) {
+            steve_tokens = false;
+            return std::nullopt;
+        }
+        return JobserverShare{.jobs = static_cast<double>(*read->jobs),
+                              .free = static_cast<double>(*read->tokens)};
+    };
     const auto sample = [&] {
         const auto at = std::chrono::steady_clock::now();
         if (building.empty() || at - sampled_at < std::chrono::seconds{1}) {
@@ -3065,8 +3079,9 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
         sampled_at = at;
         const auto processes = usage::read_processes();
         const auto load = pressure::read_sample().load;
+        const auto free = tokens();
         for (const auto& [step, pid] : building) {
-            builds.sampled(step, usage::pages_under(processes, pid) * page, load);
+            builds.sampled(step, usage::pages_under(processes, pid) * page, load, free);
         }
     };
     // Quiet seconds sample the builds; every other one republishes the status.
@@ -3130,7 +3145,8 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                                 ? probe(step, worker->second)
                                 : Probe{});
             sample();
-            if (event.kind == WorkerEvent::Kind::environment) {
+            if (event.kind == WorkerEvent::Kind::environment ||
+                event.kind == WorkerEvent::Kind::sizes) {
                 return;
             }
             say(step, describe_event(event));
@@ -3184,7 +3200,11 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                          what == Traced::merged || what == Traced::merge_failed)) {
                 cgroup::remove(*path);
             }
-            keep_build(builds.traced(step, what, now(), probed));
+            auto kept = builds.traced(step, what, now(), probed);
+            if (kept && what == Traced::merged) {
+                kept->installed_size = installed_size(vdb_of(shown.store.get()), names.at(step));
+            }
+            keep_build(kept);
             if (what == Traced::merged && std::holds_alternative<MergeStep>(steps.at(step))) {
                 state.merged.push_back(names.at(step));
                 record();

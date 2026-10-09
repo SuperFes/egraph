@@ -134,6 +134,11 @@ TEST_CASE("a build record reads back as written") {
         .cpu_busy = 0.9, .load = 7.5, .stall_cpu = 0.25, .stall_memory = 0, .stall_io = 0.01};
     record.measured = egraph::Measured::cgroup;
     record.build_stall = egraph::StallShare{.cpu = 0.5, .memory = std::nullopt, .io = 0.125};
+    record.build_dir_size = 1ULL << 33U;
+    record.image_size = 12288;
+    record.distfiles_size = 0;
+    record.installed_size = 10000;
+    record.jobserver = egraph::JobserverShare{.jobs = 16, .free = 2.5};
     const auto line = egraph::build_record_json(record);
     CHECK(line.find('\n') == std::string::npos);
     CHECK(egraph::parse_build_record(line) == record);
@@ -488,6 +493,70 @@ TEST_CASE("a worker reports the environment a build starts in, which ends nothin
     CHECK_FALSE(egraph::parse_event(R"({"environment": "CFLAGS"})"));
 }
 
+TEST_CASE("a worker reports a build's sizes, which ends nothing") {
+    const auto parsed =
+        egraph::parse_event(R"({"sizes": {"build": 122880, "image": 12288, "distfiles": 0}})");
+    REQUIRE(parsed);
+    CHECK(parsed->kind == WorkerEvent::Kind::sizes);
+    CHECK(parsed->sizes == std::map<std::string, std::uint64_t>{
+                               {"build", 122880}, {"distfiles", 0}, {"image", 12288}});
+    CHECK_FALSE(egraph::final_event(*parsed));
+    CHECK_FALSE(egraph::parse_event(R"({"sizes": {"build": -1}})"));
+    CHECK_FALSE(egraph::parse_event(R"({"sizes": {"build": 1.5}})"));
+    CHECK_FALSE(egraph::parse_event(R"({"sizes": 3})"));
+}
+
+TEST_CASE("a build's record holds its sizes and the jobserver's tokens while it built") {
+    using Kind = WorkerEvent::Kind;
+    BuildRecorder recorder{"exec", "run1", steps(), toolchain(), 4};
+    CHECK_FALSE(recorder.traced(0, Traced::build_started, 100));
+    recorder.reported(0, event(Kind::phase, "compile"), 100);
+    recorder.sampled(0, 10, std::nullopt, egraph::JobserverShare{.jobs = 16, .free = 0});
+    recorder.sampled(0, 10, std::nullopt);
+    recorder.sampled(0, 10, std::nullopt, egraph::JobserverShare{.jobs = 8, .free = 3});
+    recorder.reported(0,
+                      {.kind = Kind::sizes,
+                       .text = "",
+                       .status = 0,
+                       .log = "",
+                       .values = {},
+                       .sizes = {{"build", 40960}, {"image", 4096}, {"distfiles", 77}}},
+                      104);
+    CHECK_FALSE(recorder.traced(0, Traced::built, 105));
+    // The merge's samples are not the build's.
+    recorder.sampled(0, 10, std::nullopt, egraph::JobserverShare{.jobs = 1, .free = 1});
+    CHECK_FALSE(recorder.traced(0, Traced::merge_started, 105));
+    const auto record = recorder.traced(0, Traced::merged, 106);
+    REQUIRE(record);
+    CHECK(record->build_dir_size == 40960U);
+    CHECK(record->image_size == 4096U);
+    CHECK(record->distfiles_size == 77U);
+    // Read from the vdb once merged, by exec.
+    CHECK_FALSE(record->installed_size);
+    CHECK(record->jobserver == egraph::JobserverShare{.jobs = 12, .free = 1.5});
+    // The sizes ended no phase.
+    CHECK(record->phases.size() == 1);
+    CHECK(record->phases.at(0).seconds == 5);
+
+    CHECK_FALSE(recorder.traced(3, Traced::build_started, 200));
+    CHECK_FALSE(recorder.traced(3, Traced::built, 201));
+    CHECK_FALSE(recorder.traced(3, Traced::merge_started, 201));
+    const auto unsized = recorder.traced(3, Traced::merged, 202);
+    REQUIRE(unsized);
+    CHECK_FALSE(unsized->build_dir_size);
+    CHECK_FALSE(unsized->jobserver);
+}
+
+TEST_CASE("a merged package's installed size is its vdb entry's") {
+    const egraph::test::TempDir dir;
+    std::filesystem::create_directories(dir.path() / "app-misc" / "a-1");
+    egraph::test::write_text(dir.path() / "app-misc" / "a-1" / "SIZE", "123456\n");
+    CHECK(egraph::installed_size(dir.path(), "app-misc/a-1") == 123456U);
+    CHECK_FALSE(egraph::installed_size(dir.path(), "app-misc/b-1"));
+    egraph::test::write_text(dir.path() / "app-misc" / "a-1" / "SIZE", "big\n");
+    CHECK_FALSE(egraph::installed_size(dir.path(), "app-misc/a-1"));
+}
+
 TEST_CASE("a step's record names the candidate it builds with its flags, or what it uninstalls") {
     const auto system = egraph::test::make_system(
         {{.cpv = "app-misc/old-1"}, {.cpv = "sys-devel/gcc-15.2.1", .slot = "15"}},
@@ -595,7 +664,7 @@ TEST_CASE("as CSV, a header and a row per build, quoted where it must be") {
     record.error = R"(said "no", twice)";
     CHECK(egraph::build_csv_row(record) ==
           R"(2025-10-08T14:02:11Z,exec,run1,app-misc/a-1,gentoo,0,merged,10.0,2.0,0.0,,,)"
-          R"("said ""no"", twice",,0,,,,,,,,,,,,,,ssl zstd,,)");
+          R"("said ""no"", twice",,0,,,,,,,,,,,,,,,,,,,,ssl zstd,,)");
     record.error.reset();
     record.cpu_seconds = 61.25;
     record.peak_memory = 1048576;
@@ -605,9 +674,14 @@ TEST_CASE("as CSV, a header and a row per build, quoted where it must be") {
         .cpu_busy = 0.5, .load = 3.25, .stall_cpu = 0.125, .stall_memory = 0, .stall_io = 0.5};
     record.measured = egraph::Measured::cgroup;
     record.build_stall = egraph::StallShare{.cpu = 0.25, .memory = 0, .io = std::nullopt};
+    record.build_dir_size = 40960;
+    record.image_size = 4096;
+    record.installed_size = 1000;
+    record.jobserver = egraph::JobserverShare{.jobs = 16, .free = 0.25};
     CHECK(egraph::build_csv_row(record) ==
           R"(2025-10-08T14:02:11Z,exec,run1,app-misc/a-1,gentoo,0,merged,10.0,2.0,0.0,,,,,0,)"
-          R"(61.2,1048576,4096,0,cgroup,0.500,3.25,0.125,0.000,0.500,0.250,0.000,,ssl zstd,,)");
+          R"(61.2,1048576,4096,0,cgroup,0.500,3.25,0.125,0.000,0.500,0.250,0.000,,)"
+          R"(40960,4096,,1000,16.0,0.25,ssl zstd,,)");
     const auto header = egraph::builds_csv_header();
-    CHECK(std::ranges::count(header, ',') == 30);
+    CHECK(std::ranges::count(header, ',') == 36);
 }
