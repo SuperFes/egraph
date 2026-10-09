@@ -129,7 +129,8 @@ std::expected<Snapshot, std::string> parse_snapshot(std::string_view text) {
     Snapshot snapshot{.pid = *pid,
                       .timestamp = number_of(json, "timestamp").value_or(0),
                       .jobs = jobs_of(json),
-                      .tasks = {}};
+                      .tasks = {},
+                      .remaining = number_of(json, "egraph_remaining")};
     if (const auto tasks = value_of<Json>(json, "tasks", &Json::is_array)) {
         for (const auto& task : *tasks) {
             if (task.is_object()) {
@@ -177,19 +178,22 @@ std::string snapshot_json(const Snapshot& snapshot) {
     }
     const auto& jobs = snapshot.jobs;
     // emerge's _max_jobs is True for --jobs without a limit.
-    const Json json{{"type", "snapshot"},
-                    {"schema", 1},
-                    {"emerge_pid", snapshot.pid},
-                    {"timestamp", snapshot.timestamp},
-                    {"jobs",
-                     {{"running", jobs.running},
-                      {"max", jobs.max ? Json(*jobs.max) : Json(true)},
-                      {"completed", jobs.completed},
-                      {"total", jobs.total},
-                      {"failed", jobs.failed},
-                      {"merge_wait", jobs.merge_wait},
-                      {"merges_pending", jobs.merges_pending}}},
-                    {"tasks", std::move(tasks)}};
+    Json json{{"type", "snapshot"},
+              {"schema", 1},
+              {"emerge_pid", snapshot.pid},
+              {"timestamp", snapshot.timestamp},
+              {"jobs",
+               {{"running", jobs.running},
+                {"max", jobs.max ? Json(*jobs.max) : Json(true)},
+                {"completed", jobs.completed},
+                {"total", jobs.total},
+                {"failed", jobs.failed},
+                {"merge_wait", jobs.merge_wait},
+                {"merges_pending", jobs.merges_pending}}},
+              {"tasks", std::move(tasks)}};
+    if (snapshot.remaining) {
+        json.emplace("egraph_remaining", *snapshot.remaining);
+    }
     return json.dump();
 }
 

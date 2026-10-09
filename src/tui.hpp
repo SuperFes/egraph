@@ -2171,8 +2171,9 @@ void draw_dialog(S& screen, const Dialog& dialog, const Glyphs& glyph, Size size
 // What a task is doing, in words.
 [[nodiscard]] std::string task_state(const emerge::Task& task);
 
-// A task's row after the tree: a spinner while it runs, its kind, cpv, state, elapsed time, and
-// its cgroup's CPU parallelism and peak memory when reported.
+// A task's row after the tree: a spinner while it runs, its kind, cpv, state, elapsed time and,
+// while it builds, the time its build is expected to take, and its cgroup's CPU parallelism and
+// peak memory when reported.
 inline std::vector<Span> task_spans(const emerge::Task& task, std::size_t frame,
                                     const Glyphs& glyph) {
     const bool waiting = task.merge_wait;
@@ -2192,6 +2193,9 @@ inline std::vector<Span> task_spans(const emerge::Task& task, std::size_t frame,
     const auto elapsed = waiting && task.build_elapsed ? task.build_elapsed : task.elapsed;
     spans.push_back({std::format("{:>7}", elapsed ? duration(*elapsed) : std::string{}),
                      tone_pen(Tone::version)});
+    if (task.expected && !waiting && task.kind == emerge::TaskKind::build) {
+        spans.push_back({std::format(" of ~{}", duration(*task.expected)), tone_pen(Tone::note)});
+    }
     if (task.resources.cpu_usec && task.build_elapsed && *task.build_elapsed > 0) {
         const auto busy = static_cast<double>(*task.resources.cpu_usec) / 1e6 / *task.build_elapsed;
         spans.push_back({std::format("   {:.1f}x CPU", busy), tone_pen(Tone::note)});
@@ -2223,7 +2227,8 @@ inline std::vector<Span> row_spans(const WatchRow& row, std::size_t frame, const
 // Which emerge the merge list belongs to, as watch_rows decides.
 [[nodiscard]] std::size_t rows_owner(const Watched& watched);
 
-// An emerge's heading: its pid, jobs, and progress as a bar and a percentage.
+// An emerge's heading: its pid, jobs, progress as a bar and a percentage, and the time an
+// egraph exec estimates it has left.
 inline std::vector<Span> emerge_spans(const emerge::Snapshot& snapshot, const Glyphs& glyph) {
     const auto& jobs = snapshot.jobs;
     const auto percent = jobs.total == 0 ? 0 : jobs.completed * 100 / jobs.total;
@@ -2238,6 +2243,10 @@ inline std::vector<Span> emerge_spans(const emerge::Snapshot& snapshot, const Gl
         {std::format("   {} of {} done   ", jobs.completed, jobs.total), tone_pen(Tone::note)},
         {progress_bar(jobs.completed, jobs.total, 20, glyph), tone_pen(Tone::good)},
         {std::format(" {:>3}%", percent), tone_pen(Tone::heading)}};
+    if (snapshot.remaining) {
+        spans.push_back(
+            {std::format("   ~{} left", duration(*snapshot.remaining)), tone_pen(Tone::note)});
+    }
     if (jobs.failed > 0) {
         spans.push_back(
             {std::format("   {} {} failed", glyph.broken, jobs.failed), tone_pen(Tone::bad)});

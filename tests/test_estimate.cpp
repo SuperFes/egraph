@@ -280,3 +280,49 @@ TEST_CASE("an estimate line is read back") {
     CHECK_FALSE(egraph::parse_estimate_line("\testimate\tx\t\t1\t0\t"));
     CHECK_FALSE(egraph::parse_estimate_line("\testimate\t41\t\t1\t0"));
 }
+
+TEST_CASE("a run counts down, estimated again as its steps start and end") {
+    using egraph::Traced;
+    const auto [plan, steps] = planned({{}, {0}});
+    const std::vector costs{cost(10), cost(20)};
+    Schedule schedule{plan, steps, 2};
+    egraph::Countdown countdown{costs, 4, std::nullopt};
+    CHECK(countdown.left(schedule, 100) == 32);
+    REQUIRE(schedule.next_build() == 0);
+    schedule.build_started(0);
+    countdown.traced(0, Traced::build_started, 100);
+    CHECK(countdown.left(schedule, 104) == 28);
+    // Counted down between events.
+    CHECK(countdown.left(schedule, 106) == 26);
+    // Built 5 s later than foretold, then merging.
+    schedule.build_finished(0, true);
+    countdown.traced(0, Traced::built, 115);
+    REQUIRE(schedule.next_merge() == 0);
+    schedule.merge_started(0);
+    countdown.traced(0, Traced::merge_started, 115);
+    CHECK(countdown.left(schedule, 115) == 22);
+    CHECK(countdown.left(schedule, 130) == 7);
+    CHECK(countdown.left(schedule, 200) == 0);
+    // Nothing left known.
+    egraph::Countdown blind{std::vector<StepCost>(2), 4, std::nullopt};
+    CHECK_FALSE(blind.left(schedule, 115));
+}
+
+TEST_CASE("a status display's build tasks are given their expected seconds") {
+    const BuildKnowledge knowledge{{build("app-misc/a-1", 100, 200)}};
+    using egraph::emerge::Task;
+    using egraph::emerge::TaskKind;
+    std::vector<egraph::emerge::Snapshot> snapshots{
+        {.pid = 1,
+         .tasks = {{.cpv = "app-misc/a-2", .operation = "merge", .kind = TaskKind::build},
+                   {.cpv = "app-misc/b-1", .operation = "merge", .kind = TaskKind::build},
+                   {.cpv = "app-misc/a-1", .operation = "merge", .binary = true},
+                   {.cpv = "app-misc/a-1", .operation = "uninstall", .kind = TaskKind::merge}}},
+        {.pid = 2, .tasks = {{.cpv = "app-misc/a-1", .operation = "", .kind = TaskKind::build}}}};
+    egraph::expect_builds(snapshots, knowledge, 8);
+    CHECK(snapshots.at(0).tasks.at(0).expected == 100);
+    CHECK_FALSE(snapshots.at(0).tasks.at(1).expected);
+    CHECK_FALSE(snapshots.at(0).tasks.at(2).expected);
+    CHECK_FALSE(snapshots.at(0).tasks.at(3).expected);
+    CHECK(snapshots.at(1).tasks.at(0).expected == 100);
+}

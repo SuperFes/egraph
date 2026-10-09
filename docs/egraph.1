@@ -902,8 +902,12 @@ uses under
 .BR FEATURES=observability ,
 but in its own
 .IR ${EPREFIX}/run/egraph/exec\-<pid>.json ,
-which the living app's emerge view reads beside emerge's; it writes none of emerge's files. The
-run is logged where
+which the living app's emerge view reads beside emerge's, with an
+.B egraph_remaining
+key of its own when the build history knows packages left in it: the seconds it estimates it
+has left, estimated again as each step starts or ends (see
+.BR updates );
+it writes none of emerge's files. The run is logged where
 .B \-\-log
 says: its start, each phase, each package built, merged or uninstalled with its times, each
 failure with its build log, each skip, and its end. When the plan merges portage itself into
@@ -1433,7 +1437,10 @@ Plan the updates and write the status file first, for a system without the
 service.
 .SS tui
 The interactive interface: the installed packages, pending updates, orphans and broken ones, each
-package's page, the plan, the running emerges, a search through the repositories
+package's page, the plan, the running emerges (each build beside the time its package's builds
+here foretell, and an
+.B exec
+run with the time it estimates it has left), a search through the repositories
 .RB ( s ,
 as
 .BR search ;

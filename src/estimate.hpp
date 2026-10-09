@@ -4,6 +4,7 @@
 // and a plan from its schedule run ahead with those.
 
 #include "builds.hpp"
+#include "emerge.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -112,6 +113,35 @@ struct PlanEstimate {
 // limit.
 [[nodiscard]] std::string estimate_line(const PlanEstimate& estimate,
                                         std::optional<std::uint32_t> jobs);
+
+// A run's time left as it goes: estimated again from its schedule once a step starts or ends,
+// and counted down between.
+class Countdown {
+  public:
+    Countdown(std::vector<StepCost> costs, unsigned cores, std::optional<std::uint32_t> tokens);
+
+    void traced(std::size_t step, Traced what, double now);
+    // The seconds left at now, from schedule as it stands; none once no step left was built here
+    // before.
+    [[nodiscard]] std::optional<double> left(const Schedule& schedule, double now);
+
+  private:
+    struct Since {
+        bool merging = false;
+        double start = 0;
+    };
+    std::vector<StepCost> costs_;
+    unsigned cores_;
+    std::optional<std::uint32_t> tokens_;
+    std::map<std::size_t, Since> running_;
+    std::optional<double> estimated_;
+    double estimated_at_ = 0;
+    bool stale_ = true;
+};
+
+// Sets each build task's expected seconds from what the knowledge foretells of it.
+void expect_builds(std::vector<emerge::Snapshot>& snapshots, const BuildKnowledge& knowledge,
+                   unsigned cores);
 
 struct EstimateLine {
     double seconds = 0;

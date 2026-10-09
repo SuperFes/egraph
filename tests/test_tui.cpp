@@ -1429,6 +1429,27 @@ TEST_CASE("egraph exec is named as such, and never takes emerge's merge list") {
     watched.snapshots = {{.pid = 99, .timestamp = 0, .tasks = {}}, run};
     CHECK(egraph::tui::rows_owner(watched) == 0);
 }
+TEST_CASE("a run and its builds count down by the time the build history foretells") {
+    const auto text = [](const std::vector<egraph::tui::Span>& spans) {
+        std::string joined;
+        for (const auto& span : spans) {
+            joined += span.text;
+        }
+        return joined;
+    };
+    auto run = building_lib();
+    CHECK_FALSE(text(egraph::tui::emerge_spans(run, ascii)).contains("left"));
+    run.remaining = 4980;
+    CHECK(text(egraph::tui::emerge_spans(run, ascii)).contains("   ~1h23m left"));
+    egraph::emerge::Task task{.cpv = "dev-libs/lib-1", .phase = "compile", .elapsed = 100};
+    CHECK_FALSE(text(egraph::tui::task_spans(task, 0, ascii)).contains("of ~"));
+    task.expected = 750;
+    CHECK(text(egraph::tui::task_spans(task, 0, ascii)).contains("  1m40s of ~12m30s"));
+    // Not once it waits to merge.
+    task.merge_wait = true;
+    CHECK_FALSE(text(egraph::tui::task_spans(task, 0, ascii)).contains("of ~"));
+}
+
 TEST_CASE("the emerge view draws the merge list as a tree that says what can start") {
     const auto store = sample();
     const auto graph = egraph::build_graph(store);

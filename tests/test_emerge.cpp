@@ -126,6 +126,19 @@ TEST_CASE("a written snapshot keeps its cgroup counters, and --jobs without a li
     CHECK(egraph::emerge::parse_snapshot(json) == snapshot);
 }
 
+TEST_CASE("egraph exec's snapshot says how long it has left, and no task's expected time") {
+    egraph::emerge::Snapshot snapshot{.pid = 1, .timestamp = 2, .jobs = {}, .tasks = {}};
+    snapshot.remaining = 125.5;
+    snapshot.tasks.push_back({.cpv = "a/b-1", .root = "/", .operation = "merge", .expected = 30});
+    const auto json = egraph::emerge::snapshot_json(snapshot);
+    CHECK(json.contains(R"("egraph_remaining":125.5)"));
+    CHECK_FALSE(json.contains("expected"));
+    snapshot.tasks.at(0).expected.reset();
+    CHECK(egraph::emerge::parse_snapshot(json) == snapshot);
+    snapshot.remaining.reset();
+    CHECK_FALSE(egraph::emerge::snapshot_json(snapshot).contains("remaining"));
+}
+
 TEST_CASE("--jobs without a limit has no maximum") {
     const auto snapshot =
         egraph::emerge::parse_snapshot(replaced(snapshot_json, R"("max": 4)", R"("max": true)"));

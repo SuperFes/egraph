@@ -1735,24 +1735,34 @@ struct Shown {
     std::vector<Argument> arguments;
 };
 
+// The build history at path; none when there is none.
+std::vector<BuildRecord> read_history(const std::filesystem::path& path) {
+    std::ifstream in{path};
+    if (!in) {
+        return {};
+    }
+    std::ostringstream text;
+    text << in.rdbuf();
+    return read_builds(text.str());
+}
+
+// The cores builds share, as many as the estimates count on.
+unsigned build_cores() {
+    return std::max(std::thread::hardware_concurrency(), 1U);
+}
+
 // The plan's estimate from the build history, as a line after its others: at the jobs given,
 // else at the latest build's; none when no package in it was built here.
 std::optional<std::string> estimate_of(const Store& store, const Evaluated& evaluated,
                                        const Plan& plan, std::span<const Argument> arguments,
                                        std::optional<std::uint32_t> given_jobs) {
-    std::ifstream in{builds_path(store.meta.eroot)};
-    if (!in) {
-        return std::nullopt;
-    }
-    std::ostringstream text;
-    text << in.rdbuf();
-    const auto records = read_builds(text.str());
+    const auto records = read_history(builds_path(store.meta.eroot));
     const BuildKnowledge knowledge{records};
     if (knowledge.empty()) {
         return std::nullopt;
     }
     const auto steps = run_steps(store, evaluated, plan, arguments, true);
-    const auto cores = std::max(std::thread::hardware_concurrency(), 1U);
+    const auto cores = build_cores();
     const auto jobs = given_jobs ? given_jobs : recorded_jobs(records);
     // No limit: as many at once as a jobserver has tokens, one a core.
     const auto estimate =
@@ -3126,6 +3136,13 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
              .operation = std::holds_alternative<MergeStep>(step) ? "merge" : "uninstall"});
     }
     Observer observer{os::process_id(), jobs, std::move(observed)};
+    // The time the run has left, from the build history as it stood when the run started.
+    const auto built = build_steps(shown.store.get(), shown.evaluated.get(), plan, steps);
+    const auto cores = build_cores();
+    Countdown countdown{
+        step_costs(BuildKnowledge{read_history(builds_path(shown.store.get().meta.eroot))}, built,
+                   cores),
+        cores, jobs ? std::nullopt : std::optional{cores}};
     StatusFile status{emerge::status_dir(invocation.eprefix.value_or(""), emerge::Publisher::exec) /
                           std::format("exec-{}.json", os::process_id()),
                       out};
@@ -3133,7 +3150,9 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
         const std::chrono::duration<double> now =
             std::chrono::system_clock::now().time_since_epoch();
         observer.update(schedule, now.count());
-        status.publish(observer.snapshot(schedule, now.count()), tick);
+        auto snapshot = observer.snapshot(schedule, now.count());
+        snapshot.remaining = countdown.left(schedule, now.count());
+        status.publish(snapshot, tick);
     };
     publish(true);
     // Logged as egraph's own runs, to the journal or its file.
@@ -3156,8 +3175,7 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
         out << std::format("egraph: exec: warning: {}, so no builds are recorded\n",
                            egraph_settings.error());
     }
-    BuildRecorder builds{std::string{Exec::name}, run,
-                         build_steps(shown.store.get(), shown.evaluated.get(), plan, steps),
+    BuildRecorder builds{std::string{Exec::name}, run, built,
                          installed_toolchain(shown.store.get()), jobs};
     // By step, the worker building it, measured from /proc and its leaf at its events and
     // sampled each second while it builds.
@@ -3282,6 +3300,7 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
             }
         },
         [&](std::size_t step, Traced what, std::optional<std::size_t> worker) {
+            countdown.traced(step, what, now());
             if (worker) {
                 if (const auto pid = pool.pid(*worker)) {
                     observer.worker(step, *pid);
@@ -3752,12 +3771,23 @@ Exit execute(const Tui& tui_command, Session& session, const Invocation& invocat
         };
     }
     const auto eprefix = invocation.eprefix.value_or("");
+    // Each build's expected time from the build history, read again once it changes.
     const auto watch = [emerges = emerge::status_dir(eprefix),
-                        runs = emerge::status_dir(eprefix, emerge::Publisher::exec)] {
+                        runs = emerge::status_dir(eprefix, emerge::Publisher::exec),
+                        history = builds_path(invocation.root / eprefix.relative_path()),
+                        read = std::optional<std::filesystem::file_time_type>{},
+                        knowledge = BuildKnowledge{{}}]() mutable {
         auto found = emerge::read_snapshots(emerges);
         std::ranges::move(emerge::read_snapshots(runs, "/proc", emerge::Publisher::exec),
                           std::back_inserter(found));
         std::ranges::sort(found, {}, &emerge::Snapshot::pid);
+        std::error_code error;
+        const auto changed = std::filesystem::last_write_time(history, error);
+        if (!error && changed != read) {
+            knowledge = BuildKnowledge{read_history(history)};
+            read = changed;
+        }
+        expect_builds(found, knowledge, build_cores());
         return found;
     };
     const auto sample = [] { return pressure::read_sample(); };

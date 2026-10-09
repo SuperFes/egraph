@@ -15,10 +15,12 @@ from egraph_build import worker
 from test_actions import EGRAPH
 from test_build import age
 from test_exec_run import (
+    RUNS,
     logged,
     machines,
     over,
     parallel,
+    published,
     read_trace,
 )  # noqa: F401 (fixtures)
 from test_worker import INSTALL, PLAIN
@@ -181,6 +183,37 @@ def test_a_plan_says_how_long_it_will_take_from_the_history(parallel, tmp_path):
     seconds, peak, known, unknown, jobs = estimate(shown.stdout.split("egraph:")[0])
     assert (int(known), int(unknown), jobs) == (len(records), 1, "1")
     assert int(seconds) >= together - 1
+
+
+def test_exec_publishes_the_time_it_has_left(parallel):
+    """Its status file counts down from the plan's estimate as the run goes."""
+    system, machine = parallel
+    age(system.playground.eroot)
+    ran = system.egraph("exec", "--yes", "-j3", "app-misc/top")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    records = history(system)
+    together = sum(r["build_seconds"] + r["merge_seconds"] for r in records)
+    age(system.playground.eroot)
+    run = subprocess.Popen(
+        system.command("exec", "--yes", "-j3", *("=" + r["cpv"] for r in records)),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    left = []
+    try:
+        while run.poll() is None:
+            for _, snapshot in published(system.playground.eprefix, RUNS):
+                if "egraph_remaining" in snapshot:
+                    left.append(snapshot["egraph_remaining"])
+            time.sleep(0.1)
+    finally:
+        if run.poll() is None:
+            run.kill()
+        run.wait()
+    assert run.returncode == 0
+    assert left, "no snapshot said how long the run had left"
+    assert all(0 <= each <= together + 1 for each in left)
+    assert left[-1] <= left[0]
 
 
 # The compile spins for a while, then holds 100 MB in a shell variable across a sleep.

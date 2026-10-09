@@ -46,6 +46,9 @@ struct Task {
     std::optional<double> elapsed{};
     std::optional<double> build_elapsed{};
     Resources resources{};
+    // The seconds its build is expected to take, from the build history; not written, filled in
+    // by what shows it.
+    std::optional<double> expected{};
     bool operator==(const Task&) const = default;
 };
 
@@ -70,6 +73,9 @@ struct Snapshot {
     double timestamp = 0;
     Jobs jobs{};
     std::vector<Task> tasks{};
+    // egraph exec's own: the seconds it estimates the run has left, from the build history, as
+    // egraph_remaining.
+    std::optional<double> remaining{};
     // Which directory it was read from; not written.
     Publisher publisher = Publisher::emerge;
     bool operator==(const Snapshot&) const = default;

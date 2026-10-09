@@ -260,4 +260,61 @@ std::optional<EstimateLine> parse_estimate_line(std::string_view line) {
     return read;
 }
 
+Countdown::Countdown(std::vector<StepCost> costs, unsigned cores,
+                     std::optional<std::uint32_t> tokens)
+    : costs_{std::move(costs)}, cores_{cores}, tokens_{tokens} {}
+
+void Countdown::traced(std::size_t step, Traced what, double now) {
+    switch (what) {
+    case Traced::build_started:
+    case Traced::merge_started:
+        running_.insert_or_assign(step,
+                                  Since{.merging = what == Traced::merge_started, .start = now});
+        break;
+    case Traced::built:
+    case Traced::build_failed:
+    case Traced::merged:
+    case Traced::merge_failed:
+        running_.erase(step);
+        break;
+    case Traced::skipped:
+        break;
+    }
+    stale_ = true;
+}
+
+std::optional<double> Countdown::left(const Schedule& schedule, double now) {
+    if (stale_) {
+        std::vector<RunningStep> running;
+        running.reserve(running_.size());
+        for (const auto& [step, since] : running_) {
+            running.push_back(
+                {.step = step, .merging = since.merging, .elapsed = now - since.start});
+        }
+        const auto estimate = estimate_plan(schedule, costs_, cores_, tokens_, running);
+        estimated_ = estimate.known == 0 ? std::nullopt : std::optional{estimate.seconds};
+        estimated_at_ = now;
+        stale_ = false;
+    }
+    if (!estimated_) {
+        return std::nullopt;
+    }
+    return std::max(*estimated_ - (now - estimated_at_), 0.0);
+}
+
+void expect_builds(std::vector<emerge::Snapshot>& snapshots, const BuildKnowledge& knowledge,
+                   unsigned cores) {
+    for (auto& snapshot : snapshots) {
+        for (auto& task : snapshot.tasks) {
+            if (task.kind != emerge::TaskKind::build || task.binary ||
+                !(task.operation.empty() || task.operation == "merge")) {
+                continue;
+            }
+            if (const auto estimate = knowledge.estimate(task.cpv, cores)) {
+                task.expected = estimate->seconds;
+            }
+        }
+    }
+}
+
 } // namespace egraph

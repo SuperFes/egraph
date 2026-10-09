@@ -960,7 +960,11 @@ peaks are known. Merges of packages never built here cost nothing and are counte
 uninstalls cost nothing. The same run starts from a schedule under way, its running steps
 carried on from their elapsed seconds. The plan commands end with it as a line (`updates` at the latest
 build's jobs, `exec` at its `-j`); egraphd's status keeps it among the plan's lines, `status`
-shows it beside the counts, and a change in the estimate alone is no plan change.
+shows it beside the counts, and a change in the estimate alone is no plan change. During a
+run, `Countdown` estimates again from the live schedule whenever a step starts or ends and
+counts down between, published as `egraph_remaining` in exec's status file; the interface's
+emerge view shows it, and gives every running build, emerge's too, its package's expected
+seconds from the history (read again when the file changes).
 
 ## Roots and exit codes
 
