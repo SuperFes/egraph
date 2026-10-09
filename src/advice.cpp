@@ -178,6 +178,28 @@ std::vector<BinaryAdvice> binary_advice(const RepositoryIndex& index,
     return advice;
 }
 
+std::optional<OrderAdvice> order_advice(const Plan& plan, std::span<const Step> steps,
+                                        std::span<const StepCost> costs, unsigned cores,
+                                        std::optional<std::uint32_t> jobs,
+                                        const PlanEstimate& estimate) {
+    std::optional<OrderAdvice> best;
+    for (const auto order : {BuildOrder::critical, BuildOrder::longest}) {
+        Schedule schedule{plan, std::vector<Step>(steps.begin(), steps.end()), jobs};
+        schedule.prefer(build_order(plan, steps, costs, order));
+        const auto at = estimate_plan(std::move(schedule), costs, cores,
+                                      jobs ? std::nullopt : std::optional{cores});
+        if (!best || at.seconds < best->seconds) {
+            best = OrderAdvice{
+                .order = order, .seconds = at.seconds, .emerge_seconds = estimate.seconds};
+        }
+    }
+    if (!best || best->seconds > order_advice_share * estimate.seconds ||
+        estimate.seconds - best->seconds < order_advice_seconds) {
+        return std::nullopt;
+    }
+    return best;
+}
+
 std::vector<std::string> advice_lines(const PlanAdvice& advice) {
     std::vector<std::string> lines;
     if (!advice.tests.empty()) {
@@ -201,6 +223,11 @@ std::vector<std::string> advice_lines(const PlanAdvice& advice) {
     for (const auto& tmpfs : advice.tmpfs) {
         lines.push_back(std::format("\tadvice\ttmpfs\t{}\t{}\t{}\t{}", tmpfs.cpv, tmpfs.bytes,
                                     tmpfs.tmpdir, tmpfs.size));
+    }
+    if (const auto& order = advice.order) {
+        lines.push_back(std::format("\tadvice\torder\t{}\t{}\t{}", build_order_name(order->order),
+                                    std::llround(order->seconds),
+                                    std::llround(order->emerge_seconds)));
     }
     for (const auto& binary : advice.binaries) {
         lines.push_back(std::format("\tadvice\tbinary\t{}\t{}\t{}\t{}\t{}", binary.cpv,

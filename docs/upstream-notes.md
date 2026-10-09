@@ -98,3 +98,10 @@ is right.
   allows and the jobserver hands tokens for, so steve's job count decides. emerge builds one at a
   time without `--jobs`, jobserver or not. A preference rather than a correction, at the user's
   request (2026-10-08); `exec_jobs` in `test_action.cpp`.
+- `exec --order=longest` and `--order=critical` start, among the builds that may start, the
+  longest (or the one leading the longest chain of builds and merges to the plan's end) first,
+  by the build history, where emerge starts the first in its merge list; what each waits for,
+  merge-wait and the job limit hold them as they hold emerge's. Off by default, a preference to
+  become the default once histories show it finishes runs sooner (2026-10-09); "builds are
+  tried in the order preferred" in `test_schedule.cpp`,
+  `test_exec_starts_the_builds_its_order_puts_first` in `test_builds.py`.

@@ -205,6 +205,8 @@ struct Exec : Install {
     std::optional<bool> keep_going;
     // The portage fork's --merge-wait-scope; none for EMERGE_DEFAULT_OPTS'.
     std::optional<std::string> merge_wait_scope;
+    // The order builds start in when several may (build_order_named); none for emerge's.
+    std::optional<std::string> order;
     // Carry out the last run's request again, without what it merged.
     bool resume = false;
 };

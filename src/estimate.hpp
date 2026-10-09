@@ -139,6 +139,15 @@ struct StepCost {
     bool operator==(const StepCost&) const = default;
 };
 
+// The steps in the order a schedule tries their builds under order, by their costs (as
+// step_costs gives them): for longest, by build seconds, the longest first; for critical, by the
+// seconds of the longest chain of builds and merges from each to the plan's end through what
+// waits for it, waits on a step later in the steps' order (which their order breaks) left out;
+// ties, and emerge's, in the steps' order.
+[[nodiscard]] std::vector<std::size_t> build_order(const Plan& plan, std::span<const Step> steps,
+                                                   std::span<const StepCost> costs,
+                                                   BuildOrder order);
+
 // A step running as the estimate starts, building or merging, and its seconds so far.
 struct RunningStep {
     std::size_t step = 0;

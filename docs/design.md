@@ -1034,7 +1034,14 @@ matches as depgraph's `_reinstall_for_flags` decides under `--binpkg-respect-use
 IUSE and the profile's masks and forces from the candidate, is named. Flags in a binary's IUSE
 alone are compared without the profile's forces and masks, which the store keeps only for the
 ebuild's IUSE: where one such flag is masked, egraph names no binary where emerge would take it.
-`--usepkg-exclude`, `--binpkg-respect-use=n` and a binary's own visibility are not weighed. A status keeps them
+`--usepkg-exclude`, `--binpkg-respect-use=n` and a binary's own visibility are not weighed.
+A schedule tries builds in emerge's order unless `exec --order` prefers another
+(`build_order`): the longest build first, or by the longest chain of builds and merges from each
+to the plan's end, waits on later steps (which the order breaks) left out, ties in emerge's
+order; the waits, merge-wait and the job limit still hold, and the estimate and the countdown
+run the same schedule. A plan in emerge's order is estimated again in the other two, and the
+sooner is named when it saves a tenth and five minutes. Under merge-wait a long build holds
+every merge back, so an order helps only where what waits for the short builds can wait. A status keeps them
 among the plan's lines, and they are no plan change either. The finish time is no line: it is
 the estimate's seconds from now, which only the human layout says, in the local zone.
 

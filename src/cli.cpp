@@ -1793,7 +1793,8 @@ std::vector<StepFacts> facts_of(const std::shared_ptr<const RepositoryIndex>& in
 std::vector<std::string> estimate_of(const Session& session, const Invocation& invocation,
                                      const Store& store, const Evaluated& evaluated,
                                      const Plan& plan, std::span<const Argument> arguments,
-                                     std::optional<std::uint32_t> given_jobs) {
+                                     std::optional<std::uint32_t> given_jobs,
+                                     BuildOrder order = BuildOrder::emerge) {
     const auto records = read_history(builds_path(store.meta.eroot));
     BuildKnowledge knowledge{records};
     if (knowledge.empty()) {
@@ -1807,7 +1808,9 @@ std::vector<std::string> estimate_of(const Session& session, const Invocation& i
     const auto facts = facts_of(index, built, knowledge);
     const auto costs = step_costs(knowledge, built, cores, facts);
     // No limit: as many at once as a jobserver has tokens, one a core.
-    const auto estimate = estimate_plan(Schedule{plan, steps, jobs}, costs, cores,
+    Schedule schedule{plan, steps, jobs};
+    schedule.prefer(build_order(plan, steps, costs, order));
+    const auto estimate = estimate_plan(std::move(schedule), costs, cores,
                                         jobs ? std::nullopt : std::optional{cores});
     if (estimate.known + estimate.guessed == 0) {
         return {};
@@ -1834,6 +1837,9 @@ std::vector<std::string> estimate_of(const Session& session, const Invocation& i
     advice.tmpfs = tmpfs_advice(built, costs, spaces);
     if (index) {
         advice.binaries = binary_advice(*index, built, costs);
+    }
+    if (order == BuildOrder::emerge) {
+        advice.order = order_advice(plan, steps, costs, cores, jobs, estimate);
     }
     std::ranges::move(advice_lines(advice), std::back_inserter(lines));
     return lines;
@@ -2302,7 +2308,8 @@ std::expected<Request, std::string> resolve_request(const PlanCommand& command, 
 std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_view name,
                                      Session& session, const Invocation& invocation,
                                      std::ostream& out, std::ostream& err,
-                                     std::optional<std::uint32_t> jobs = std::nullopt) {
+                                     std::optional<std::uint32_t> jobs = std::nullopt,
+                                     BuildOrder order = BuildOrder::emerge) {
     if (!command.update && (command.deep || command.rebuilds != UseRebuilds::none)) {
         err << "egraph: " << name << ": -D, -N and -U are only planned with -u\n";
         return std::unexpected(Exit::usage);
@@ -2386,9 +2393,9 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
     std::ranges::move(tried_changes(session, invocation, *store, evaluated, shown.plan,
                                     command.rebuilds, targets, envs, name, command.table),
                       std::back_inserter(lines));
-    std::ranges::move(
-        estimate_of(session, invocation, *store, evaluated, shown.plan, shown.arguments, jobs),
-        std::back_inserter(lines));
+    std::ranges::move(estimate_of(session, invocation, *store, evaluated, shown.plan,
+                                  shown.arguments, jobs, order),
+                      std::back_inserter(lines));
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme, command.table,
                       unlisted_held(shown.plan, command.held), local_clock());
@@ -3127,6 +3134,11 @@ struct RemovedAtEnd {
 // Runs the steps over a pool of workers, as many builds at once as command or else the settings
 // allow, going on after a failure as either says, reporting each event on out: the workers' exit
 // status, or why the run stopped short.
+// The order an exec's builds start in.
+BuildOrder order_of(const Exec& command) {
+    return build_order_named(command.order.value_or("emerge")).value_or(BuildOrder::emerge);
+}
+
 std::expected<int, std::string> run_pool(const Invocation& invocation, const RunSettings& settings,
                                          const Exec& command, const Shown& shown,
                                          StepRequests& requests, const std::vector<Step>& steps,
@@ -3198,6 +3210,16 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                        .alone = merge_wait_steps(shown.store.get(), build_graph(shown.store.get()),
                                                  shown.evaluated.get(), plan, steps, scope),
                        .running_root = same_root(invocation.root, "/")}};
+    // The time the run has left, from the build history as it stood when the run started; and
+    // the order builds start in, from the same.
+    const auto built = build_steps(shown.store.get(), shown.evaluated.get(), plan, steps);
+    const auto cores = build_cores();
+    BuildKnowledge knowledge{read_history(builds_path(shown.store.get().meta.eroot))};
+    const auto facts = knowledge.empty()
+                           ? std::vector<StepFacts>{}
+                           : facts_of(estimate_index(nullptr, invocation), built, knowledge);
+    auto costs = step_costs(knowledge, built, cores, facts);
+    schedule.prefer(build_order(plan, steps, costs, order_of(command)));
     // Published as emerge's scheduler publishes itself, in egraph's own place.
     std::vector<Observed> observed;
     observed.reserve(steps.size());
@@ -3208,15 +3230,7 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
              .operation = std::holds_alternative<MergeStep>(step) ? "merge" : "uninstall"});
     }
     Observer observer{os::process_id(), jobs, std::move(observed)};
-    // The time the run has left, from the build history as it stood when the run started.
-    const auto built = build_steps(shown.store.get(), shown.evaluated.get(), plan, steps);
-    const auto cores = build_cores();
-    BuildKnowledge knowledge{read_history(builds_path(shown.store.get().meta.eroot))};
-    const auto facts = knowledge.empty()
-                           ? std::vector<StepFacts>{}
-                           : facts_of(estimate_index(nullptr, invocation), built, knowledge);
-    Countdown countdown{step_costs(knowledge, built, cores, facts), cores,
-                        jobs ? std::nullopt : std::optional{cores}};
+    Countdown countdown{std::move(costs), cores, jobs ? std::nullopt : std::optional{cores}};
     StatusFile status{emerge::status_dir(invocation.eprefix.value_or(""), emerge::Publisher::exec) /
                           std::format("exec-{}.json", os::process_id()),
                       out};
@@ -3481,7 +3495,10 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
                const Invocation& invocation, std::ostream& out, std::ostream& err) {
     return act_on_plan(
         Exec::name, command.yes, session, invocation, out, err,
-        [&] { return show_plan(command, Exec::name, session, invocation, out, err, command.jobs); },
+        [&] {
+            return show_plan(command, Exec::name, session, invocation, out, err, command.jobs,
+                             order_of(command));
+        },
         [&](const Invocation& again) {
             return carry_out(command, merged, session, again, out, err);
         },
@@ -5133,6 +5150,17 @@ void configure(CLI::App& app, Invocation& invocation) {
             "EMERGE_DEFAULT_OPTS' otherwise, else deep")
         ->type_name("SCOPE")
         ->check(CLI::IsMember({"deep", "system", "toolchain", "none"}));
+    exec_cmd
+        ->add_option_function<std::string>(
+            "--order",
+            [&invocation](const std::string& order) {
+                std::get<Exec>(invocation.command).order = order;
+            },
+            "The order builds start in when several may: emerge (its own, the default), longest "
+            "(the longest build first) or critical (the build leading the longest chain of "
+            "builds first), as the build history foretells them")
+        ->type_name("ORDER")
+        ->check(CLI::IsMember({"emerge", "longest", "critical"}));
     // Targets stay required while parsing, so that --keep-going takes none for its value, unless
     // --resume, which takes the last run's.
     CLI::Option* exec_targets = exec_cmd->get_option("targets");
@@ -5148,7 +5176,7 @@ void configure(CLI::App& app, Invocation& invocation) {
                 exec_targets->required(false);
             },
             "Carry out the last run's targets and options again, without what it merged; --jobs, "
-            "--keep-going and --merge-wait-scope given now replace its own")
+            "--keep-going, --merge-wait-scope and --order given now replace its own")
         ->trigger_on_parse();
     exec_cmd->callback([&invocation] {
         const auto& exec = std::get<Exec>(invocation.command);
@@ -5559,6 +5587,9 @@ std::vector<std::string> exec_arguments(const Exec& command) {
     if (command.merge_wait_scope) {
         arguments.insert(arguments.end(), {"--merge-wait-scope", *command.merge_wait_scope});
     }
+    if (command.order) {
+        arguments.insert(arguments.end(), {"--order", *command.order});
+    }
     arguments.emplace_back("--");
     arguments.insert(arguments.end(), command.targets.begin(), command.targets.end());
     return arguments;
@@ -5587,6 +5618,7 @@ std::expected<Exec, std::string> resumed_exec(const Exec& given,
     resumed.keep_going = given.keep_going ? given.keep_going : resumed.keep_going;
     resumed.merge_wait_scope =
         given.merge_wait_scope ? given.merge_wait_scope : resumed.merge_wait_scope;
+    resumed.order = given.order ? given.order : resumed.order;
     resumed.yes = given.yes;
     resumed.trace = given.trace;
     return resumed;

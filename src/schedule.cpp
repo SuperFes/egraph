@@ -26,6 +26,31 @@ Schedule::Schedule(const Plan& plan, std::vector<Step> steps, std::optional<std:
     }
 }
 
+std::string_view build_order_name(BuildOrder order) {
+    switch (order) {
+    case BuildOrder::emerge:
+        return "emerge";
+    case BuildOrder::longest:
+        return "longest";
+    case BuildOrder::critical:
+        return "critical";
+    }
+    return "emerge";
+}
+
+std::optional<BuildOrder> build_order_named(std::string_view name) {
+    for (const auto order : {BuildOrder::emerge, BuildOrder::longest, BuildOrder::critical}) {
+        if (build_order_name(order) == name) {
+            return order;
+        }
+    }
+    return std::nullopt;
+}
+
+void Schedule::prefer(std::vector<std::size_t> order) {
+    order_ = std::move(order);
+}
+
 bool Schedule::dependent(std::size_t step) const {
     const auto& merges = plan_.get().merges;
     const auto start = std::get<MergeStep>(steps_.at(step)).merge;
@@ -63,7 +88,8 @@ std::optional<std::size_t> Schedule::next_build() const {
         return std::nullopt;
     }
     std::optional<std::size_t> first;
-    for (std::size_t i = 0; i < steps_.size(); ++i) {
+    for (std::size_t at = 0; at < steps_.size(); ++at) {
+        const auto i = order_.empty() ? at : order_.at(at);
         if (!std::holds_alternative<MergeStep>(steps_.at(i)) || states_.at(i) != State::queued) {
             continue;
         }

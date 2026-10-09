@@ -16,12 +16,22 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
 
 namespace egraph {
+
+// The order builds are tried in when several may start: emerge's (the steps' own), the longest
+// build first, or the build leading the longest chain of builds and merges to the plan's end
+// first, as the estimate foretells them. Either of the last two diverges from emerge.
+enum class BuildOrder : std::uint8_t { emerge, longest, critical };
+
+// "emerge", "longest" or "critical".
+[[nodiscard]] std::string_view build_order_name(BuildOrder order);
+[[nodiscard]] std::optional<BuildOrder> build_order_named(std::string_view name);
 
 // How built packages are let through to merge. With emerge's FEATURES=merge-wait (portage's
 // default) every one waits until no build runs; without it, only those alone marks (the
@@ -44,11 +54,14 @@ class Schedule {
     Schedule(const Plan& plan, std::vector<Step> steps, std::optional<std::uint32_t> jobs,
              MergeWait merge_wait = {});
 
-    // The step whose build may start now, if any: the first not built in the steps' order
-    // that reaches no merge yet to finish, through what each waits for (installed packages
-    // that stay included), but those after it; or, with nothing else running or waiting, the
-    // first. None at the job limit, while what built is let through to merge, or once a step
-    // has failed.
+    // Builds are tried in order (steps, each once), rather than the steps' own.
+    void prefer(std::vector<std::size_t> order);
+
+    // The step whose build may start now, if any: the first not built in the order preferred
+    // (the steps' own unless prefer() said otherwise) that reaches no merge yet to finish,
+    // through what each waits for (installed packages that stay included), but those after it
+    // in the steps' order; or, with nothing else running or waiting, the first. None at the job
+    // limit, while what built is let through to merge, or once a step has failed.
     [[nodiscard]] std::optional<std::size_t> next_build() const;
     void build_started(std::size_t step);
     void build_finished(std::size_t step, bool succeeded);
@@ -115,6 +128,8 @@ class Schedule {
     std::reference_wrapper<const Plan> plan_;
     std::vector<Step> steps_;
     std::optional<std::uint32_t> jobs_;
+    // The steps in the order their builds are tried; empty for the steps' own.
+    std::vector<std::size_t> order_;
     std::vector<State> states_;
     // By merge index, its step.
     std::vector<std::size_t> step_of_merge_;

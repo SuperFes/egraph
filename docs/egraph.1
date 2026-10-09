@@ -571,7 +571,11 @@ for PKGDIR (the source its path) or
 .B binhost
 (the source its name in binrepos.conf, else its URI), and its size; people are told the emerge
 option that would take it. A binhost counts once portage has fetched its index, of which it
-keeps a copy; egraph never fetches one.
+keeps a copy; egraph never fetches one. Where builds start in emerge's order and another
+.B exec \-\-order
+would finish at least a tenth and five minutes sooner,
+.IR "" "order name seconds emerge-seconds" ,
+the order and the plan's seconds in it and in emerge's.
 .TP
 .B \-\-dynamic\-deps
 .TP
@@ -1041,14 +1045,28 @@ another until that has merged, as
 .B emerge
 holds them.
 .TP
+.BR \-\-order " emerge|longest|critical"
+The order builds start in when several may, what each waits for still holding it back:
+.B emerge
+the plan's own, as emerge starts them (the default),
+.B longest
+the longest build first, or
+.B critical
+the build leading the longest chain of builds and merges to the end of the plan first, as the
+build history foretells them (a package it has nothing on counting for nothing). Either of the
+last two differs from emerge. The estimate the plan shows follows it; in emerge's order, a plan
+that another would finish a tenth and five minutes sooner says so (see
+.BR plan ).
+.TP
 .B \-\-resume
 Carry out the last run's targets and options again, after it failed or was cut short: the plan
 is made and verified afresh, then its merges of packages the last run merged, and that are
 installed still, are left out, where a target would be merged again otherwise. The
 .BR \-\-jobs ,
-.B \-\-keep\-going
-and
+.BR \-\-keep\-going ,
 .B \-\-merge\-wait\-scope
+and
+.B \-\-order
 given now replace the last run's; targets and the plan's options cannot be given. Nothing is
 done when the last run finished.
 .TP

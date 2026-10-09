@@ -544,3 +544,35 @@ TEST_CASE("a status display's build tasks are given their expected seconds") {
     CHECK_FALSE(snapshots.at(0).tasks.at(3).expected);
     CHECK(snapshots.at(1).tasks.at(0).expected == 100);
 }
+
+TEST_CASE("builds are ordered by their seconds, or by the longest chain they lead") {
+    // 1 waits for 0; 0 waits for 3, later in the steps' order: a wait the order breaks.
+    const auto [plan, steps] = planned({{3}, {0}, {}, {}});
+    const std::vector<StepCost> costs{cost(10), cost(100), cost(50), cost(60)};
+    using egraph::BuildOrder;
+    CHECK(egraph::build_order(plan, steps, costs, BuildOrder::emerge) ==
+          std::vector<std::size_t>{0, 1, 2, 3});
+    CHECK(egraph::build_order(plan, steps, costs, BuildOrder::longest) ==
+          std::vector<std::size_t>{1, 3, 2, 0});
+    // 0 leads 0 and 1: 10 + 1 + 100 + 1 seconds.
+    CHECK(egraph::build_order(plan, steps, costs, BuildOrder::critical) ==
+          std::vector<std::size_t>{0, 1, 3, 2});
+    // Ties keep the steps' order.
+    const std::vector<StepCost> even{cost(5), cost(5), cost(5), cost(5)};
+    CHECK(egraph::build_order(plan, steps, even, BuildOrder::longest) ==
+          std::vector<std::size_t>{0, 1, 2, 3});
+}
+
+TEST_CASE("the longest build first finishes sooner where emerge's order leaves it last") {
+    const auto [plan, steps] = planned({{}, {}, {}});
+    const std::vector<StepCost> costs{cost(10), cost(10), cost(100)};
+    const auto in = [&](egraph::BuildOrder order) {
+        Schedule schedule{plan, steps, 2};
+        schedule.prefer(egraph::build_order(plan, steps, costs, order));
+        return egraph::estimate_plan(schedule, costs, 8).seconds;
+    };
+    // Both short builds, their merges, then the long one alone.
+    CHECK(in(egraph::BuildOrder::emerge) == Approx(113));
+    CHECK(in(egraph::BuildOrder::longest) < 105);
+    CHECK(in(egraph::BuildOrder::critical) == Approx(in(egraph::BuildOrder::longest)));
+}

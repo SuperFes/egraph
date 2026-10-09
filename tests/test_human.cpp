@@ -486,6 +486,30 @@ TEST_CASE("updates name the long builds a binary package could replace") {
                               "that emerge --getbinpkg would skip for a 12.0 MiB download\n"));
 }
 
+TEST_CASE("updates name the build order that would finish sooner") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{
+                              "a/b-1\tupgrade\ta/b-2\tr",
+                              "\testimate\t2400\t\t1\t0\t2",
+                              "\tadvice\torder\tcritical\t1980\t2400",
+                          },
+                          plain);
+    CHECK(
+        out.str().ends_with("Order: egraph exec --order=critical, the builds leading the "
+                            "longest chains first, would take about 33 min rather than 40 min\n"));
+    std::ostringstream longest;
+    egraph::human_updates(longest,
+                          std::vector<std::string>{
+                              "a/b-1\tupgrade\ta/b-2\tr",
+                              "\testimate\t2400\t\t1\t0\t2",
+                              "\tadvice\torder\tlongest\t1980\t2400",
+                          },
+                          plain);
+    CHECK(longest.str().ends_with("Order: egraph exec --order=longest, the longest builds first, "
+                                  "would take about 33 min rather than 40 min\n"));
+}
+
 TEST_CASE("an estimate's seconds read as roughly as they are known") {
     CHECK(egraph::rough_duration(0.2) == "1 s");
     CHECK(egraph::rough_duration(40.4) == "40 s");

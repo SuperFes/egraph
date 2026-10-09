@@ -1290,9 +1290,12 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
     - 20f4b (done): the advice: a planned build of ten minutes or more, with a binary whose
       USE matches as binpkg-respect-use matches it and that nothing else refuses, held to what
       `emerge --pretend --getbinpkg` takes.
-- 20g (planned): scheduling: among the builds ready at once, the longest first or the critical
+- 20g (done): scheduling: among the builds ready at once, the longest first or the critical
   path first, beside emerge's order; a divergence from emerge, so behind an option and
-  recorded in `docs/upstream-notes.md`.
+  recorded in `docs/upstream-notes.md`. `exec --order=longest|critical`, the estimate and
+  countdown following it, and a plan in emerge's order told of one a tenth and five minutes
+  sooner. emerge's stays the default until real histories (20h) show another finishes sooner;
+  then it becomes the default.
 - 20h (planned): importing earlier build times from `emerge.log` (read only, marked as
   imported, coarser), never required.
 - 20i (planned): space: what removing a package frees with the orphans it leaves (the vdb's

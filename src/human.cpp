@@ -1094,6 +1094,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     std::optional<Fields> memory;
     std::vector<Fields> tmpfs;
     std::vector<Fields> binaries;
+    std::optional<Fields> order;
     for (std::size_t i = rows.size(); i-- > 0;) {
         const auto& row = rows.at(i);
         if (row.size() < 3 || !row.at(0).empty() || row.at(1) != "advice") {
@@ -1111,6 +1112,8 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             tmpfs.emplace(tmpfs.begin(), row.begin() + 3, row.end());
         } else if (row.at(2) == "binary" && row.size() == 8) {
             binaries.emplace(binaries.begin(), row.begin() + 3, row.end());
+        } else if (row.at(2) == "order" && row.size() == 6) {
+            order = Fields(row.begin() + 3, row.end());
         }
         rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
     }
@@ -1679,6 +1682,18 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             "to package.env, with env/notmpfs.conf setting PORTAGE_TMPDIR=\"/var/tmp/notmpfs\"",
             too_large.at(0), bytes(1), bytes(3), too_large.at(2), parts.category, parts.name);
         out << paint("Tmpfs:", Tone::heading) << ' ' << paint(text, Tone::note) << '\n';
+    }
+    // name, seconds, emerge's seconds
+    if (order) {
+        const auto seconds = [&](std::size_t field) {
+            return rough_duration(number_field(order->at(field)).value_or(0));
+        };
+        const auto text = std::format(
+            "egraph exec --order={}, {}, would take about {} rather than {}", order->at(0),
+            order->at(0) == "critical" ? "the builds leading the longest chains first"
+                                       : "the longest builds first",
+            seconds(1), seconds(2));
+        out << paint("Order:", Tone::heading) << ' ' << paint(text, Tone::note) << '\n';
     }
     // cpv, seconds, kind, source, bytes
     for (const auto& binary : binaries) {

@@ -427,6 +427,54 @@ def test_a_plan_says_how_long_it_will_take_from_the_history(parallel, tmp_path):
     assert int(seconds) >= together - 1
 
 
+def test_exec_starts_the_builds_its_order_puts_first(parallel, tmp_path):
+    """With a long build last in emerge's order, a plan is told of the order that finishes
+    sooner, and exec --order starts that build first, as the history foretells it."""
+    system, machine = parallel
+    age(system.playground.eroot)
+    ran = system.egraph("exec", "--yes", "-j2", "app-misc/top")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    records = history(system)
+    path = os.path.join(system.playground.eroot, "var", "lib", "egraph", "builds.jsonl")
+    with open(path, "w") as f:
+        # also and base first, as emerge orders them, leave side to build after them.
+        lengths = {
+            "app-misc/also-1": 400,
+            "app-misc/base-1": 400,
+            "app-misc/side-1": 2000,
+        }
+        for record in records:
+            record["build_seconds"] = lengths.get(record["cpv"], 10)
+            record["jobs"] = 2
+            f.write(json.dumps(record) + "\n")
+    targets = ["=" + r["cpv"] for r in records]
+    plan = system.egraph("plan", *targets)
+    assert plan.returncode == 0, plan.stdout + plan.stderr
+    (order,) = [a[1:] for a in advice(plan.stdout) if a[0] == "order"]
+    name, seconds, emerge_seconds = order
+    assert name in ("critical", "longest")
+    assert int(seconds) <= int(emerge_seconds) - 300
+    human = system.egraph("--layout", "human", "plan", *targets)
+    assert f"Order: egraph exec --order={name}" in human.stdout
+    traced = tmp_path / "trace"
+    run = system.egraph(
+        "exec", "--yes", "-j2", "--order=longest", "--trace", str(traced), *targets
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    trace = read_trace(traced)
+    started = [cpv for what, cpv in trace if what == "build-start"]
+    assert started[0] == "app-misc/side-1"
+    assert sorted(started) == sorted(r["cpv"] for r in records)
+    # Its own order planned, a run says nothing of another.
+    shown = subprocess.run(
+        system.command("exec", "--order=longest", *targets),
+        input="n\n",
+        capture_output=True,
+        text=True,
+    )
+    assert not [a for a in advice(shown.stdout) if a[0] == "order"]
+
+
 # built and fresh inherit the same eclass, and other none.
 SIMILAR_ECLASSES = {"slow": ['S="${WORKDIR}"', "src_compile() { sleep 2; }"]}
 SIMILAR = {

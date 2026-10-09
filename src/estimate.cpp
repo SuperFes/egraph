@@ -10,6 +10,7 @@
 #include <iterator>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <ranges>
 #include <system_error>
 #include <unordered_map>
@@ -337,6 +338,59 @@ std::optional<PackageEstimate> BuildKnowledge::estimate(const BuildWanted& wante
         estimate.merge_seconds = median(merges);
     }
     return estimate;
+}
+
+std::vector<std::size_t> build_order(const Plan& plan, std::span<const Step> steps,
+                                     std::span<const StepCost> costs, BuildOrder order) {
+    std::vector<std::size_t> found(steps.size());
+    std::ranges::iota(found, std::size_t{0});
+    if (order == BuildOrder::emerge) {
+        return found;
+    }
+    const auto cost = [&](std::size_t step) {
+        if (!std::holds_alternative<MergeStep>(steps.subspan(step).front()) ||
+            step >= costs.size()) {
+            return 0.0;
+        }
+        const auto& each = costs.subspan(step).front();
+        return each.build_seconds + (order == BuildOrder::critical ? each.merge_seconds : 0.0);
+    };
+    std::vector<double> priority(steps.size());
+    if (order == BuildOrder::longest) {
+        for (std::size_t step = 0; step < steps.size(); ++step) {
+            priority.at(step) = cost(step);
+        }
+    } else {
+        // By merge, its step; then by step, the later steps waiting for it.
+        constexpr auto none = std::numeric_limits<std::size_t>::max();
+        std::vector<std::size_t> step_of(plan.merges.size(), none);
+        for (std::size_t step = 0; step < steps.size(); ++step) {
+            if (const auto* merge = std::get_if<MergeStep>(&steps.subspan(step).front())) {
+                step_of.at(merge->merge) = step;
+            }
+        }
+        std::vector<std::vector<std::size_t>> waiting(steps.size());
+        for (std::size_t step = 0; step < steps.size(); ++step) {
+            if (const auto* merge = std::get_if<MergeStep>(&steps.subspan(step).front())) {
+                for (const auto& wait : plan.merges.at(merge->merge).waits) {
+                    const auto other = step_of.at(wait.merge);
+                    if (other != none && other < step) {
+                        waiting.at(other).push_back(step);
+                    }
+                }
+            }
+        }
+        for (std::size_t step = steps.size(); step-- > 0;) {
+            double after = 0;
+            for (const auto later : waiting.at(step)) {
+                after = std::max(after, priority.at(later));
+            }
+            priority.at(step) = cost(step) + after;
+        }
+    }
+    std::ranges::stable_sort(found, std::greater<>{},
+                             [&priority](std::size_t step) { return priority.at(step); });
+    return found;
 }
 
 PlanEstimate estimate_plan(Schedule schedule, std::span<const StepCost> costs, unsigned cores,

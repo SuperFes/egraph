@@ -82,6 +82,19 @@ struct BinaryAdvice {
     bool operator==(const BinaryAdvice&) const = default;
 };
 
+// A plan run in emerge's order is told of another that would finish sooner, once that takes no
+// more than this share of the time and saves at least order_advice_seconds.
+inline constexpr double order_advice_share = 0.9;
+inline constexpr double order_advice_seconds = 300;
+
+struct OrderAdvice {
+    BuildOrder order = BuildOrder::critical;
+    // The plan's seconds in that order, and in emerge's.
+    double seconds = 0;
+    double emerge_seconds = 0;
+    bool operator==(const OrderAdvice&) const = default;
+};
+
 struct PlanAdvice {
     // The seconds the builds' tests take, summed, and the costliest of them first; none when
     // they take less than test_advice_seconds.
@@ -90,6 +103,7 @@ struct PlanAdvice {
     std::optional<MemoryAdvice> memory{};
     std::vector<TmpfsAdvice> tmpfs{};
     std::vector<BinaryAdvice> binaries{};
+    std::optional<OrderAdvice> order{};
     bool operator==(const PlanAdvice&) const = default;
 };
 
@@ -135,6 +149,13 @@ tmpfs_advice(std::span<const BuildStep> built, std::span<const StepCost> costs,
                                                       std::span<const BuildStep> built,
                                                       std::span<const StepCost> costs);
 
+// The order other than emerge's that would run the plan (its steps, at jobs, none for a token a
+// core, on a system of cores) soonest, as estimated, where it beats estimate, the plan's in
+// emerge's order, by order_advice_share and order_advice_seconds; none otherwise.
+[[nodiscard]] std::optional<OrderAdvice>
+order_advice(const Plan& plan, std::span<const Step> steps, std::span<const StepCost> costs,
+             unsigned cores, std::optional<std::uint32_t> jobs, const PlanEstimate& estimate);
+
 // For scripts, after a plan's estimate line, where advised: "<TAB>advice<TAB>tests<TAB>seconds",
 // then "<TAB>advice<TAB>test<TAB>cpv<TAB>seconds" for each package named, seconds whole;
 // "<TAB>advice<TAB>memory<TAB>peak<TAB>total<TAB>jobs<TAB>seconds<TAB>jobs peak<TAB>largest
@@ -142,7 +163,8 @@ tmpfs_advice(std::span<const BuildStep> built, std::span<const StepCost> costs,
 // when there are none, as is the floor; and "<TAB>advice<TAB>tmpfs<TAB>cpv<TAB>bytes<TAB>tmpdir
 // <TAB>its size" for each build too large for its tmpfs; and "<TAB>advice<TAB>binary<TAB>cpv
 // <TAB>seconds<TAB>local or binhost<TAB>source<TAB>bytes" for each build a binary could replace,
-// seconds whole.
+// seconds whole; and "<TAB>advice<TAB>order<TAB>name<TAB>seconds<TAB>emerge's seconds", seconds
+// whole, where another order would finish sooner.
 [[nodiscard]] std::vector<std::string> advice_lines(const PlanAdvice& advice);
 
 // Whether a plan's line is one of advice_lines'.

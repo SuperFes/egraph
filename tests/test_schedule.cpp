@@ -688,3 +688,28 @@ TEST_CASE("once a scope step merges before what it needs at run time, builds wai
     run(true);
     run(false);
 }
+
+TEST_CASE("builds are tried in the order preferred, what they wait for still holding them back") {
+    auto [plan, steps] = planned({{}, {}, {1}, {}});
+    egraph::Schedule schedule{plan, steps, 2};
+    schedule.prefer({3, 2, 1, 0});
+    build(schedule, 3);
+    // 2 waits for 1, which is not built.
+    build(schedule, 1);
+    CHECK(schedule.next_build() == std::nullopt);
+    schedule.build_finished(1, true);
+    schedule.build_finished(3, true);
+    merge(schedule, 1);
+    merge(schedule, 3);
+    build(schedule, 2);
+    build(schedule, 0);
+}
+
+TEST_CASE("build orders go by their names") {
+    for (const auto order :
+         {egraph::BuildOrder::emerge, egraph::BuildOrder::longest, egraph::BuildOrder::critical}) {
+        CHECK(egraph::build_order_named(egraph::build_order_name(order)) == order);
+    }
+    CHECK(egraph::build_order_name(egraph::BuildOrder::critical) == "critical");
+    CHECK_FALSE(egraph::build_order_named("fastest"));
+}

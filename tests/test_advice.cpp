@@ -281,3 +281,29 @@ TEST_CASE("a long build a binary could replace is named, with the binary's sourc
                                    "\tadvice\tbinary\tapp-misc/d-1\t600\tlocal\t/var/cache/"
                                    "binpkgs\t7"});
 }
+
+TEST_CASE("a plan in emerge's order is told of one that would finish well sooner") {
+    const auto [plan, steps, built] = apart(3);
+    std::vector<StepCost> costs{holding(1), holding(1), holding(1)};
+    costs.at(0).build_seconds = 400;
+    costs.at(1).build_seconds = 400;
+    costs.at(2).build_seconds = 2000;
+    const auto emerge = egraph::estimate_plan(egraph::Schedule{plan, steps, 2}, costs, 8);
+    const auto advice = egraph::order_advice(plan, steps, costs, 8, 2, emerge);
+    REQUIRE(advice);
+    CHECK(advice->order == egraph::BuildOrder::critical);
+    CHECK(advice->emerge_seconds == emerge.seconds);
+    CHECK(advice->seconds < emerge.seconds - 300);
+    CHECK(egraph::advice_lines(PlanAdvice{
+              .order = egraph::OrderAdvice{.seconds = 2001.6, .emerge_seconds = 2402}}) ==
+          std::vector<std::string>{"\tadvice\torder\tcritical\t2002\t2402"});
+    // Too little saved to say: a tenth of the time, but not five minutes.
+    costs.at(0).build_seconds = 40;
+    costs.at(1).build_seconds = 40;
+    costs.at(2).build_seconds = 200;
+    const auto small = egraph::estimate_plan(egraph::Schedule{plan, steps, 2}, costs, 8);
+    CHECK_FALSE(egraph::order_advice(plan, steps, costs, 8, 2, small));
+    // One at a time, no order is sooner.
+    const auto alone = egraph::estimate_plan(egraph::Schedule{plan, steps, 1}, costs, 8);
+    CHECK_FALSE(egraph::order_advice(plan, steps, costs, 8, 1, alone));
+}
