@@ -329,6 +329,10 @@ struct Tried {
 using TryResult = std::expected<Tried, std::string>;
 // Tries lines as with_what_if does, evaluating the cps they newly reach.
 using Trier = std::function<Job<TryResult>(const TryRequest&)>;
+// What saving lines would write (saved_files), and writing it (write_saved).
+using SavePreviewer = std::function<std::expected<std::vector<SavedFile>, std::string>(
+    const std::vector<WhatIfLine>&)>;
+using SaveWriter = std::function<std::expected<void, std::string>(const std::vector<SavedFile>&)>;
 
 // What the interface asks of the world outside it: run() calls these, the app never does.
 struct Services {
@@ -358,6 +362,8 @@ struct Services {
     NewsMarker mark_read{};
     TerminalProgram dispatch_conf{};
     Trier try_lines{};
+    SavePreviewer preview_save{};
+    SaveWriter write_save{};
 };
 
 struct Watched;
@@ -714,6 +720,18 @@ class App {
     // Whether the plans rebuild them, as --rebuild-env.
     [[nodiscard]] bool rebuild_env() const { return rebuild_env_; }
     [[nodiscard]] bool can_undo() const { return !undo_.empty(); }
+    // The lines s asks to save, for run() to show what that writes.
+    [[nodiscard]] const std::optional<std::vector<WhatIfLine>>& save_preview_requested() const {
+        return saving_;
+    }
+    // Asks whether to write the files.
+    void finish_save_preview(std::expected<std::vector<SavedFile>, std::string> files);
+    // The files saving writes, once confirmed, for run() to write.
+    [[nodiscard]] const std::optional<std::vector<SavedFile>>& save_requested() const {
+        return writing_;
+    }
+    // Saved, the lines are gone, and the stores refresh with the configuration.
+    void finish_save(const std::expected<void, std::string>& written);
     [[nodiscard]] TryRequest start_try();
     // Shows the stores tried, each view where it was, unless the lines changed meanwhile.
     void finish_try(TryResult result);
@@ -915,6 +933,9 @@ class App {
     std::vector<std::vector<WhatIfLine>> undo_;
     std::vector<EnvChange> env_changes_;
     bool rebuild_env_ = false;
+    std::optional<std::vector<WhatIfLine>> saving_;
+    std::optional<std::vector<SavedFile>> confirming_save_;
+    std::optional<std::vector<SavedFile>> writing_;
     std::optional<StatusShown> status_;
     std::optional<NoticesShown> notices_;
     bool on_notices_ = false;
@@ -2592,6 +2613,13 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
             ran == Polled::finished || planned == Polled::finished ||
             tried_lines == Polled::finished || found_stale) {
             // Drawn below before any key is read.
+        } else if (const auto& lines = app.save_preview_requested()) {
+            app.finish_save_preview(services.preview_save
+                                        ? services.preview_save(*lines)
+                                        : std::unexpected(std::string{"no way to save"}));
+        } else if (const auto& files = app.save_requested()) {
+            app.finish_save(services.write_save ? services.write_save(*files)
+                                                : std::unexpected(std::string{"no way to save"}));
         } else if (const auto change = app.steve_change_requested()) {
             app.finish_steve_change(services.set_steve
                                         ? services.set_steve(change->setting, change->value)

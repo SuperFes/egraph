@@ -2076,6 +2076,69 @@ TEST_CASE("env lines list what they build otherwise, which r rebuilds in the pla
     CHECK(contains(text, "rebuilt in the plans; r leaves them out"));
 }
 
+TEST_CASE("s saves the lines once the files they go to are shown and confirmed") {
+    const egraph::test::TempDir config;
+    egraph::tui::App app{rebuilt(), true};
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    select_flag(app, "x");
+    app.handle(character(U' '));
+    try_and_plan(app, config.path());
+    app.handle(key(KeyKind::escape));
+    REQUIRE(app.on_what_if());
+    const egraph::tui::Services services{
+        .check = no_check,
+        .try_lines = trying_under(config.path()),
+        .preview_save =
+            [&](const std::vector<egraph::WhatIfLine>& lines) {
+                return egraph::saved_files(config.path(), lines);
+            },
+        .write_save =
+            [](const std::vector<egraph::SavedFile>& files) { return egraph::write_saved(files); }};
+
+    // Shown, and declined: nothing is written and the lines stay.
+    app.handle(character(U's'));
+    REQUIRE(app.save_preview_requested().has_value());
+    app.finish_save_preview(services.preview_save(*app.save_preview_requested()));
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "Save the lines tried?");
+    CHECK(app.dialog()->lines ==
+          std::vector<std::string>{(config.path() / "package.use" / "egraph").string() + ":",
+                                   "  app-misc/a -x"});
+    app.handle(character(U'n'));
+    CHECK_FALSE(app.save_requested().has_value());
+    CHECK(app.what_if().size() == 1);
+
+    FakeScreen screen{30, 100, {character(U's'), character(U'y')}};
+    egraph::tui::run(screen, app, ascii, services);
+    CHECK(std::filesystem::exists(config.path() / "package.use" / "egraph"));
+    CHECK(app.what_if().empty());
+    CHECK_FALSE(app.can_undo());
+    CHECK_FALSE(app.on_what_if());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "Saved");
+}
+
+TEST_CASE("a save that cannot be written says why, and keeps the lines") {
+    egraph::tui::App app{rebuilt(), true};
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    select_flag(app, "x");
+    app.handle(character(U' '));
+    app.handle(key(KeyKind::escape));
+    app.handle(character(U's'));
+    REQUIRE(app.save_preview_requested().has_value());
+    app.finish_save_preview(std::vector<egraph::SavedFile>{
+        {.path = "/etc/portage/package.use/egraph", .text = "app-misc/a -x\n"}});
+    app.handle(character(U'y'));
+    REQUIRE(app.save_requested().has_value());
+    app.finish_save(std::unexpected(std::string{"cannot write /etc/portage/package.use/egraph"}));
+    CHECK_FALSE(app.save_requested().has_value());
+    CHECK(app.what_if().size() == 1);
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "Not saved");
+}
+
 TEST_CASE("the check compares installed stores, and a preview keeps the evaluated one") {
     egraph::tui::App app{both(), true};
     std::size_t checked_nodes = 0;

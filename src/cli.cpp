@@ -3574,7 +3574,18 @@ Exit execute(const Tui& tui_command, Session& session, const Invocation& invocat
          .try_lines =
              [&invocation, &session](const tui::TryRequest& request) {
                  return background_try(invocation, session, request);
-             }},
+             },
+         .preview_save =
+             [&invocation](const std::vector<WhatIfLine>& lines) {
+                 return saved_files(config_root(invocation) / "etc/portage", lines);
+             },
+         .write_save = [](const std::vector<SavedFile>& files) -> std::expected<void, std::string> {
+             auto written = write_saved(files);
+             if (!written && !os::is_root()) {
+                 return std::unexpected(written.error() + "; run egraph as root");
+             }
+             return written;
+         }},
         warnings, tui_command.notices, err);
 }
 

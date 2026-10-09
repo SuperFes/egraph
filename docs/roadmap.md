@@ -24,7 +24,7 @@ Update the status column as steps land.
 | 16 | Daily use in place of emerge | done |
 | 17 | `egraphd`, the service | done |
 | 18 | Explaining and checking the configuration | planned |
-| 19 | What-if | planned |
+| 19 | What-if | done |
 | 20 | Build knowledge | planned |
 | 21 | The fork's speedups upstream | planned |
 | 22 | Portage's tools in egraph's space | to map out |
@@ -1182,7 +1182,7 @@ changes (undo, save) and takes typed lines.
   - 19e4 (done): the what-if page: the lines pending, dropped with `x`, undone with `u`, typed
     with `a` (package.use) or `e` (package.env), as they are on a package's page, there naming
     it; the set's plan's `tried:` count; the env rebuilds, `r` planning them.
-- 19f: saving to egraph's files. Decided with the user (2026-10-08): egraph's own files keep
+- 19f (done): saving to egraph's files. Decided with the user (2026-10-08): egraph's own files keep
   one line per atom, a flag's new token replacing its old one (and an env file's), a line left
   empty dropped; where `package.use` (`package.env`) is the user's single file, lines are only
   appended. `egraph --use LINE --env LINE save` writes them, as the what-if page's `s` does
@@ -1191,7 +1191,7 @@ changes (undo, save) and takes typed lines.
     through a hidden file beside it, which portage passes over.
   - 19f2 (done): the `save` command; held to portage's USE, emerge's plans and its env
     rebuilds with the files it saves, on every scenario (the what-if tests save through it).
-  - 19f3: the what-if page's `s`.
+  - 19f3 (done): the what-if page's `s`, through `tui::SavePreviewer` and `tui::SaveWriter`.
 
 ## 20. Build knowledge
 

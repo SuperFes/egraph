@@ -358,9 +358,9 @@ struct Affected {
 using Command =
     std::variant<std::monostate, Deps, Rdeps, Why, Match, UseCommand, Soname, Broken, Search,
                  Versions, ConfigCommand, Blockers, Orphans, Updates, PlanCommand, Update, Install,
-                 Exec, Remove, Select, Deselect, Save, Sync, NoticesCommand, Export, Stats, LogCommand,
-                 Diff, HistoryCommand, StatusCommand, Rebuild, Refresh, Watch, Check, Notify, Tui,
-                 Shell, Complete, Affected>;
+                 Exec, Remove, Select, Deselect, Save, Sync, NoticesCommand, Export, Stats,
+                 LogCommand, Diff, HistoryCommand, StatusCommand, Rebuild, Refresh, Watch, Check,
+                 Notify, Tui, Shell, Complete, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

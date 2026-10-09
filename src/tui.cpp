@@ -1463,6 +1463,8 @@ void App::handle_what_if(const Key& key) {
     } else if (is(key, U'r') && !env_changes_.empty()) {
         rebuild_env_ = !rebuild_env_;
         replan();
+    } else if (is(key, U's')) {
+        saving_ = lines_;
     } else if (is_move(key)) {
         move(what_if_cursor_, lines_.size(), key, height_);
     }
@@ -1685,7 +1687,11 @@ void App::handle_dialog(const Key& key) {
         }
         return;
     }
-    if (is(key, U'y') || is(key, U'Y')) {
+    if ((is(key, U'y') || is(key, U'Y')) && confirming_save_) {
+        dialog_.reset();
+        writing_ = std::move(confirming_save_);
+        confirming_save_.reset();
+    } else if (is(key, U'y') || is(key, U'Y')) {
         dialog_.reset();
         if (!confirming_) {
             done_ = true;
@@ -1710,7 +1716,54 @@ void App::handle_dialog(const Key& key) {
                key.kind == KeyKind::escape) {
         dialog_.reset();
         confirming_.reset();
+        confirming_save_.reset();
     }
+}
+
+void App::finish_save_preview(std::expected<std::vector<SavedFile>, std::string> files) {
+    const auto lines = std::move(saving_);
+    saving_.reset();
+    if (!files) {
+        show({.error = true, .title = "Not saved", .lines = {std::move(files.error())}});
+        return;
+    }
+    // Each file, and its lines for the atoms saved, as they will read.
+    std::vector<std::string> shown;
+    for (const auto& file : *files) {
+        const auto kind = file.path.string().contains("package.use") ? WhatIfLine::File::use
+                                                                     : WhatIfLine::File::env;
+        shown.push_back(std::format("{}:", file.path.string()));
+        for (const auto part : std::views::split(std::string_view{file.text}, '\n')) {
+            const std::string_view text{part};
+            const auto atom = text.substr(0, text.find(' '));
+            if (lines && std::ranges::any_of(*lines, [&](const WhatIfLine& line) {
+                    return line.file == kind && line.atom == atom;
+                })) {
+                shown.push_back(std::format("  {}", text));
+            }
+        }
+    }
+    confirming_save_ = std::move(*files);
+    show({.error = false,
+          .title = "Save the lines tried?",
+          .lines = std::move(shown),
+          .question = true});
+}
+
+void App::finish_save(const std::expected<void, std::string>& written) {
+    auto files = std::move(writing_);
+    writing_.reset();
+    if (!written) {
+        show({.error = true, .title = "Not saved", .lines = {written.error()}});
+        return;
+    }
+    std::vector<std::string> paths;
+    for (const auto& file : files.value_or(std::vector<SavedFile>{})) {
+        paths.push_back(file.path.string());
+    }
+    undo_.clear();
+    set_lines({}, false);
+    show({.error = false, .title = "Saved", .lines = std::move(paths)});
 }
 
 void App::act(Action action) {
@@ -3419,7 +3472,8 @@ std::vector<Hint> what_if_keys(const App& app, const Glyphs& glyph) {
                            {.key = "x", .meaning = "drop", .bar = true},
                            {.key = "u", .meaning = "undo", .bar = app.can_undo()},
                            {.key = "a", .meaning = "add a package.use line", .bar = true},
-                           {.key = "e", .meaning = "add a package.env line"}};
+                           {.key = "e", .meaning = "add a package.env line"},
+                           {.key = "s", .meaning = "save", .bar = true}};
     if (!app.env_changes().empty()) {
         keys.push_back({.key = "r",
                         .meaning = app.rebuild_env() ? "leave the env rebuilds out"
