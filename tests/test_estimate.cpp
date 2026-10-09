@@ -11,6 +11,9 @@ using Catch::Approx;
 using egraph::BuildKnowledge;
 using egraph::BuildRecord;
 using egraph::PackageEstimate;
+using egraph::PlanEstimate;
+using egraph::Schedule;
+using egraph::StepCost;
 
 namespace {
 
@@ -30,6 +33,37 @@ BuildRecord beside(BuildRecord record, std::uint32_t others, std::optional<doubl
         record.system = egraph::SystemShare{.cpu_busy = busy};
     }
     return record;
+}
+
+// A plan of merges in order, each waiting for the merges listed, and its steps.
+struct Planned {
+    egraph::Plan plan;
+    std::vector<egraph::Step> steps;
+};
+
+Planned planned(const std::vector<std::vector<std::uint32_t>>& waits) {
+    Planned found;
+    for (std::uint32_t i = 0; i < waits.size(); ++i) {
+        egraph::Merge merge;
+        for (const auto other : waits.at(i)) {
+            egraph::WaitKinds kinds;
+            kinds.run = true;
+            merge.waits.push_back({.merge = other, .kinds = kinds});
+        }
+        found.plan.merges.push_back(std::move(merge));
+        found.plan.order.push_back(i);
+        found.steps.emplace_back(egraph::MergeStep{.merge = i, .blockers = {}, .world = {}});
+    }
+    return found;
+}
+
+StepCost cost(double seconds, double parallelism = 1,
+              std::optional<std::uint64_t> memory = std::nullopt) {
+    return {.build_seconds = seconds,
+            .parallelism = parallelism,
+            .peak_memory = memory,
+            .merge_seconds = 1,
+            .known = true};
 }
 
 } // namespace
@@ -121,4 +155,86 @@ TEST_CASE("a package's parallelism is no more than the system's cores") {
     const auto estimate = idle.estimate("app-misc/a-1", 4);
     CHECK(estimate->seconds == 100);
     CHECK(estimate->parallelism == 0);
+}
+
+TEST_CASE("a plan's builds that wait for each other add up, merges and all") {
+    const auto [plan, steps] = planned({{}, {0}, {1}});
+    const std::vector costs{cost(10), cost(20), cost(30)};
+    CHECK(egraph::estimate_plan(Schedule{plan, steps, std::nullopt}, costs, 4) ==
+          PlanEstimate{.seconds = 63, .known = 3, .finished = {11, 32, 63}});
+}
+
+TEST_CASE("builds beside each other take the longest, merging once none runs") {
+    const auto [plan, steps] = planned({{}, {}, {}});
+    const std::vector costs{cost(10, 2, 100), cost(20, 2, 200), cost(30, 2)};
+    const auto estimate = egraph::estimate_plan(Schedule{plan, steps, 3}, costs, 8);
+    CHECK(estimate.seconds == 33);
+    CHECK(estimate.finished == std::vector<std::optional<double>>{31, 32, 33});
+    // The peaks known, of the builds at once.
+    CHECK(estimate.peak_memory == 300U);
+    // Without merge-wait, each merges once built.
+    const auto eager =
+        egraph::estimate_plan(Schedule{plan, steps, 3, {.feature = false}}, costs, 8);
+    CHECK(eager.finished == std::vector<std::optional<double>>{11, 21, 31});
+    // One at a time.
+    CHECK(egraph::estimate_plan(Schedule{plan, steps, 1}, costs, 8).seconds == 63);
+}
+
+TEST_CASE("builds wanting more cores than the system has share them") {
+    const auto [plan, steps] = planned({{}, {}});
+    const std::vector costs{cost(10, 4), cost(10, 4)};
+    CHECK(egraph::estimate_plan(Schedule{plan, steps, 2}, costs, 4).seconds == Approx(22));
+    CHECK(egraph::estimate_plan(Schedule{plan, steps, 2}, costs, 8).seconds == Approx(12));
+    // A build that sleeps keeps its pace.
+    const std::vector sleepy{cost(10, 4), cost(10, 4), cost(10, 0)};
+    const auto [three, three_steps] = planned({{}, {}, {}});
+    const auto estimate =
+        egraph::estimate_plan(Schedule{three, three_steps, 3, {.feature = false}}, sleepy, 4);
+    CHECK(estimate.finished.at(2) == Approx(11));
+}
+
+TEST_CASE("a jobserver's tokens hold builds back unless one would run alone") {
+    const auto [plan, steps] = planned({{}, {}});
+    const std::vector costs{cost(10, 1, 100), cost(10, 1, 200)};
+    const auto gated = egraph::estimate_plan(Schedule{plan, steps, std::nullopt}, costs, 4, 1);
+    CHECK(gated.seconds == 22);
+    CHECK(gated.peak_memory == 200U);
+    CHECK(egraph::estimate_plan(Schedule{plan, steps, std::nullopt}, costs, 4, 2).seconds == 12);
+    CHECK(egraph::estimate_plan(Schedule{plan, steps, std::nullopt}, costs, 4, 0).seconds == 22);
+}
+
+TEST_CASE("steps never built here cost nothing and are counted apart") {
+    const auto [plan, steps] = planned({{}, {0}});
+    const std::vector costs{StepCost{}, cost(10)};
+    const auto estimate = egraph::estimate_plan(Schedule{plan, steps, 2}, costs, 4);
+    CHECK(estimate.seconds == 11);
+    CHECK(estimate.known == 1);
+    CHECK(estimate.unknown == 1);
+    CHECK_FALSE(estimate.peak_memory);
+}
+
+TEST_CASE("a run under way is estimated from where it stands") {
+    const auto [plan, steps] = planned({{}, {0}, {1}});
+    const std::vector costs{cost(10), cost(20), cost(30)};
+    Schedule schedule{plan, steps, 2};
+    REQUIRE(schedule.next_build() == 0);
+    schedule.build_started(0);
+    schedule.build_finished(0, true);
+    REQUIRE(schedule.next_merge() == 0);
+    schedule.merge_started(0);
+    schedule.merge_finished(0, true);
+    REQUIRE(schedule.next_build() == 1);
+    schedule.build_started(1);
+    const std::vector<egraph::RunningStep> running{{.step = 1, .merging = false, .elapsed = 15}};
+    const auto estimate = egraph::estimate_plan(schedule, costs, 4, std::nullopt, running);
+    CHECK(estimate == PlanEstimate{.seconds = 37, .known = 2, .finished = {std::nullopt, 6, 37}});
+    // Past its estimate: done any moment.
+    const std::vector<egraph::RunningStep> late{{.step = 1, .merging = false, .elapsed = 50}};
+    CHECK(egraph::estimate_plan(schedule, costs, 4, std::nullopt, late).finished.at(1) == 1);
+    // Merging.
+    schedule.build_finished(1, true);
+    REQUIRE(schedule.next_merge() == 1);
+    schedule.merge_started(1);
+    const std::vector<egraph::RunningStep> merging{{.step = 1, .merging = true, .elapsed = 0.5}};
+    CHECK(egraph::estimate_plan(schedule, costs, 4, std::nullopt, merging).seconds == 31.5);
 }

@@ -1,6 +1,7 @@
 #pragma once
 
-// Estimates from the build history: how long a package's next build takes, from its own builds.
+// Estimates from the build history: how long a package's next build takes, from its own builds,
+// and a plan from its schedule run ahead with those.
 
 #include "builds.hpp"
 
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -52,5 +54,48 @@ class BuildKnowledge {
   private:
     std::map<std::string, std::vector<BuildRecord>, std::less<>> by_cp_;
 };
+
+// What a step costs the estimate: a merge step's build and merge, from its package's estimate
+// where it has one; an uninstall's run, as merge_seconds.
+struct StepCost {
+    double build_seconds = 0;
+    double parallelism = 1;
+    std::optional<std::uint64_t> peak_memory{};
+    double merge_seconds = 0;
+    // From the package's own builds.
+    bool known = false;
+    bool operator==(const StepCost&) const = default;
+};
+
+// A step running as the estimate starts, building or merging, and its seconds so far.
+struct RunningStep {
+    std::size_t step = 0;
+    bool merging = false;
+    double elapsed = 0;
+};
+
+struct PlanEstimate {
+    // From the start until the last step finishes.
+    double seconds = 0;
+    // The most memory the builds running at once held, of those whose peaks are known.
+    std::optional<std::uint64_t> peak_memory{};
+    // Of the merge steps not done, those whose packages were built here before and those not.
+    std::size_t known = 0;
+    std::size_t unknown = 0;
+    // By step, the seconds from the start until it merged or uninstalled; none for one already
+    // done or never reached.
+    std::vector<std::optional<double>> finished{};
+    bool operator==(const PlanEstimate&) const = default;
+};
+
+// The plan run ahead on a clock of its own, from schedule as it stands, the steps running
+// carried on: each build taking its seconds when the parallelism of those beside it fits the
+// cores, and slowed alike when it does not; merges and uninstalls one at a time, as the schedule
+// lets them. With tokens, no more builds than that run at once unless one would run alone, as a
+// jobserver gates them.
+[[nodiscard]] PlanEstimate estimate_plan(Schedule schedule, std::span<const StepCost> costs,
+                                         unsigned cores,
+                                         std::optional<std::uint32_t> tokens = std::nullopt,
+                                         std::span<const RunningStep> running = {});
 
 } // namespace egraph

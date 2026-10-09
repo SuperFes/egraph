@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <format>
 #include <functional>
+#include <limits>
 #include <ranges>
+#include <variant>
 
 namespace egraph {
 
@@ -108,6 +110,95 @@ std::optional<PackageEstimate> BuildKnowledge::estimate(std::string_view cpv,
     if (!merges.empty()) {
         estimate.merge_seconds = median(merges);
     }
+    return estimate;
+}
+
+PlanEstimate estimate_plan(Schedule schedule, std::span<const StepCost> costs, unsigned cores,
+                           std::optional<std::uint32_t> tokens,
+                           std::span<const RunningStep> running) {
+    struct Going {
+        std::size_t step;
+        bool merging;
+        // Seconds left: a build's at its own pace, a merge's as they pass.
+        double left;
+    };
+    const auto steps = schedule.steps().size();
+    const std::vector<StepCost> cost_of(costs.begin(), costs.end());
+    PlanEstimate estimate{.finished = std::vector<std::optional<double>>(steps)};
+    for (std::size_t step = 0; step < steps; ++step) {
+        if (std::holds_alternative<MergeStep>(schedule.step(step)) &&
+            schedule.stage(step) != Schedule::Stage::done) {
+            ++(cost_of.at(step).known ? estimate.known : estimate.unknown);
+        }
+    }
+    std::vector<Going> going;
+    for (const auto& [step, merging, elapsed] : running) {
+        const auto& cost = cost_of.at(step);
+        going.push_back(
+            {.step = step,
+             .merging = merging,
+             .left = std::max((merging ? cost.merge_seconds : cost.build_seconds) - elapsed, 0.0)});
+    }
+    double now = 0;
+    for (;;) {
+        while (const auto step = schedule.next_merge()) {
+            schedule.merge_started(*step);
+            going.push_back(
+                {.step = *step, .merging = true, .left = cost_of.at(*step).merge_seconds});
+        }
+        while (const auto step = schedule.next_build()) {
+            if (!schedule.alone() && tokens && schedule.building() >= *tokens) {
+                break;
+            }
+            schedule.build_started(*step);
+            going.push_back(
+                {.step = *step, .merging = false, .left = cost_of.at(*step).build_seconds});
+        }
+        std::optional<std::uint64_t> memory;
+        double wanted = 0;
+        for (const auto& each : going) {
+            if (!each.merging) {
+                const auto& cost = cost_of.at(each.step);
+                wanted += cost.parallelism;
+                if (cost.peak_memory) {
+                    memory = memory.value_or(0) + *cost.peak_memory;
+                }
+            }
+        }
+        if (memory) {
+            estimate.peak_memory = std::max(estimate.peak_memory.value_or(0), *memory);
+        }
+        if (going.empty()) {
+            break;
+        }
+        // Builds slowed alike when they want more cores than there are; one that wants none
+        // keeps its pace, as merges do.
+        const double share = wanted > cores ? cores / wanted : 1.0;
+        const auto pace = [&](const Going& each) {
+            return each.merging || cost_of.at(each.step).parallelism == 0 ? 1.0 : share;
+        };
+        double next = std::numeric_limits<double>::infinity();
+        for (const auto& each : going) {
+            next = std::min(next, each.left / pace(each));
+        }
+        now += next;
+        std::vector<Going> ended;
+        std::vector<Going> left;
+        for (auto& each : going) {
+            each.left -= next * pace(each);
+            (each.left <= 1e-9 ? ended : left).push_back(each);
+        }
+        going = std::move(left);
+        for (const auto& each : ended) {
+            if (each.merging) {
+                schedule.merge_finished(each.step, true);
+                estimate.finished.at(each.step) = now;
+            } else {
+                schedule.build_finished(each.step, true);
+            }
+        }
+    }
+    estimate.seconds = now;
     return estimate;
 }
 
