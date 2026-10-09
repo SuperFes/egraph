@@ -4039,12 +4039,17 @@ Exit execute(const LogCommand& command, Session&, const Invocation& invocation, 
 
 Exit execute(const BuildsCommand& command, Session&, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
-    if (command.format && (command.slowest || command.by)) {
-        err << "egraph: builds: --format lists the records, not --slowest or --by\n";
+    const auto views =
+        std::ranges::count(std::array{command.slowest, command.by.has_value(), command.rebuilds,
+                                      command.failing, command.slower},
+                           true);
+    if (command.format && views > 0) {
+        err << "egraph: builds: --format lists the records, not a view of them\n";
         return Exit::usage;
     }
-    if (command.slowest && command.by) {
-        err << "egraph: builds: --slowest and --by are views of their own; give one\n";
+    if (views > 1) {
+        err << "egraph: builds: --slowest, --by, --rebuilds, --failing and --slower are views of "
+               "their own; give one\n";
         return Exit::usage;
     }
     std::ostringstream text;
@@ -4081,6 +4086,18 @@ Exit execute(const BuildsCommand& command, Session&, const Invocation& invocatio
         for (const auto& total : period_totals(*records, *command.by, zone)) {
             lines.push_back(period_fields(total));
         }
+    } else if (command.rebuilds) {
+        for (const auto& counts : frequent_rebuilds(*records)) {
+            lines.push_back(rebuild_fields(counts));
+        }
+    } else if (command.failing) {
+        for (const auto& failures : failing_packages(*records)) {
+            lines.push_back(failures_fields(failures));
+        }
+    } else if (command.slower) {
+        for (const auto& slowdown : slower_builds(*records)) {
+            std::ranges::move(slowdown_lines(slowdown), std::back_inserter(lines));
+        }
     } else {
         for (const auto& record : *records) {
             lines.push_back(build_fields(record));
@@ -4095,6 +4112,12 @@ Exit execute(const BuildsCommand& command, Session&, const Invocation& invocatio
         human_slowest(out, lines, style.theme);
     } else if (command.by) {
         human_periods(out, lines, *command.by == BuildPeriod::week ? "week" : "month", style.theme);
+    } else if (command.rebuilds) {
+        human_rebuilds(out, lines, style.theme);
+    } else if (command.failing) {
+        human_failures(out, lines, zone, style.theme);
+    } else if (command.slower) {
+        human_slowdowns(out, lines, style.theme);
     } else {
         human_builds(out, lines, !command.packages.empty(), zone, style.theme);
     }
@@ -5195,6 +5218,16 @@ void configure(CLI::App& app, Invocation& invocation) {
     builds_cmd->add_flag_callback(
         "--slowest", [&invocation] { std::get<BuildsCommand>(invocation.command).slowest = true; },
         "Each package's median build time, slowest first, in place of the builds");
+    builds_cmd->add_flag_callback(
+        "--rebuilds",
+        [&invocation] { std::get<BuildsCommand>(invocation.command).rebuilds = true; },
+        "Each package built more than once, the most first, with why its builds ran");
+    builds_cmd->add_flag_callback(
+        "--failing", [&invocation] { std::get<BuildsCommand>(invocation.command).failing = true; },
+        "Each package whose builds failed, with the phases and whether it merged since");
+    builds_cmd->add_flag_callback(
+        "--slower", [&invocation] { std::get<BuildsCommand>(invocation.command).slower = true; },
+        "Each package whose latest build got slower, with what changed under it");
     add_field(builds_cmd, invocation, "--by", &BuildsCommand::by,
               "The time spent building in each week or month, in place of the builds")
         ->type_name("PERIOD")

@@ -954,6 +954,17 @@ the cps by the median of their merged builds' seconds without fetching, as the e
 them; `--by week|month` sums building and merging per local week (from Monday) or month, the
 empty periods between kept so the bars read as a timeline. The pruning to `build_keep` per cp
 makes older periods undercount packages rebuilt often; the views say so rather than keep more.
+`--rebuilds` counts each cp's builds by reason, inferring one for a record without it from the
+build of its cp and slot before (vercmp for an upgrade or downgrade, the flags for USE, else a
+reinstall; a sub-slot rebuild cannot be told from a reinstall after the fact), with the flags
+that flipped between consecutive builds of a slot and the cps its sub-slot rebuilds were for.
+`--failing` counts failures by phase and the ones a later build of the same version merged past,
+which is what "fails now and then" means here. `--slower` weighs a cp's latest merged build
+against the median of the 5 before it, in CPU seconds where all six measured them (contention
+moves wall time, not CPU time), else in seconds building of builds that ran alone; a quarter more
+and 30 s more counts, and `build_changes` lists what differs from the build just before: version,
+toolchain versions, compiler variables, env files and flags, which is where a toolchain, CFLAGS
+or LTO change shows.
 
 Estimates (`src/estimate.hpp`) come from the history, and from the repository index's distfile
 sizes where it is there (loaded or on disk; an estimate never builds it). A package's next build

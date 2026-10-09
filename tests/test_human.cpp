@@ -1306,3 +1306,66 @@ TEST_CASE("the time spent building reads as a bar per week or month") {
     egraph::human_periods(none, {}, "week", plain);
     CHECK(none.str() == "+ Nothing in the build history.\n");
 }
+
+TEST_CASE("what rebuilds most reads with why, the flags that changed and what it was rebuilt for") {
+    std::ostringstream out;
+    egraph::human_rebuilds(out,
+                           std::vector<std::string>{
+                               "a/x\t7\t1\t1\t1\t1\t2\t0\t1\tgtk:2\tdev-libs/icu:2",
+                               "a/y\t2\t0\t0\t0\t0\t0\t1\t1\t\t",
+                           },
+                           plain);
+    CHECK(out.str() ==
+          "Package  Builds  Why                                                         Flags    "
+          "For\n"
+          "a/x      7       2 subslot, 1 new, 1 upgrade, 1 downgrade, 1 use, 1 unknown  gtk (2)  "
+          "dev-libs/icu (2)\n"
+          "a/y      2       1 reinstall, 1 unknown\n");
+    std::ostringstream none;
+    egraph::human_rebuilds(none, {}, plain);
+    CHECK(none.str() == "+ Nothing was built more than once.\n");
+}
+
+TEST_CASE("what fails reads with the phases, the latest failure and whether it merged since") {
+    const auto* utc = std::chrono::locate_zone("UTC");
+    std::ostringstream out;
+    egraph::human_failures(
+        out,
+        std::vector<std::string>{
+            "p/g\t2\t1\t0\tmerged\t1759932731\tp/g-1\tworker:1\tno ebuild of p/g-1",
+            "p/f\t3\t2\t1\tfailing\t1759932131\tp/f-2\tcompile:1 install:1\t/var/log/b.log"},
+        *utc, plain);
+    CHECK(out.str() ==
+          "Package  Failed  Phases            Last failed       Version  Now           "
+          "Passed later  Log\n"
+          "p/g      1 of 2  worker            2025-10-08 14:12  1        merged since  "
+          "              no ebuild of p/g-1\n"
+          "p/f      2 of 3  compile, install  2025-10-08 14:02  2        failing       "
+          "1             /var/log/b.log\n");
+    std::ostringstream none;
+    egraph::human_failures(none, {}, *utc, plain);
+    CHECK(none.str() == "+ No build failed.\n");
+}
+
+TEST_CASE("a slower build reads with its time against before's and what changed under it") {
+    std::ostringstream out;
+    egraph::human_slowdowns(out,
+                            std::vector<std::string>{
+                                "a/s\ta/s-2\t5\tcpu\t200.0\t105.0",
+                                "\tchange\tversion\t1\t2",
+                                "\tchange\tsys-devel/gcc\t15\t",
+                                "\tchange\tUSE\tdoc\tlto x",
+                                "a/u\ta/u-1\t3\twall\t200.0\t100.0",
+                            },
+                            plain);
+    CHECK(out.str() == "a/s-2  CPU 3 min, was 2 min (+90%)\n"
+                       "  version        1 > 2\n"
+                       "  sys-devel/gcc  15 > (none)\n"
+                       "  USE            -doc +lto +x\n"
+                       "\n"
+                       "a/u-1  took 3 min, was 2 min (+100%)\n"
+                       "  nothing it records changed\n");
+    std::ostringstream none;
+    egraph::human_slowdowns(none, {}, plain);
+    CHECK(none.str() == "+ Nothing got slower.\n");
+}

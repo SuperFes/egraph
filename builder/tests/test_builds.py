@@ -133,6 +133,28 @@ def test_a_build_records_why_the_plan_merged_it(machines):
     assert [line.split("\t")[-1] for line in listed] == ["new", "reinstall"]
 
 
+def test_egraph_builds_says_what_rebuilds_fails_and_got_slower(machines):
+    system, machine = machines
+    for target in ("app-misc/lib", "app-misc/lib", "app-misc/broken"):
+        age(system.playground.eroot)
+        system.egraph("exec", "--yes", "-1", target)
+    rebuilds = system.egraph("builds", "--rebuilds").stdout.splitlines()
+    assert rebuilds == ["app-misc/lib\t2\t1\t0\t0\t0\t0\t1\t0\t\t"]
+    (failing,) = [
+        line.split("\t")
+        for line in system.egraph("builds", "--failing").stdout.splitlines()
+    ]
+    assert failing[:5] == ["app-misc/broken", "1", "1", "0", "failing"]
+    assert failing[6:8] == ["app-misc/broken-1", "compile:1"]
+    assert os.path.isfile(failing[8])
+    slower = system.egraph("builds", "--slower")
+    assert (slower.returncode, slower.stdout) == (0, "")
+    for view in ("--rebuilds", "--failing", "--slower"):
+        shown = system.egraph("--layout", "human", "builds", view)
+        assert shown.returncode == 0, shown.stderr
+    assert system.egraph("builds", "--failing", "--slower").returncode == 2
+
+
 def test_egraph_builds_reads_the_history_back(machines):
     """As lines, for the packages given, as the file holds them and as CSV."""
     system, machine = machines

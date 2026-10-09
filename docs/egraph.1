@@ -1367,6 +1367,52 @@ those that failed, the seconds and the CPU seconds (empty when none was measured
 the last builds of each package only
 .RB ( build_keep ),
 so a package rebuilt often counts in the latest periods alone.
+.TP
+.B \-\-rebuilds
+In place of the builds, each package built more than once, the most builds first, ties by cp:
+why its builds ran (a record's own reason, else one inferred from the build of its slot before it:
+an upgrade or downgrade by the versions, the same version with other flags for
+.BR use ,
+else
+.BR reinstall ;
+.B unknown
+for the first of a slot without a reason), the flags turned on or off between consecutive builds of
+a slot, and the packages its sub-slot rebuilds were for, each with how often. As lines: the cp, its
+builds, its builds for each reason
+.RB ( new ", " upgrade ", " downgrade ", " use ", " subslot ", " reinstall ", then " unknown ),
+the flags and the packages as
+.IR name : count
+separated by spaces, most first.
+.TP
+.B \-\-failing
+In place of the builds, each package with a failed build, the latest failure first: its failures
+of its builds, the phases that failed
+.RB ( merge
+for the merge,
+.B worker
+for a worker's error), the latest failure's time and version, whether a build of it merged since,
+the failures a later build of the same version merged past (a package failing now and then), and the
+latest failure's log or error. As lines: the cp, builds, failed, passed later,
+.BR merged " or " failing ,
+the latest failure's start and cpv, the phases as
+.IR name : count ,
+and the log or error.
+.TP
+.B \-\-slower
+In place of the builds, each package whose latest merged build took at least a quarter longer, and
+30 s more, than the median of the 5 merged builds before it, the most slowed first: in CPU time
+where all of them measured it, else in time building of those that ran alone, with what changed
+from the build just before (its version, the toolchain's versions, the compiler variables such as
+.B CFLAGS
+and
+.BR LDFLAGS ,
+the
+.I package.env
+files, and the flags turned off and on). As lines: the cp, the cpv, its start,
+.BR cpu " or " wall ,
+its seconds and the earlier median, then a line per change: an empty field,
+.BR change ,
+what changed, before and after (empty where it was not set).
 .SS diff \fR[\fIwhen\fR]
 The installed packages and root sets now against the system as its history kept it (see
 .I ${ROOT}${EPREFIX}/var/lib/egraph

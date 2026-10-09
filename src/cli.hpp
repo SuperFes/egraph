@@ -296,6 +296,10 @@ struct BuildsCommand {
     // spent building by week or month.
     bool slowest = false;
     std::optional<BuildPeriod> by;
+    // Or what rebuilds most and why, what fails, or what got slower and what changed with it.
+    bool rebuilds = false;
+    bool failing = false;
+    bool slower = false;
 };
 
 // The installed packages and root sets now against a generation of the system store's history.

@@ -1261,8 +1261,10 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
   - 20e2 (done): `egraph builds` views: the builds as a table, a package's under a sparkline of
     their times, the slowest packages (`--slowest`), and the time spent by week or month
     (`--by`).
-  - 20e3 (planned): what rebuilds most often and why, packages that fail now and then, and
-    builds that got slower with what changed beside them (toolchain, flags, env files).
+  - 20e3 (done): what rebuilds most often and why (`--rebuilds`: reasons, inferred for records
+    without one, the flags that flipped, what sub-slot rebuilds were for), packages that fail
+    (`--failing`: phases, failures a later build of the version merged past), and builds that
+    got slower (`--slower`, by CPU time) with what changed under them.
   - 20e4 (planned): the views as pages in the living app.
 - 20f (planned): advice: a build whose directory will not fit a tmpfs `PORTAGE_TMPDIR` (offer a
   `notmpfs` env), one whose peak memory at these jobs nears what the system has (fewer jobs,

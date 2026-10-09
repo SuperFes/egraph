@@ -2804,9 +2804,28 @@ class Table {
     std::vector<std::vector<Cell>> rows_;
 };
 
-void put_nothing_built(std::ostream& out, const Theme& theme) {
-    out << theme.paint(theme.glyph().good, Tone::good) << ' '
-        << theme.paint("Nothing in the build history.", Tone::good) << '\n';
+void put_none(std::ostream& out, const Theme& theme,
+              std::string_view message = "Nothing in the build history.") {
+    out << theme.paint(theme.glyph().good, Tone::good) << ' ' << theme.paint(message, Tone::good)
+        << '\n';
+}
+
+// name:count words as "name (count)" joined by commas, the count left out when it is 1.
+std::string tally_words(std::string_view field) {
+    std::string text;
+    for (const auto word : std::views::split(field, ' ')) {
+        const std::string_view each{word.begin(), word.end()};
+        if (each.empty()) {
+            continue;
+        }
+        const auto colon = each.rfind(':');
+        const auto name = each.substr(0, colon);
+        const auto count =
+            colon == std::string_view::npos ? std::string_view{"1"} : each.substr(colon + 1);
+        text += text.empty() ? "" : ", ";
+        text += count == "1" ? std::string{name} : std::format("{} ({})", name, count);
+    }
+    return text;
 }
 
 std::string field_or_empty(const Fields& row, std::size_t index) {
@@ -2826,7 +2845,7 @@ std::string builds_count(std::size_t builds, std::size_t failed) {
 void human_builds(std::ostream& out, std::span<const std::string> records, bool by_package,
                   const std::chrono::time_zone& zone, const Theme& theme) {
     if (records.empty()) {
-        put_nothing_built(out, theme);
+        put_none(out, theme);
         return;
     }
     Table table{{{.text = "Started"},
@@ -2913,7 +2932,7 @@ void human_builds(std::ostream& out, std::span<const std::string> records, bool 
 
 void human_slowest(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
     if (records.empty()) {
-        put_nothing_built(out, theme);
+        put_none(out, theme);
         return;
     }
     // The sparkline's most builds.
@@ -2953,7 +2972,7 @@ void human_slowest(std::ostream& out, std::span<const std::string> records, cons
 void human_periods(std::ostream& out, std::span<const std::string> records, std::string_view period,
                    const Theme& theme) {
     if (records.empty()) {
-        put_nothing_built(out, theme);
+        put_none(out, theme);
         return;
     }
     constexpr std::size_t bar_width = 20;
@@ -2990,6 +3009,133 @@ void human_periods(std::ostream& out, std::span<const std::string> records, std:
              {.text = count, .tone = Tone::note}});
     }
     table.put(out, theme.paint);
+}
+
+void human_rebuilds(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    if (records.empty()) {
+        put_none(out, theme, "Nothing was built more than once.");
+        return;
+    }
+    constexpr std::array<std::string_view, 7> reasons{"new",     "upgrade",   "downgrade", "use",
+                                                      "subslot", "reinstall", "unknown"};
+    Table table{{{.text = "Package"},
+                 {.text = "Builds"},
+                 {.text = "Why"},
+                 {.text = "Flags"},
+                 {.text = "For"}}};
+    for (const auto& row : split_all(records)) {
+        std::vector<std::pair<double, std::size_t>> counts;
+        for (std::size_t i = 0; i < reasons.size(); ++i) {
+            if (const auto count = number_field(field_or_empty(row, i + 2)).value_or(0);
+                count > 0) {
+                counts.emplace_back(count, i);
+            }
+        }
+        std::ranges::stable_sort(counts, std::greater{}, &std::pair<double, std::size_t>::first);
+        std::string why;
+        for (const auto& [count, reason] : counts) {
+            why += std::format("{}{:.0f} {}", why.empty() ? "" : ", ", count, reasons.at(reason));
+        }
+        table.add({{.text = field_or_empty(row, 0), .tone = Tone::name},
+                   {.text = field_or_empty(row, 1), .tone = Tone::count},
+                   {.text = why, .tone = Tone::note},
+                   {.text = tally_words(field_or_empty(row, 9)), .tone = Tone::use},
+                   {.text = tally_words(field_or_empty(row, 10)), .tone = Tone::name}});
+    }
+    table.put(out, theme.paint);
+}
+
+void human_failures(std::ostream& out, std::span<const std::string> records,
+                    const std::chrono::time_zone& zone, const Theme& theme) {
+    if (records.empty()) {
+        put_none(out, theme, "No build failed.");
+        return;
+    }
+    Table table{{{.text = "Package"},
+                 {.text = "Failed"},
+                 {.text = "Phases"},
+                 {.text = "Last failed"},
+                 {.text = "Version"},
+                 {.text = "Now"},
+                 {.text = "Passed later"},
+                 {.text = "Log"}}};
+    for (const auto& row : split_all(records)) {
+        const bool merged = field_or_empty(row, 4) == "merged";
+        const auto passed = field_or_empty(row, 3);
+        auto phases = tally_words(field_or_empty(row, 7));
+        table.add(
+            {{.text = field_or_empty(row, 0), .tone = Tone::name},
+             {.text = std::format("{} of {}", field_or_empty(row, 2), field_or_empty(row, 1)),
+              .tone = Tone::count},
+             {.text = std::move(phases), .tone = Tone::bad},
+             {.text = log::local_time(number_field(field_or_empty(row, 5)).value_or(0), zone)
+                          .substr(0, 16),
+              .tone = Tone::note},
+             {.text = std::string{split_cpv(field_or_empty(row, 6)).version},
+              .tone = Tone::version},
+             {.text = merged ? "merged since" : "failing", .tone = merged ? Tone::good : Tone::bad},
+             {.text = passed == "0" ? std::string{} : passed, .tone = Tone::count},
+             {.text = field_or_empty(row, 8), .tone = Tone::note}});
+    }
+    table.put(out, theme.paint);
+}
+
+void human_slowdowns(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto rows = split_all(records);
+    if (rows.empty()) {
+        put_none(out, theme, "Nothing got slower.");
+        return;
+    }
+    for (std::size_t i = 0; i < rows.size();) {
+        const auto& head = rows.at(i);
+        const auto seconds = number_field(field_or_empty(head, 4)).value_or(0);
+        const auto before = number_field(field_or_empty(head, 5)).value_or(0);
+        if (i > 0) {
+            out << '\n';
+        }
+        out << paint_cpv(field_or_empty(head, 1), paint) << "  "
+            << paint(std::format("{} {}, was {}", field_or_empty(head, 3) == "cpu" ? "CPU" : "took",
+                                 rough_duration(seconds), rough_duration(before)),
+                     Tone::count)
+            << ' '
+            << paint(std::format("(+{:.0f}%)",
+                                 before > 0 ? std::floor((seconds / before - 1) * 100) : 0.0),
+                     Tone::bad)
+            << '\n';
+        std::size_t end = i + 1;
+        std::size_t width = 0;
+        while (end < rows.size() && field_or_empty(rows.at(end), 0).empty()) {
+            width = std::max(width, columns_of(field_or_empty(rows.at(end), 2)));
+            ++end;
+        }
+        if (end == i + 1) {
+            out << "  " << paint("nothing it records changed", Tone::note) << '\n';
+        }
+        for (std::size_t j = i + 1; j < end; ++j) {
+            const auto& change = rows.at(j);
+            const auto what = field_or_empty(change, 2);
+            const auto old = field_or_empty(change, 3);
+            const auto now = field_or_empty(change, 4);
+            std::string text;
+            if (what == "USE") {
+                for (const auto& [flags, sign] : {std::pair{old, '-'}, std::pair{now, '+'}}) {
+                    for (const auto flag : std::views::split(flags, ' ')) {
+                        if (!flag.empty()) {
+                            text += std::format("{}{}{}", text.empty() ? "" : " ", sign,
+                                                std::string_view{flag.begin(), flag.end()});
+                        }
+                    }
+                }
+            } else {
+                text = std::format("{} > {}", old.empty() ? "(none)" : old,
+                                   now.empty() ? "(none)" : now);
+            }
+            out << "  " << paint(what, Tone::name) << spaces(columns_of(what), width) << "  "
+                << paint(text, Tone::version) << '\n';
+        }
+        i = end;
+    }
 }
 
 } // namespace egraph

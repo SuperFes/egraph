@@ -327,6 +327,19 @@ void human_slowest(std::ostream& out, std::span<const std::string> records, cons
 void human_periods(std::ostream& out, std::span<const std::string> records, std::string_view period,
                    const Theme& theme);
 
+// rebuild_fields' records: each cp's builds, why they ran (most first), the flags that changed
+// and what its sub-slot rebuilds were for.
+void human_rebuilds(std::ostream& out, std::span<const std::string> records, const Theme& theme);
+
+// failures_fields' records: each cp's failures of its builds, the phases, the latest's day, and
+// whether it merged since.
+void human_failures(std::ostream& out, std::span<const std::string> records,
+                    const std::chrono::time_zone& zone, const Theme& theme);
+
+// slowdown_lines' records: each latest build, how long it took against before, and what changed
+// under it.
+void human_slowdowns(std::ostream& out, std::span<const std::string> records, const Theme& theme);
+
 // The legend for the kind letters and the any-of marker, and with possible the toggles.
 void human_legend(std::ostream& out, const Theme& theme, bool possible = false);
 
