@@ -478,6 +478,8 @@ struct PlanRow {
     std::string label;
     // Index into Plan::merges, for a merge; the packages between merges are installed ones.
     std::optional<std::uint32_t> merge;
+    // Index into ScopePlan::tried, for a merge the lines tried drop, and the heading over them.
+    std::optional<std::size_t> dropped{};
     std::size_t depth = 0;
     bool last = false;
     std::vector<bool> rails;
@@ -502,6 +504,21 @@ enum class Only : std::uint8_t { all, orphans, broken, updates };
 inline constexpr UseRebuilds shown_rebuilds = UseRebuilds::all;
 
 // A page's plan, and what the list shows of it per package.
+// A merge the lines tried change, as tried_lines records it: by its first field (the installed
+// cpv it replaces, or a new package's), added, changed, or dropped (with the fields it had).
+struct TriedMerge {
+    enum class Change : std::uint8_t { added, changed, dropped };
+    std::string first;
+    Change change = Change::added;
+    std::string kind;
+    std::string target;
+    std::string repo;
+    std::string flags;
+};
+
+// tried_lines' records.
+[[nodiscard]] std::vector<TriedMerge> tried_merges(std::span<const std::string> records);
+
 struct ScopePlan {
     Scope scope = Scope::installed;
     Plan plan;
@@ -515,6 +532,8 @@ struct ScopePlan {
     std::optional<std::string> error;
     // The stores it was made for, as App counts them.
     std::size_t generation = 0;
+    // With lines tried, what they change against the plan made without them.
+    std::vector<TriedMerge> tried{};
 };
 
 class App {
@@ -590,6 +609,9 @@ class App {
         return current().held.at(package);
     }
     [[nodiscard]] const Plan& plan() const { return current().plan; }
+    // What the lines tried change in the page's plan, by the merge's first field.
+    [[nodiscard]] std::optional<TriedMerge> tried_of(std::string_view first) const;
+    [[nodiscard]] const std::vector<TriedMerge>& current_tried() const { return current().tried; }
     [[nodiscard]] const std::vector<Remedy>& remedies() const { return current().remedies; }
     // The list's page, whose set the plan updates.
     [[nodiscard]] Scope scope() const { return scope_; }
@@ -1068,6 +1090,15 @@ inline std::vector<Span> update_mark(const App& app, std::uint32_t package, cons
     const auto& update = app.update_of(package);
     const auto held = app.held_of(package);
     std::vector<Span> spans;
+    const auto tried = app.tried_of(app.store().string(app.store().packages.at(package).cpv));
+    if (tried && tried->change == TriedMerge::Change::dropped) {
+        spans = {{.text = "  ", .pen = {}},
+                 {.text = tried->kind == "rebuild" ? std::string{"rebuild"}
+                                                   : std::format("{} {}", glyph.instead,
+                                                                 split_cpv(tried->target).version),
+                  .pen = tone_pen(Tone::note)},
+                 {.text = "  dropped", .pen = tone_pen(Tone::note)}};
+    }
     if (update) {
         const auto& evaluated = app.evaluated();
         const auto version =
@@ -1079,6 +1110,11 @@ inline std::vector<Span> update_mark(const App& app, std::uint32_t package, cons
                 ? Span{" rebuild", tone_pen(Tone::use)}
                 : Span{std::format(" {}", version.version),
                        tone_pen(update->kind == UpdateKind::upgrade ? Tone::good : Tone::bad)}};
+        if (tried) {
+            spans.push_back(
+                {.text = tried->change == TriedMerge::Change::added ? "  + tried" : "  ~ tried",
+                 .pen = tone_pen(Tone::count)});
+        }
     }
     if (held) {
         spans.push_back({"  ", {}});
@@ -1684,6 +1720,30 @@ inline std::vector<Span> merge_spans(const App& app, const Planned& planned, std
     return spans;
 }
 
+// What the lines tried change in the page's plan, counted as updates counts them.
+inline std::string tried_count(const App& app) {
+    const auto& tried = app.current_tried();
+    if (tried.empty()) {
+        return "";
+    }
+    std::size_t added = 0;
+    std::size_t changed = 0;
+    std::size_t dropped = 0;
+    for (const auto& merge : tried) {
+        (merge.change == TriedMerge::Change::added     ? added
+         : merge.change == TriedMerge::Change::changed ? changed
+                                                       : dropped)++;
+    }
+    std::string text;
+    for (const auto& [count, words] :
+         {std::pair{added, "more"}, {dropped, "fewer"}, {changed, "changed"}}) {
+        if (count != 0) {
+            text += std::format("{}{} {}", text.empty() ? "  tried: " : ", ", count, words);
+        }
+    }
+    return text;
+}
+
 template <class S> void draw_plan(S& screen, App& app, const Glyphs& glyph, Size size) {
     const auto& open = app.planned();
     if (!open) {
@@ -1695,7 +1755,8 @@ template <class S> void draw_plan(S& screen, App& app, const Glyphs& glyph, Size
                  {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
                 {std::format(" {} ", glyph.trail), tone_pen(Tone::note)},
                 {"plan", tone_pen(Tone::name)},
-                {std::format("  {} merges", app.plan().merges.size()), tone_pen(Tone::count)}},
+                {std::format("  {} merges", app.plan().merges.size()), tone_pen(Tone::count)},
+                {tried_count(app), tone_pen(Tone::note)}},
                glyph);
     const unsigned first = 2;
     const unsigned height = size.rows - first - 1;
@@ -1707,6 +1768,11 @@ template <class S> void draw_plan(S& screen, App& app, const Glyphs& glyph, Size
         }
         const auto& row = planned.rows.at(index);
         const unsigned at = first + line;
+        if (row.depth == 0 && row.dropped) {
+            put_spans(screen, at, 3, {{"dropped by what is tried", tone_pen(Tone::note)}},
+                      size.cols);
+            continue;
+        }
         if (row.depth == 0) {
             put_spans(
                 screen, at, 3,
@@ -1728,6 +1794,36 @@ template <class S> void draw_plan(S& screen, App& app, const Glyphs& glyph, Size
         }
         tree += std::format("{} ", row.last ? glyph.branch : glyph.tee);
         std::vector<Span> spans{marker(selected, glyph), {std::move(tree), tone_pen(Tone::note)}};
+        if (row.dropped) {
+            // As updates lists it: the merge's kind, name, version and any it moved to.
+            const auto& tried = app.current_tried().at(*row.dropped);
+            const auto from = split_cpv(tried.first);
+            const auto mark = tried.kind == "upgrade"     ? glyph.upgrade
+                              : tried.kind == "downgrade" ? glyph.downgrade
+                              : tried.kind == "rebuild"   ? glyph.rebuild
+                                                          : glyph.added;
+            auto text = std::format("{} {}/{}  {}", mark, from.category, from.name, from.version);
+            if (tried.first != tried.target) {
+                text += std::format(" {} {}", glyph.instead, split_cpv(tried.target).version);
+            }
+            spans.push_back({.text = "- ", .pen = tone_pen(Tone::bad)});
+            spans.push_back({.text = std::format("{}  ::{}  (dropped)", text, tried.repo),
+                             .pen = tone_pen(Tone::note)});
+            put_spans(screen, at, 0, spans, size.cols, bg);
+            continue;
+        }
+        if (row.merge && !app.current_tried().empty()) {
+            const auto& merge = app.plan().merges.at(*row.merge);
+            const auto first_field =
+                merge.replaces
+                    ? app.store().string(app.store().packages.at(*merge.replaces).cpv)
+                    : app.evaluated().string(app.evaluated().candidates.at(merge.candidate).cpv);
+            const auto tried = app.tried_of(first_field);
+            spans.push_back({.text = !tried                                       ? "  "
+                                     : tried->change == TriedMerge::Change::added ? "+ "
+                                                                                  : "~ ",
+                             .pen = tone_pen(Tone::count)});
+        }
         std::ranges::move(row.merge ? merge_spans(app, planned, *row.merge, glyph)
                                     : cpv_spans(row.label),
                           std::back_inserter(spans));

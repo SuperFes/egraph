@@ -1829,6 +1829,107 @@ TEST_CASE("refreshed stores keep the lines, tried again on them") {
     CHECK(flag_rows(app) == std::vector<std::string>{"x off was on", "y on", "z on"});
 }
 
+TEST_CASE("tried_merges reads tried_lines' records") {
+    const std::vector<std::string> records{
+        "app-misc/a-1\ttried\tadded\trebuild\tapp-misc/a-1\tgentoo\t-x*",
+        "dev-libs/b-1\ttried\tdropped\tupgrade\tdev-libs/b-2\tgentoo\t", "\ttried\tnone"};
+    const auto merges = egraph::tui::tried_merges(records);
+    REQUIRE(merges.size() == 2);
+    CHECK(merges.front().first == "app-misc/a-1");
+    CHECK(merges.front().change == egraph::tui::TriedMerge::Change::added);
+    CHECK(merges.front().flags == "-x*");
+    CHECK(merges.back().change == egraph::tui::TriedMerge::Change::dropped);
+    CHECK(merges.back().target == "dev-libs/b-2");
+}
+
+namespace {
+
+// app-misc/a-1, built with x and y of its IUSE x y z; make.conf enabling y, and x unless
+// without_x, which leaves the rebuild for -x pending.
+egraph::Stores rebuilt(bool without_x = false) {
+    auto system = egraph::test::make_system(
+        {{.cpv = "app-misc/a-1", .iuse = "x y z", .use = "x y"}},
+        {{.cpv = "app-misc/a-1", .iuse = "x y z", .use = without_x ? "y" : "x y"}});
+    egraph::test::set_ledger(
+        system.evaluated, {.conf = {{.file = "mc", .line = 3, .tokens = without_x ? "y" : "x y"}}});
+    if (without_x) {
+        auto& ev = system.evaluated;
+        egraph::test::detail::Interner intern(ev);
+        ev.packages.front().target = 0;
+        ev.packages.front().rebuild = egraph::test::ids_of(ev, intern, {"-x*"});
+    }
+    return {.installed = std::move(system.store), .evaluated = std::move(system.evaluated)};
+}
+
+// Tries the lines, then plans the page's set.
+void try_and_plan(egraph::tui::App& app, const std::filesystem::path& config) {
+    REQUIRE(app.try_requested());
+    app.finish_try(trying_under(config)(app.start_try())().value());
+    REQUIRE(app.scope_plan_requested());
+    app.finish_scope_plan(egraph::test::finish(app.start_scope_plan()));
+}
+
+} // namespace
+
+TEST_CASE("the plans follow the lines tried, marking what they add and change") {
+    const egraph::test::TempDir config;
+    egraph::tui::App app{rebuilt(), true};
+    CHECK(app.list().shown.empty());
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    select_flag(app, "x");
+    app.handle(character(U' '));
+    try_and_plan(app, config.path());
+    REQUIRE(app.update_of(0).has_value());
+    REQUIRE(app.tried_of("app-misc/a-1").has_value());
+    CHECK(app.tried_of("app-misc/a-1")->change == egraph::tui::TriedMerge::Change::added);
+
+    FakeScreen screen{20, 120, {}};
+    app.handle(key(KeyKind::escape));
+    app.handle(character(U'u'));
+    REQUIRE(app.list().shown == std::vector<std::uint32_t>{0});
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "app-misc/a-1  R rebuild  + tried"));
+    app.handle(character(U'p'));
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "1 merges  tried: 1 more"));
+    CHECK(contains(screen.text(), "+ R app-misc/a  1"));
+
+    // y too: the rebuild changes.
+    app.handle(key(KeyKind::escape));
+    app.handle(key(KeyKind::enter));
+    select_flag(app, "y");
+    app.handle(character(U' '));
+    try_and_plan(app, config.path());
+    CHECK(app.tried_of("app-misc/a-1")->change == egraph::tui::TriedMerge::Change::added);
+    CHECK(app.tried_of("app-misc/a-1")->flags == "-x* -y*");
+}
+
+TEST_CASE("a merge the lines tried drop is listed after the plan, dimmed") {
+    const egraph::test::TempDir config;
+    egraph::tui::App app{rebuilt(true), true};
+    REQUIRE(app.update_of(0).has_value());
+    app.handle(key(KeyKind::enter));
+    select_flag(app, "x");
+    app.handle(character(U' '));
+    try_and_plan(app, config.path());
+    CHECK_FALSE(app.update_of(0).has_value());
+    REQUIRE(app.tried_of("app-misc/a-1").has_value());
+    CHECK(app.tried_of("app-misc/a-1")->change == egraph::tui::TriedMerge::Change::dropped);
+
+    FakeScreen screen{20, 120, {}};
+    app.handle(key(KeyKind::escape));
+    // Still listed with the updates, as dropped.
+    CHECK(app.list().shown == std::vector<std::uint32_t>{0});
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "app-misc/a-1  rebuild  dropped"));
+    app.handle(character(U'p'));
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "0 merges  tried: 1 fewer"));
+    CHECK(contains(screen.text(), "dropped by what is tried"));
+    CHECK(contains(screen.text(), "- R app-misc/a  1  ::test_repo  (dropped)"));
+}
+
 TEST_CASE("the check compares installed stores, and a preview keeps the evaluated one") {
     egraph::tui::App app{both(), true};
     std::size_t checked_nodes = 0;

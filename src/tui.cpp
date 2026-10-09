@@ -640,6 +640,33 @@ bool paired(const Store& installed, const Evaluated& evaluated) {
 }
 
 // The plan's updates, rebuilds and held updates per package, and the held ones' remedies.
+} // namespace
+
+std::vector<TriedMerge> tried_merges(std::span<const std::string> records) {
+    std::vector<TriedMerge> merges;
+    for (const auto& record : records) {
+        std::vector<std::string> fields;
+        for (const auto field : std::views::split(std::string_view{record}, '\t')) {
+            fields.emplace_back(std::string_view{field});
+        }
+        if (fields.size() < 7 || fields.at(1) != "tried") {
+            continue;
+        }
+        const auto& change = fields.at(2);
+        merges.push_back({.first = fields.at(0),
+                          .change = change == "added"     ? TriedMerge::Change::added
+                                    : change == "changed" ? TriedMerge::Change::changed
+                                                          : TriedMerge::Change::dropped,
+                          .kind = fields.at(3),
+                          .target = fields.at(4),
+                          .repo = fields.at(5),
+                          .flags = fields.at(6)});
+    }
+    return merges;
+}
+
+namespace {
+
 ScopePlan scoped(Scope scope, Plan plan, const Store& store, const Evaluated& evaluated,
                  const Graph& graph, const Targets& targets, const Rescope& rescope) {
     const auto count = store.packages.size();
@@ -673,7 +700,26 @@ ScopePlan scoped(Scope scope, Plan plan, const Store& store, const Evaluated& ev
 // The plan of -uDN on the set, as exec makes it for a set argument: depclean's kept packages
 // and what the set reaches in scope, the set's atoms emerge's arguments.
 ScopePlan plan_set(Scope scope, const Store& store, const Evaluated& evaluated, const Graph& graph,
-                   const std::vector<Masking>& masking, bool dynamic_deps) {
+                   const std::vector<Masking>& masking, bool dynamic_deps,
+                   const std::shared_ptr<const Stores>& untried) {
+    // With lines tried, what they change against the plan made the same way without them.
+    const auto tried = [&](const Plan& plan, const Targets& targets) {
+        if (!untried) {
+            return std::vector<TriedMerge>{};
+        }
+        const auto& before = untried->evaluated;
+        return tried_merges(tried_lines(
+            update_lines(store, before, plan_updates(store, before, shown_rebuilds, targets),
+                         shown_rebuilds, HeldLines::none, false, targets),
+            update_lines(store, evaluated, plan, shown_rebuilds, HeldLines::none, false, targets)));
+    };
+    // Every installed package, as index() plans it.
+    if (scope == Scope::installed) {
+        auto made = scoped(scope, plan_updates(store, evaluated, shown_rebuilds), store, evaluated,
+                           graph, {}, {});
+        made.tried = tried(made.plan, {});
+        return made;
+    }
     const auto request =
         parse_request(store, evaluated, std::array{std::string{scope_name(scope)}});
     if (!request) {
@@ -699,12 +745,15 @@ ScopePlan plan_set(Scope scope, const Store& store, const Evaluated& evaluated, 
     targets.request = request->arguments;
     targets.dynamic_deps = dynamic_deps;
     auto plan = plan_updates(store, evaluated, shown_rebuilds, targets);
+    auto changes = tried(plan, targets);
     const Rescope rescope = [&store, &options](const std::vector<bool>& removed) {
         auto without = options;
         without.removed = removed;
         return keep(store, without).packages;
     };
-    return scoped(scope, std::move(plan), store, evaluated, graph, targets, rescope);
+    auto made = scoped(scope, std::move(plan), store, evaluated, graph, targets, rescope);
+    made.tried = std::move(changes);
+    return made;
 }
 
 } // namespace
@@ -854,9 +903,12 @@ void App::index() {
             masking_.push_back(
                 {.masked = dynamic_deps_ ? pkg.masked : pkg.vdb_masked, .visible = pkg.visible});
         }
-        // The first page's, at once; the others' in the background once shown.
-        auto installed = scoped(Scope::installed, plan_updates(store, evaluated(), shown_rebuilds),
-                                store, evaluated(), graph, {}, {});
+    }
+    // The first page's, at once; the others' in the background once shown, as are all with lines
+    // tried, planned twice.
+    if (has_evaluated() && !untried_) {
+        auto installed =
+            plan_set(Scope::installed, store, evaluated(), graph, masking_, dynamic_deps_, nullptr);
         installed.generation = generation_;
         plans_.front() = std::move(installed);
     }
@@ -1163,15 +1215,15 @@ bool App::scope_plan_requested() const {
 Job<ScopePlan> App::start_scope_plan() {
     planning_ = scope_;
     // Copies and shared stores, as the app may move on to others meanwhile.
-    auto made =
-        std::async(std::launch::async, [scope = scope_, loaded = owned_, store = store_,
-                                        evaluated = evaluated_, graph = graph_, masking = masking_,
-                                        dynamic_deps = dynamic_deps_, generation = generation_] {
-            auto plan =
-                plan_set(scope, store.get(), evaluated.get(), graph.get(), masking, dynamic_deps);
-            plan.generation = generation;
-            return plan;
-        });
+    auto made = std::async(std::launch::async,
+                           [scope = scope_, loaded = owned_, store = store_, evaluated = evaluated_,
+                            graph = graph_, masking = masking_, dynamic_deps = dynamic_deps_,
+                            generation = generation_, untried = untried_] {
+                               auto plan = plan_set(scope, store.get(), evaluated.get(),
+                                                    graph.get(), masking, dynamic_deps, untried);
+                               plan.generation = generation;
+                               return plan;
+                           });
     return [made = std::move(made)]() mutable -> std::optional<ScopePlan> {
         if (made.wait_for(std::chrono::seconds{0}) != std::future_status::ready) {
             return std::nullopt;
@@ -1363,7 +1415,8 @@ void App::filter() {
     for (std::uint32_t id = 0; id < folded_.size(); ++id) {
         if ((list_.only == Only::orphans && kept_.packages.at(id)) ||
             (list_.only == Only::broken && broken(id) == 0) ||
-            (list_.only == Only::updates && !update_of(id) && !held_of(id))) {
+            (list_.only == Only::updates && !update_of(id) && !held_of(id) &&
+             !tried_of(store().string(store().packages.at(id).cpv)))) {
             continue;
         }
         if (folded_.at(id).find(query) != std::string::npos) {
@@ -2132,10 +2185,42 @@ void App::handle_list(const Key& key) {
     }
 }
 
+std::optional<TriedMerge> App::tried_of(std::string_view first) const {
+    const auto& tried = current().tried;
+    if (const auto found = std::ranges::find(tried, first, &TriedMerge::first);
+        found != tried.end()) {
+        return *found;
+    }
+    return std::nullopt;
+}
+
 Planned& App::open_plan(std::optional<std::string> selected) {
     Planned planned{.rows = plan_rows(store(), evaluated(), kept_, plan()),
                     .places = std::vector<std::size_t>(plan().merges.size(), 0),
                     .cursor = {}};
+    // Last, what the lines tried drop.
+    const auto& tried = current().tried;
+    for (std::size_t i = 0; i < tried.size(); ++i) {
+        if (tried.at(i).change != TriedMerge::Change::dropped) {
+            continue;
+        }
+        if (!planned.rows.empty() && planned.rows.back().dropped) {
+            planned.rows.back().last = false;
+        } else {
+            planned.rows.push_back({.label = {},
+                                    .merge = std::nullopt,
+                                    .dropped = i,
+                                    .depth = 0,
+                                    .last = false,
+                                    .rails = {}});
+        }
+        planned.rows.push_back({.label = tried.at(i).first,
+                                .merge = std::nullopt,
+                                .dropped = i,
+                                .depth = 1,
+                                .last = true,
+                                .rails = {}});
+    }
     for (std::size_t place = 0; place < plan().order.size(); ++place) {
         planned.places.at(plan().order.at(place)) = place + 1;
     }

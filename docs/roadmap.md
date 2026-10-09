@@ -1175,7 +1175,10 @@ changes (undo, save) and takes typed lines.
     the background (the cps newly reached evaluated there too, `tui::Trier`) and shown in place
     of the untried, so the sets' plans follow them already; the USE section says what a flag
     was. 2 s here for mpv's flag, with its cps evaluated.
-  - 19e3: the set pages plan with the lines tried, marked as 19c's plan.
+  - 19e3 (done): the set pages plan with the lines tried, marked as 19c's plan: the list's
+    rows `+ tried`, `~ tried` or dropped, the plan view's merges `+` or `~`, the dropped after
+    them, and a `tried:` count. Each set planned twice in the background, @installed too
+    while lines are tried.
   - 19e4: the what-if page: the lines pending, dropped with `x`, undone with `u`, typed with
     `a`; the plan's `Tried:` count; the env rebuilds, `r` planning them.
 - 19f: saving to egraph's files.
