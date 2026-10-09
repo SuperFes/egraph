@@ -14,6 +14,7 @@
 #include <fstream>
 #include <langinfo.h>
 #include <limits>
+#include <linux/magic.h>
 #include <malloc.h>
 #include <poll.h>
 #include <random>
@@ -30,6 +31,7 @@
 #include <sys/statvfs.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <sys/vfs.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <utility>
@@ -640,18 +642,40 @@ bool can_create(const std::filesystem::path& path) {
     return !dir.empty() && access(dir.c_str(), W_OK) == 0;
 }
 
-std::expected<std::uint64_t, std::error_code> free_bytes(const std::filesystem::path& path) {
-    auto existing = path;
+namespace {
+
+// path, or the nearest directory above it that exists.
+std::filesystem::path nearest_existing(std::filesystem::path path) {
     std::error_code ignored;
-    while (!std::filesystem::exists(existing, ignored) && existing.has_parent_path() &&
-           existing.parent_path() != existing) {
-        existing = existing.parent_path();
+    while (!std::filesystem::exists(path, ignored) && path.has_parent_path() &&
+           path.parent_path() != path) {
+        path = path.parent_path();
     }
+    return path;
+}
+
+} // namespace
+
+std::expected<std::uint64_t, std::error_code> free_bytes(const std::filesystem::path& path) {
+    const auto existing = nearest_existing(path);
     struct statvfs found{};
     if (::statvfs(existing.c_str(), &found) != 0) {
         return std::unexpected(std::error_code(errno, std::generic_category()));
     }
     return std::uint64_t{found.f_bsize} * std::uint64_t{found.f_bavail};
+}
+
+std::expected<FilesystemSpace, std::error_code>
+filesystem_space(const std::filesystem::path& path) {
+    const auto existing = nearest_existing(path);
+    struct statfs found{};
+    if (::statfs(existing.c_str(), &found) != 0) {
+        return std::unexpected(std::error_code(errno, std::generic_category()));
+    }
+    const auto block = static_cast<std::uint64_t>(found.f_bsize);
+    return FilesystemSpace{.size = block * std::uint64_t{found.f_blocks},
+                           .free = block * std::uint64_t{found.f_bavail},
+                           .tmpfs = found.f_type == TMPFS_MAGIC};
 }
 
 std::int64_t process_id() {

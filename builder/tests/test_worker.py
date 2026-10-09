@@ -676,8 +676,11 @@ def test_a_merge_records_its_world_atom(machine):
 def test_a_build_reports_the_environment_it_starts_in(machine):
     """Its compiler variables as portage sets them for the build, package.env's included."""
     os.makedirs(machine.path("etc/portage/env"), exist_ok=True)
+    # Built elsewhere, as a notmpfs env builds it.
+    elsewhere = machine.path("var/tmp/notmpfs")
+    os.makedirs(elsewhere)
     with open(machine.path("etc/portage/env/lib.conf"), "w") as f:
-        f.write('CFLAGS="-O3 -flib"\nMAKEOPTS="-j3"\n')
+        f.write(f'CFLAGS="-O3 -flib"\nMAKEOPTS="-j3"\nPORTAGE_TMPDIR="{elsewhere}"\n')
     with open(machine.path("etc/portage/package.env"), "w") as f:
         f.write("app-misc/lib lib.conf\n")
     environments = []
@@ -689,10 +692,12 @@ def test_a_build_reports_the_environment_it_starts_in(machine):
     lib, files = environments
     assert lib["CFLAGS"] == "-O3 -flib"
     assert lib["MAKEOPTS"] == "-j3"
+    assert lib["PORTAGE_TMPDIR"] == elsewhere
     assert set(lib) <= set(worker.ENVIRONMENT)
     # The other package's are make.conf's, as phases set MAKEOPTS when it is unset.
     assert files.get("CFLAGS") == (machine.playground.settings.get("CFLAGS") or None)
     assert files["MAKEOPTS"] != "-j3"
+    assert files["PORTAGE_TMPDIR"] == machine.playground.settings["PORTAGE_TMPDIR"]
 
 
 def test_a_failed_phase_merges_nothing_and_names_its_log(machine):

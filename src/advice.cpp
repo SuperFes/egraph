@@ -4,6 +4,7 @@
 #include <cmath>
 #include <format>
 #include <functional>
+#include <ranges>
 #include <utility>
 
 namespace egraph {
@@ -70,6 +71,39 @@ std::optional<std::uint64_t> steve_floor(std::uint64_t total, const steve::Setti
     return floor;
 }
 
+std::vector<std::string> build_tmpdirs(std::span<const StepCost> costs) {
+    std::vector<std::string> tmpdirs;
+    for (const auto& cost : costs) {
+        if (cost.build_directory) {
+            tmpdirs.push_back(cost.build_directory->tmpdir);
+        }
+    }
+    std::ranges::sort(tmpdirs);
+    const auto [first, last] = std::ranges::unique(tmpdirs);
+    tmpdirs.erase(first, last);
+    return tmpdirs;
+}
+
+std::vector<TmpfsAdvice>
+tmpfs_advice(std::span<const BuildStep> built, std::span<const StepCost> costs,
+             const std::map<std::string, os::FilesystemSpace, std::less<>>& spaces) {
+    std::vector<TmpfsAdvice> advice;
+    for (const auto& [step, cost] : std::views::zip(built, costs)) {
+        const auto& directory = cost.build_directory;
+        if (step.uninstall || !directory || directory->env_files != step.env_files) {
+            continue;
+        }
+        const auto space = spaces.find(directory->tmpdir);
+        if (space != spaces.end() && space->second.tmpfs && directory->bytes > space->second.size) {
+            advice.push_back({.cpv = step.cpv,
+                              .bytes = directory->bytes,
+                              .tmpdir = directory->tmpdir,
+                              .size = space->second.size});
+        }
+    }
+    return advice;
+}
+
 std::vector<std::string> advice_lines(const PlanAdvice& advice) {
     std::vector<std::string> lines;
     if (!advice.tests.empty()) {
@@ -89,6 +123,10 @@ std::vector<std::string> advice_lines(const PlanAdvice& advice) {
                         memory->jobs ? std::to_string(std::llround(memory->seconds)) : "",
                         memory->jobs ? std::to_string(memory->jobs_peak) : "", memory->largest,
                         memory->largest_peak, optional(memory->steve_floor)));
+    }
+    for (const auto& tmpfs : advice.tmpfs) {
+        lines.push_back(std::format("\tadvice\ttmpfs\t{}\t{}\t{}\t{}", tmpfs.cpv, tmpfs.bytes,
+                                    tmpfs.tmpdir, tmpfs.size));
     }
     return lines;
 }

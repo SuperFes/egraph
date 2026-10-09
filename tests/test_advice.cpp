@@ -5,6 +5,8 @@
 #include <format>
 
 #include <cstdint>
+#include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -148,4 +150,37 @@ TEST_CASE("a plan's memory advice is a line for scripts") {
         MemoryAdvice{.peak = 30, .total = 32, .largest = "app-misc/p0-1", .largest_peak = 30};
     CHECK(egraph::advice_lines(advice) ==
           std::vector<std::string>{"\tadvice\tmemory\t30\t32\t\t\t\tapp-misc/p0-1\t30\t"});
+}
+
+TEST_CASE("a build too large for the tmpfs it builds on is offered the disk") {
+    const auto ran = [](std::uint64_t bytes, std::string tmpdir,
+                        std::vector<std::string> env = {}) {
+        return StepCost{.build_seconds = 100,
+                        .known = true,
+                        .build_directory = egraph::BuildDirectory{.bytes = bytes,
+                                                                  .tmpdir = std::move(tmpdir),
+                                                                  .env_files = std::move(env)}};
+    };
+    const std::vector<BuildStep> built{
+        {.cpv = "app-misc/big-1"},     {.cpv = "app-misc/small-1"},
+        {.cpv = "app-misc/disk-1"},    {.cpv = "app-misc/moved-1", .env_files = {"/env/notmpfs"}},
+        {.cpv = "app-misc/unknown-1"}, {.cpv = "app-misc/gone-1", .uninstall = true}};
+    const std::vector<StepCost> costs{ran(9 * gib, "/var/tmp"),
+                                      ran(1 * gib, "/var/tmp"),
+                                      ran(20 * gib, "/var/tmp/disk"),
+                                      ran(9 * gib, "/var/tmp"),
+                                      {},
+                                      ran(9 * gib, "/var/tmp")};
+    CHECK(egraph::build_tmpdirs(costs) == std::vector<std::string>{"/var/tmp", "/var/tmp/disk"});
+    const std::map<std::string, egraph::os::FilesystemSpace, std::less<>> spaces{
+        {"/var/tmp", {.size = 8 * gib, .free = 8 * gib, .tmpfs = true}},
+        {"/var/tmp/disk", {.size = 10 * gib, .free = 10 * gib, .tmpfs = false}}};
+    CHECK(egraph::tmpfs_advice(built, costs, spaces) ==
+          std::vector<egraph::TmpfsAdvice>{
+              {.cpv = "app-misc/big-1", .bytes = 9 * gib, .tmpdir = "/var/tmp", .size = 8 * gib}});
+    // A tmpdir not looked up says nothing.
+    CHECK(egraph::tmpfs_advice(built, costs, {}).empty());
+    const auto lines = egraph::advice_lines(PlanAdvice{
+        .tmpfs = {{.cpv = "app-misc/big-1", .bytes = 9, .tmpdir = "/var/tmp", .size = 8}}});
+    CHECK(lines == std::vector<std::string>{"\tadvice\ttmpfs\tapp-misc/big-1\t9\t/var/tmp\t8"});
 }

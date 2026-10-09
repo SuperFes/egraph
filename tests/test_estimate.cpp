@@ -311,6 +311,34 @@ TEST_CASE("a package's test phase is foretold as part of its seconds") {
     CHECK(egraph::step_costs(knowledge, steps, 8).at(0).test_seconds == Approx(30));
 }
 
+TEST_CASE("a package's build directory is the largest it grew to, where its latest ran") {
+    const auto ran = [](std::string cpv, double start, std::optional<std::uint64_t> bytes,
+                        std::optional<std::string> tmpdir, std::vector<std::string> env = {}) {
+        auto record = build(std::move(cpv), 100);
+        record.start = start;
+        record.build_dir_size = bytes;
+        if (tmpdir) {
+            record.environment.emplace("PORTAGE_TMPDIR", *tmpdir);
+        }
+        record.env_files = std::move(env);
+        return record;
+    };
+    const BuildKnowledge knowledge{{ran("app-misc/a-1", 1, 9000, "/var/tmp"),
+                                    ran("app-misc/a-1", 2, 5000, "/var/tmp/disk", {"/env/disk"}),
+                                    ran("app-misc/a-1", 3, std::nullopt, "/var/tmp")}};
+    CHECK(knowledge.estimate("app-misc/a-1", 8)->build_directory ==
+          egraph::BuildDirectory{
+              .bytes = 9000, .tmpdir = "/var/tmp/disk", .env_files = {"/env/disk"}});
+    // Without a size and a PORTAGE_TMPDIR, none.
+    CHECK_FALSE(BuildKnowledge{{ran("app-misc/b-1", 1, 9000, std::nullopt),
+                                ran("app-misc/b-1", 2, std::nullopt, "/var/tmp")}}
+                    .estimate("app-misc/b-1", 8)
+                    ->build_directory);
+    // A step's cost carries it.
+    const std::vector<egraph::BuildStep> steps{{.cpv = "app-misc/a-1"}};
+    CHECK(egraph::step_costs(knowledge, steps, 8).at(0).build_directory->bytes == 9000);
+}
+
 TEST_CASE("a plan's builds that wait for each other add up, merges and all") {
     const auto [plan, steps] = planned({{}, {0}, {1}});
     const std::vector costs{cost(10), cost(20), cost(30)};

@@ -1092,6 +1092,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     std::optional<double> test_seconds;
     std::vector<std::pair<std::string_view, double>> tested;
     std::optional<Fields> memory;
+    std::vector<Fields> tmpfs;
     for (std::size_t i = rows.size(); i-- > 0;) {
         const auto& row = rows.at(i);
         if (row.size() < 3 || !row.at(0).empty() || row.at(1) != "advice") {
@@ -1105,6 +1106,8 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             }
         } else if (row.at(2) == "memory" && row.size() == 11) {
             memory = Fields(row.begin() + 3, row.end());
+        } else if (row.at(2) == "tmpfs" && row.size() == 7) {
+            tmpfs.emplace(tmpfs.begin(), row.begin() + 3, row.end());
         }
         rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
     }
@@ -1659,6 +1662,20 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                                 memory->at(7));
         }
         out << paint("Memory:", Tone::heading) << ' ' << paint(text, Tone::note) << '\n';
+    }
+    // cpv, bytes, tmpdir, its size
+    for (const auto& too_large : tmpfs) {
+        const auto bytes = [&](std::size_t field) {
+            return byte_size(
+                static_cast<std::uint64_t>(number_field(too_large.at(field)).value_or(0)));
+        };
+        const auto parts = split_cpv(too_large.at(0));
+        const auto text = std::format(
+            "{} grew to {}, past the {} tmpfs at {}; to build it on disk, add \"{}/{} "
+            "notmpfs.conf\" "
+            "to package.env, with env/notmpfs.conf setting PORTAGE_TMPDIR=\"/var/tmp/notmpfs\"",
+            too_large.at(0), bytes(1), bytes(3), too_large.at(2), parts.category, parts.name);
+        out << paint("Tmpfs:", Tone::heading) << ' ' << paint(text, Tone::note) << '\n';
     }
     if (test_seconds) {
         auto text = std::format("about {} of the building", rough_duration(*test_seconds));

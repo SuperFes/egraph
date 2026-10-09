@@ -1277,8 +1277,9 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
   - 20f2 (done): memory: a plan whose peak passes four fifths of the system's memory is told
     the jobs that keep it below, from the estimate run again at fewer, else the build too large
     alone, and steve's `--min-memory-avail` where steve runs with a lower floor.
-  - 20f3 (planned): tmpfs: each build records its `PORTAGE_TMPDIR`; a package whose build
-    directory grew past the size of the tmpfs it builds on is offered a `notmpfs` env.
+  - 20f3 (done): tmpfs: each build records its `PORTAGE_TMPDIR`; a package whose build
+    directory grew past the size of the tmpfs it builds on, with the env files it builds with
+    now, is offered a `notmpfs` env.
   - 20f4 (planned): binary packages: a long build a binary package could replace, from the
     local `PKGDIR` and the binhost indexes portage keeps cached (never fetched by egraph), the
     USE matched as portage's binpkg-respect-use matches it.

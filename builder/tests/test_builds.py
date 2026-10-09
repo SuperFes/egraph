@@ -84,6 +84,10 @@ def test_each_build_is_recorded_as_it_merges(parallel, tmp_path):
         assert record["merge_seconds"] > 0 and record["waited"] >= 0
         assert record["use"] == built_with(machine, cpv)
         assert set(record["environment"]) <= set(worker.ENVIRONMENT)
+        assert (
+            record["environment"]["PORTAGE_TMPDIR"]
+            == system.playground.settings["PORTAGE_TMPDIR"]
+        )
         assert record["jobs"] == 3
         assert record["beside"] == most[cpv], cpv
 
@@ -284,6 +288,39 @@ def test_a_plan_says_when_its_builds_would_hold_most_of_the_memory(machines):
     assert (largest, int(largest_peak)) == (records[0]["cpv"], total * 9 // 10)
     human = system.egraph("--layout", "human", "plan", *targets)
     assert f"{records[0]['cpv']} alone holds" in human.stdout
+
+
+@pytest.mark.skipif(
+    not any(
+        line.split()[1:3] == ["/dev/shm", "tmpfs"] for line in open("/proc/mounts")
+    ),
+    reason="no tmpfs at /dev/shm",
+)
+def test_a_plan_offers_the_disk_to_builds_too_large_for_their_tmpfs(machines):
+    """Builds whose directories grew past the tmpfs they built on are named, with the env that
+    builds them on disk."""
+    system, machine = machines
+    age(system.playground.eroot)
+    ran = system.egraph("exec", "--yes", "app-misc/needs")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    shm = os.statvfs("/dev/shm")
+    size = shm.f_frsize * shm.f_blocks
+    records = history(system)
+    path = os.path.join(system.playground.eroot, "var", "lib", "egraph", "builds.jsonl")
+    with open(path, "w") as f:
+        for record in records:
+            record["environment"]["PORTAGE_TMPDIR"] = "/dev/shm"
+            record["build_dir_size"] = 2 * size
+            f.write(json.dumps(record) + "\n")
+    targets = ["=" + r["cpv"] for r in records]
+    plan = system.egraph("plan", *targets)
+    assert plan.returncode == 0, plan.stdout + plan.stderr
+    tmpfs = [a[1:] for a in advice(plan.stdout) if a[0] == "tmpfs"]
+    assert sorted(tmpfs) == sorted(
+        [r["cpv"], str(2 * size), "/dev/shm", str(size)] for r in records
+    )
+    human = system.egraph("--layout", "human", "plan", *targets)
+    assert "Tmpfs: " in human.stdout and "notmpfs.conf" in human.stdout
 
 
 def test_a_plan_says_how_long_it_will_take_from_the_history(parallel, tmp_path):

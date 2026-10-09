@@ -1826,6 +1826,13 @@ std::vector<std::string> estimate_of(const Session& session, const Invocation& i
             }
         }
     }
+    std::map<std::string, os::FilesystemSpace, std::less<>> spaces;
+    for (auto& tmpdir : build_tmpdirs(costs)) {
+        if (const auto space = os::filesystem_space(std::filesystem::path{tmpdir} / "portage")) {
+            spaces.emplace(std::move(tmpdir), *space);
+        }
+    }
+    advice.tmpfs = tmpfs_advice(built, costs, spaces);
     std::ranges::move(advice_lines(advice), std::back_inserter(lines));
     return lines;
 }

@@ -311,6 +311,24 @@ std::optional<PackageEstimate> BuildKnowledge::estimate(const BuildWanted& wante
     }
     estimate.seconds = median(seconds);
     estimate.test_seconds = median(tests);
+    // The largest directory, and where the latest of the builds that said ran.
+    std::optional<double> latest;
+    for (const BuildRecord& record : chosen) {
+        const auto tmpdir = record.environment.find("PORTAGE_TMPDIR");
+        if (!record.build_dir_size || tmpdir == record.environment.end()) {
+            continue;
+        }
+        auto& directory = estimate.build_directory;
+        if (!directory) {
+            directory.emplace();
+        }
+        directory->bytes = std::max(directory->bytes, *record.build_dir_size);
+        if (!latest || record.start > *latest) {
+            latest = record.start;
+            directory->tmpdir = tmpdir->second;
+            directory->env_files = record.env_files;
+        }
+    }
     if (!cpu.empty()) {
         estimate.parallelism = estimate.seconds > 0 ? median(cpu) / estimate.seconds : 0;
     }
@@ -474,7 +492,8 @@ std::vector<StepCost> step_costs(const BuildKnowledge& knowledge, std::span<cons
                          .merge_seconds = estimate->merge_seconds,
                          .known = !estimate->guessed,
                          .guessed = estimate->guessed,
-                         .test_seconds = estimate->test_seconds});
+                         .test_seconds = estimate->test_seconds,
+                         .build_directory = estimate->build_directory});
     }
     return costs;
 }

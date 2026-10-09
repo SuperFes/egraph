@@ -892,7 +892,7 @@ events: a merge step's record once it merged (with the merge's seconds and merge
 failed (the phase, its status and log, or the worker's error); an uninstall or a skip records
 nothing. Each record has the cpv, repository and slot, the flags the candidate is built with,
 the env files `package.env` applies to it (the USE ledger's stacker), the build environment's
-compiler variables (the worker reports them from the build's configuration before its first
+compiler variables and `PORTAGE_TMPDIR` (the worker reports them from the build's configuration before its first
 phase, an `environment` event), the toolchain cps' versions installed when the build started
 (the installed store's, changed by the run's own merges of them), each build phase's seconds,
 the run's jobs and the most builds that ran beside it, and why the plan merged it (`reason`): new
@@ -1018,7 +1018,12 @@ running at once would hold more than 80% of MemTotal, the plan is estimated agai
 fewer at a time until its peak fits, which names the jobs, their time and peak (none when even
 one at a time does not, the build holding the most alone named instead); only then is steve
 looked for (its command line, through /proc), and where its `--min-memory-avail` is below a
-fifth of the memory, that fifth is offered as its floor. A status keeps them
+fifth of the memory, that fifth is offered as its floor. A package's estimate also keeps its build directory: the
+most bytes it grew to among those builds, and the `PORTAGE_TMPDIR` and env files of the latest
+that said; each such tmpdir's filesystem is looked up once (`statfs`, through
+`os::filesystem_space`, at `${PORTAGE_TMPDIR}/portage` or what of it exists), and a package
+whose directory outgrew the tmpfs it would build on again is offered an env that builds it on
+disk, unless its env files have changed since, as a new one may already move it. A status keeps them
 among the plan's lines, and they are no plan change either. The finish time is no line: it is
 the estimate's seconds from now, which only the human layout says, in the local zone.
 

@@ -114,7 +114,7 @@ def parse_request(line):
 
 
 # The build environment's variables a build's record keeps (build_environment_keys in
-# src/builds.hpp).
+# src/builds.hpp): the compiler's, and where it builds.
 ENVIRONMENT = (
     "CC",
     "CXX",
@@ -124,6 +124,7 @@ ENVIRONMENT = (
     "RUSTFLAGS",
     "MAKEOPTS",
     "NINJAOPTS",
+    "PORTAGE_TMPDIR",
 )
 
 

@@ -28,9 +28,11 @@ namespace egraph {
 // Bumped when a record's fields change meaning; records of another version are kept, unread.
 inline constexpr std::int64_t build_record_version = 1;
 
-// The build environment's variables a worker reports, those set.
-inline constexpr std::array<std::string_view, 8> build_environment_keys{
-    "CC", "CXX", "CFLAGS", "CXXFLAGS", "LDFLAGS", "RUSTFLAGS", "MAKEOPTS", "NINJAOPTS"};
+// The build environment's variables a worker reports, those set: the compiler's, and where it
+// builds.
+inline constexpr std::array<std::string_view, 9> build_environment_keys{
+    "CC",        "CXX",      "CFLAGS",    "CXXFLAGS",      "LDFLAGS",
+    "RUSTFLAGS", "MAKEOPTS", "NINJAOPTS", "PORTAGE_TMPDIR"};
 
 // The cps whose installed versions a record keeps as its toolchain.
 inline constexpr std::array<std::string_view, 8> toolchain_cps{

@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <functional>
 #include <optional>
 #include <string>
@@ -148,6 +149,27 @@ TEST_CASE("free space is that of the nearest directory that exists") {
     REQUIRE(free.has_value());
     CHECK(*free > 0);
     CHECK(free == egraph::os::free_bytes(dir.path()));
+}
+
+TEST_CASE("a filesystem's space is that of the nearest directory that exists, tmpfs or not") {
+    const egraph::test::TempDir dir;
+    const auto space = egraph::os::filesystem_space(dir.path() / "not" / "yet");
+    REQUIRE(space.has_value());
+    CHECK(space->size > 0);
+    CHECK(space->free <= space->size);
+    CHECK(space->tmpfs == egraph::os::filesystem_space(dir.path())->tmpfs);
+    CHECK_FALSE(egraph::os::filesystem_space("/proc")->tmpfs);
+    // Wherever the system mounts a tmpfs, it is one.
+    std::ifstream mounts{"/proc/mounts"};
+    std::string device;
+    std::string target;
+    std::string type;
+    std::string rest;
+    while (mounts >> device >> target >> type && std::getline(mounts, rest)) {
+        if (type == "tmpfs" && target == "/dev/shm") {
+            CHECK(egraph::os::filesystem_space(target)->tmpfs);
+        }
+    }
 }
 
 TEST_CASE("a watcher wakes for an entry made, written or removed in a directory it watches") {

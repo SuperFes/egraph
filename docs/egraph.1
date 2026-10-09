@@ -556,7 +556,11 @@ peak then, all three empty when not even one at a time does, the build holding t
 and its peak, in bytes, and where steve is running and holds its tokens back at less free
 memory, the MiB it would hold them back at (its
 .BR \-\-min\-memory\-avail )
-to keep a fifth free, else empty.
+to keep a fifth free, else empty; and for each package whose build directory grew past the size
+of the tmpfs its PORTAGE_TMPDIR is on, when it last built there with the package.env files it
+builds with now,
+.IR "" "tmpfs cpv bytes tmpdir size" ,
+which people are told to build on disk through an env setting PORTAGE_TMPDIR elsewhere.
 .TP
 .B \-\-dynamic\-deps
 .TP
@@ -1853,7 +1857,7 @@ ran, or
 saw
 .B emerge
 run, appended as it merges or fails, with its cpv, repository, slot, flags, package.env files, its
-environment's compiler variables, the toolchain's installed versions, each phase's seconds, its
+environment's compiler variables and PORTAGE_TMPDIR, the toolchain's installed versions, each phase's seconds, its
 build's and merge's seconds, its outcome, and the run's jobs; kept to the last
 .B build_keep
 builds of each package.

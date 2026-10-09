@@ -1,15 +1,18 @@
 #pragma once
 
 // Advice on a plan before it runs, from its estimate and the build history: what its tests cost,
-// and the jobs its builds' memory allows.
+// the jobs its builds' memory allows, and the builds too large for the tmpfs they build on.
 
 #include "builds.hpp"
 #include "estimate.hpp"
 #include "exec.hpp"
+#include "os.hpp"
 #include "steve.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -52,12 +55,22 @@ struct MemoryAdvice {
     bool operator==(const MemoryAdvice&) const = default;
 };
 
+// A build whose directory grew past the size of the tmpfs PORTAGE_TMPDIR is on.
+struct TmpfsAdvice {
+    std::string cpv{};
+    std::uint64_t bytes = 0;
+    std::string tmpdir{};
+    std::uint64_t size = 0;
+    bool operator==(const TmpfsAdvice&) const = default;
+};
+
 struct PlanAdvice {
     // The seconds the builds' tests take, summed, and the costliest of them first; none when
     // they take less than test_advice_seconds.
     double test_seconds = 0;
     std::vector<TestCost> tests{};
     std::optional<MemoryAdvice> memory{};
+    std::vector<TmpfsAdvice> tmpfs{};
     bool operator==(const PlanAdvice&) const = default;
 };
 
@@ -79,11 +92,23 @@ memory_advice(const Plan& plan, std::span<const Step> steps, std::span<const Bui
 [[nodiscard]] std::optional<std::uint64_t> steve_floor(std::uint64_t total,
                                                        const steve::Settings& settings);
 
+// The PORTAGE_TMPDIRs the steps' packages last built in, each once, to look their filesystems
+// up.
+[[nodiscard]] std::vector<std::string> build_tmpdirs(std::span<const StepCost> costs);
+
+// The steps (by step, built for their packages) whose packages' build directories grew past the
+// size of the tmpfs their PORTAGE_TMPDIR is on (its space in spaces), where they build with the
+// env files they did then: a new one may move them.
+[[nodiscard]] std::vector<TmpfsAdvice>
+tmpfs_advice(std::span<const BuildStep> built, std::span<const StepCost> costs,
+             const std::map<std::string, os::FilesystemSpace, std::less<>>& spaces);
+
 // For scripts, after a plan's estimate line, where advised: "<TAB>advice<TAB>tests<TAB>seconds",
 // then "<TAB>advice<TAB>test<TAB>cpv<TAB>seconds" for each package named, seconds whole;
 // "<TAB>advice<TAB>memory<TAB>peak<TAB>total<TAB>jobs<TAB>seconds<TAB>jobs peak<TAB>largest
 // cpv<TAB>its peak<TAB>steve floor", bytes but the floor's MiB, jobs, its seconds and peak empty
-// when there are none, as is the floor.
+// when there are none, as is the floor; and "<TAB>advice<TAB>tmpfs<TAB>cpv<TAB>bytes<TAB>tmpdir
+// <TAB>its size" for each build too large for its tmpfs.
 [[nodiscard]] std::vector<std::string> advice_lines(const PlanAdvice& advice);
 
 // Whether a plan's line is one of advice_lines'.

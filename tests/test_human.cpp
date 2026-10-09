@@ -454,6 +454,21 @@ TEST_CASE("updates say when their builds would hold most of the memory") {
                               "a/b-2 alone holds 30.0 GiB\n"));
 }
 
+TEST_CASE("updates offer the disk to a build too large for its tmpfs") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{
+                              "a/b-1\tupgrade\ta/b-2\tr",
+                              "\testimate\t100\t\t1\t0\t1",
+                              "\tadvice\ttmpfs\ta/b-2\t15032385536\t/var/tmp\t8589934592",
+                          },
+                          plain);
+    CHECK(out.str().ends_with(
+        "Tmpfs: a/b-2 grew to 14.0 GiB, past the 8.0 GiB tmpfs at /var/tmp; to build it on disk, "
+        "add \"a/b notmpfs.conf\" to package.env, with env/notmpfs.conf setting "
+        "PORTAGE_TMPDIR=\"/var/tmp/notmpfs\"\n"));
+}
+
 TEST_CASE("an estimate's seconds read as roughly as they are known") {
     CHECK(egraph::rough_duration(0.2) == "1 s");
     CHECK(egraph::rough_duration(40.4) == "40 s");

@@ -18,6 +18,15 @@
 
 namespace egraph {
 
+// The directory a package's builds ran in: the most bytes it grew to in the builds an estimate
+// rests on, and the PORTAGE_TMPDIR and env files of the latest of those.
+struct BuildDirectory {
+    std::uint64_t bytes = 0;
+    std::string tmpdir{};
+    std::vector<std::string> env_files{};
+    bool operator==(const BuildDirectory&) const = default;
+};
+
 // A package's next build as its own last builds foretell it.
 struct PackageEstimate {
     // Its build's seconds on a system with nothing else running, fetching left out.
@@ -36,6 +45,8 @@ struct PackageEstimate {
     bool guessed = false;
     // Of its seconds, those its test phase takes.
     double test_seconds = 0;
+    // Of its own builds, those that said their size and PORTAGE_TMPDIR; none for a guess.
+    std::optional<BuildDirectory> build_directory{};
     bool operator==(const PackageEstimate&) const = default;
 };
 
@@ -124,6 +135,7 @@ struct StepCost {
     bool guessed = false;
     // Of build_seconds, those its test phase takes.
     double test_seconds = 0;
+    std::optional<BuildDirectory> build_directory{};
     bool operator==(const StepCost&) const = default;
 };
 

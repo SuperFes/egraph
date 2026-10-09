@@ -275,6 +275,17 @@ std::expected<void, std::error_code> journal_send(std::span<const std::string> f
 // that exists.
 std::expected<std::uint64_t, std::error_code> free_bytes(const std::filesystem::path& path);
 
+// A filesystem's size and the bytes free to this process on it, and whether it is a tmpfs.
+struct FilesystemSpace {
+    std::uint64_t size = 0;
+    std::uint64_t free = 0;
+    bool tmpfs = false;
+    bool operator==(const FilesystemSpace&) const = default;
+};
+
+// The filesystem of path, or of the nearest directory above it that exists.
+std::expected<FilesystemSpace, std::error_code> filesystem_space(const std::filesystem::path& path);
+
 // Whether this process runs as root (effective user id 0).
 bool is_root();
 
