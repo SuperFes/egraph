@@ -16,6 +16,9 @@
 
 namespace egraph {
 
+// "512 B", "1.5 KiB", "2.0 MiB".
+[[nodiscard]] std::string byte_size(std::uint64_t bytes);
+
 enum class Tone : std::uint8_t {
     heading,
     category,

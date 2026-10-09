@@ -896,6 +896,16 @@ phase, an `environment` event), the toolchain cps' versions installed when the b
 (the installed store's, changed by the run's own merges of them), each build phase's seconds,
 the run's jobs and the most builds that ran beside it.
 
+What a build used comes from /proc without root (`src/usage.hpp`), probed at its start, at each
+phase and at its end: CPU seconds from the worker's `cutime` and `cstime`, which hold the time of
+every process below it once waited for (portage waits for each phase's), so each phase's time is
+whole when the next begins, and the worker's own Python is left out; bytes read from and written
+to storage from its `io`, less writes cancelled before writeback; and the system's CPU busy share
+and PSI totals, as shares of the build's time. Each second while a build runs, the resident
+memory of the processes below its worker is summed (the worker's own left out) for its peak, and
+the load is sampled for its mean. A sum of RSS counts shared pages once a process, and a peak
+between samples is missed; the build's cgroup measures both exactly where egraph can make one.
+
 Each append rewrites the file under its directory's lock (`os::rewrite_locked`, as the store
 history's log is appended) and keeps the last `build_keep` records of each cp (`egraph.conf`,
 20 by default; 0 records nothing), so the file stays a few MB at most and is read whole; lines it

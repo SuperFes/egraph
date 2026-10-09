@@ -25,6 +25,14 @@ struct Stalls {
     std::optional<double> io{};
 };
 
+// Microseconds some tasks have stalled on a resource since boot.
+struct StallTotals {
+    std::optional<std::uint64_t> cpu{};
+    std::optional<std::uint64_t> memory{};
+    std::optional<std::uint64_t> io{};
+    bool operator==(const StallTotals&) const = default;
+};
+
 // One reading of /proc; whatever could not be read is unset.
 struct Sample {
     std::optional<CpuTimes> cpu{};
@@ -34,6 +42,7 @@ struct Sample {
     // The one-minute load average.
     std::optional<double> load{};
     Stalls stalls{};
+    StallTotals totals{};
 };
 
 // The aggregate "cpu" line of /proc/stat, and how many "cpuN" lines follow it.
@@ -45,6 +54,8 @@ struct Sample {
 [[nodiscard]] std::optional<double> parse_loadavg(std::string_view text);
 // The "some" line's avg10 from a /proc/pressure file.
 [[nodiscard]] std::optional<double> parse_psi(std::string_view text);
+// The "some" line's total from a /proc/pressure file.
+[[nodiscard]] std::optional<std::uint64_t> parse_psi_total(std::string_view text);
 
 [[nodiscard]] Sample read_sample(const std::filesystem::path& proc = "/proc");
 

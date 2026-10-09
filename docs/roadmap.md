@@ -1214,9 +1214,17 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
   rewrites the file under its directory's lock, pruned to `build_keep` (rather than a
   compaction at the end of a run). `egraph builds [atom]` lists them, as JSON or CSV with
   `--format`. Held to the run's trace, log and vdb entries on a parallel run.
-- 20b (planned): resources. CPU time per phase, peak memory and IO from the build's cgroup (or
-  rusage), load average and PSI over it, steve's tokens, the build directory's peak size,
-  installed size, distfile sizes and fetch time; emerge's builds from the monitor.
+- 20b (in progress): resources, in four steps.
+  - 20b1 (done): from /proc, without root: CPU seconds per phase and per build from the worker's
+    waited-for children (`cutime`/`cstime`, which beat rusage: they hold the whole tree, and a
+    reused worker's peak cannot be reset), storage IO from its `io`, the peak memory of the
+    processes below it sampled each second, and the system's CPU busy share, mean load and PSI
+    stall shares over the build.
+  - 20b2 (planned): a cgroup leaf per build where egraph runs as root on cgroup2, for an exact
+    `memory.peak`, `cpu.stat`, `io.stat` and the build's own pressure.
+  - 20b3 (planned): sizes: the build directory at the end of install, the installed size,
+    distfile sizes and fetch time, and steve's tokens.
+  - 20b4 (planned): emerge's builds, as the monitor or egraphd sees them, marked as emerge's.
 - 20c (planned): estimates. A package's time from its own builds, scaled for the parallelism it
   gets; a plan's wall time from the schedule run ahead with those times and the jobs (the
   critical path, not the sum), and its peak memory: `updates`, `plan`, `exec` and a whole

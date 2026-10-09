@@ -43,6 +43,7 @@
 #include "steve.hpp"
 #include "store.hpp"
 #include "tui.hpp"
+#include "usage.hpp"
 #include "use_stack.hpp"
 #include "visibility.hpp"
 #include "watch.hpp"
@@ -3009,7 +3010,6 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
         status.publish(observer.snapshot(schedule, now.count()), tick);
     };
     publish(true);
-    pool.every(std::chrono::seconds{2}, [&] { publish(true); });
     // Logged as egraph's own runs, to the journal or its file.
     std::vector<RunStep> logged;
     logged.reserve(steps.size());
@@ -3033,6 +3033,37 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     BuildRecorder builds{std::string{Exec::name}, run,
                          build_steps(shown.store.get(), shown.evaluated.get(), plan, steps),
                          installed_toolchain(shown.store.get()), jobs};
+    // By step, the worker building it, measured from /proc at its events and sampled each second
+    // while it builds.
+    std::map<std::size_t, std::int64_t> building;
+    const auto ticks = os::clock_ticks();
+    const auto page = os::page_size();
+    const auto probe = [&](std::optional<std::int64_t> pid) {
+        return Probe{.worker = pid ? usage::read_counters(*pid, ticks) : std::nullopt,
+                     .system = pressure::read_sample()};
+    };
+    auto sampled_at = std::chrono::steady_clock::now();
+    const auto sample = [&] {
+        const auto at = std::chrono::steady_clock::now();
+        if (building.empty() || at - sampled_at < std::chrono::seconds{1}) {
+            return;
+        }
+        sampled_at = at;
+        const auto processes = usage::read_processes();
+        const auto load = pressure::read_sample().load;
+        for (const auto& [step, pid] : building) {
+            builds.sampled(step, usage::pages_under(processes, pid) * page, load);
+        }
+    };
+    // Quiet seconds sample the builds; every other one republishes the status.
+    bool other_second = false;
+    pool.every(std::chrono::seconds{1}, [&] {
+        sample();
+        other_second = !other_second;
+        if (other_second) {
+            publish(true);
+        }
+    });
     const auto builds_file = builds_path(shown.store.get().meta.eroot);
     bool builds_told = false;
     const auto keep_build = [&](const std::optional<BuildRecord>& record) {
@@ -3079,7 +3110,12 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     const auto outcome = run_schedule(
         schedule, pool, requests,
         [&](std::size_t step, const WorkerEvent& event) {
-            builds.reported(step, event, now());
+            const auto worker = building.find(step);
+            builds.reported(step, event, now(),
+                            event.kind == WorkerEvent::Kind::phase && worker != building.end()
+                                ? probe(worker->second)
+                                : Probe{});
+            sample();
             if (event.kind == WorkerEvent::Kind::environment) {
                 return;
             }
@@ -3108,7 +3144,22 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
             if (const auto logs = events.traced(step, what, now())) {
                 logger.write(*logs);
             }
-            keep_build(builds.traced(step, what, now()));
+            Probe probed;
+            if (what == Traced::build_started) {
+                const auto pid = worker ? pool.pid(*worker) : std::nullopt;
+                if (pid) {
+                    building.insert_or_assign(step, *pid);
+                }
+                probed = probe(pid);
+            } else if (what == Traced::built || what == Traced::build_failed) {
+                const auto found = building.find(step);
+                probed =
+                    probe(found != building.end() ? std::optional{found->second} : std::nullopt);
+                if (found != building.end()) {
+                    building.erase(found);
+                }
+            }
+            keep_build(builds.traced(step, what, now(), probed));
             if (what == Traced::merged && std::holds_alternative<MergeStep>(steps.at(step))) {
                 state.merged.push_back(names.at(step));
                 record();

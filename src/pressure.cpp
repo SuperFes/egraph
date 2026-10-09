@@ -121,17 +121,36 @@ std::optional<double> parse_psi(std::string_view text) {
     return std::nullopt;
 }
 
+std::optional<std::uint64_t> parse_psi_total(std::string_view text) {
+    for (const auto line : lines(text)) {
+        const auto fields = words(line);
+        if (fields.empty() || fields.front() != "some") {
+            continue;
+        }
+        for (const auto field : fields) {
+            if (field.starts_with("total=")) {
+                return number<std::uint64_t>(field.substr(6));
+            }
+        }
+    }
+    return std::nullopt;
+}
+
 Sample read_sample(const std::filesystem::path& proc) {
     const auto stat = read_text(proc / "stat");
     const auto meminfo = read_text(proc / "meminfo");
+    const auto cpu = read_text(proc / "pressure/cpu");
+    const auto memory = read_text(proc / "pressure/memory");
+    const auto io = read_text(proc / "pressure/io");
     return {.cpu = parse_stat(stat),
             .cpus = count_cpus(stat),
             .mem_total = parse_meminfo(meminfo, "MemTotal"),
             .mem_available = parse_meminfo(meminfo, "MemAvailable"),
             .load = parse_loadavg(read_text(proc / "loadavg")),
-            .stalls = {.cpu = parse_psi(read_text(proc / "pressure/cpu")),
-                       .memory = parse_psi(read_text(proc / "pressure/memory")),
-                       .io = parse_psi(read_text(proc / "pressure/io"))}};
+            .stalls = {.cpu = parse_psi(cpu), .memory = parse_psi(memory), .io = parse_psi(io)},
+            .totals = {.cpu = parse_psi_total(cpu),
+                       .memory = parse_psi_total(memory),
+                       .io = parse_psi_total(io)}};
 }
 
 std::optional<double> cpu_busy(const Sample& before, const Sample& after) {

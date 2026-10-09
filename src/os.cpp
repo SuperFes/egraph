@@ -658,6 +658,16 @@ std::int64_t process_id() {
     return ::getpid();
 }
 
+std::uint64_t page_size() {
+    const auto size = ::sysconf(_SC_PAGESIZE);
+    return size > 0 ? static_cast<std::uint64_t>(size) : 4096;
+}
+
+std::uint64_t clock_ticks() {
+    const auto ticks = ::sysconf(_SC_CLK_TCK);
+    return ticks > 0 ? static_cast<std::uint64_t>(ticks) : 100;
+}
+
 bool is_root() {
     return geteuid() == 0;
 }

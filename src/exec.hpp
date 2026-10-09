@@ -131,7 +131,15 @@ class StepRequests {
 
 // What egraph-build --worker reports of a request.
 struct WorkerEvent {
-    enum class Kind : std::uint8_t { phase, environment, built, merged, uninstalled, failed, error };
+    enum class Kind : std::uint8_t {
+        phase,
+        environment,
+        built,
+        merged,
+        uninstalled,
+        failed,
+        error
+    };
     Kind kind = Kind::phase;
     // The phase starting, the cpv built or done, the phase that failed, or the error's
     // message.

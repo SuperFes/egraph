@@ -45,6 +45,14 @@ std::optional<std::int64_t> integer_at(const Json& json, std::string_view key) {
     return found->get<std::int64_t>();
 }
 
+std::optional<std::uint64_t> unsigned_at(const Json& json, std::string_view key) {
+    const auto found = json.find(key);
+    if (found == json.end() || !found->is_number_unsigned()) {
+        return std::nullopt;
+    }
+    return found->get<std::uint64_t>();
+}
+
 // The strings of an array, none for anything else.
 std::optional<std::vector<std::string>> strings(const Json& json) {
     if (!json.is_array()) {
@@ -98,7 +106,11 @@ std::filesystem::path builds_path(const std::filesystem::path& eroot) {
 std::string build_record_json(const BuildRecord& record) {
     auto phases = Json::array();
     for (const auto& phase : record.phases) {
-        phases.push_back({{"phase", phase.phase}, {"seconds", phase.seconds}});
+        Json each{{"phase", phase.phase}, {"seconds", phase.seconds}};
+        if (phase.cpu_seconds) {
+            each.emplace("cpu_seconds", *phase.cpu_seconds);
+        }
+        phases.push_back(std::move(each));
     }
     Json json{{"version", build_record_version},
               {"origin", record.origin},
@@ -135,6 +147,32 @@ std::string build_record_json(const BuildRecord& record) {
     }
     if (record.jobs) {
         json.emplace("jobs", *record.jobs);
+    }
+    if (record.cpu_seconds) {
+        json.emplace("cpu_seconds", *record.cpu_seconds);
+    }
+    if (record.peak_memory) {
+        json.emplace("peak_memory", *record.peak_memory);
+    }
+    if (record.read_bytes) {
+        json.emplace("read_bytes", *record.read_bytes);
+    }
+    if (record.write_bytes) {
+        json.emplace("write_bytes", *record.write_bytes);
+    }
+    if (record.system) {
+        auto system = Json::object();
+        const auto share = [&](std::string_view key, std::optional<double> value) {
+            if (value) {
+                system.emplace(key, *value);
+            }
+        };
+        share("cpu_busy", record.system->cpu_busy);
+        share("load", record.system->load);
+        share("stall_cpu", record.system->stall_cpu);
+        share("stall_memory", record.system->stall_memory);
+        share("stall_io", record.system->stall_io);
+        json.emplace("system", std::move(system));
     }
     return json.dump();
 }
@@ -211,7 +249,9 @@ std::expected<BuildRecord, std::string> parse_build_record(std::string_view line
             if (!phase || !seconds) {
                 return std::unexpected("a phase without its name or seconds");
             }
-            record.phases.push_back({.phase = std::move(*phase), .seconds = *seconds});
+            record.phases.push_back({.phase = std::move(*phase),
+                                     .seconds = *seconds,
+                                     .cpu_seconds = number_at(each, "cpu_seconds")});
         }
     }
     record.merge_seconds = number_at(json, "merge_seconds");
@@ -231,6 +271,20 @@ std::expected<BuildRecord, std::string> parse_build_record(std::string_view line
         return std::unexpected("beside out of range");
     }
     record.beside = beside ? static_cast<std::uint32_t>(*beside) : 0;
+    record.cpu_seconds = number_at(json, "cpu_seconds");
+    record.peak_memory = unsigned_at(json, "peak_memory");
+    record.read_bytes = unsigned_at(json, "read_bytes");
+    record.write_bytes = unsigned_at(json, "write_bytes");
+    if (const auto found = json.find("system"); found != json.end()) {
+        if (!found->is_object()) {
+            return std::unexpected("system is not an object");
+        }
+        record.system = SystemShare{.cpu_busy = number_at(*found, "cpu_busy"),
+                                    .load = number_at(*found, "load"),
+                                    .stall_cpu = number_at(*found, "stall_cpu"),
+                                    .stall_memory = number_at(*found, "stall_memory"),
+                                    .stall_io = number_at(*found, "stall_io")};
+    }
     return record;
 }
 
@@ -373,6 +427,14 @@ std::string build_line(const BuildRecord& record, const std::chrono::time_zone& 
         if (record.merge_seconds) {
             line += ", merge " + log::duration(*record.merge_seconds);
         }
+        if (record.cpu_seconds) {
+            line += "; CPU " + log::duration(*record.cpu_seconds);
+            if (record.peak_memory) {
+                line += ", memory " + byte_size(*record.peak_memory);
+            }
+        } else if (record.peak_memory) {
+            line += "; memory " + byte_size(*record.peak_memory);
+        }
         return line;
     }
     if (record.failed_phase) {
@@ -388,12 +450,14 @@ std::string build_line(const BuildRecord& record, const std::chrono::time_zone& 
 }
 
 std::string build_fields(const BuildRecord& record) {
-    return std::format("{:.0f}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{}", record.start, record.cpv,
-                       record.repo, outcome_name(record.outcome), record.build_seconds,
-                       record.merge_seconds ? std::format("{:.1f}", *record.merge_seconds)
-                                            : std::string{},
-                       record.failed_phase.value_or(""),
-                       record.jobs ? std::to_string(*record.jobs) : std::string{}, record.beside);
+    return std::format(
+        "{:.0f}\t{}\t{}\t{}\t{:.1f}\t{}\t{}\t{}\t{}\t{}\t{}", record.start, record.cpv, record.repo,
+        outcome_name(record.outcome), record.build_seconds,
+        record.merge_seconds ? std::format("{:.1f}", *record.merge_seconds) : std::string{},
+        record.failed_phase.value_or(""),
+        record.jobs ? std::to_string(*record.jobs) : std::string{}, record.beside,
+        record.cpu_seconds ? std::format("{:.1f}", *record.cpu_seconds) : std::string{},
+        record.peak_memory ? std::to_string(*record.peak_memory) : std::string{});
 }
 
 namespace {
@@ -426,16 +490,26 @@ std::string seconds_or_empty(std::optional<double> seconds) {
     return seconds ? std::format("{:.1f}", *seconds) : std::string{};
 }
 
+std::string count_or_empty(std::optional<std::uint64_t> count) {
+    return count ? std::to_string(*count) : std::string{};
+}
+
+std::string share_or_empty(std::optional<double> share) {
+    return share ? std::format("{:.3f}", *share) : std::string{};
+}
+
 } // namespace
 
 std::string_view builds_csv_header() {
     return "start,origin,run,cpv,repo,slot,outcome,build_seconds,merge_seconds,waited,"
-           "failed_phase,status,error,jobs,beside,use,env_files,log";
+           "failed_phase,status,error,jobs,beside,cpu_seconds,peak_memory,read_bytes,write_bytes,"
+           "cpu_busy,load,stall_cpu,stall_memory,stall_io,use,env_files,log";
 }
 
 std::string build_csv_row(const BuildRecord& record) {
     const auto seconds =
         std::chrono::sys_seconds{std::chrono::seconds{static_cast<std::int64_t>(record.start)}};
+    const auto system = record.system.value_or(SystemShare{});
     const std::vector<std::string> fields{
         std::format("{:%Y-%m-%dT%H:%M:%SZ}", seconds),
         record.origin,
@@ -452,6 +526,15 @@ std::string build_csv_row(const BuildRecord& record) {
         record.error.value_or(""),
         record.jobs ? std::to_string(*record.jobs) : std::string{},
         std::to_string(record.beside),
+        seconds_or_empty(record.cpu_seconds),
+        count_or_empty(record.peak_memory),
+        count_or_empty(record.read_bytes),
+        count_or_empty(record.write_bytes),
+        share_or_empty(system.cpu_busy),
+        system.load ? std::format("{:.2f}", *system.load) : std::string{},
+        share_or_empty(system.stall_cpu),
+        share_or_empty(system.stall_memory),
+        share_or_empty(system.stall_io),
         joined(record.use),
         joined(record.env_files),
         record.log.value_or("")};
@@ -465,15 +548,82 @@ std::string build_csv_row(const BuildRecord& record) {
     return row;
 }
 
+namespace {
+
+// The CPU seconds a worker's processes used between two probes.
+std::optional<double> cpu_between(const Probe& before, const Probe& after) {
+    if (!before.worker || !after.worker) {
+        return std::nullopt;
+    }
+    return std::max(after.worker->children_cpu - before.worker->children_cpu, 0.0);
+}
+
+std::optional<std::uint64_t> grown(std::optional<std::uint64_t> before,
+                                   std::optional<std::uint64_t> after) {
+    if (!before || !after) {
+        return std::nullopt;
+    }
+    return *after > *before ? *after - *before : 0;
+}
+
+// The share of seconds some tasks stalled, from PSI's microsecond totals.
+std::optional<double> stalled(std::optional<std::uint64_t> before,
+                              std::optional<std::uint64_t> after, double seconds) {
+    if (!before || !after || *after < *before || seconds <= 0) {
+        return std::nullopt;
+    }
+    return std::min(static_cast<double>(*after - *before) / 1e6 / seconds, 1.0);
+}
+
+std::optional<SystemShare> system_share(const std::optional<pressure::Sample>& before,
+                                        const std::optional<pressure::Sample>& after, double loads,
+                                        std::size_t load_samples, double seconds) {
+    SystemShare share;
+    for (const auto& each : {before, after}) {
+        if (each && each->load) {
+            loads += *each->load;
+            ++load_samples;
+        }
+    }
+    if (load_samples > 0) {
+        share.load = loads / static_cast<double>(load_samples);
+    }
+    if (before && after) {
+        share.cpu_busy = pressure::cpu_busy(*before, *after);
+        share.stall_cpu = stalled(before->totals.cpu, after->totals.cpu, seconds);
+        share.stall_memory = stalled(before->totals.memory, after->totals.memory, seconds);
+        share.stall_io = stalled(before->totals.io, after->totals.io, seconds);
+    }
+    if (share == SystemShare{}) {
+        return std::nullopt;
+    }
+    return share;
+}
+
+} // namespace
+
 BuildRecorder::BuildRecorder(std::string origin, std::string run, std::vector<BuildStep> steps,
                              Toolchain toolchain, std::optional<std::uint32_t> jobs)
     : origin_{std::move(origin)}, run_{std::move(run)}, steps_{std::move(steps)},
       toolchain_{std::move(toolchain)}, jobs_{jobs}, times_(steps_.size()) {}
 
-void BuildRecorder::end_phase(Times& times, double now) {
+void BuildRecorder::sampled(std::size_t step, std::uint64_t memory, std::optional<double> load) {
+    auto& times = times_.at(step);
+    if (!times.building) {
+        return;
+    }
+    times.peak_memory = std::max(times.peak_memory.value_or(0), memory);
+    if (load) {
+        times.loads += *load;
+        ++times.load_samples;
+    }
+}
+
+void BuildRecorder::end_phase(Times& times, double now, const Probe& probe) {
     if (times.phase && times.phase_start) {
-        times.phases.push_back(
-            {.phase = std::move(*times.phase), .seconds = now - *times.phase_start});
+        times.phases.push_back({.phase = std::move(*times.phase),
+                                .seconds = now - *times.phase_start,
+                                .cpu_seconds = cpu_between(times.phase_started, probe)});
     }
     times.phase.reset();
     times.phase_start.reset();
@@ -506,6 +656,16 @@ BuildRecord BuildRecorder::record(std::size_t step, BuildRecord::Outcome outcome
     if (times.build_start && times.built) {
         found.build_seconds = *times.built - *times.build_start;
     }
+    const auto& before = times.started;
+    const auto& after = times.ended;
+    found.cpu_seconds = cpu_between(before, after);
+    if (before.worker && after.worker) {
+        found.read_bytes = grown(before.worker->read_bytes, after.worker->read_bytes);
+        found.write_bytes = grown(before.worker->write_bytes, after.worker->write_bytes);
+    }
+    found.peak_memory = times.peak_memory;
+    found.system = system_share(before.system, after.system, times.loads, times.load_samples,
+                                found.build_seconds);
     if (outcome == BuildRecord::Outcome::failed && times.failure) {
         if (times.failure->kind == WorkerEvent::Kind::failed) {
             found.failed_phase = times.failure->text;
@@ -518,13 +678,18 @@ BuildRecord BuildRecorder::record(std::size_t step, BuildRecord::Outcome outcome
     return found;
 }
 
-std::optional<BuildRecord> BuildRecorder::traced(std::size_t step, Traced what, double now) {
+std::optional<BuildRecord> BuildRecorder::traced(std::size_t step, Traced what, double now,
+                                                 const Probe& probe) {
     auto& times = times_.at(step);
     const auto& built = steps_.at(step);
     switch (what) {
     case Traced::build_started: {
         times.build_start = now;
         times.building = true;
+        times.started = probe;
+        times.peak_memory.reset();
+        times.loads = 0;
+        times.load_samples = 0;
         times.toolchain.clear();
         for (const auto& [cp, slots] : toolchain_) {
             auto& versions = times.toolchain.try_emplace(cp).first->second;
@@ -542,14 +707,16 @@ std::optional<BuildRecord> BuildRecorder::traced(std::size_t step, Traced what, 
         return std::nullopt;
     }
     case Traced::built:
-        end_phase(times, now);
+        end_phase(times, now, probe);
         times.building = false;
         times.built = now;
+        times.ended = probe;
         return std::nullopt;
     case Traced::build_failed:
-        end_phase(times, now);
+        end_phase(times, now, probe);
         times.building = false;
         times.built = now;
+        times.ended = probe;
         return record(step, BuildRecord::Outcome::failed);
     case Traced::merge_started:
         times.merge_start = now;
@@ -587,7 +754,8 @@ std::optional<BuildRecord> BuildRecorder::traced(std::size_t step, Traced what, 
     return std::nullopt;
 }
 
-void BuildRecorder::reported(std::size_t step, const WorkerEvent& event, double now) {
+void BuildRecorder::reported(std::size_t step, const WorkerEvent& event, double now,
+                             const Probe& probe) {
     using Kind = WorkerEvent::Kind;
     auto& times = times_.at(step);
     switch (event.kind) {
@@ -597,9 +765,10 @@ void BuildRecorder::reported(std::size_t step, const WorkerEvent& event, double 
     case Kind::phase:
         // The merge's phase is the merge's time, not the build's.
         if (times.building) {
-            end_phase(times, now);
+            end_phase(times, now, probe);
             times.phase = event.text;
             times.phase_start = now;
+            times.phase_started = probe;
         }
         break;
     case Kind::failed:

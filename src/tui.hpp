@@ -2163,8 +2163,6 @@ void draw_dialog(S& screen, const Dialog& dialog, const Glyphs& glyph, Size size
 
 // "45s", "1m40s", "1h02m": seconds, rounded down, in at most two units.
 [[nodiscard]] std::string duration(double seconds);
-// "512 B", "1.5 KiB", "2.0 MiB".
-[[nodiscard]] std::string byte_size(std::uint64_t bytes);
 // done of total as width cells: full ones, one filled by eighths where the glyphs have them, then
 // empty ones.
 [[nodiscard]] std::string progress_bar(std::uint64_t done, std::uint64_t total, std::size_t width,

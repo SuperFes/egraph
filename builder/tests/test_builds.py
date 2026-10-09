@@ -12,9 +12,11 @@ from test_build import age
 from test_exec_run import (
     logged,
     machines,
+    over,
     parallel,
     read_trace,
 )  # noqa: F401 (fixtures)
+from test_worker import INSTALL, PLAIN
 
 pytestmark = pytest.mark.skipif(
     not EGRAPH, reason="set EGRAPH to the egraph binary (meson test does)"
@@ -134,3 +136,47 @@ def test_egraph_builds_reads_the_history_back(machines):
     assert len(as_csv) == len(records) + 1
     bad = system.egraph("builds", "not an atom")
     assert bad.returncode == 2
+
+
+# The compile spins for a while, then holds 100 MB in a shell variable across a sleep.
+HUNGRY = INSTALL + """src_compile() {
+	local i held
+	for ((i = 0; i < 400000; i++)); do :; done
+	held=$(head -c 100000000 /dev/zero | tr '\\0' x)
+	sleep 2.5
+	: "${#held}"
+}
+"""
+
+
+@pytest.fixture
+def hungry(gnupg_home, tmp_path):
+    yield from over({"app-misc/hungry-1": {**PLAIN, "MISC_CONTENT": HUNGRY}}, tmp_path)
+
+
+def test_a_build_is_measured_by_what_its_processes_used(hungry):
+    """Its CPU time by phase, the memory its processes held, its IO and the system's load."""
+    system, machine = hungry
+    age(system.playground.eroot)
+    ran = system.egraph("exec", "--yes", "app-misc/hungry")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    (record,) = history(system)
+    phases = {p["phase"]: p for p in record["phases"]}
+    assert all("cpu_seconds" in p for p in record["phases"])
+    # Beyond what an empty phase costs portage.
+    assert phases["compile"]["cpu_seconds"] >= phases["configure"]["cpu_seconds"] + 0.2
+    assert (
+        sum(p["cpu_seconds"] for p in record["phases"]) <= record["cpu_seconds"] + 0.01
+    )
+    assert record["peak_memory"] >= 100_000_000
+    if os.path.exists("/proc/self/io"):
+        assert record["read_bytes"] >= 0 and record["write_bytes"] >= 0
+    shares = record["system"]
+    assert 0 <= shares["cpu_busy"] <= 1
+    assert shares["load"] >= 0
+    if os.path.exists("/proc/pressure/cpu"):
+        for key in ("stall_cpu", "stall_memory", "stall_io"):
+            assert 0 <= shares[key] <= 1, key
+    listed = system.egraph("builds", "--format", "csv").stdout.splitlines()
+    header, row = listed[0].split(","), listed[1].split(",")
+    assert int(row[header.index("peak_memory")]) == record["peak_memory"]

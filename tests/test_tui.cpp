@@ -941,10 +941,10 @@ TEST_CASE("durations, sizes, bars and spinners read at a glance") {
     CHECK(egraph::tui::duration(100.5) == "1m40s");
     CHECK(egraph::tui::duration(3725) == "1h02m");
     CHECK(egraph::tui::duration(-3) == "0s");
-    CHECK(egraph::tui::byte_size(512) == "512 B");
-    CHECK(egraph::tui::byte_size(1536) == "1.5 KiB");
-    CHECK(egraph::tui::byte_size(2097152) == "2.0 MiB");
-    CHECK(egraph::tui::byte_size(5ULL << 30U) == "5.0 GiB");
+    CHECK(egraph::byte_size(512) == "512 B");
+    CHECK(egraph::byte_size(1536) == "1.5 KiB");
+    CHECK(egraph::byte_size(2097152) == "2.0 MiB");
+    CHECK(egraph::byte_size(5ULL << 30U) == "5.0 GiB");
 
     const auto& unicode = egraph::glyphs(egraph::GlyphSet::unicode);
     CHECK(egraph::tui::progress_bar(12, 40, 20, unicode) ==

@@ -125,6 +125,13 @@ TEST_CASE("a build record reads back as written") {
     record.waited = 1.5;
     record.jobs = 4;
     record.beside = 2;
+    record.phases.back().cpu_seconds = 70;
+    record.cpu_seconds = 71.5;
+    record.peak_memory = 1ULL << 31U;
+    record.read_bytes = 4096;
+    record.write_bytes = 0;
+    record.system = egraph::SystemShare{
+        .cpu_busy = 0.9, .load = 7.5, .stall_cpu = 0.25, .stall_memory = 0, .stall_io = 0.01};
     const auto line = egraph::build_record_json(record);
     CHECK(line.find('\n') == std::string::npos);
     CHECK(egraph::parse_build_record(line) == record);
@@ -236,6 +243,102 @@ TEST_CASE("a merged build's record has its phases, times, environment and toolch
     CHECK(record->outcome == BuildRecord::Outcome::merged);
     CHECK(record->jobs == 4);
     CHECK(record->beside == 1);
+}
+
+namespace {
+
+egraph::Probe probe(double cpu, std::uint64_t read, std::uint64_t written) {
+    return {.worker = egraph::usage::Counters{.children_cpu = cpu,
+                                              .read_bytes = read,
+                                              .write_bytes = written},
+            .system = std::nullopt};
+}
+
+egraph::pressure::Sample system(std::uint64_t busy, std::uint64_t total, double load,
+                                std::uint64_t stalled_cpu, std::uint64_t stalled_io) {
+    return {.cpu = egraph::pressure::CpuTimes{.busy = busy, .total = total},
+            .load = load,
+            .totals = {.cpu = stalled_cpu, .memory = 0, .io = stalled_io}};
+}
+
+} // namespace
+
+TEST_CASE("a build is measured by its worker's counters at its start, phases and end") {
+    using Kind = WorkerEvent::Kind;
+    BuildRecorder recorder{"exec", "run1", steps(), toolchain(), 4};
+    auto started = probe(5, 1000, 2000);
+    started.system = system(100, 1000, 2, 0, 1'000'000);
+    CHECK_FALSE(recorder.traced(0, Traced::build_started, 100, started));
+    recorder.reported(0, event(Kind::phase, "setup"), 100, probe(5, 1000, 2000));
+    recorder.reported(0, event(Kind::phase, "compile"), 102, probe(5.5, 1500, 2000));
+    recorder.sampled(0, 300, 4);
+    recorder.sampled(0, 900, 6);
+    recorder.sampled(0, 600, std::nullopt);
+    auto ended = probe(45.5, 9000, 2000 + 4096);
+    // Over the 10 s it built: CPU 80% busy, 2.5 s stalled on CPU and 1 s on IO.
+    ended.system = system(900, 2000, 8, 2'500'000, 2'000'000);
+    CHECK_FALSE(recorder.traced(0, Traced::built, 110, ended));
+    // The merge is not the build's.
+    CHECK_FALSE(recorder.traced(0, Traced::merge_started, 115, probe(46, 9000, 9000)));
+    recorder.reported(0, event(Kind::phase, "merge"), 115, probe(46, 9000, 9000));
+    recorder.sampled(0, 5000, 20);
+    const auto record = recorder.traced(0, Traced::merged, 120, probe(50, 20000, 20000));
+    REQUIRE(record);
+    CHECK(record->phases ==
+          std::vector<egraph::PhaseTime>{{.phase = "setup", .seconds = 2, .cpu_seconds = 0.5},
+                                         {.phase = "compile", .seconds = 8, .cpu_seconds = 40}});
+    CHECK(record->cpu_seconds == 40.5);
+    CHECK(record->peak_memory == 900U);
+    CHECK(record->read_bytes == 8000U);
+    CHECK(record->write_bytes == 4096U);
+    REQUIRE(record->system);
+    CHECK(record->system->cpu_busy == 0.8);
+    // The loads at its start, sampled and at its end.
+    CHECK(record->system->load == 5);
+    CHECK(record->system->stall_cpu == 0.25);
+    CHECK(record->system->stall_memory == 0);
+    CHECK(record->system->stall_io == 0.1);
+}
+
+TEST_CASE("a build is measured as far as its probes go") {
+    using Kind = WorkerEvent::Kind;
+    BuildRecorder recorder{"exec", "run1", steps(), toolchain(), 4};
+    // Unmeasured: nothing.
+    CHECK_FALSE(recorder.traced(0, Traced::build_started, 100));
+    recorder.reported(0, event(Kind::phase, "compile"), 100);
+    CHECK_FALSE(recorder.traced(0, Traced::built, 110));
+    CHECK_FALSE(recorder.traced(0, Traced::merge_started, 110));
+    auto record = recorder.traced(0, Traced::merged, 111);
+    REQUIRE(record);
+    CHECK_FALSE(record->phases.at(0).cpu_seconds);
+    CHECK_FALSE(record->cpu_seconds);
+    CHECK_FALSE(record->peak_memory);
+    CHECK_FALSE(record->read_bytes);
+    CHECK_FALSE(record->system);
+
+    // A worker whose IO is not accounted, and a failure with its processes' time.
+    egraph::Probe start{.worker = egraph::usage::Counters{.children_cpu = 1}, .system = {}};
+    CHECK_FALSE(recorder.traced(3, Traced::build_started, 200, start));
+    recorder.reported(3, event(Kind::phase, "compile"), 200, start);
+    egraph::Probe end{.worker = egraph::usage::Counters{.children_cpu = 4}, .system = {}};
+    recorder.reported(
+        3, {.kind = Kind::failed, .text = "compile", .status = 1, .log = "/l", .values = {}}, 203,
+        end);
+    record = recorder.traced(3, Traced::build_failed, 203, end);
+    REQUIRE(record);
+    CHECK(record->phases.at(0).cpu_seconds == 3);
+    CHECK(record->cpu_seconds == 3);
+    CHECK_FALSE(record->read_bytes);
+    CHECK_FALSE(record->system);
+
+    // A sample for a step not building is not its.
+    recorder.sampled(2, 100, 1);
+    CHECK_FALSE(recorder.traced(2, Traced::build_started, 300));
+    CHECK_FALSE(recorder.traced(2, Traced::built, 301));
+    CHECK_FALSE(recorder.traced(2, Traced::merge_started, 301));
+    record = recorder.traced(2, Traced::merged, 302);
+    REQUIRE(record);
+    CHECK_FALSE(record->peak_memory);
 }
 
 TEST_CASE("a failed build's record names the phase, its status and its log") {
@@ -390,6 +493,18 @@ TEST_CASE("a build reads as when, what, how it ended and how long it took") {
     record.error = "no ebuild";
     CHECK(egraph::build_line(record, *utc) ==
           "2025-10-08 14:02:11  app-misc/a-1::gentoo  failed after 2 min 3 s: no ebuild");
+
+    // Measured: its CPU time and memory after.
+    record.error.reset();
+    record.outcome = BuildRecord::Outcome::merged;
+    record.merge_seconds = 4;
+    record.cpu_seconds = 842;
+    record.peak_memory = 3ULL << 30U;
+    CHECK(egraph::build_line(record, *utc) ==
+          "2025-10-08 14:02:11  app-misc/a-1::gentoo  merged in 2 min 3 s, merge 4.0 s; CPU "
+          "14 min 2 s, memory 3.0 GiB");
+    record.peak_memory.reset();
+    CHECK(egraph::build_line(record, *utc).ends_with("merge 4.0 s; CPU 14 min 2 s"));
 }
 
 TEST_CASE("for scripts, a build's fields are separated by tabs") {
@@ -397,13 +512,19 @@ TEST_CASE("for scripts, a build's fields are separated by tabs") {
     record.jobs = 4;
     record.beside = 2;
     CHECK(egraph::build_fields(record) ==
-          "1759932132\tapp-misc/a-1\tgentoo\tmerged\t10.0\t2.0\t\t4\t2");
+          "1759932132\tapp-misc/a-1\tgentoo\tmerged\t10.0\t2.0\t\t4\t2\t\t");
+    record.cpu_seconds = 61.25;
+    record.peak_memory = 1048576;
+    CHECK(egraph::build_fields(record) ==
+          "1759932132\tapp-misc/a-1\tgentoo\tmerged\t10.0\t2.0\t\t4\t2\t61.2\t1048576");
+    record.cpu_seconds.reset();
+    record.peak_memory.reset();
     record.outcome = BuildRecord::Outcome::failed;
     record.merge_seconds.reset();
     record.failed_phase = "compile";
     record.jobs.reset();
     CHECK(egraph::build_fields(record) ==
-          "1759932132\tapp-misc/a-1\tgentoo\tfailed\t10.0\t\tcompile\t\t2");
+          "1759932132\tapp-misc/a-1\tgentoo\tfailed\t10.0\t\tcompile\t\t2\t\t");
 }
 
 TEST_CASE("as CSV, a header and a row per build, quoted where it must be") {
@@ -413,5 +534,17 @@ TEST_CASE("as CSV, a header and a row per build, quoted where it must be") {
     record.error = R"(said "no", twice)";
     CHECK(egraph::build_csv_row(record) ==
           R"(2025-10-08T14:02:11Z,exec,run1,app-misc/a-1,gentoo,0,merged,10.0,2.0,0.0,,,)"
-          R"("said ""no"", twice",,0,ssl zstd,,)");
+          R"("said ""no"", twice",,0,,,,,,,,,,ssl zstd,,)");
+    record.error.reset();
+    record.cpu_seconds = 61.25;
+    record.peak_memory = 1048576;
+    record.read_bytes = 4096;
+    record.write_bytes = 0;
+    record.system = egraph::SystemShare{
+        .cpu_busy = 0.5, .load = 3.25, .stall_cpu = 0.125, .stall_memory = 0, .stall_io = 0.5};
+    CHECK(egraph::build_csv_row(record) ==
+          R"(2025-10-08T14:02:11Z,exec,run1,app-misc/a-1,gentoo,0,merged,10.0,2.0,0.0,,,,,0,)"
+          R"(61.2,1048576,4096,0,0.500,3.25,0.125,0.000,0.500,ssl zstd,,)");
+    const auto header = egraph::builds_csv_header();
+    CHECK(std::ranges::count(header, ',') == 26);
 }

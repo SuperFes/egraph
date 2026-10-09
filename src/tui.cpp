@@ -2782,20 +2782,6 @@ std::string duration(double seconds) {
     return std::format("{}h{:02}m", whole / 3600, whole % 3600 / 60);
 }
 
-std::string byte_size(std::uint64_t bytes) {
-    if (bytes < 1024) {
-        return std::format("{} B", bytes);
-    }
-    constexpr std::array<std::string_view, 5> units{"KiB", "MiB", "GiB", "TiB", "PiB"};
-    auto value = static_cast<double>(bytes) / 1024;
-    std::size_t unit = 0;
-    while (value >= 1024 && unit + 1 < units.size()) {
-        value /= 1024;
-        ++unit;
-    }
-    return std::format("{:.1f} {}", value, units.at(unit));
-}
-
 std::string progress_bar(std::uint64_t done, std::uint64_t total, std::size_t width,
                          const Glyphs& glyph) {
     const auto eighths = columns(glyph.bar_eighths);

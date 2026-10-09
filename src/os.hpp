@@ -281,6 +281,10 @@ bool is_root();
 // This process's id.
 std::int64_t process_id();
 
+// The size of a memory page, and the clock ticks in a second, as /proc counts them.
+std::uint64_t page_size();
+std::uint64_t clock_ticks();
+
 // The running executable, from /proc/self/exe; empty if that cannot be read.
 std::filesystem::path executable();
 

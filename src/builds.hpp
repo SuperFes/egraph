@@ -4,7 +4,9 @@
 // one JSON object a line, kept to the last builds of each cp.
 
 #include "exec.hpp"
+#include "pressure.hpp"
 #include "schedule.hpp"
+#include "usage.hpp"
 
 #include <array>
 #include <chrono>
@@ -37,7 +39,21 @@ inline constexpr std::array<std::string_view, 8> toolchain_cps{
 struct PhaseTime {
     std::string phase{};
     double seconds = 0;
+    // The user and system seconds its processes used, where measured.
+    std::optional<double> cpu_seconds{};
     bool operator==(const PhaseTime&) const = default;
+};
+
+// How busy the system was over a build: the share of CPU time busy, the mean one-minute load,
+// and the share of the time some tasks stalled on CPU, memory or IO; whatever /proc did not say
+// is unset.
+struct SystemShare {
+    std::optional<double> cpu_busy{};
+    std::optional<double> load{};
+    std::optional<double> stall_cpu{};
+    std::optional<double> stall_memory{};
+    std::optional<double> stall_io{};
+    bool operator==(const SystemShare&) const = default;
 };
 
 struct BuildRecord {
@@ -75,6 +91,13 @@ struct BuildRecord {
     std::optional<std::uint32_t> jobs{};
     // The most other builds running at once beside it.
     std::uint32_t beside = 0;
+    // From its worker's counters: the user and system seconds of its processes, the most memory
+    // they held at once (sampled each second), and the bytes they read from and wrote to storage.
+    std::optional<double> cpu_seconds{};
+    std::optional<std::uint64_t> peak_memory{};
+    std::optional<std::uint64_t> read_bytes{};
+    std::optional<std::uint64_t> write_bytes{};
+    std::optional<SystemShare> system{};
     bool operator==(const BuildRecord&) const = default;
 };
 
@@ -140,8 +163,16 @@ using Toolchain = std::map<std::string, std::map<std::string, std::string>>;
 // The toolchain cps' versions installed, by slot.
 [[nodiscard]] Toolchain installed_toolchain(const Store& store);
 
+// What /proc said at one of a build's events: its worker's counters, and the system's.
+struct Probe {
+    std::optional<usage::Counters> worker{};
+    std::optional<pressure::Sample> system{};
+};
+
 // The records of a run's builds, from what its schedule traces and its workers report, as
 // RunEvents logs them: a merge step's record once it merged or failed, none for an uninstall.
+// Probes taken at the build's start, phases and end measure it, and samples taken while it builds
+// its memory and the load.
 class BuildRecorder {
   public:
     // toolchain: as installed when the run started; merges of its cps change it for the builds
@@ -149,8 +180,11 @@ class BuildRecorder {
     BuildRecorder(std::string origin, std::string run, std::vector<BuildStep> steps,
                   Toolchain toolchain, std::optional<std::uint32_t> jobs);
 
-    [[nodiscard]] std::optional<BuildRecord> traced(std::size_t step, Traced what, double now);
-    void reported(std::size_t step, const WorkerEvent& event, double now);
+    [[nodiscard]] std::optional<BuildRecord> traced(std::size_t step, Traced what, double now,
+                                                    const Probe& probe = {});
+    void reported(std::size_t step, const WorkerEvent& event, double now, const Probe& probe = {});
+    // While step builds: the memory its processes hold, and the load.
+    void sampled(std::size_t step, std::uint64_t memory, std::optional<double> load);
 
   private:
     struct Times {
@@ -166,9 +200,17 @@ class BuildRecorder {
         std::optional<WorkerEvent> failure;
         std::uint32_t beside = 0;
         bool building = false;
+        // The probes at the build's start, its phase's start and its end.
+        Probe started;
+        Probe phase_started;
+        Probe ended;
+        std::optional<std::uint64_t> peak_memory;
+        // The loads sampled while it built, summed.
+        double loads = 0;
+        std::size_t load_samples = 0;
     };
 
-    static void end_phase(Times& times, double now);
+    static void end_phase(Times& times, double now, const Probe& probe);
     [[nodiscard]] BuildRecord record(std::size_t step, BuildRecord::Outcome outcome) const;
 
     std::string origin_;

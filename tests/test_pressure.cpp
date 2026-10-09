@@ -62,6 +62,10 @@ TEST_CASE("proc files are read field by field") {
 
     CHECK(egraph::pressure::parse_psi(psi_text) == 12.5);
     CHECK_FALSE(egraph::pressure::parse_psi("full avg10=2.00\n").has_value());
+
+    CHECK(egraph::pressure::parse_psi_total(psi_text) == 123U);
+    CHECK_FALSE(egraph::pressure::parse_psi_total("full avg10=2.00 total=45\n").has_value());
+    CHECK_FALSE(egraph::pressure::parse_psi_total("some avg10=2.00 total=x\n").has_value());
 }
 
 TEST_CASE("a sample reads every file, and PSI only where the kernel keeps it") {
@@ -74,12 +78,14 @@ TEST_CASE("a sample reads every file, and PSI only where the kernel keeps it") {
     CHECK(without.mem_available == 11339588ULL * 1024);
     CHECK(without.load == 3.55);
     CHECK_FALSE(without.stalls.cpu.has_value());
+    CHECK_FALSE(without.totals.cpu.has_value());
 
     write_proc(dir.path(), 10, 90, true);
     const auto with = egraph::pressure::read_sample(dir.path());
     CHECK(with.stalls.cpu == 12.5);
     CHECK(with.stalls.memory == 0.0);
     CHECK(with.stalls.io == 3.25);
+    CHECK(with.totals == egraph::pressure::StallTotals{.cpu = 123, .memory = 0, .io = 0});
 
     const auto nothing = egraph::pressure::read_sample(dir.path() / "missing");
     CHECK_FALSE(nothing.cpu.has_value());

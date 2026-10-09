@@ -2605,4 +2605,18 @@ void human_match(std::ostream& out, std::span<const std::string> records,
     }
 }
 
+std::string byte_size(std::uint64_t bytes) {
+    if (bytes < 1024) {
+        return std::format("{} B", bytes);
+    }
+    constexpr std::array<std::string_view, 5> units{"KiB", "MiB", "GiB", "TiB", "PiB"};
+    auto value = static_cast<double>(bytes) / 1024;
+    std::size_t unit = 0;
+    while (value >= 1024 && unit + 1 < units.size()) {
+        value /= 1024;
+        ++unit;
+    }
+    return std::format("{:.1f} {}", value, units.at(unit));
+}
+
 } // namespace egraph
