@@ -2931,7 +2931,8 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                                          const std::vector<std::string>& names, RunState state,
                                          std::ostream& out) {
     const auto& plan = shown.plan;
-    const auto jobs = command.jobs ? command.jobs : jobs_of(execution_options(settings.defaults));
+    const auto jobs = exec_jobs(command.jobs, execution_options(settings.defaults),
+                                settings.jobserver.has_value());
     const bool keep_going =
         command.keep_going.value_or(keep_going_of(execution_options(settings.defaults)));
     std::optional<os::Jobserver> jobserver;
@@ -4664,7 +4665,8 @@ void configure(CLI::App& app, Invocation& invocation) {
                 std::get<Exec>(invocation.command).jobs = jobs;
             },
             "Build up to N packages at once, as emerge --jobs; EMERGE_DEFAULT_OPTS' count "
-            "otherwise")
+            "otherwise, else as many as the jobserver hands tokens for under "
+            "FEATURES=jobserver-token, else one")
         ->type_name("N")
         ->check(CLI::PositiveNumber);
     exec_cmd

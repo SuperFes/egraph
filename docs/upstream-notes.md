@@ -93,3 +93,8 @@ is right.
   lists `lib-2` with `gtk` but not the `gtkdep` that `gtk? ( dev-libs/gtkdep )` needs. egraph
   plans with the change made, which is what emerge merges once package.use makes it
   (`test_use_changes_once_made_are_emerges`, `usechange` scenario).
+- `exec` without `-j` and without `--jobs` in `EMERGE_DEFAULT_OPTS`, under
+  FEATURES=jobserver-token, sets no limit of its own: as many builds start as the plan's order
+  allows and the jobserver hands tokens for, so steve's job count decides. emerge builds one at a
+  time without `--jobs`, jobserver or not. A preference rather than a correction, at the user's
+  request (2026-10-08); `exec_jobs` in `test_action.cpp`.

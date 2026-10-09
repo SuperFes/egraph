@@ -23,6 +23,12 @@ namespace egraph {
 // --jobs decides, one without a number allowing any; one without --jobs.
 [[nodiscard]] std::optional<std::uint32_t> jobs_of(std::span<const std::string> passed);
 
+// How many builds exec runs at once: given (-j), else the count passed (execution_options'
+// spelling) names with --jobs; else, with a jobserver, any, each build gated by its tokens;
+// else one.
+[[nodiscard]] std::optional<std::uint32_t>
+exec_jobs(std::optional<std::uint32_t> given, std::span<const std::string> passed, bool jobserver);
+
 // Whether emerge goes on after a failure under passed: the last --keep-going decides, without a
 // value or with y; off without one.
 [[nodiscard]] bool keep_going_of(std::span<const std::string> passed);

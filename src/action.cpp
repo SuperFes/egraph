@@ -153,6 +153,19 @@ std::optional<std::uint32_t> jobs_of(std::span<const std::string> passed) {
     return jobs;
 }
 
+std::optional<std::uint32_t> exec_jobs(std::optional<std::uint32_t> given,
+                                       std::span<const std::string> passed, bool jobserver) {
+    if (given) {
+        return given;
+    }
+    if (std::ranges::any_of(passed, [](std::string_view option) {
+            return option == "--jobs" || option.starts_with("--jobs=");
+        })) {
+        return jobs_of(passed);
+    }
+    return jobserver ? std::nullopt : std::optional<std::uint32_t>{1};
+}
+
 bool keep_going_of(std::span<const std::string> passed) {
     bool keep_going = false;
     for (const std::string_view option : passed) {

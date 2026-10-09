@@ -66,6 +66,15 @@ TEST_CASE("the jobs emerge runs at once come from the last --jobs") {
     CHECK(egraph::jobs_of(egraph::execution_options(Words{"-aj8"})) == 8);
 }
 
+TEST_CASE("exec's jobs: -j, else EMERGE_DEFAULT_OPTS, else any under a jobserver, else one") {
+    using Words = std::vector<std::string>;
+    CHECK(egraph::exec_jobs(3, Words{"--jobs=4"}, true) == 3);
+    CHECK(egraph::exec_jobs(std::nullopt, Words{"--jobs=4"}, true) == 4);
+    CHECK(egraph::exec_jobs(std::nullopt, Words{"--jobs"}, false) == std::nullopt);
+    CHECK(egraph::exec_jobs(std::nullopt, Words{"--keep-going"}, true) == std::nullopt);
+    CHECK(egraph::exec_jobs(std::nullopt, Words{}, false) == 1);
+}
+
 TEST_CASE("emerge goes on after a failure by the last --keep-going") {
     using Words = std::vector<std::string>;
     CHECK_FALSE(egraph::keep_going_of(Words{}));

@@ -939,7 +939,14 @@ packages at once, as
 .B emerge \-\-jobs
 does; otherwise as many as
 .B EMERGE_DEFAULT_OPTS
-says, one by default.
+says; without either, under
+.B FEATURES=jobserver\-token
+as many as the jobserver hands tokens for (steve's job count), the plan's order allowing, and
+otherwise one
+.RB ( emerge
+builds one at a time without
+.B \-\-jobs
+whatever the jobserver).
 .TP
 .BR \-\-keep\-going " [\fBy\fR|\fBn\fR]"
 Go on after a failure, once the builds running have finished and merged, as

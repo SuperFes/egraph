@@ -437,10 +437,12 @@ def test_builds_wait_to_run_alone_without_room_in_the_build_directory(
     assert "builds wait to run alone" in ran.stdout
 
 
-def test_each_build_takes_a_jobserver_token(parallel, tmp_path):
+@pytest.mark.parametrize("jobs", [["-j3"], []])
+def test_each_build_takes_a_jobserver_token(parallel, tmp_path, jobs):
     """Under FEATURES=jobserver-token, a token from MAKEFLAGS' jobserver per build, the first
     held already when MAKEFLAGS comes from the environment, as emerge takes them; each given
-    back."""
+    back. Without -j or --jobs, the tokens alone limit the builds, where emerge builds one at a
+    time."""
     system, machine = parallel
     age(system.playground.eroot)
     fifo = tmp_path / "jobserver"
@@ -455,9 +457,12 @@ def test_each_build_takes_a_jobserver_token(parallel, tmp_path):
             FEATURES="jobserver-token",
             MAKEFLAGS=f"--jobserver-auth=fifo:{fifo}",
         )
+        if not jobs:
+            # Without the fixture's --jobs=2.
+            environment["EMERGE_DEFAULT_OPTS"] = "--jobs-tmpdir-require-free-gb=0"
         ran = subprocess.run(
             system.command(
-                "exec", "--yes", "-j3", "--trace", str(trace), "app-misc/top"
+                "exec", "--yes", *jobs, "--trace", str(trace), "app-misc/top"
             ),
             capture_output=True,
             text=True,
