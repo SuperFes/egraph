@@ -966,6 +966,13 @@ and 30 s more counts, and `build_changes` lists what differs from the build just
 toolchain versions, compiler variables, env files and flags, which is where a toolchain, CFLAGS
 or LTO change shows.
 
+The views share one model with the terminal interface: the human layouts build `StyledLine`s
+(pieces of text each in a tone, with the cp the line is about), which `put_styled` prints and the
+living app's build history view (`B`, `Built` in `src/tui.hpp`) draws as spans. That view reads
+the history through a `Services` reader when it opens or on `r`, lays its page out again only
+when the page, the package or the records change, and opens a line's cp: its builds alone first,
+then its installed package's page.
+
 Estimates (`src/estimate.hpp`) come from the history, and from the repository index's distfile
 sizes where it is there (loaded or on disk; an estimate never builds it). A package's next build
 is foretold by 5 of its merged builds (the version's, else the cp's), those whose USE differs

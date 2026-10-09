@@ -1735,6 +1735,15 @@ struct Shown {
     std::vector<Argument> arguments;
 };
 
+// The time zone times are read and shown in; UTC without one.
+const std::chrono::time_zone& local_zone() {
+    try {
+        return *std::chrono::current_zone();
+    } catch (const std::runtime_error&) {
+        return *std::chrono::locate_zone("UTC");
+    }
+}
+
 // The build history at path; none when there is none.
 std::vector<BuildRecord> read_history(const std::filesystem::path& path) {
     std::ifstream in{path};
@@ -3896,7 +3905,12 @@ Exit execute(const Tui& tui_command, Session& session, const Invocation& invocat
                  return std::unexpected(written.error() + "; run egraph as root");
              }
              return written;
-         }},
+         },
+         .read_builds =
+             [history = builds_path(invocation.root / eprefix.relative_path())] {
+                 return read_history(history);
+             },
+         .zone = local_zone},
         warnings, tui_command.notices, err);
 }
 
@@ -3985,15 +3999,6 @@ Exit execute(const Complete& command, Session&, const Invocation& invocation, st
     write_lines(
         out, complete_word(newest->installed, newest->evaluated, view, command.what, command.word));
     return Exit::ok;
-}
-
-// The time zone times are read and shown in; UTC without one.
-const std::chrono::time_zone& local_zone() {
-    try {
-        return *std::chrono::current_zone();
-    } catch (const std::runtime_error&) {
-        return *std::chrono::locate_zone("UTC");
-    }
 }
 
 Exit execute(const LogCommand& command, Session&, const Invocation& invocation, std::ostream& out,

@@ -102,6 +102,50 @@ def test_tui_shows_the_store_and_quits(playgrounds, tmp_path):
         tmux(socket, "kill-server")
 
 
+def test_tui_shows_the_build_history(playgrounds, tmp_path):
+    """B opens it, newest first; enter shows a package's builds, enter again its page."""
+    path = tmp_path / "installed.egraph"
+    write_stores(playgrounds("roots"), path)
+    skip_without_tui()
+    root = tmp_path / "root"
+    history = root / "var" / "lib" / "egraph" / "builds.jsonl"
+    history.parent.mkdir(parents=True)
+    record = {
+        "version": 1,
+        "origin": "exec",
+        "run": "r",
+        "repo": "test_repo",
+        "slot": "0",
+        "outcome": "merged",
+        "merge_seconds": 1.0,
+    }
+    with open(history, "w") as f:
+        for start, seconds in ((1759932131, 100.0), (1759933131, 300.0)):
+            built = dict(
+                record, start=start, cpv="app-misc/world-1", build_seconds=seconds
+            )
+            f.write(json.dumps(built) + "\n")
+
+    socket = f"egraph-test-{os.getpid()}"
+    command = (
+        f"TZ=UTC {EGRAPH} --store {path} --root {root} --no-refresh tui; "
+        "echo EXIT=$?; sleep 30"
+    )
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "120", "-y", "16", command)
+    try:
+        wait_for(socket, "nothing to update")
+        tmux(socket, "send-keys", "-t", "t", "B")
+        wait_for(socket, "builds  slowest  by week", "app-misc/world-1::test_repo")
+        tmux(socket, "send-keys", "-t", "t", "Down", "Enter")
+        wait_for(socket, "app-misc/world", "2 builds, 1 min 40 s to 5 min 0 s")
+        tmux(socket, "send-keys", "-t", "t", "Down", "Down", "Enter")
+        wait_for(socket, "Depends on", "@selected  app-misc/world")
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")
+
+
 def test_tui_lists_and_shows_pending_updates(playgrounds, tmp_path):
     path = tmp_path / "installed.egraph"
     write_stores(playgrounds("repository"), path)

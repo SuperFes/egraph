@@ -4117,3 +4117,155 @@ TEST_CASE("run reads a news item and marks it read through its services") {
     CHECK(asked == std::vector<std::string>{"/repo/news.en.txt"});
     CHECK(read == std::vector<std::string>{"news:gentoo/2026-09-01-x"});
 }
+
+namespace {
+
+egraph::BuildRecord history_build(std::string cpv, double start, double seconds,
+                                  bool merged = true) {
+    egraph::BuildRecord record;
+    record.origin = "exec";
+    record.run = "run1";
+    record.start = start;
+    record.cpv = std::move(cpv);
+    record.repo = "gentoo";
+    record.slot = "0";
+    record.build_seconds = seconds;
+    record.outcome =
+        merged ? egraph::BuildRecord::Outcome::merged : egraph::BuildRecord::Outcome::failed;
+    if (merged) {
+        record.merge_seconds = 1;
+    } else {
+        record.failed_phase = "compile";
+    }
+    return record;
+}
+
+std::vector<egraph::BuildRecord> history() {
+    return {history_build("app-misc/a-1", 1759932131, 100),
+            history_build("dev-libs/gone-2", 1759932731, 30, false),
+            history_build("app-misc/a-1", 1759933131, 300)};
+}
+
+const std::chrono::time_zone& utc() {
+    return *std::chrono::locate_zone("UTC");
+}
+
+// The plain text of the build history view's lines.
+std::vector<std::string> built_lines(const egraph::tui::App& app) {
+    std::vector<std::string> found;
+    for (const auto& line : app.built()->lines) {
+        found.push_back(egraph::plain_text(line));
+    }
+    return found;
+}
+
+} // namespace
+
+TEST_CASE("B opens the build history, read once, newest first, its pages turned left and right") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{12, 140, {character(U'B'), key(KeyKind::right)}};
+    int reads = 0;
+    egraph::tui::run(screen, app, ascii,
+                     {.read_builds =
+                          [&] {
+                              ++reads;
+                              return history();
+                          },
+                      .zone = utc});
+    CHECK(reads == 1);
+    REQUIRE(app.built());
+    CHECK(app.built()->page == egraph::tui::BuildsPage::slowest);
+    const auto text = screen.text();
+    CHECK(text.find("builds  slowest  by week") != std::string::npos);
+    CHECK(text.find("app-misc/a  3 min") != std::string::npos);
+
+    egraph::tui::App fresh{store, graph};
+    fresh.handle(character(U'B'));
+    CHECK(fresh.builds_requested());
+    fresh.finish_builds(history(), utc());
+    CHECK_FALSE(fresh.builds_requested());
+    fresh.lay_out_builds(ascii);
+    const auto lines = built_lines(fresh);
+    REQUIRE(lines.size() == 4);
+    CHECK(lines.at(0).starts_with("Started"));
+    CHECK(lines.at(1).starts_with("2025-10-08 14:18  app-misc/a-1::gentoo"));
+    CHECK(lines.at(3).starts_with("2025-10-08 14:02  app-misc/a-1::gentoo"));
+    CHECK(fresh.built()->lines.at(2).subject == "dev-libs/gone");
+    // The last page stays put.
+    for (int i = 0; i < 8; ++i) {
+        fresh.handle(key(KeyKind::right));
+    }
+    CHECK(fresh.built()->page == egraph::tui::BuildsPage::slower);
+    fresh.lay_out_builds(ascii);
+    CHECK(built_lines(fresh) ==
+          std::vector<std::string>{"app-misc/a-1  took 5 min, was 2 min (+200%)",
+                                   "  nothing it records changed"});
+    fresh.handle(key(KeyKind::left));
+    CHECK(fresh.built()->page == egraph::tui::BuildsPage::failing);
+    // r reads the history again.
+    fresh.handle(character(U'r'));
+    CHECK(fresh.builds_requested());
+    fresh.handle(key(KeyKind::escape));
+    CHECK_FALSE(fresh.built());
+}
+
+TEST_CASE("enter on a build opens its package's builds, and enter again the package's page") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    app.handle(character(U'B'));
+    app.finish_builds(history(), utc());
+    app.set_height(10);
+    app.lay_out_builds(ascii);
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.built()->cp == "app-misc/a");
+    app.lay_out_builds(ascii);
+    const auto lines = built_lines(app);
+    REQUIRE(lines.size() == 4);
+    CHECK(lines.at(0) == "app-misc/a  _#  2 builds, 1 min 40 s to 5 min 0 s");
+    CHECK(lines.at(1).starts_with("  Started"));
+    CHECK(app.built()->cursor.at == 0);
+    // Other pages show the package alone too.
+    app.handle(key(KeyKind::right));
+    app.lay_out_builds(ascii);
+    CHECK(built_lines(app).size() == 2);
+    app.handle(key(KeyKind::left));
+    app.lay_out_builds(ascii);
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    CHECK(store.string(store.packages.at(app.pages().back().package).cpv) == "app-misc/a-1");
+    // Back from the page, esc shows every package again, then closes the view.
+    app.handle(key(KeyKind::escape));
+    CHECK(app.pages().empty());
+    app.handle(key(KeyKind::escape));
+    REQUIRE(app.built());
+    CHECK_FALSE(app.built()->cp);
+    app.handle(key(KeyKind::escape));
+    CHECK_FALSE(app.built());
+}
+
+TEST_CASE("a package no longer installed has no page to open from its builds") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    app.handle(character(U'B'));
+    app.finish_builds(history(), utc());
+    app.set_height(10);
+    app.lay_out_builds(ascii);
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.built()->cp == "dev-libs/gone");
+    app.lay_out_builds(ascii);
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    CHECK(app.pages().empty());
+    REQUIRE(app.dialog());
+    CHECK(app.dialog()->title == "dev-libs/gone is not installed");
+}

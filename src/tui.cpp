@@ -1,6 +1,7 @@
 #include "tui.hpp"
 
 #include "build_info.hpp"
+#include "build_views.hpp"
 #include "request.hpp"
 
 #include <cmath>
@@ -1588,7 +1589,7 @@ bool App::typing() const {
     if (search_) {
         return search_->typing;
     }
-    return list_.searching && !checked_ && !watched_ && !planned_;
+    return list_.searching && !checked_ && !watched_ && !planned_ && !built_;
 }
 
 void App::handle(const Key& key) {
@@ -1640,6 +1641,8 @@ void App::handle(const Key& key) {
         handle_watch(key);
     } else if (planned_) {
         handle_plan(key);
+    } else if (built_) {
+        handle_builds(key);
     } else if (on_what_if()) {
         handle_what_if(key);
     } else if (on_notices_) {
@@ -2289,6 +2292,8 @@ void App::handle_list(const Key& key) {
         checked_.emplace();
     } else if (is(key, U'e')) {
         watched_.emplace();
+    } else if (is(key, U'B')) {
+        built_.emplace();
     } else if (is(key, U'p') && has_evaluated() && scope_planned(scope_)) {
         open_plan();
     } else if (key.kind == KeyKind::left || is(key, U'h')) {
@@ -2457,6 +2462,142 @@ void App::handle_plan(const Key& key) {
             }
         }
         move_among(planned.cursor, stops, key, height_);
+    }
+}
+
+void App::finish_builds(std::vector<BuildRecord> records, const std::chrono::time_zone& zone) {
+    if (!built_) {
+        return;
+    }
+    built_->records = std::move(records);
+    built_->zone = std::cref(zone);
+    built_->laid_out = false;
+}
+
+void App::lay_out_builds(const Glyphs& glyph) {
+    if (!built_ || !built_->records || built_->laid_out) {
+        return;
+    }
+    auto& built = *built_;
+    const auto& zone = built.zone.value_or(std::cref(*std::chrono::locate_zone("UTC"))).get();
+    std::vector<BuildRecord> records;
+    for (const auto& record : *built.records) {
+        const auto parts = split_cpv(record.cpv);
+        if (!built.cp || std::format("{}/{}", parts.category, parts.name) == *built.cp) {
+            records.push_back(record);
+        }
+    }
+    std::vector<std::string> fields;
+    switch (built.page) {
+    case BuildsPage::builds:
+        // Newest first, but a package's own oldest first, as its sparkline runs.
+        if (!built.cp) {
+            std::ranges::reverse(records);
+        }
+        for (const auto& record : records) {
+            fields.push_back(build_fields(record));
+        }
+        built.lines = styled_builds(fields, built.cp.has_value(), zone, glyph);
+        break;
+    case BuildsPage::slowest:
+        for (const auto& times : slowest_packages(records)) {
+            fields.push_back(package_times_fields(times));
+        }
+        built.lines = styled_slowest(fields, glyph);
+        break;
+    case BuildsPage::weeks:
+    case BuildsPage::months: {
+        const auto weeks = built.page == BuildsPage::weeks;
+        for (const auto& total :
+             period_totals(records, weeks ? BuildPeriod::week : BuildPeriod::month, zone)) {
+            fields.push_back(period_fields(total));
+        }
+        built.lines = styled_periods(fields, weeks ? "week" : "month", glyph);
+        break;
+    }
+    case BuildsPage::rebuilds:
+        for (const auto& counts : frequent_rebuilds(records)) {
+            fields.push_back(rebuild_fields(counts));
+        }
+        built.lines = styled_rebuilds(fields, glyph);
+        break;
+    case BuildsPage::failing:
+        for (const auto& failures : failing_packages(records)) {
+            fields.push_back(failures_fields(failures));
+        }
+        built.lines = styled_failures(fields, zone, glyph);
+        break;
+    case BuildsPage::slower:
+        for (const auto& slowdown : slower_builds(records)) {
+            std::ranges::move(slowdown_lines(slowdown), std::back_inserter(fields));
+        }
+        built.lines = styled_slowdowns(fields, glyph);
+        break;
+    }
+    built.laid_out = true;
+    const auto last = built.lines.empty() ? 0 : built.lines.size() - 1;
+    built.cursor.at = std::min(built.cursor.at, last);
+    built.cursor.top = std::min(built.cursor.top, built.cursor.at);
+}
+
+void App::handle_builds(const Key& key) {
+    if (!built_) {
+        return;
+    }
+    auto& built = *built_;
+    // Another page or package: laid out afresh, from the top.
+    const auto again = [&built] {
+        built.laid_out = false;
+        built.cursor = {};
+    };
+    const auto page = static_cast<std::size_t>(built.page);
+    if (is(key, U'q') || is(key, U'Q')) {
+        done_ = true;
+    } else if (key.kind == KeyKind::escape || key.kind == KeyKind::backspace) {
+        if (built.cp) {
+            built.cp.reset();
+            again();
+        } else {
+            built_.reset();
+        }
+    } else if (key.kind == KeyKind::left || is(key, U'h')) {
+        if (page > 0) {
+            built.page = static_cast<BuildsPage>(page - 1);
+            again();
+        }
+    } else if (key.kind == KeyKind::right || is(key, U'l')) {
+        if (page + 1 < builds_pages.size()) {
+            built.page = static_cast<BuildsPage>(page + 1);
+            again();
+        }
+    } else if (is(key, U'r')) {
+        built.records.reset();
+        built.laid_out = false;
+    } else if (key.kind == KeyKind::enter) {
+        if (built.cursor.at >= built.lines.size()) {
+            return;
+        }
+        const auto subject = built.lines.at(built.cursor.at).subject;
+        if (subject.empty()) {
+            return;
+        }
+        if (!built.cp) {
+            built.cp = subject;
+            again();
+            return;
+        }
+        const auto& store = this->store();
+        for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
+            if (store.string(store.packages.at(id).cp) == subject) {
+                open(id);
+                return;
+            }
+        }
+        show({.error = false,
+              .title = std::format("{} is not installed", subject),
+              .lines = {"Its builds stay in the history from when it was."}});
+    } else if (is_move(key)) {
+        move(built.cursor, built.lines.size(), key, height_);
     }
 }
 
@@ -3343,6 +3484,7 @@ std::vector<Hint> list_keys(const App& app, const Glyphs& glyph) {
         {.key = "b", .meaning = app.build_deps() ? "run-time deps only" : "build deps too"});
     keys.push_back({.key = "c", .meaning = "check the store"});
     keys.push_back({.key = "e", .meaning = "running emerges"});
+    keys.push_back({.key = "B", .meaning = "build history"});
     add_common(keys);
     return keys;
 }
@@ -3455,6 +3597,21 @@ std::vector<Hint> plan_keys(const Planned& planned, const Glyphs& glyph) {
     return keys;
 }
 
+std::vector<Hint> builds_keys(const Built& built, const Glyphs& glyph) {
+    const bool on_package =
+        built.cursor.at < built.lines.size() && !built.lines.at(built.cursor.at).subject.empty();
+    std::vector<Hint> keys{
+        {.key = std::string{glyph.move}, .meaning = "move"},
+        {.key = std::string{glyph.pages}, .meaning = "page", .bar = true},
+        {.key = std::string{glyph.enter},
+         .meaning = built.cp ? "open the package" : "the package's builds",
+         .bar = on_package},
+        {.key = "esc", .meaning = built.cp ? "all packages" : "back", .bar = true},
+        {.key = "r", .meaning = "read the history again"}};
+    add_common(keys);
+    return keys;
+}
+
 std::vector<Hint> what_if_keys(const App& app, const Glyphs& glyph) {
     std::vector<Hint> keys{{.key = std::string{glyph.move}, .meaning = "move"},
                            {.key = std::string{glyph.pages}, .meaning = "page"},
@@ -3529,6 +3686,9 @@ std::vector<Hint> view_keys(const App& app, const Glyphs& glyph) {
     }
     if (const auto& planned = app.planned()) {
         return plan_keys(*planned, glyph);
+    }
+    if (const auto& built = app.built()) {
+        return builds_keys(*built, glyph);
     }
     if (app.on_what_if()) {
         return what_if_keys(app, glyph);

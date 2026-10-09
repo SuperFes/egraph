@@ -1584,6 +1584,20 @@ does, and
 saves the lines as
 .B save
 does, once a dialog showing each file and the lines it gets is confirmed.
+.B B
+opens the build history, a page per view of
+.B builds
+turned with the left and right arrows: the builds newest first, the slowest packages, the time by
+week and by month, what rebuilds most, what fails and what got slower;
+.B enter
+on a line shows its package's builds alone (its builds as a table under a sparkline, and the other
+pages for it alone),
+.B enter
+again opens the package's page,
+.B esc
+goes back to every package, and
+.B r
+reads the history again.
 A set's plan is made in the background the first time its page shows, as
 .B exec \-uDN
 on its set plans it. Beside them, the plan of

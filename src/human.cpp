@@ -2744,17 +2744,20 @@ struct Cell {
 
 // Rows aligned in columns two apart under a header, the columns no row fills left out, each line
 // led by an indent and its trailing blanks dropped. The widths come from every row added, so
-// slices of the rows put apart still line up.
+// slices of the rows laid out apart still line up.
 class Table {
   public:
     explicit Table(std::vector<Cell> header) : header_(std::move(header)) {}
 
-    void add(std::vector<Cell> row) { rows_.push_back(std::move(row)); }
-    [[nodiscard]] std::size_t size() const { return rows_.size(); }
+    // A row, about the cp subject if any.
+    void add(std::vector<Cell> row, std::string subject = {}) {
+        rows_.push_back(std::move(row));
+        subjects_.push_back(std::move(subject));
+    }
 
     // The header, then the rows at the places given.
-    void put(std::ostream& out, const Painter& paint, std::string_view indent,
-             std::span<const std::size_t> places) const {
+    void lay_out(std::vector<StyledLine>& lines, std::string_view indent,
+                 std::span<const std::size_t> places) const {
         std::vector<std::size_t> widths(header_.size(), 0);
         std::vector<bool> filled(header_.size(), false);
         for (std::size_t i = 0; i < header_.size(); ++i) {
@@ -2766,8 +2769,11 @@ class Table {
                 filled.at(i) = filled.at(i) || !row.at(i).text.empty();
             }
         }
-        const auto line = [&](const std::vector<Cell>& row, bool heading) {
-            std::string text;
+        const auto line = [&](const std::vector<Cell>& row, bool heading, std::string subject) {
+            StyledLine laid{.pieces = {}, .subject = std::move(subject)};
+            if (!indent.empty()) {
+                laid.pieces.push_back({.text = std::string{indent}, .tone = std::nullopt});
+            }
             std::size_t pending = 0;
             bool started = false;
             for (std::size_t i = 0; i < row.size() && i < widths.size(); ++i) {
@@ -2778,36 +2784,43 @@ class Table {
                 pending += started ? 2 : 0;
                 started = true;
                 if (!cell.text.empty()) {
-                    text += std::string(pending, ' ');
-                    text += paint(cell.text, heading ? Tone::heading : cell.tone);
+                    laid.pieces.push_back(
+                        {.text = std::string(pending, ' '), .tone = std::nullopt});
+                    laid.pieces.push_back(
+                        {.text = cell.text, .tone = heading ? Tone::heading : cell.tone});
                     pending = 0;
                 }
                 pending += widths.at(i) - columns_of(cell.text);
             }
-            out << indent << text << '\n';
+            lines.push_back(std::move(laid));
         };
-        line(header_, true);
+        line(header_, true, {});
         for (const auto place : places) {
-            line(rows_.at(place), false);
+            line(rows_.at(place), false, subjects_.at(place));
         }
     }
 
     // The header, then every row.
-    void put(std::ostream& out, const Painter& paint) const {
+    [[nodiscard]] std::vector<StyledLine> lines() const {
         std::vector<std::size_t> all(rows_.size());
         std::ranges::iota(all, std::size_t{0});
-        put(out, paint, "", all);
+        std::vector<StyledLine> laid;
+        lay_out(laid, "", all);
+        return laid;
     }
 
   private:
     std::vector<Cell> header_;
     std::vector<std::vector<Cell>> rows_;
+    std::vector<std::string> subjects_;
 };
 
-void put_none(std::ostream& out, const Theme& theme,
-              std::string_view message = "Nothing in the build history.") {
-    out << theme.paint(theme.glyph().good, Tone::good) << ' ' << theme.paint(message, Tone::good)
-        << '\n';
+std::vector<StyledLine> none_line(const Glyphs& glyph,
+                                  std::string_view message = "Nothing in the build history.") {
+    return {{.pieces = {{.text = std::string{glyph.good}, .tone = Tone::good},
+                        {.text = " ", .tone = std::nullopt},
+                        {.text = std::string{message}, .tone = Tone::good}},
+             .subject = {}}};
 }
 
 // name:count words as "name (count)" joined by commas, the count left out when it is 1.
@@ -2840,13 +2853,49 @@ std::string builds_count(std::size_t builds, std::size_t failed) {
     return text;
 }
 
+std::string cp_of_cpv(std::string_view cpv) {
+    const auto parts = split_cpv(cpv);
+    return std::format("{}/{}", parts.category, parts.name);
+}
+
 } // namespace
 
-void human_builds(std::ostream& out, std::span<const std::string> records, bool by_package,
-                  const std::chrono::time_zone& zone, const Theme& theme) {
+std::vector<Piece> cpv_pieces(std::string_view cpv) {
+    const auto parts = split_cpv(cpv);
+    std::vector<Piece> pieces;
+    if (!parts.category.empty()) {
+        pieces.push_back({.text = std::string{parts.category}, .tone = Tone::category});
+        pieces.push_back({.text = "/", .tone = Tone::note});
+    }
+    pieces.push_back({.text = std::string{parts.name}, .tone = Tone::name});
+    if (!parts.version.empty()) {
+        pieces.push_back({.text = "-", .tone = Tone::note});
+        pieces.push_back({.text = std::string{parts.version}, .tone = Tone::version});
+    }
+    return pieces;
+}
+
+std::string plain_text(const StyledLine& line) {
+    std::string text;
+    for (const auto& piece : line.pieces) {
+        text += piece.text;
+    }
+    return text;
+}
+
+void put_styled(std::ostream& out, std::span<const StyledLine> lines, const Painter& paint) {
+    for (const auto& line : lines) {
+        for (const auto& piece : line.pieces) {
+            out << (piece.tone ? paint(piece.text, *piece.tone) : piece.text);
+        }
+        out << '\n';
+    }
+}
+
+std::vector<StyledLine> styled_builds(std::span<const std::string> records, bool by_package,
+                                      const std::chrono::time_zone& zone, const Glyphs& glyph) {
     if (records.empty()) {
-        put_none(out, theme);
-        return;
+        return none_line(glyph);
     }
     Table table{{{.text = "Started"},
                  {.text = by_package ? "Version" : "Package"},
@@ -2869,7 +2918,7 @@ void human_builds(std::ostream& out, std::span<const std::string> records, bool 
     for (const auto& row : split_all(records)) {
         const auto cpv = field_or_empty(row, 1);
         const auto parts = split_cpv(cpv);
-        const auto cp = std::format("{}/{}", parts.category, parts.name);
+        const auto cp = cp_of_cpv(cpv);
         const bool merged = field_or_empty(row, 3) == "merged";
         const auto seconds = number_field(field_or_empty(row, 4)).value_or(0);
         const auto merge = number_field(field_or_empty(row, 5));
@@ -2891,7 +2940,8 @@ void human_builds(std::ostream& out, std::span<const std::string> records, bool 
                    {.text = cpu ? log::duration(*cpu) : std::string{}, .tone = Tone::count},
                    {.text = memory ? byte_size(static_cast<std::uint64_t>(*memory)) : std::string{},
                     .tone = Tone::count},
-                   {.text = field_or_empty(row, 11), .tone = Tone::note}});
+                   {.text = field_or_empty(row, 11), .tone = Tone::note}},
+                  cp);
         auto group = std::ranges::find(groups, cp, &Group::cp);
         if (group == groups.end()) {
             groups.push_back({.cp = cp, .rows = {}, .seconds = {}, .failed = 0});
@@ -2905,18 +2955,18 @@ void human_builds(std::ostream& out, std::span<const std::string> records, bool 
         }
     }
     if (!by_package) {
-        table.put(out, theme.paint);
-        return;
+        return table.lines();
     }
-    bool first = true;
+    std::vector<StyledLine> lines;
     for (const auto& group : groups) {
-        if (!first) {
-            out << '\n';
+        if (!lines.empty()) {
+            lines.push_back({});
         }
-        first = false;
-        out << paint_cpv(group.cp, theme.paint);
+        StyledLine heading{.pieces = cpv_pieces(group.cp), .subject = group.cp};
         if (!group.seconds.empty()) {
-            out << "  " << theme.paint(sparkline_text(group.seconds, theme.glyph()), Tone::choice);
+            heading.pieces.push_back({.text = "  ", .tone = std::nullopt});
+            heading.pieces.push_back(
+                {.text = sparkline_text(group.seconds, glyph), .tone = Tone::choice});
         }
         auto summary = builds_count(group.rows.size(), group.failed);
         if (!group.seconds.empty()) {
@@ -2925,15 +2975,17 @@ void human_builds(std::ostream& out, std::span<const std::string> records, bool 
                                            : std::format("{} to {}", log::duration(low),
                                                          log::duration(high)));
         }
-        out << "  " << theme.paint(summary, Tone::note) << '\n';
-        table.put(out, theme.paint, "  ", group.rows);
+        heading.pieces.push_back({.text = "  ", .tone = std::nullopt});
+        heading.pieces.push_back({.text = std::move(summary), .tone = Tone::note});
+        lines.push_back(std::move(heading));
+        table.lay_out(lines, "  ", group.rows);
     }
+    return lines;
 }
 
-void human_slowest(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+std::vector<StyledLine> styled_slowest(std::span<const std::string> records, const Glyphs& glyph) {
     if (records.empty()) {
-        put_none(out, theme);
-        return;
+        return none_line(glyph);
     }
     // The sparkline's most builds.
     constexpr std::size_t trend = 12;
@@ -2957,23 +3009,24 @@ void human_slowest(std::ostream& out, std::span<const std::string> records, cons
         if (failed > 0) {
             count += std::format(", {:.0f} failed", failed);
         }
-        table.add({{.text = field_or_empty(row, 0), .tone = Tone::name},
+        auto cp = field_or_empty(row, 0);
+        table.add({{.text = cp, .tone = Tone::name},
                    {.text = rough_duration(number_field(field_or_empty(row, 3)).value_or(0)),
                     .tone = Tone::count},
-                   {.text = sparkline_text(seconds, theme.glyph()), .tone = Tone::choice},
+                   {.text = sparkline_text(seconds, glyph), .tone = Tone::choice},
                    {.text = cpu ? rough_duration(*cpu) : std::string{}, .tone = Tone::count},
                    {.text = memory ? byte_size(static_cast<std::uint64_t>(*memory)) : std::string{},
                     .tone = Tone::count},
-                   {.text = count, .tone = Tone::note}});
+                   {.text = count, .tone = Tone::note}},
+                  cp);
     }
-    table.put(out, theme.paint);
+    return table.lines();
 }
 
-void human_periods(std::ostream& out, std::span<const std::string> records, std::string_view period,
-                   const Theme& theme) {
+std::vector<StyledLine> styled_periods(std::span<const std::string> records,
+                                       std::string_view period, const Glyphs& glyph) {
     if (records.empty()) {
-        put_none(out, theme);
-        return;
+        return none_line(glyph);
     }
     constexpr std::size_t bar_width = 20;
     const bool months = period == "month";
@@ -3002,19 +3055,18 @@ void human_periods(std::ostream& out, std::span<const std::string> records, std:
         }
         table.add(
             {{.text = months ? day.substr(0, 7) : day, .tone = Tone::note},
-             {.text = most > 0 ? bar_text(seconds / most, bar_width, theme.glyph()) : std::string{},
+             {.text = most > 0 ? bar_text(seconds / most, bar_width, glyph) : std::string{},
               .tone = Tone::choice},
              {.text = builds > 0 ? rough_duration(seconds) : std::string{}, .tone = Tone::count},
              {.text = cpu ? rough_duration(*cpu) : std::string{}, .tone = Tone::count},
              {.text = count, .tone = Tone::note}});
     }
-    table.put(out, theme.paint);
+    return table.lines();
 }
 
-void human_rebuilds(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+std::vector<StyledLine> styled_rebuilds(std::span<const std::string> records, const Glyphs& glyph) {
     if (records.empty()) {
-        put_none(out, theme, "Nothing was built more than once.");
-        return;
+        return none_line(glyph, "Nothing was built more than once.");
     }
     constexpr std::array<std::string_view, 7> reasons{"new",     "upgrade",   "downgrade", "use",
                                                       "subslot", "reinstall", "unknown"};
@@ -3036,20 +3088,21 @@ void human_rebuilds(std::ostream& out, std::span<const std::string> records, con
         for (const auto& [count, reason] : counts) {
             why += std::format("{}{:.0f} {}", why.empty() ? "" : ", ", count, reasons.at(reason));
         }
-        table.add({{.text = field_or_empty(row, 0), .tone = Tone::name},
+        auto cp = field_or_empty(row, 0);
+        table.add({{.text = cp, .tone = Tone::name},
                    {.text = field_or_empty(row, 1), .tone = Tone::count},
                    {.text = why, .tone = Tone::note},
                    {.text = tally_words(field_or_empty(row, 9)), .tone = Tone::use},
-                   {.text = tally_words(field_or_empty(row, 10)), .tone = Tone::name}});
+                   {.text = tally_words(field_or_empty(row, 10)), .tone = Tone::name}},
+                  cp);
     }
-    table.put(out, theme.paint);
+    return table.lines();
 }
 
-void human_failures(std::ostream& out, std::span<const std::string> records,
-                    const std::chrono::time_zone& zone, const Theme& theme) {
+std::vector<StyledLine> styled_failures(std::span<const std::string> records,
+                                        const std::chrono::time_zone& zone, const Glyphs& glyph) {
     if (records.empty()) {
-        put_none(out, theme, "No build failed.");
-        return;
+        return none_line(glyph, "No build failed.");
     }
     Table table{{{.text = "Package"},
                  {.text = "Failed"},
@@ -3062,12 +3115,12 @@ void human_failures(std::ostream& out, std::span<const std::string> records,
     for (const auto& row : split_all(records)) {
         const bool merged = field_or_empty(row, 4) == "merged";
         const auto passed = field_or_empty(row, 3);
-        auto phases = tally_words(field_or_empty(row, 7));
+        auto cp = field_or_empty(row, 0);
         table.add(
-            {{.text = field_or_empty(row, 0), .tone = Tone::name},
+            {{.text = cp, .tone = Tone::name},
              {.text = std::format("{} of {}", field_or_empty(row, 2), field_or_empty(row, 1)),
               .tone = Tone::count},
-             {.text = std::move(phases), .tone = Tone::bad},
+             {.text = tally_words(field_or_empty(row, 7)), .tone = Tone::bad},
              {.text = log::local_time(number_field(field_or_empty(row, 5)).value_or(0), zone)
                           .substr(0, 16),
               .tone = Tone::note},
@@ -3075,34 +3128,39 @@ void human_failures(std::ostream& out, std::span<const std::string> records,
               .tone = Tone::version},
              {.text = merged ? "merged since" : "failing", .tone = merged ? Tone::good : Tone::bad},
              {.text = passed == "0" ? std::string{} : passed, .tone = Tone::count},
-             {.text = field_or_empty(row, 8), .tone = Tone::note}});
+             {.text = field_or_empty(row, 8), .tone = Tone::note}},
+            cp);
     }
-    table.put(out, theme.paint);
+    return table.lines();
 }
 
-void human_slowdowns(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
-    const auto& paint = theme.paint;
+std::vector<StyledLine> styled_slowdowns(std::span<const std::string> records,
+                                         const Glyphs& glyph) {
     const auto rows = split_all(records);
     if (rows.empty()) {
-        put_none(out, theme, "Nothing got slower.");
-        return;
+        return none_line(glyph, "Nothing got slower.");
     }
+    std::vector<StyledLine> lines;
     for (std::size_t i = 0; i < rows.size();) {
         const auto& head = rows.at(i);
         const auto seconds = number_field(field_or_empty(head, 4)).value_or(0);
         const auto before = number_field(field_or_empty(head, 5)).value_or(0);
+        const auto cp = field_or_empty(head, 0);
         if (i > 0) {
-            out << '\n';
+            lines.push_back({});
         }
-        out << paint_cpv(field_or_empty(head, 1), paint) << "  "
-            << paint(std::format("{} {}, was {}", field_or_empty(head, 3) == "cpu" ? "CPU" : "took",
+        StyledLine heading{.pieces = cpv_pieces(field_or_empty(head, 1)), .subject = cp};
+        heading.pieces.push_back({.text = "  ", .tone = std::nullopt});
+        heading.pieces.push_back(
+            {.text = std::format("{} {}, was {}", field_or_empty(head, 3) == "cpu" ? "CPU" : "took",
                                  rough_duration(seconds), rough_duration(before)),
-                     Tone::count)
-            << ' '
-            << paint(std::format("(+{:.0f}%)",
+             .tone = Tone::count});
+        heading.pieces.push_back({.text = " ", .tone = std::nullopt});
+        heading.pieces.push_back(
+            {.text = std::format("(+{:.0f}%)",
                                  before > 0 ? std::floor((seconds / before - 1) * 100) : 0.0),
-                     Tone::bad)
-            << '\n';
+             .tone = Tone::bad});
+        lines.push_back(std::move(heading));
         std::size_t end = i + 1;
         std::size_t width = 0;
         while (end < rows.size() && field_or_empty(rows.at(end), 0).empty()) {
@@ -3110,7 +3168,9 @@ void human_slowdowns(std::ostream& out, std::span<const std::string> records, co
             ++end;
         }
         if (end == i + 1) {
-            out << "  " << paint("nothing it records changed", Tone::note) << '\n';
+            lines.push_back({.pieces = {{.text = "  ", .tone = std::nullopt},
+                                        {.text = "nothing it records changed", .tone = Tone::note}},
+                             .subject = cp});
         }
         for (std::size_t j = i + 1; j < end; ++j) {
             const auto& change = rows.at(j);
@@ -3131,11 +3191,43 @@ void human_slowdowns(std::ostream& out, std::span<const std::string> records, co
                 text = std::format("{} > {}", old.empty() ? "(none)" : old,
                                    now.empty() ? "(none)" : now);
             }
-            out << "  " << paint(what, Tone::name) << spaces(columns_of(what), width) << "  "
-                << paint(text, Tone::version) << '\n';
+            lines.push_back(
+                {.pieces = {{.text = "  ", .tone = std::nullopt},
+                            {.text = what, .tone = Tone::name},
+                            {.text = spaces(columns_of(what), width) + "  ", .tone = std::nullopt},
+                            {.text = std::move(text), .tone = Tone::version}},
+                 .subject = cp});
         }
         i = end;
     }
+    return lines;
+}
+
+void human_builds(std::ostream& out, std::span<const std::string> records, bool by_package,
+                  const std::chrono::time_zone& zone, const Theme& theme) {
+    put_styled(out, styled_builds(records, by_package, zone, theme.glyph()), theme.paint);
+}
+
+void human_slowest(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    put_styled(out, styled_slowest(records, theme.glyph()), theme.paint);
+}
+
+void human_periods(std::ostream& out, std::span<const std::string> records, std::string_view period,
+                   const Theme& theme) {
+    put_styled(out, styled_periods(records, period, theme.glyph()), theme.paint);
+}
+
+void human_rebuilds(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    put_styled(out, styled_rebuilds(records, theme.glyph()), theme.paint);
+}
+
+void human_failures(std::ostream& out, std::span<const std::string> records,
+                    const std::chrono::time_zone& zone, const Theme& theme) {
+    put_styled(out, styled_failures(records, zone, theme.glyph()), theme.paint);
+}
+
+void human_slowdowns(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    put_styled(out, styled_slowdowns(records, theme.glyph()), theme.paint);
 }
 
 } // namespace egraph

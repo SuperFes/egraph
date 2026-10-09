@@ -4,6 +4,7 @@
 // draw() and run() are templates over the screen, so tests drive them with a fake one and only
 // tui.cpp pairs them with the Notcurses Screen.
 
+#include "builds.hpp"
 #include "cli.hpp"
 #include "depclean.hpp"
 #include "emerge.hpp"
@@ -334,6 +335,10 @@ using SavePreviewer = std::function<std::expected<std::vector<SavedFile>, std::s
     const std::vector<WhatIfLine>&)>;
 using SaveWriter = std::function<std::expected<void, std::string>(const std::vector<SavedFile>&)>;
 
+// Reads the build history, and the local time zone its times read in.
+using BuildsReader = std::function<std::vector<BuildRecord>()>;
+using ZoneReader = std::function<const std::chrono::time_zone&()>;
+
 // What the interface asks of the world outside it: run() calls these, the app never does.
 struct Services {
     Checker check{};
@@ -364,6 +369,9 @@ struct Services {
     Trier try_lines{};
     SavePreviewer preview_save{};
     SaveWriter write_save{};
+    BuildsReader read_builds{};
+    // UTC when empty.
+    ZoneReader zone{};
 };
 
 struct Watched;
@@ -494,6 +502,24 @@ struct PlanRow {
 // The plan as a tree under each root set, chains as update_tree_lines finds them with kept.
 [[nodiscard]] std::vector<PlanRow> plan_rows(const Store& store, const Evaluated& evaluated,
                                              const Kept& kept, const Plan& plan);
+
+// The build history's pages, in the order left and right turn them, and their names.
+enum class BuildsPage : std::uint8_t { builds, slowest, weeks, months, rebuilds, failing, slower };
+inline constexpr std::array<std::string_view, 7> builds_pages{
+    "builds", "slowest", "by week", "by month", "rebuilds", "failing", "slower"};
+
+// The build history view: its records once run() read them, the page shown, and a package's
+// builds alone once a line of it is opened; the page's lines as `egraph builds` prints them,
+// laid out again whenever they change.
+struct Built {
+    BuildsPage page = BuildsPage::builds;
+    std::optional<std::string> cp{};
+    std::optional<std::vector<BuildRecord>> records{};
+    std::optional<std::reference_wrapper<const std::chrono::time_zone>> zone{};
+    std::vector<StyledLine> lines{};
+    bool laid_out = false;
+    Cursor cursor{};
+};
 
 // The plan view: its rows, each merge's place in the merge order (from 1), and the cursor over
 // the packages.
@@ -679,6 +705,13 @@ class App {
     [[nodiscard]] const std::optional<Watched>& watched() const { return watched_; }
     // Open from the list, under any pages opened from it.
     [[nodiscard]] const std::optional<Planned>& planned() const { return planned_; }
+    // Open from the list, under any pages opened from it.
+    [[nodiscard]] const std::optional<Built>& built() const { return built_; }
+    // Whether the build history view waits for the history, which run() then reads.
+    [[nodiscard]] bool builds_requested() const { return built_ && !built_->records; }
+    void finish_builds(std::vector<BuildRecord> records, const std::chrono::time_zone& zone);
+    // Lays the page's lines out with the glyphs it is drawn with, where they changed.
+    void lay_out_builds(const Glyphs& glyph);
     // Whether the emerge view is showing and due to read the snapshots, which run() then does.
     [[nodiscard]] bool watch_requested() const;
     void finish_watch(std::vector<emerge::Snapshot> snapshots, const pressure::Sample& sample = {},
@@ -868,6 +901,7 @@ class App {
     void handle_watch(const Key& key);
     void handle_steve(const Key& key);
     void handle_plan(const Key& key);
+    void handle_builds(const Key& key);
     // The plan view over the current plan, on the row labelled selected where there is one.
     Planned& open_plan(std::optional<std::string> selected = std::nullopt);
     void handle_prompt(std::string& text, const Key& key);
@@ -954,6 +988,7 @@ class App {
     std::optional<Checked> checked_;
     std::optional<Watched> watched_;
     std::optional<Planned> planned_;
+    std::optional<Built> built_;
     std::vector<Page> pages_;
     std::optional<Dialog> dialog_;
     bool keys_shown_ = false;
@@ -2422,6 +2457,57 @@ template <class S> void draw_output(S& screen, App& app, const Glyphs& glyph, Si
     }
 }
 
+// The build history view: its pages in the title, the one shown marked, then the page's lines
+// as `egraph builds` prints them, the cursor's highlighted.
+template <class S> void draw_builds(S& screen, App& app, const Glyphs& glyph, Size size) {
+    app.lay_out_builds(glyph);
+    const auto& open = app.built();
+    if (!open) {
+        return;
+    }
+    const auto& built = *open;
+    std::vector<Span> title{
+        {.text = std::format(" {} egraph ", glyph.package),
+         .pen = {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
+        {.text = std::format(" {} ", glyph.trail), .pen = tone_pen(Tone::note)}};
+    for (std::size_t page = 0; page < builds_pages.size(); ++page) {
+        const bool shown = page == static_cast<std::size_t>(built.page);
+        title.push_back({.text = std::string{builds_pages.at(page)},
+                         .pen = shown ? tone_pen(Tone::name) : tone_pen(Tone::note)});
+        title.push_back({.text = "  ", .pen = Pen{}});
+    }
+    if (built.cp) {
+        title.push_back({.text = std::format("{} ", glyph.trail), .pen = tone_pen(Tone::note)});
+        title.push_back({.text = *built.cp, .pen = tone_pen(Tone::name)});
+    }
+    draw_title(screen, app, size.cols, title, glyph);
+    const unsigned first = 2;
+    const unsigned height = size.rows - first - 1;
+    app.set_height(height);
+    if (!built.records) {
+        put_spans(screen, first, 3, {{"reading the build history", tone_pen(Tone::note)}},
+                  size.cols);
+        return;
+    }
+    for (unsigned line = 0; line < height; ++line) {
+        const auto index = built.cursor.top + line;
+        if (index >= built.lines.size()) {
+            break;
+        }
+        const bool selected = index == built.cursor.at;
+        const auto bg = selected ? std::optional<Color>{palette::surface} : std::nullopt;
+        if (selected) {
+            screen.fill_row(first + line, {.fg = std::nullopt, .bg = palette::surface});
+        }
+        std::vector<Span> spans{marker(selected, glyph)};
+        for (const auto& piece : built.lines.at(index).pieces) {
+            spans.push_back(
+                {.text = piece.text, .pen = piece.tone ? tone_pen(*piece.tone) : Pen{}});
+        }
+        put_spans(screen, first + line, 0, spans, size.cols, bg);
+    }
+}
+
 // The : prompt over the hint bar, or the command it runs.
 template <class S> void draw_prompt(S& screen, const App& app, Size size) {
     const Pen bar{.fg = palette::text, .bg = palette::mantle};
@@ -2465,6 +2551,8 @@ template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
             draw_watch(screen, app, glyph, size);
         } else if (app.planned()) {
             draw_plan(screen, app, glyph, size);
+        } else if (app.built()) {
+            draw_builds(screen, app, glyph, size);
         } else if (app.on_what_if()) {
             draw_what_if(screen, app, glyph, size);
         } else if (app.on_notices()) {
@@ -2680,6 +2768,10 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
         } else if (const auto list = app.plan_requested()) {
             app.finish_plan(services.plan ? services.plan(*list)
                                           : std::unexpected(std::string{"no way to plan"}));
+        } else if (app.builds_requested()) {
+            app.finish_builds(services.read_builds ? services.read_builds()
+                                                   : std::vector<BuildRecord>{},
+                              services.zone ? services.zone() : *std::chrono::locate_zone("UTC"));
         } else {
             auto timeout = app.refresh();
             if (watches && !app.stale()) {

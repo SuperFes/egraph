@@ -1251,7 +1251,7 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
   - 20d3 (done): a package never built here, from the most similar ones that were (their
     eclasses in common, the rarer weighing more), scaled by the distfiles' size, and counted
     apart as guessed.
-- 20e (planned): queries and views: a package's last builds as a table and a sparkline ("gcc,
+- 20e (done): queries and views: a package's last builds as a table and a sparkline ("gcc,
   the last 12 times"), the slowest packages, total build time by week or month, what rebuilds
   most often and why (subslot rebuilds, USE churn), packages that fail now and then, and a
   build that got slower (a toolchain or CFLAGS change, LTO), each a page in the living app.
@@ -1265,7 +1265,8 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
     without one, the flags that flipped, what sub-slot rebuilds were for), packages that fail
     (`--failing`: phases, failures a later build of the version merged past), and builds that
     got slower (`--slower`, by CPU time) with what changed under them.
-  - 20e4 (planned): the views as pages in the living app.
+  - 20e4 (done): the views as pages in the living app: `B` opens the build history, a page per
+    view, a line opening its package's builds and then its page.
 - 20f (planned): advice: a build whose directory will not fit a tmpfs `PORTAGE_TMPDIR` (offer a
   `notmpfs` env), one whose peak memory at these jobs nears what the system has (fewer jobs,
   or steve's memory floor), FEATURES=test's cost per package, a binary package offered when a

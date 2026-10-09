@@ -311,6 +311,43 @@ void human_use(std::ostream& out, std::span<const std::string> records,
 void human_use_steps(std::ostream& out, std::span<const std::string> records,
                      std::span<const std::string> groups, const Theme& theme);
 
+// A piece of a line in one tone, none for plain.
+struct Piece {
+    std::string text;
+    std::optional<Tone> tone;
+    bool operator==(const Piece&) const = default;
+};
+
+// A line of pieces, and the cp it is about (empty for none), for the terminal interface to draw
+// as the human layout prints it.
+struct StyledLine {
+    std::vector<Piece> pieces;
+    std::string subject;
+    bool operator==(const StyledLine&) const = default;
+};
+
+// A cpv's pieces, as paint_cpv colours it.
+[[nodiscard]] std::vector<Piece> cpv_pieces(std::string_view cpv);
+[[nodiscard]] std::string plain_text(const StyledLine& line);
+void put_styled(std::ostream& out, std::span<const StyledLine> lines, const Painter& paint);
+
+// The build history's views as the human_ functions below print them, each line about its cp.
+[[nodiscard]] std::vector<StyledLine> styled_builds(std::span<const std::string> records,
+                                                    bool by_package,
+                                                    const std::chrono::time_zone& zone,
+                                                    const Glyphs& glyph);
+[[nodiscard]] std::vector<StyledLine> styled_slowest(std::span<const std::string> records,
+                                                     const Glyphs& glyph);
+[[nodiscard]] std::vector<StyledLine> styled_periods(std::span<const std::string> records,
+                                                     std::string_view period, const Glyphs& glyph);
+[[nodiscard]] std::vector<StyledLine> styled_rebuilds(std::span<const std::string> records,
+                                                      const Glyphs& glyph);
+[[nodiscard]] std::vector<StyledLine> styled_failures(std::span<const std::string> records,
+                                                      const std::chrono::time_zone& zone,
+                                                      const Glyphs& glyph);
+[[nodiscard]] std::vector<StyledLine> styled_slowdowns(std::span<const std::string> records,
+                                                       const Glyphs& glyph);
+
 // build_fields' records as a table: when each started, the package, how it ended, its build's
 // and merge's times, CPU time, memory and why it ran. With by_package, a table under each cp in
 // the order of its first build, headed by a sparkline of its merged builds' times; zone is the
