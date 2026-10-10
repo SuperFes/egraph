@@ -79,7 +79,9 @@ TEST_CASE("the sample store decodes") {
     CHECK(a.iuse_effective);
     CHECK(a.counter == 7);
     CHECK(a.merged == 1759784400);
+    CHECK(a.size == 52428800);
     CHECK(store->packages.back().counter == 0);
+    CHECK(store->packages.back().size == 0);
     CHECK(store->string(a.cpv) == "app-misc/a-1");
     CHECK(store->string(a.cp) == "app-misc/a");
     CHECK(store->ids_in(a.use).size() == 1);
@@ -138,7 +140,7 @@ TEST_CASE("the header is checked") {
     CHECK(rejection(bytes) == "not an egraph store");
 
     CHECK(rejection(egraph::test::assemble(egraph::test::sample_sections(), 3)) ==
-          "format version 3, expected 6");
+          "format version 3, expected 7");
 
     auto sections = egraph::test::sample_sections();
     sections.pop_back();
@@ -242,7 +244,7 @@ TEST_CASE("export --format json reads the store") {
     REQUIRE(egraph::run(invocation, out, err) == egraph::Exit::ok);
     CHECK(err.str().empty());
     CHECK_THAT(out.str(),
-               Catch::Matchers::StartsWith(R"({"format":4,"packages":[{"counter":7,"cp":)"));
+               Catch::Matchers::StartsWith(R"({"format":5,"packages":[{"counter":7,"cp":)"));
 
     invocation.store = "/nonexistent/egraph.store";
     invocation.no_refresh = true;

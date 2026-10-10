@@ -43,7 +43,7 @@ TEST_CASE("the sample store exports as the builder would") {
     egraph::write_json(out, *store);
     CHECK(
         out.str() ==
-        R"({"format":4,"packages":[)"
+        R"({"format":5,"packages":[)"
         R"({"counter":7,"cp":"app-misc/a","cpv":"app-misc/a-1","deps":{"BDEPEND":[],"DEPEND":[],)"
         R"("IDEPEND":[],"PDEPEND":[],"RDEPEND":[)"
         R"({"atom":"","matches":[],"parent":-1,"type":"any-of"},)"
@@ -52,11 +52,13 @@ TEST_CASE("the sample store exports as the builder would") {
         R"({"atom":"!app-misc/old","matches":[],"parent":-1,"type":"weak-blocker"}]},)"
         R"("eapi":"8","errors":[["RDEPEND","bad dep"]],"iuse":["flag"],"merged":1759784400,)"
         R"("provides":[],)"
-        R"("repo":"test_repo","requires":[["x86_64","libb.so.1"]],"slot":"0","sub_slot":"0",)"
+        R"("repo":"test_repo","requires":[["x86_64","libb.so.1"]],"size":52428800,"slot":"0",)"
+        R"("sub_slot":"0",)"
         R"("use":["flag"]},)"
         R"({"counter":0,"cp":"dev-libs/b","cpv":"dev-libs/b-1","deps":{"BDEPEND":[],)"
         R"("DEPEND":[],"IDEPEND":[],"PDEPEND":[],"RDEPEND":[]},"eapi":"8","errors":[],"iuse":[],)"
-        R"("merged":0,"provides":[["x86_64","libb.so.1"]],"repo":"test_repo","requires":[],"slot":"0",)"
+        R"("merged":0,"provides":[["x86_64","libb.so.1"]],"repo":"test_repo","requires":[],"size":0,)"
+        R"("slot":"0",)"
         R"("sub_slot":"0","use":[]}],"roots":[)"
         R"({"atom":"app-misc/a","matches":["app-misc/a-1"],"set":"selected","via":""},)"
         R"({"atom":"dev-libs/missing","matches":[],"set":"system","via":""}]})"

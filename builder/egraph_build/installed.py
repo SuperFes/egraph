@@ -32,6 +32,7 @@ _AUX_KEYS = (
         "COUNTER",
         "EAPI",
         "IUSE",
+        "SIZE",
         "SLOT",
         "USE",
         "repository",
@@ -68,6 +69,8 @@ class Package(NamedTuple):
     # The vdb entry's COUNTER, and when it was merged (seconds since the epoch); 0 when unknown.
     counter: int = 0
     merged: int = 0
+    # The vdb entry's SIZE, the bytes its files take; 0 when unknown.
+    size: int = 0
 
 
 class Matcher:
@@ -163,6 +166,7 @@ def read_package(vardb, cpv, match):
         requires=sonames["REQUIRES"],
         counter=_number(metadata["COUNTER"]),
         merged=merge_time(vardb, cpv),
+        size=_number(metadata["SIZE"]),
     )
 
 
@@ -348,6 +352,7 @@ def to_json(layer):
                 "requires": [list(soname) for soname in pkg.requires],
                 "counter": pkg.counter,
                 "merged": pkg.merged,
+                "size": pkg.size,
             }
         )
     roots = [
@@ -359,5 +364,5 @@ def to_json(layer):
         }
         for root in layer.roots()
     ]
-    document = {"format": 4, "packages": packages, "roots": roots}
+    document = {"format": 5, "packages": packages, "roots": roots}
     return json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"

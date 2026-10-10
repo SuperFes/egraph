@@ -134,7 +134,7 @@ def test_json_is_canonical(layers, playgrounds):
     assert text == installed.to_json(installed.build(playgrounds("any-of").vardb))
     assert text.endswith("}\n") and "\n" not in text[:-1]
     document = json.loads(text)
-    assert document["format"] == 4
+    assert document["format"] == 5
     cpvs = [pkg["cpv"] for pkg in document["packages"]]
     assert cpvs == sorted(cpvs)
 
@@ -171,6 +171,7 @@ def test_json_content(layers):
         "provides": [],
         "requires": [],
         "counter": 0,
+        "size": 0,
     }
 
 
@@ -182,6 +183,18 @@ def test_a_package_records_its_counter_and_when_it_was_merged(mutable_playground
     os.utime(vdb(playground, "dev-libs/alt-b-1", "COUNTER"), (1759784400, 1759784400))
     pkg = installed.build(fresh_vardb(playground)).package("dev-libs/alt-b-1")
     assert (pkg.counter, pkg.merged) == (42, 1759784400)
+
+
+def test_a_package_records_the_bytes_its_files_take(mutable_playground):
+    from test_build import add_package, fresh_vardb
+
+    playground = mutable_playground("reference")
+    add_package(playground, "dev-libs/alt-b-1", SIZE="52428800")
+    add_package(playground, "dev-libs/alt-c-1", SIZE="lots")
+    layer = installed.build(fresh_vardb(playground))
+    assert layer.package("dev-libs/alt-b-1").size == 52428800
+    assert layer.package("dev-libs/alt-c-1").size == 0
+    assert layer.package("dev-libs/lib-1").size == 0
 
 
 def test_an_unreadable_counter_is_zero(mutable_playground):

@@ -23,7 +23,7 @@
 
 namespace egraph {
 
-inline constexpr std::uint32_t store_format_version = 6;
+inline constexpr std::uint32_t store_format_version = 7;
 inline constexpr std::array<std::string_view, 5> dep_kinds{"BDEPEND", "DEPEND", "IDEPEND",
                                                            "PDEPEND", "RDEPEND"};
 
@@ -93,6 +93,8 @@ struct Package {
     // The vdb entry's COUNTER, and when it was merged in seconds since the epoch; 0 when unknown.
     std::uint64_t counter = 0;
     std::uint64_t merged = 0;
+    // The vdb entry's SIZE: the bytes its files take; 0 when unknown.
+    std::uint64_t size = 0;
     // String ids in Store::ids.
     Range use;
     Range iuse;

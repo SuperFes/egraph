@@ -1,6 +1,6 @@
 # Store format
 
-Status: format version 6 (evaluated store: 12, repository index: 8), implemented by `builder/egraph_build/store.py`
+Status: format version 7 (evaluated store: 12, repository index: 8), implemented by `builder/egraph_build/store.py`
 (writer and a Python reader) and `src/store.cpp`, `src/evaluated.cpp` and `src/repository.cpp` (C++ readers). Any
 layout change bumps the version.
 
@@ -25,7 +25,8 @@ layout change bumps the version.
    Freshness is exactly "every input still stats the same".
 3. **Strings.** An interned table; package data refers to strings by index.
 4. **Packages.** cpv, cp, slot, sub-slot, repo, USE, IUSE, EAPI, parse errors, and the merge's
-   vdb COUNTER and time (format 6), which tell a rebuild and when it landed.
+   vdb COUNTER and time (format 6), which tell a rebuild and when it landed, and its vdb SIZE
+   (format 7), what removing it frees.
 5. **Dependency trees.** Per package and per kind, a flat node list with parent indices. Node types
    are atom, any-of (`||`), all-of (a group inside `||`), and blocker (weak or strong).
 6. **Resolved edges.** Per atom node, the installed cpvs that satisfy it with USE deps honored.
@@ -93,7 +94,8 @@ In package order, which is sorted by cpv:
 
 1. String ids: cpv, cp, slot, sub-slot, repo, EAPI; then 1 if the EAPI has `IUSE_EFFECTIVE`,
    else 0; then the vdb entry's COUNTER, and when it was merged in seconds since the epoch (its
-   COUNTER file's mtime: BUILD_TIME is a binary package's build), each 0 when unknown.
+   COUNTER file's mtime: BUILD_TIME is a binary package's build), and its SIZE, the bytes its
+   files take (format 7), each 0 when unknown.
 2. USE and IUSE: lists of string ids.
 3. Errors: list of `(kind, message)` string ids, for dependency strings portage could not parse.
 4. For each kind in the order BDEPEND, DEPEND, IDEPEND, PDEPEND, RDEPEND, a node list. A node is

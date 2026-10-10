@@ -24,7 +24,7 @@ from egraph_build.repository import (
 from egraph_build.roots import Root
 
 MAGIC = b"EGRAPH\0\0"
-FORMAT_VERSION = 6
+FORMAT_VERSION = 7
 (
     SECTION_META,
     SECTION_INPUTS,
@@ -255,6 +255,7 @@ def encode(layer, meta, inputs=()):
         w.varint(1 if has_iuse_effective(pkg.eapi) else 0)
         w.varint(pkg.counter)
         w.varint(pkg.merged)
+        w.varint(pkg.size)
         w.ids([strings(flag) for flag in pkg.use])
         w.ids([strings(flag) for flag in pkg.iuse])
         w.varint(len(pkg.errors))
@@ -788,7 +789,7 @@ def decode(data):
         fields = [s() for _ in range(6)]
         # Derived from the EAPI; only the C++ matcher needs it spelled out.
         r.varint(2)
-        merge = (r.varint(), r.varint())
+        merge = (r.varint(), r.varint(), r.varint())
         use = tuple(strings[i] for i in r.ids(nstrings))
         iuse = tuple(strings[i] for i in r.ids(nstrings))
         errors = tuple((s(), s()) for _ in range(r.count()))
@@ -809,7 +810,16 @@ def decode(data):
 
     cpvs = [fields[0] for fields, *_ in raw]
     packages = []
-    for fields, (counter, merged), use, iuse, errors, deps, provides, requires in raw:
+    for (
+        fields,
+        (counter, merged, size),
+        use,
+        iuse,
+        errors,
+        deps,
+        provides,
+        requires,
+    ) in raw:
         packages.append(
             Package(
                 *fields,
@@ -821,6 +831,7 @@ def decode(data):
                 requires=requires,
                 counter=counter,
                 merged=merged,
+                size=size,
             )
         )
     roots = tuple(
