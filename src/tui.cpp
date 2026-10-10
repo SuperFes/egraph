@@ -923,6 +923,7 @@ void App::index() {
     if (indexed_ && !catalogue_) {
         catalogue_.emplace(installed(), evaluated(), *indexed_->index, indexed_->masks);
     }
+    match_advisories();
     std::erase_if(picked_, [this](const std::string& cpv) { return !find(cpv); });
 }
 
@@ -1522,6 +1523,7 @@ void App::filter() {
     for (std::uint32_t id = 0; id < folded_.size(); ++id) {
         if ((list_.only == Only::orphans && kept_.packages.at(id)) ||
             (list_.only == Only::broken && broken(id) == 0) ||
+            (list_.only == Only::vulnerable && advisories_of(id).empty()) ||
             (list_.only == Only::updates && !update_of(id) && !held_of(id) &&
              !tried_of(store().string(store().packages.at(id).cpv)))) {
             continue;
@@ -2285,6 +2287,11 @@ void App::handle_list(const Key& key) {
     } else if (is(key, U'!')) {
         list_.only = list_.only == Only::broken ? Only::all : Only::broken;
         filter();
+    } else if (is(key, U'v')) {
+        list_.only = list_.only == Only::vulnerable ? Only::all : Only::vulnerable;
+        // Shown again after a failure, the index is tried again.
+        index_failed_ = index_failed_ && list_.only != Only::vulnerable;
+        filter();
     } else if (is(key, U'u') && has_evaluated()) {
         list_.only = list_.only == Only::updates ? Only::all : Only::updates;
         filter();
@@ -2601,7 +2608,28 @@ void App::handle_builds(const Key& key) {
     }
 }
 
-void App::finish_index(IndexResult result) {
+std::span<const std::string> App::advisories_of(std::uint32_t package) const {
+    if (package >= advisories_.size()) {
+        return {};
+    }
+    return advisories_.at(package);
+}
+
+void App::match_advisories() {
+    advisories_.assign(store().packages.size(), {});
+    if (!indexed_) {
+        return;
+    }
+    for (const auto& advisory : affected_advisories(*indexed_->index, installed(), applied_)) {
+        for (const auto& affected : advisory.packages) {
+            if (const auto id = find(affected.cpv)) {
+                advisories_.at(*id).push_back(advisory.id);
+            }
+        }
+    }
+}
+
+void App::finish_index(IndexResult result, const std::vector<std::string>& applied) {
     if (!result) {
         index_failed_ = true;
         show({.error = true,
@@ -2612,6 +2640,11 @@ void App::finish_index(IndexResult result) {
     catalogue_.reset();
     indexed_ = std::make_unique<const Indexed>(std::move(*result));
     catalogue_.emplace(installed(), evaluated(), *indexed_->index, indexed_->masks);
+    applied_ = applied;
+    match_advisories();
+    if (list_.only == Only::vulnerable) {
+        filter();
+    }
     if (search_ && search_->pending) {
         run_search();
     }
@@ -3471,6 +3504,7 @@ std::vector<Hint> list_keys(const App& app, const Glyphs& glyph) {
     };
     filter("o", Only::orphans, "orphans");
     filter("!", Only::broken, "broken");
+    filter("v", Only::vulnerable, "vulnerable");
     if (evaluated) {
         filter("u", Only::updates, "updates");
     }

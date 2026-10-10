@@ -206,6 +206,54 @@ def test_tui_searches_the_repositories(playgrounds, tmp_path):
         tmux(socket, "kill-server")
 
 
+def test_tui_lists_the_packages_glsas_affect(playgrounds, tmp_path):
+    from test_glsa import with_glsa_dir, write_glsa
+
+    system = playgrounds("visibility")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path)
+    glsa_dir = tmp_path / "glsa"
+    write_glsa(
+        glsa_dir,
+        "202601-01",
+        [("app-misc/stable", "*", [("vulnerable", "lt", "99", None)])],
+    )
+    write_glsa(
+        glsa_dir,
+        "202601-02",
+        [("app-misc/stable", "*", [("vulnerable", "lt", "98", None)])],
+    )
+    # glsa-check marked the second applied.
+    eroot = tmp_path / "root"
+    os.makedirs(eroot / "var/lib/portage")
+    (eroot / "var/lib/portage/glsa_injected").write_text("202601-02\n")
+    index = repository.read(portdb(system))._replace(
+        advisories=repository.read_advisories(
+            with_glsa_dir(system.vardb.settings, glsa_dir)
+        )
+    )
+    meta = egraph_store.RepositoryMeta("0", "0", str(eroot), 0)
+    egraph_store.write(
+        egraph_store.repository_path(path), egraph_store.encode_repository(index, meta)
+    )
+    skip_without_tui()
+
+    socket = f"egraph-test-{os.getpid()}"
+    command = f"{EGRAPH} --store {path} --no-refresh tui; echo EXIT=$?; sleep 30"
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "120", "-y", "30", command)
+    try:
+        wait_for(socket, "/ to search")
+        tmux(socket, "send-keys", "-t", "t", "v")
+        screen = wait_for(socket, "1 vulnerable", "app-misc/stable", "GLSA 202601-01")
+        assert "202601-02" not in screen
+        tmux(socket, "send-keys", "-t", "t", "v")
+        wait_for(socket, "GLSA 202601-01", gone=["1 vulnerable"])
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")
+
+
 def test_bare_egraph_opens_the_interface_and_runs_commands(playgrounds, tmp_path):
     path = tmp_path / "installed.egraph"
     write_stores(playgrounds("repository"), path)

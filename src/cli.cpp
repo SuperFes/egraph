@@ -3959,6 +3959,8 @@ Exit execute(const Tui& tui_command, Session& session, const Invocation& invocat
              [history = builds_path(invocation.root / eprefix.relative_path())] {
                  return read_history(history);
              },
+         .applied_advisories =
+             [](const std::filesystem::path& eroot) { return applied_advisories(eroot); },
          .zone = local_zone},
         warnings, tui_command.notices, err);
 }

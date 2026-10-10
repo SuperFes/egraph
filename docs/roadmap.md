@@ -1308,7 +1308,9 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
     their sum; `remove` adds the packages a depclean would take after it (`orphan` lines), the
     world file's atoms that matched only what goes dropped as unmerging drops them, held to the
     orphans emerge's own depclean leaves.
-- 20j (planned): a GLSA filter in the list (the matching landed in 17e1).
+- 20j (done): a GLSA filter in the list (the matching landed in 17e1): `v` shows the
+  installed packages GLSAs affect, loading the repository index as the search does, and once
+  it is loaded every affected package's line names its GLSAs.
 
 ## 21. The fork's speedups upstream
 

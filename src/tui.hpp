@@ -9,6 +9,7 @@
 #include "depclean.hpp"
 #include "emerge.hpp"
 #include "evaluated.hpp"
+#include "glsa.hpp"
 #include "graph.hpp"
 #include "human.hpp"
 #include "job.hpp"
@@ -32,6 +33,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <format>
 #include <functional>
 #include <iosfwd>
@@ -185,6 +187,8 @@ using Refresher = std::function<Job<RefreshResult>()>;
 using IndexResult = std::expected<std::shared_ptr<const RepositoryIndex>, std::string>;
 // Loads the repository index, building it first where it is missing or stale.
 using IndexLoader = std::function<Job<IndexResult>()>;
+// The GLSAs glsa-check marked applied under an EROOT.
+using AppliedReader = std::function<std::vector<std::string>(const std::filesystem::path&)>;
 // The time, which says when to look at the stores' inputs again.
 using Clock = std::function<std::chrono::steady_clock::time_point()>;
 
@@ -370,6 +374,8 @@ struct Services {
     SavePreviewer preview_save{};
     SaveWriter write_save{};
     BuildsReader read_builds{};
+    // None taken as applied when empty.
+    AppliedReader applied_advisories{};
     // UTC when empty.
     ZoneReader zone{};
 };
@@ -530,7 +536,7 @@ struct Planned {
 };
 
 // Which packages the list shows, before the search.
-enum class Only : std::uint8_t { all, orphans, broken, updates };
+enum class Only : std::uint8_t { all, orphans, broken, updates, vulnerable };
 
 // The rebuilds for USE the interface shows beside replacements: all of --newuse's.
 inline constexpr UseRebuilds shown_rebuilds = UseRebuilds::all;
@@ -630,8 +636,16 @@ class App {
     // The repository index's packages, once loaded.
     [[nodiscard]] const std::optional<Catalogue>& catalogue() const { return catalogue_; }
     // Whether the search waits for the repository index, which run() then loads.
-    [[nodiscard]] bool index_requested() const { return search_ && !indexed_ && !index_failed_; }
-    void finish_index(IndexResult result);
+    // Whether the search, or the list's vulnerable packages, wait for the repository index, which
+    // run() then loads.
+    [[nodiscard]] bool index_requested() const {
+        return (search_ || list_.only == Only::vulnerable) && !indexed_ && !index_failed_;
+    }
+    [[nodiscard]] bool index_failed() const { return index_failed_; }
+    // applied: the GLSAs glsa-check marked applied, which affect nothing.
+    void finish_index(IndexResult result, const std::vector<std::string>& applied = {});
+    // The GLSAs affecting an installed package, by id; none until the repository index is loaded.
+    [[nodiscard]] std::span<const std::string> advisories_of(std::uint32_t package) const;
     // What emerge -uDN would merge for the package, as the page's plan weighs it.
     [[nodiscard]] const std::optional<PendingUpdate>& update_of(std::uint32_t package) const {
         return current().updates.at(package);
@@ -881,6 +895,8 @@ class App {
     void turn_page(int step);
     void filter();
     void recompute();
+    // advisories_ from indexed_ over the installed store, or none without it.
+    void match_advisories();
     void open(std::uint32_t package);
     // The search's results for its key, or nothing until the index is loaded.
     void run_search();
@@ -932,6 +948,9 @@ class App {
     // Over indexed_ and the installed store shown.
     std::optional<Catalogue> catalogue_;
     bool index_failed_ = false;
+    std::vector<std::string> applied_;
+    // Per package, the ids of the GLSAs affecting it, from indexed_.
+    std::vector<std::vector<std::string>> advisories_;
     std::optional<Search> search_;
     std::optional<Listing> listing_;
     bool dynamic_deps_ = false;
@@ -1155,6 +1174,8 @@ inline std::string_view empty_list(const App::List& list) {
         return "nothing broken";
     case Only::updates:
         return "nothing to update";
+    case Only::vulnerable:
+        return "no advisory affects them";
     }
     return "no package matches";
 }
@@ -1267,6 +1288,9 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
         title.push_back({std::format("{} updates", list.shown.size()), tone_pen(Tone::count)});
     } else if (list.only == Only::broken) {
         title.push_back({std::format("{} broken", list.shown.size()), tone_pen(Tone::count)});
+    } else if (list.only == Only::vulnerable) {
+        title.push_back({.text = std::format("{} vulnerable", list.shown.size()),
+                         .pen = tone_pen(Tone::count)});
     } else {
         title.push_back({std::format("{} of {} packages", list.shown.size(), store.packages.size()),
                          tone_pen(Tone::count)});
@@ -1341,6 +1365,14 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
         std::ranges::move(cpv_spans(store.string(store.packages.at(id).cpv)),
                           std::back_inserter(spans));
         std::ranges::move(update_mark(app, id, glyph), std::back_inserter(spans));
+        if (const auto advisories = app.advisories_of(id); !advisories.empty()) {
+            std::string ids = "  GLSA";
+            for (const auto& advisory : advisories) {
+                ids += ' ';
+                ids += advisory;
+            }
+            spans.push_back({.text = std::move(ids), .pen = tone_pen(Tone::bad)});
+        }
         put_spans(screen, first + line, 0, spans, right, bg);
         put_spans(screen, first + line, right,
                   {{std::format("{:>7}", app.dependencies(id)), tone_pen(Tone::version)},
@@ -1357,6 +1389,18 @@ template <class S> void draw_list(S& screen, App& app, const Glyphs& glyph, Size
                                 scope_name(app.scope())),
                     tone_pen(Tone::note)}},
                   size.cols);
+    } else if (list.only == Only::vulnerable && app.index_requested()) {
+        put_spans(screen, first, 5,
+                  {{.text = std::format("{} loading the repository index",
+                                        spinner_frame(app.frame(), glyph)),
+                    .pen = tone_pen(Tone::note)}},
+                  size.cols);
+    } else if (list.only == Only::vulnerable && app.index_failed()) {
+        put_spans(
+            screen, first, 5,
+            {{.text = std::format("{} the repository index could not be loaded", glyph.broken),
+              .pen = tone_pen(Tone::bad)}},
+            size.cols);
     } else if (list.shown.empty()) {
         put_spans(screen, first, 5, {{std::string{empty_list(list)}, tone_pen(Tone::note)}},
                   size.cols);
@@ -2656,7 +2700,13 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
                            : ready(IndexResult{std::unexpected(std::string{
                                  "this egraph has no way to load the repository index"})});
             },
-            [&](IndexResult result) { app.finish_index(std::move(result)); });
+            [&](IndexResult result) {
+                std::vector<std::string> applied;
+                if (result && services.applied_advisories) {
+                    applied = services.applied_advisories((*result)->meta.eroot);
+                }
+                app.finish_index(std::move(result), applied);
+            });
         const auto ran = poll(
             running, app.run_requested().has_value(),
             [&] {

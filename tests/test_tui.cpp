@@ -577,6 +577,80 @@ TEST_CASE("! shows only broken packages, and a page lists what is not installed"
     CHECK(contains(text, "R.... ! dev-libs/missing"));
 }
 
+// GLSAs for both of the sample's packages, the second marked applied.
+std::shared_ptr<const egraph::RepositoryIndex> advisory_index() {
+    egraph::test::IndexBuilder b{{"test_repo"}};
+    b.advisory("202601-01", "b: leak", {{"dev-libs/b", "*", "<dev-libs/b-2", ">=dev-libs/b-2"}});
+    b.advisory("202601-02", "a: overflow",
+               {{"app-misc/a", "*", "<app-misc/a-2", ">=app-misc/a-2"}});
+    b.advisory("202601-03", "b: another", {{"dev-libs/b", "*", "<dev-libs/b-3", ""}});
+    auto index = b.index();
+    index.meta.eroot = "/target/";
+    return std::make_shared<const egraph::RepositoryIndex>(std::move(index));
+}
+
+TEST_CASE("v shows only the packages GLSAs affect, once the repository index is loaded") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{12, 120, {}};
+    CHECK_FALSE(app.index_requested());
+    app.handle(character(U'v'));
+    CHECK(app.list().only == egraph::tui::Only::vulnerable);
+    CHECK(app.index_requested());
+    CHECK(app.list().shown.empty());
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "loading the repository index"));
+
+    app.finish_index(advisory_index(), {"202601-02"});
+    CHECK_FALSE(app.index_requested());
+    CHECK(app.list().shown == std::vector<std::uint32_t>{1});
+    CHECK(std::ranges::equal(app.advisories_of(1),
+                             std::vector<std::string>{"202601-01", "202601-03"}));
+    CHECK(app.advisories_of(0).empty());
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(0), "1 vulnerable"));
+    CHECK(contains(screen.line(3), "dev-libs/b-1"));
+    CHECK(contains(screen.line(3), "GLSA 202601-01 202601-03"));
+    CHECK(contains(screen.text(), "v all"));
+
+    // Among the rest, still marked.
+    app.handle(character(U'v'));
+    CHECK(app.list().only == egraph::tui::Only::all);
+    CHECK(app.list().shown.size() == 2);
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "GLSA 202601-01"));
+}
+
+TEST_CASE("the vulnerable list says when nothing is affected, or why it cannot tell") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    SECTION("nothing affected") {
+        egraph::tui::App app{store, graph};
+        FakeScreen screen{12, 120, {}};
+        app.handle(character(U'v'));
+        app.finish_index(advisory_index(), {"202601-01", "202601-02", "202601-03"});
+        CHECK(app.list().shown.empty());
+        egraph::tui::draw(screen, app, ascii);
+        CHECK(contains(screen.line(0), "0 vulnerable"));
+        CHECK(contains(screen.text(), "no advisory affects them"));
+    }
+    SECTION("no index") {
+        egraph::tui::App app{store, graph};
+        FakeScreen screen{12, 120, {}};
+        app.handle(character(U'v'));
+        app.finish_index(egraph::tui::IndexResult{std::unexpected("no repositories")});
+        CHECK_FALSE(app.index_requested());
+        app.handle(key(KeyKind::escape));
+        egraph::tui::draw(screen, app, ascii);
+        CHECK(contains(screen.text(), "the repository index could not be loaded"));
+        // Shown again, it tries again.
+        app.handle(character(U'v'));
+        app.handle(character(U'v'));
+        CHECK(app.index_requested());
+    }
+}
+
 TEST_CASE("without build-time dependencies, only run-time ones count as broken") {
     // a-1 alone, DEPEND: dev-libs/missing.
     egraph::test::Bytes packages;
@@ -3005,6 +3079,41 @@ TEST_CASE("run loads the index in the background, and a failure says why") {
         app.handle(character(U's'));
         CHECK(app.index_requested());
     }
+}
+
+TEST_CASE("refreshed stores match the GLSAs against what is installed now") {
+    egraph::tui::App app{shared(app_with_lib("1")), false};
+    egraph::test::IndexBuilder b{{"test_repo"}};
+    b.advisory("202601-01", "lib", {{"dev-libs/lib", "*", "<dev-libs/lib-2", ">=dev-libs/lib-2"}});
+    app.handle(character(U'v'));
+    app.finish_index(std::make_shared<const egraph::RepositoryIndex>(b.index()));
+    CHECK(app.list().shown.size() == 1);
+    app.finish_refresh(shared(app_with_lib("2")));
+    CHECK(app.list().only == egraph::tui::Only::vulnerable);
+    CHECK(app.list().shown.empty());
+}
+
+TEST_CASE("run hands the GLSAs glsa-check applied to the index it loaded") {
+    const auto store = sample();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{12, 120, {character(U'v'), key(KeyKind::tick)}};
+    std::vector<std::filesystem::path> asked;
+    const egraph::tui::Services services{
+        .load_index = [&]() -> egraph::Job<egraph::tui::IndexResult> {
+            return egraph::ready(egraph::tui::IndexResult{advisory_index()});
+        },
+        .applied_advisories =
+            [&](const std::filesystem::path& eroot) {
+                asked.push_back(eroot);
+                return std::vector<std::string>{"202601-01", "202601-03"};
+            },
+    };
+    egraph::tui::run(screen, app, ascii, services);
+    // The index builder's EROOT.
+    CHECK(asked == std::vector<std::filesystem::path>{"/target/"});
+    // a's GLSA alone was not applied.
+    CHECK(app.list().shown == std::vector<std::uint32_t>{0});
 }
 
 TEST_CASE("refreshed stores keep the search, its results now as installed") {

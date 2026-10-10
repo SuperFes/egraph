@@ -215,7 +215,9 @@ glyphs (`--glyphs`). `App` holds the state and what keys do to it; drawing only 
 - The package list filters on every key after `/` (case-insensitive, anywhere in the cpv) and
   shows how many packages each depends on and is needed by. Each row is marked with the root set
   that keeps it directly, or as an orphan, and whether it is broken. `o` shows only orphans, as
-  `egraph orphans` does, and `!` only broken packages, as `egraph broken` does. `b` leaves out
+  `egraph orphans` does, `!` only broken packages, as `egraph broken` does, and `v` only those
+  GLSAs affect (`affected_advisories`, as `notices` matches them, glsa-check's applied ones left
+  out), loading the repository index first and naming each package's GLSAs. `b` leaves out
   build-time dependencies (DEPEND, BDEPEND) for both, as `--with-bdeps n` does for orphans.
   depclean runs once at start and again on `b`.
 - It opens both stores and reads dependencies as the queries do (`--dynamic-deps`, y by

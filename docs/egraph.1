@@ -1619,6 +1619,11 @@ adds descriptions) whose packages not installed open a listing of their versions
 .B :
 prompt taking these commands. It keeps the store current while it is open, and loads the
 repository index the first time it searches, building it where it is missing or stale.
+.B v
+shows only the installed packages GLSAs not marked applied affect, as
+.B notices
+matches them, loading the index first; once it is loaded every affected package's line names
+its GLSAs.
 The list has a page per set its updates are planned for:
 .BR @installed ,
 .B @world
