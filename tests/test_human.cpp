@@ -132,6 +132,16 @@ TEST_CASE("orphans end with a count") {
     CHECK(none.str() == "+ Nothing to remove.\n");
 }
 
+TEST_CASE("orphans name the bytes each frees, and their sum") {
+    std::ostringstream out;
+    egraph::human_orphans(
+        out, std::vector<std::string>{"a/b-1\t1536", "a/long-1\t2097152", "a/c-1\t"}, plain);
+    CHECK(out.str() == "- a/b-1     1.5 KiB\n"
+                       "- a/long-1  2.0 MiB\n"
+                       "- a/c-1\n"
+                       "\n3 packages depclean would remove, freeing 2.0 MiB\n");
+}
+
 TEST_CASE("a removal lists what goes, then what is kept and why") {
     std::ostringstream out;
     egraph::human_removal(out,
@@ -147,6 +157,25 @@ TEST_CASE("a removal lists what goes, then what is kept and why") {
     CHECK(kept.str() == "H a/lib-1  needed by a/user-1\n\nNothing to remove, 1 kept\n");
 }
 
+TEST_CASE("a removal names the bytes it frees, then what depclean would remove after it") {
+    std::ostringstream out;
+    egraph::human_removal(out,
+                          std::vector<std::string>{"a/b-1\tremove\t1536", "a/lib-1\tkept\ta/user-1",
+                                                   "a/dep-1\torphan\t2048", "a/other-1\torphan\t"},
+                          plain);
+    CHECK(out.str() == "- a/b-1  1.5 KiB\n"
+                       "H a/lib-1  needed by a/user-1\n"
+                       "\n1 package to remove, freeing 1.5 KiB, 1 kept\n"
+                       "\nThen emerge --depclean would remove, freeing 2.0 KiB more:\n"
+                       "- a/dep-1    2.0 KiB\n"
+                       "- a/other-1\n");
+    std::ostringstream unknown;
+    egraph::human_removal(unknown, std::vector<std::string>{"a/b-1\tremove\t", "a/dep-1\torphan\t"},
+                          plain);
+    CHECK(unknown.str() == "- a/b-1\n\n1 package to remove\n"
+                           "\nThen emerge --depclean would remove:\n- a/dep-1\n");
+}
+
 TEST_CASE("a deselect lists the atoms leaving, then what depclean would remove after") {
     std::ostringstream out;
     egraph::human_deselect(
@@ -157,6 +186,14 @@ TEST_CASE("a deselect lists the atoms leaving, then what depclean would remove a
     std::ostringstream alone;
     egraph::human_deselect(alone, std::vector<std::string>{"a/leaf\tdeselect"}, plain);
     CHECK(alone.str() == "- a/leaf\n\n1 atom leaves @selected\n");
+}
+
+TEST_CASE("a deselect names the bytes what it orphans frees") {
+    std::ostringstream out;
+    egraph::human_deselect(
+        out, std::vector<std::string>{"a/user\tdeselect", "a/user-1\torphan\t2048"}, plain);
+    CHECK(out.str() == "- a/user\n\n1 atom leaves @selected; then emerge --depclean would remove, "
+                       "freeing 2.0 KiB:\n- a/user-1  2.0 KiB\n");
 }
 
 TEST_CASE("an action's changes to @selected follow it") {

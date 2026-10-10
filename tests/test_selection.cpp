@@ -65,11 +65,11 @@ TEST_CASE("a deselect lists what then becomes an orphan, not what already is") {
     const std::vector<std::string> user{"app-misc/user"};
     // lib stays for base.
     CHECK(egraph::deselect_lines(store, {}, user) ==
-          std::vector<std::string>{"app-misc/user\tdeselect", "app-misc/user-1\torphan"});
+          std::vector<std::string>{"app-misc/user\tdeselect", "app-misc/user-1\torphan\t"});
     const std::vector<std::string> both{"app-misc/leaf", "app-misc/user"};
     CHECK(egraph::deselect_lines(store, {}, both) ==
           std::vector<std::string>{"app-misc/leaf\tdeselect", "app-misc/user\tdeselect",
-                                   "app-misc/leaf-1\torphan", "app-misc/user-1\torphan"});
+                                   "app-misc/leaf-1\torphan\t", "app-misc/user-1\torphan\t"});
 }
 
 TEST_CASE("deselecting a world_sets set drops the atoms it gives, not the world file's") {
@@ -77,7 +77,7 @@ TEST_CASE("deselecting a world_sets set drops the atoms it gives, not the world 
     give_via(system.store, "app-misc/leaf", "myset");
     const std::vector<std::string> set{"@myset"};
     CHECK(egraph::deselect_lines(system.store, {}, set) ==
-          std::vector<std::string>{"@myset\tdeselect", "app-misc/leaf-1\torphan"});
+          std::vector<std::string>{"@myset\tdeselect", "app-misc/leaf-1\torphan\t"});
     const std::vector<std::string> leaf{"app-misc/leaf"};
     CHECK(egraph::deselect_lines(system.store, {}, leaf) ==
           std::vector<std::string>{"app-misc/leaf\tdeselect"});

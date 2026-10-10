@@ -175,7 +175,8 @@ The records are:
 - `export [PKG...] [--depth N] [--direction reverse|forward|both]`: the packages within N
   dependency edges of PKG (all packages when none are given), as the canonical JSON or as DOT
   with every edge between them. Blockers are not followed.
-- `orphans [--with-bdeps y|n]`: one cpv per line, what `emerge --depclean` would remove. When
+- `orphans [--with-bdeps y|n]`: one `cpv bytes` line per package `emerge --depclean` would
+  remove, the bytes its vdb SIZE records (empty without one). When
   depclean would refuse (runtime dependencies nothing installed satisfies), the orphans are still
   listed, the unresolved dependencies go to stderr as `cpv kind atom`, and the exit status is 1.
   An empty @world is refused outright, as depclean does.
@@ -579,7 +580,10 @@ file's atoms are left out, since depclean deselects them, while a set world_sets
 (the store records which, `Root::via`). A matched package depclean still keeps is listed with
 its kept dependents and root sets. Verification reads the cpvs of emerge's "All selected
 packages:" line; `test_remove.py` holds the plan to `_calc_depclean` for every installed cp
-(and each version of a slotted one) on every scenario.
+(and each version of a slotted one) on every scenario. Each removed package carries its vdb SIZE, and the
+plan adds what a plain depclean would remove once they are gone and not before
+(`Removal::orphaned`): their packages taken as gone, and each world file atom that matched only
+them dropped, as unmerging's `clean_world` drops it (`WorldSelectedPackagesSet.cleanPackage`).
 
 `select` is `install --noreplace` that runs even with nothing to merge. Neither `--pretend`
 says which atom emerge would record (`create_world_atom` weighs the repositories' slots and the

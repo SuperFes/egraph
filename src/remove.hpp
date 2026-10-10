@@ -27,15 +27,20 @@ struct Removal {
     };
     // In cpv order.
     std::vector<Held> kept;
+    // What emerge --depclean would remove once these are gone and not before, in cpv order.
+    std::vector<std::uint32_t> orphaned;
 };
 
 // What emerge --depclean removes of matched, given options as for keep(): depclean then keeps
-// every installed package not matched, and leaves out @selected, whose atoms it deselects.
+// every installed package not matched, and leaves out @selected, whose atoms it deselects. And
+// what a depclean after it would remove: unmerging drops the world file's atoms that matched only
+// what it removed.
 [[nodiscard]] Removal plan_removal(const Store& store, KeepOptions options,
                                    std::span<const std::uint32_t> matched);
 
-// "cpv<TAB>remove" per removed package, then "cpv<TAB>kept<TAB>by..." per kept one, each set and
-// dependent cpv a field.
+// "cpv<TAB>remove<TAB>bytes" per removed package, then "cpv<TAB>kept<TAB>by..." per kept one, each
+// set and dependent cpv a field, then "cpv<TAB>orphan<TAB>bytes" per package it orphans; the
+// bytes are size_field's.
 [[nodiscard]] std::vector<std::string> removal_lines(const Store& store, const Removal& removal);
 
 // The cpvs emerge --pretend --depclean would remove, from its "All selected packages:" line,

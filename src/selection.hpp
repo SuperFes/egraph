@@ -27,8 +27,8 @@ selection_changes(const std::set<std::string, std::less<>>& before,
 [[nodiscard]] std::vector<std::string> parse_deselect(std::string_view output);
 
 // What deselecting atoms (parse_deselect's) leaves: "atom<TAB>deselect" for each, then
-// "cpv<TAB>orphan" for each package depclean, given options as for keep(), would remove after it
-// but not before, by cpv.
+// "cpv<TAB>orphan<TAB>bytes" (size_field's) for each package depclean, given options as for
+// keep(), would remove after it but not before, by cpv.
 [[nodiscard]] std::vector<std::string>
 deselect_lines(const Store& store, const KeepOptions& options, std::span<const std::string> atoms);
 

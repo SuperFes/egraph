@@ -258,6 +258,34 @@ std::vector<Fields> split_all(std::span<const std::string> records) {
     return all;
 }
 
+// The bytes in a record's field, none where it is missing or empty.
+std::optional<std::uint64_t> bytes_at(const Fields& row, std::size_t field) {
+    if (field >= row.size()) {
+        return std::nullopt;
+    }
+    const auto text = row.at(field);
+    std::uint64_t value = 0;
+    const auto [end, error] = std::from_chars(text.begin(), text.end(), value);
+    if (text.empty() || error != std::errc{} || end != text.end()) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+// Packages with the bytes each takes, where known.
+using Sized = std::vector<std::pair<std::string_view, std::optional<std::uint64_t>>>;
+
+// Their bytes together, none when no package's are known.
+std::optional<std::uint64_t> total_bytes(const Sized& packages) {
+    std::optional<std::uint64_t> total;
+    for (const auto& [cpv, bytes] : packages) {
+        if (bytes) {
+            total = total.value_or(0) + *bytes;
+        }
+    }
+    return total;
+}
+
 // The field query.hpp's possible_lines append.
 constexpr std::string_view possible_prefix = "use=";
 
@@ -579,6 +607,37 @@ void human_path(std::ostream& out, std::span<const std::string> records, const T
     }
 }
 
+namespace {
+
+// Each package as one to remove, its bytes right-aligned after the longest cpv.
+void sized_packages(std::ostream& out, const Sized& packages, const Theme& theme) {
+    const auto& paint = theme.paint;
+    std::size_t width = 0;
+    std::size_t size_width = 0;
+    for (const auto& [cpv, bytes] : packages) {
+        width = std::max(width, cpv.size());
+        if (bytes) {
+            size_width = std::max(size_width, byte_size(*bytes).size());
+        }
+    }
+    for (const auto& [cpv, bytes] : packages) {
+        out << paint(theme.glyph().orphan, Tone::bad) << ' ' << paint_cpv(cpv, paint);
+        if (bytes) {
+            const auto text = byte_size(*bytes);
+            out << std::string(width - cpv.size() + 2 + size_width - text.size(), ' ')
+                << paint(text, Tone::note);
+        }
+        out << '\n';
+    }
+}
+
+// ", freeing 2.0 MiB", nothing when no bytes are known.
+std::string freeing(std::optional<std::uint64_t> bytes, std::string_view more = {}) {
+    return bytes ? std::format(", freeing {}{}", byte_size(*bytes), more) : std::string{};
+}
+
+} // namespace
+
 void human_orphans(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
     const auto& paint = theme.paint;
     if (records.empty()) {
@@ -586,15 +645,18 @@ void human_orphans(std::ostream& out, std::span<const std::string> records, cons
             << paint("Nothing to remove.", Tone::good) << '\n';
         return;
     }
-    for (const auto& cpv : records) {
-        out << paint(theme.glyph().orphan, Tone::bad) << ' ' << paint_cpv(cpv, paint) << '\n';
+    const auto rows = split_all(records);
+    Sized packages;
+    for (const auto& row : rows) {
+        packages.emplace_back(row.front(), bytes_at(row, 1));
     }
+    sized_packages(out, packages, theme);
     out << '\n'
         << paint(std::to_string(records.size()), Tone::count)
         << paint(records.size() == 1 ? " package depclean would remove"
                                      : " packages depclean would remove",
                  Tone::note)
-        << '\n';
+        << paint(freeing(total_bytes(packages)), Tone::note) << '\n';
 }
 
 void human_verification(std::ostream& out, std::span<const std::string> records, const Theme& theme,
@@ -639,17 +701,21 @@ void human_removal(std::ostream& out, std::span<const std::string> records, cons
     const auto& paint = theme.paint;
     const auto rows = split_all(records);
     std::size_t width = 0;
-    std::size_t removed = 0;
+    Sized removed;
+    Sized orphaned;
     for (const auto& row : rows) {
         if (row.at(1) == "kept") {
             width = std::max(width, row.front().size());
+        } else if (row.at(1) == "remove") {
+            removed.emplace_back(row.front(), bytes_at(row, 2));
+        } else if (row.at(1) == "orphan") {
+            orphaned.emplace_back(row.front(), bytes_at(row, 2));
         }
     }
+    sized_packages(out, removed, theme);
     for (const auto& row : rows) {
         const auto cpv = row.front();
-        if (row.at(1) == "remove") {
-            ++removed;
-            out << paint(theme.glyph().orphan, Tone::bad) << ' ' << paint_cpv(cpv, paint) << '\n';
+        if (row.at(1) != "kept") {
             continue;
         }
         std::vector<std::string_view> dependents;
@@ -661,19 +727,29 @@ void human_removal(std::ostream& out, std::span<const std::string> records, cons
             << std::string(width - cpv.size() + 2, ' ')
             << paint(holder_note(dependents, sets), Tone::note) << '\n';
     }
-    const auto kept = rows.size() - removed;
+    const auto kept = rows.size() - removed.size() - orphaned.size();
     out << '\n';
-    if (removed == 0) {
+    if (removed.empty()) {
         out << paint("Nothing to remove", Tone::note);
     } else {
-        out << paint(std::to_string(removed), Tone::count)
-            << paint(removed == 1 ? " package to remove" : " packages to remove", Tone::note);
+        out << paint(std::to_string(removed.size()), Tone::count)
+            << paint(removed.size() == 1 ? " package to remove" : " packages to remove", Tone::note)
+            << paint(freeing(total_bytes(removed)), Tone::note);
     }
     if (kept > 0) {
         out << paint(", ", Tone::note) << paint(std::to_string(kept), Tone::count)
             << paint(" kept", Tone::note);
     }
     out << '\n';
+    if (orphaned.empty()) {
+        return;
+    }
+    out << '\n'
+        << paint(std::format("Then emerge --depclean would remove{}:",
+                             freeing(total_bytes(orphaned), " more")),
+                 Tone::note)
+        << '\n';
+    sized_packages(out, orphaned, theme);
 }
 
 void human_deselect(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
@@ -696,13 +772,17 @@ void human_deselect(std::ostream& out, std::span<const std::string> records, con
         out << '\n';
         return;
     }
-    out << paint("; then emerge --depclean would remove:", Tone::note) << '\n';
+    Sized orphaned;
     for (const auto& row : rows) {
         if (row.at(1) == "orphan") {
-            out << paint(theme.glyph().orphan, Tone::bad) << ' ' << paint_cpv(row.front(), paint)
-                << '\n';
+            orphaned.emplace_back(row.front(), bytes_at(row, 2));
         }
     }
+    out << paint(std::format("; then emerge --depclean would remove{}:",
+                             freeing(total_bytes(orphaned))),
+                 Tone::note)
+        << '\n';
+    sized_packages(out, orphaned, theme);
 }
 
 void human_selection(std::ostream& out, std::span<const std::string> records, const Theme& theme) {

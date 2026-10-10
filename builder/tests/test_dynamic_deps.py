@@ -64,4 +64,7 @@ def test_egraph_orphans_follow_the_ebuilds(stored):
     result = egraph(path, "orphans", "--dynamic-deps", "y")
     assert (result.returncode != 0) == (expected.returncode != 0), result.stderr
     if expected.kept:
-        assert tuple(result.stdout.splitlines()) == expected.orphans
+        assert (
+            tuple(line.split("\t")[0] for line in result.stdout.splitlines())
+            == expected.orphans
+        )

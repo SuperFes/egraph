@@ -14,10 +14,46 @@ void by_cpv(const Store& store, std::vector<std::uint32_t>& ids) {
         ids, {}, [&store](std::uint32_t id) { return store.string(store.packages.at(id).cpv); });
 }
 
+// What depclean, given options, would remove once removed are unmerged and not before: unmerging
+// drops each world file atom that matched nothing but them, as clean_world does.
+std::vector<std::uint32_t> orphaned_by(const Store& store, const KeepOptions& options,
+                                       std::span<const std::uint32_t> removed) {
+    if (removed.empty()) {
+        return {};
+    }
+    auto after = options;
+    after.removed.resize(store.packages.size(), false);
+    for (const auto id : removed) {
+        after.removed.at(id) = true;
+    }
+    after.dropped.resize(store.roots.size(), false);
+    for (std::uint32_t id = 0; id < store.roots.size(); ++id) {
+        const auto& root = store.roots.at(id);
+        const auto matches = store.ids_in(root.matches);
+        if (store.string(root.set) == "selected" && store.string(root.via).empty() &&
+            !matches.empty() && std::ranges::all_of(matches, [&](std::uint32_t pkg) {
+                return after.removed.at(pkg);
+            })) {
+            after.dropped.at(id) = true;
+        }
+    }
+    const auto before = keep(store, options);
+    const auto kept = keep(store, after);
+    std::vector<std::uint32_t> found;
+    for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
+        if (before.packages.at(id) && !kept.packages.at(id) && !after.removed.at(id)) {
+            found.push_back(id);
+        }
+    }
+    by_cpv(store, found);
+    return found;
+}
+
 } // namespace
 
 Removal plan_removal(const Store& store, KeepOptions options,
                      std::span<const std::uint32_t> matched) {
+    const auto plain = options;
     std::vector<bool> is_matched(store.packages.size(), false);
     for (const auto id : matched) {
         is_matched.at(id) = true;
@@ -62,14 +98,16 @@ Removal plan_removal(const Store& store, KeepOptions options,
         held.sets.assign(sets.begin(), sets.end());
         removal.kept.push_back(std::move(held));
     }
+    removal.orphaned = orphaned_by(store, plain, removal.removed);
     return removal;
 }
 
 std::vector<std::string> removal_lines(const Store& store, const Removal& removal) {
     std::vector<std::string> lines;
-    lines.reserve(removal.removed.size() + removal.kept.size());
+    lines.reserve(removal.removed.size() + removal.kept.size() + removal.orphaned.size());
     for (const auto id : removal.removed) {
-        lines.push_back(std::format("{}\tremove", store.string(store.packages.at(id).cpv)));
+        const auto& pkg = store.packages.at(id);
+        lines.push_back(std::format("{}\tremove\t{}", store.string(pkg.cpv), size_field(pkg)));
     }
     for (const auto& held : removal.kept) {
         auto line = std::format("{}\tkept", store.string(store.packages.at(held.package).cpv));
@@ -80,6 +118,10 @@ std::vector<std::string> removal_lines(const Store& store, const Removal& remova
             line += std::format("\t{}", store.string(store.packages.at(dependent).cpv));
         }
         lines.push_back(std::move(line));
+    }
+    for (const auto id : removal.orphaned) {
+        const auto& pkg = store.packages.at(id);
+        lines.push_back(std::format("{}\torphan\t{}", store.string(pkg.cpv), size_field(pkg)));
     }
     return lines;
 }

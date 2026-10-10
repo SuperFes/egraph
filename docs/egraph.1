@@ -445,7 +445,9 @@ the blockers that block something installed.
 .SS orphans
 The installed packages
 .B emerge \-\-depclean
-would remove.
+would remove, each with the bytes its files take as its vdb entry's
+.I SIZE
+records (an empty field without one); for people, with what they free together.
 .TP
 .B \-\-dynamic\-deps
 .TP
@@ -1092,7 +1094,14 @@ does, the request goes to
 .B emerge \-\-pretend \-\-depclean
 first, nothing is removed if it would remove otherwise (exit status 5), and on yes
 .B emerge \-\-depclean
-removes them and the stores are refreshed.
+removes them and the stores are refreshed. Each package removed comes with the bytes its vdb
+entry's
+.I SIZE
+records, and after them come the packages a plain
+.B emerge \-\-depclean
+would then remove that it would not remove now (as
+.I orphan
+lines), the world file's atoms that matched only what goes taken as deselected.
 .TP
 .B \-\-dynamic\-deps
 .TP
@@ -1130,7 +1139,7 @@ for a set, as
 .B emerge \-\-pretend \-\-deselect
 says, followed by the installed packages
 .B emerge \-\-depclean
-would then remove that it would not remove now. On yes, as
+would then remove that it would not remove now, each with the bytes it takes. On yes, as
 .B update
 does,
 .B emerge \-\-deselect

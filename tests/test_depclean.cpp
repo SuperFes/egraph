@@ -44,6 +44,15 @@ TEST_CASE("without roots everything is an orphan") {
     CHECK(egraph::orphans(kept) == std::vector<std::uint32_t>{0, 1});
 }
 
+TEST_CASE("orphans carry the bytes their vdb entries record") {
+    auto store = decoded(egraph::test::with_section(5, Bytes{}.varint(0)));
+    store.packages.front().size = 1536;
+    const std::vector<std::uint32_t> ids{0, 1};
+    CHECK(egraph::orphan_lines(store, ids) ==
+          std::vector<std::string>{"app-misc/a-1\t1536", "dev-libs/b-1\t"});
+    CHECK(egraph::orphan_lines(store, {}).empty());
+}
+
 TEST_CASE("a runtime dependency nothing satisfies is unresolved") {
     // a-1 alone, RDEPEND: dev-libs/missing dev-libs/b.
     const auto store = decoded(egraph::test::with_rdepend(2, [](Bytes& nodes) {

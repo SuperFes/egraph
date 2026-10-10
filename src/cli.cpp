@@ -1683,7 +1683,7 @@ Exit execute(const Orphans& command, Session& session, const Invocation& invocat
         return Exit::failure;
     }
     const auto& kept = depclean->get().kept;
-    const auto lines = cpvs(store, orphans(kept));
+    const auto lines = orphan_lines(store, orphans(kept));
     if (const auto style = output(invocation); style.human) {
         human_orphans(out, lines, style.theme);
     } else {

@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -72,6 +73,13 @@ struct Kept {
 
 // Installed packages depclean would remove, as ids in cpv order.
 [[nodiscard]] std::vector<std::uint32_t> orphans(const Kept& kept);
+
+// A package's vdb SIZE as a record's field: its bytes, empty when unknown.
+[[nodiscard]] std::string size_field(const Package& pkg);
+
+// "cpv<TAB>bytes" per package, size_field's bytes.
+[[nodiscard]] std::vector<std::string> orphan_lines(const Store& store,
+                                                    std::span<const std::uint32_t> ids);
 
 // Why depclean keeps a package: the root that starts the chain, then each dependency in it.
 struct Path {

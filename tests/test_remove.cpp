@@ -45,9 +45,9 @@ egraph::test::System sample() {
 
 TEST_CASE("a matched package nothing else needs is removed, @selected or not") {
     const auto system = sample();
-    CHECK(removing(system, {"app-misc/b-1"}) == std::vector<std::string>{"app-misc/b-1\tremove"});
+    CHECK(removing(system, {"app-misc/b-1"}) == std::vector<std::string>{"app-misc/b-1\tremove\t"});
     CHECK(removing(system, {"app-misc/a-1", "dev-libs/lib-1"}) ==
-          std::vector<std::string>{"app-misc/a-1\tremove", "dev-libs/lib-1\tremove"});
+          std::vector<std::string>{"app-misc/a-1\tremove\t", "dev-libs/lib-1\tremove\t"});
 }
 
 TEST_CASE("a matched package something unmatched needs is kept, with what keeps it") {
@@ -83,7 +83,31 @@ TEST_CASE("removing keeps what the options take as gone out of the roots") {
     options.removed.at(ids_of(store, {"app-misc/a-1"}).front()) = true;
     CHECK(egraph::removal_lines(
               store, egraph::plan_removal(store, options, ids_of(store, {"dev-libs/lib-1"}))) ==
-          std::vector<std::string>{"dev-libs/lib-1\tremove"});
+          std::vector<std::string>{"dev-libs/lib-1\tremove\t"});
+}
+
+TEST_CASE("a removal names what it leaves for depclean, with the bytes each takes") {
+    auto system = sample();
+    auto& store = system.store;
+    store.packages.at(ids_of(store, {"app-misc/a-1"}).front()).size = 2048;
+    store.packages.at(ids_of(store, {"dev-libs/lib-1"}).front()).size = 4096;
+    // a's world file atom goes with it, and lib with nothing needing it.
+    CHECK(removing(system, {"app-misc/a-1"}) ==
+          std::vector<std::string>{"app-misc/a-1\tremove\t2048", "dev-libs/lib-1\torphan\t4096"});
+    CHECK(removing(system, {"app-misc/a-1", "dev-libs/lib-1"}) ==
+          std::vector<std::string>{"app-misc/a-1\tremove\t2048", "dev-libs/lib-1\tremove\t4096"});
+    CHECK(removing(system, {"dev-libs/lib-1"}) ==
+          std::vector<std::string>{"dev-libs/lib-1\tkept\tapp-misc/a-1"});
+}
+
+TEST_CASE("a world file atom something else still matches stays when its package goes") {
+    // As unmerge's clean_world keeps it: a-1 then keeps x.
+    const auto system =
+        make_system({{.cpv = "app-misc/a-1", .deps = {{"RDEPEND", "dev-libs/x"}}, .slot = "1"},
+                     {.cpv = "app-misc/a-2", .deps = {{"RDEPEND", "dev-libs/x"}}, .slot = "2"},
+                     {.cpv = "dev-libs/x-1"}},
+                    {}, {"app-misc/a"}, {});
+    CHECK(removing(system, {"app-misc/a-2"}) == std::vector<std::string>{"app-misc/a-2\tremove\t"});
 }
 
 TEST_CASE("depclean's removals are read from its selected packages") {

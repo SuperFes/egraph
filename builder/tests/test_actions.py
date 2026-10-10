@@ -390,6 +390,27 @@ def test_remove_removes_through_depclean_and_deselects(system):
     assert logged_runs(machine) == [("remove", "done", "app-misc/leaf")]
 
 
+def test_a_removal_names_what_it_frees_and_the_orphans_depclean_then_takes(system):
+    machine = system(removable=True)
+    for cpv, size in (("app-misc/user-1", "2048"), ("app-misc/lib-1", "4096")):
+        with open(os.path.join(vdb(machine.playground, cpv), "SIZE"), "w") as f:
+            f.write(size + "\n")
+    age(machine.playground.eroot)
+    result = machine.egraph("remove", "--yes", "app-misc/user")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines()[:2] == [
+        "app-misc/user-1\tremove\t2048",
+        "app-misc/lib-1\torphan\t4096",
+    ]
+    assert not machine.installed("app-misc/user-1")
+    # What emerge's depclean now takes, with its size.
+    again = machine.egraph("orphans")
+    assert again.returncode == 0, again.stderr
+    assert again.stdout == "app-misc/lib-1\t4096\n"
+    shown = machine.egraph("--layout", "human", "orphans")
+    assert "freeing 4.0 KiB" in shown.stdout
+
+
 def test_what_something_needs_is_kept_and_nothing_is_asked(system):
     machine = system(removable=True)
     result = machine.egraph("--layout", "human", "remove", "--yes", "app-misc/lib")
@@ -453,8 +474,8 @@ def test_deselect_lists_what_depclean_would_then_remove(system):
     lines = result.stdout.splitlines()
     assert lines[:3] == [
         "app-misc/user\tdeselect",
-        "app-misc/lib-1\torphan",
-        "app-misc/user-1\torphan",
+        "app-misc/lib-1\torphan\t",
+        "app-misc/user-1\torphan\t",
     ]
     assert lines[-1] == "app-misc/user\tdeselected"
     run = machine.emerged()[-1]

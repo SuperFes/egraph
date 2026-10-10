@@ -11,6 +11,7 @@
 #include <iterator>
 #include <numeric>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
@@ -514,6 +515,20 @@ std::vector<std::uint32_t> orphans(const Kept& kept) {
         }
     }
     return ids;
+}
+
+std::string size_field(const Package& pkg) {
+    return pkg.size == 0 ? std::string{} : std::to_string(pkg.size);
+}
+
+std::vector<std::string> orphan_lines(const Store& store, std::span<const std::uint32_t> ids) {
+    std::vector<std::string> lines;
+    lines.reserve(ids.size());
+    for (const auto id : ids) {
+        const auto& pkg = store.packages.at(id);
+        lines.push_back(std::format("{}\t{}", store.string(pkg.cpv), size_field(pkg)));
+    }
+    return lines;
 }
 
 std::optional<Path> why(const Kept& kept, std::uint32_t package) {

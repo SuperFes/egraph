@@ -23,6 +23,11 @@ def orphans(path, *options):
     )
 
 
+def cpvs_of(stdout):
+    """The cpvs of orphans' lines, each before its size."""
+    return tuple(line.split("\t")[0] for line in stdout.splitlines())
+
+
 def unresolved(stderr):
     """(parent, atom) pairs from egraph's refusal message."""
     return frozenset(
@@ -52,7 +57,7 @@ def test_orphans_are_what_depclean_removes(system, with_bdeps, dynamic_deps):
         assert result.stdout == ""
         assert "the @world set is empty" in result.stderr
         return
-    assert tuple(result.stdout.splitlines()) == expected.orphans
+    assert cpvs_of(result.stdout) == expected.orphans
     assert unresolved(result.stderr) == expected.unresolved
 
 
@@ -62,7 +67,7 @@ def test_roots_scenario_by_hand(playgrounds, tmp_path):
     write_stores(playgrounds("roots"), path)
     result = orphans(path)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == [
+    assert cpvs_of(result.stdout) == (
         "app-misc/orphan-1",
         # || ( alt-x alt-y ): neither kept yet, so the first.
         "dev-libs/alt-y-1",
@@ -74,7 +79,7 @@ def test_roots_scenario_by_hand(playgrounds, tmp_path):
         "dev-libs/orphan-dep-1",
         # The unslotted world atom keeps the highest slot only.
         "sys-kernel/sources-1",
-    ]
+    )
 
 
 def test_dependencies_follow_the_ebuild_unless_told_otherwise(playgrounds, tmp_path):
@@ -83,7 +88,7 @@ def test_dependencies_follow_the_ebuild_unless_told_otherwise(playgrounds, tmp_p
     system = playgrounds("dynamic-deps")
     path = tmp_path / "installed.egraph"
     write_stores(system, path)
-    assert orphans(path).stdout == "dev-libs/dep-1\n"
+    assert orphans(path).stdout == "dev-libs/dep-1\t\n"
     assert depclean(system.trees, system.eroot, dynamic_deps=True).orphans == (
         "dev-libs/dep-1",
     )
@@ -97,4 +102,4 @@ def test_atoms_of_one_cp_share_what_they_keep(playgrounds, tmp_path):
     keep lib-1 and nothing keeps lib-2."""
     path = tmp_path / "installed.egraph"
     write_stores(playgrounds("repository"), path)
-    assert "dev-libs/lib-2" in orphans(path).stdout.splitlines()
+    assert "dev-libs/lib-2" in cpvs_of(orphans(path).stdout)

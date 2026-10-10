@@ -1301,8 +1301,13 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
   build and merge seconds and its session's jobs, origin `emerge.log`, merged into the history
   by start, those it holds already left out; estimates take them only where egraph has no build
   of its own.
-- 20i (planned): space: what removing a package frees with the orphans it leaves (the vdb's
+- 20i (done): space: what removing a package frees with the orphans it leaves (the vdb's
   SIZE).
+  - 20i1 (done): the installed store (format 7) records each package's vdb SIZE.
+  - 20i2 (done): `orphans`, `remove` and `deselect` name each package's bytes and, for people,
+    their sum; `remove` adds the packages a depclean would take after it (`orphan` lines), the
+    world file's atoms that matched only what goes dropped as unmerging drops them, held to the
+    orphans emerge's own depclean leaves.
 - 20j (planned): a GLSA filter in the list (the matching landed in 17e1).
 
 ## 21. The fork's speedups upstream

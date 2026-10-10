@@ -80,15 +80,18 @@ std::vector<std::string> deselect_lines(const Store& store, const KeepOptions& o
     for (const auto& atom : atoms) {
         lines.push_back(std::format("{}\tdeselect", atom));
     }
-    std::vector<std::string_view> orphaned;
+    std::vector<std::uint32_t> orphaned;
     for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
         if (kept_before.packages.at(id) && !kept_after.packages.at(id)) {
-            orphaned.push_back(store.string(store.packages.at(id).cpv));
+            orphaned.push_back(id);
         }
     }
-    std::ranges::sort(orphaned);
-    for (const auto cpv : orphaned) {
-        lines.push_back(std::format("{}\torphan", cpv));
+    std::ranges::sort(orphaned, {}, [&store](std::uint32_t id) {
+        return store.string(store.packages.at(id).cpv);
+    });
+    for (const auto id : orphaned) {
+        const auto& pkg = store.packages.at(id);
+        lines.push_back(std::format("{}\torphan\t{}", store.string(pkg.cpv), size_field(pkg)));
     }
     return lines;
 }

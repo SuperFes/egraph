@@ -283,7 +283,10 @@ def test_orphans_are_what_depclean_removes(
         text=True,
     )
     assert (result.returncode != 0) == (expected.returncode != 0), result.stderr
-    assert tuple(result.stdout.splitlines()) == expected.orphans
+    assert (
+        tuple(line.split("\t")[0] for line in result.stdout.splitlines())
+        == expected.orphans
+    )
 
 
 @pytest.mark.skipif(
