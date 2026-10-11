@@ -35,6 +35,10 @@ class Replacement {
     Clock::time_point since_{};
 };
 
+// Whether the running executable's path now names another file than the one running, as after
+// an upgrade merged it; false when /proc does not say.
+[[nodiscard]] bool executable_replaced();
+
 // The running executable, watched for its replacement, and run again over this process. Never
 // due when /proc does not say what is running.
 class SelfRestart {

@@ -35,7 +35,10 @@ void Replacement::keep() {
     }
 }
 
-SelfRestart SelfRestart::open() {
+namespace {
+
+// The running executable's path, where a replacement would be.
+std::filesystem::path executable_path() {
     auto path = os::executable();
     // The link reads so once the file is replaced; its path is where the new one is.
     constexpr std::string_view deleted = " (deleted)";
@@ -43,6 +46,23 @@ SelfRestart SelfRestart::open() {
         text.resize(text.size() - deleted.size());
         path = std::move(text);
     }
+    return path;
+}
+
+} // namespace
+
+bool executable_replaced() {
+    const auto path = executable_path();
+    if (path.empty()) {
+        return false;
+    }
+    const auto running = os::running_identity();
+    const auto now = os::identity(path);
+    return running && now && *running != *now;
+}
+
+SelfRestart SelfRestart::open() {
+    auto path = executable_path();
     auto argv = os::command_line();
     const auto running = os::running_identity();
     if (path.empty() || !argv || !running) {

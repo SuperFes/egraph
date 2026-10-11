@@ -138,15 +138,26 @@ TEST_CASE("a store in another format is put down to another version of egraph or
         .message = "/s/installed.egraph: format version 4, expected 5",
         .mismatch = egraph::FormatMismatch{
             .kind = "an egraph store", .found = 4, .expected = 5, .path = "/s/installed.egraph"}};
-    CHECK(egraph::built_store_error("egraph-build", mismatch) ==
-          "egraph and egraph-build are from different versions: egraph-build wrote "
-          "/s/installed.egraph as an egraph store of format 4, but this egraph reads format 5; "
-          "install both from the same release");
+    CHECK(egraph::built_store_error("egraph-build", mismatch, false) ==
+          "egraph-build is older than this egraph: it wrote /s/installed.egraph as an egraph "
+          "store of format 4, but this egraph reads format 5; install both from the same "
+          "release");
+    auto newer = mismatch;
+    newer.mismatch->found = 6;
+    CHECK(egraph::built_store_error("egraph-build", newer, false) ==
+          "egraph-build is newer than this egraph: it wrote /s/installed.egraph as an egraph "
+          "store of format 6, but this egraph reads format 5; install both from the same "
+          "release");
+    // An upgrade merged egraph and its builder while the old egraph ran.
+    CHECK(egraph::built_store_error("egraph-build", newer, true) ==
+          "this egraph was replaced by another version while it ran, whose egraph-build wrote "
+          "/s/installed.egraph as an egraph store of format 6, but this egraph reads format 5; "
+          "run egraph again");
     CHECK(egraph::stored_store_error(mismatch) ==
           "/s/installed.egraph is an egraph store of format 4, from another egraph version, but "
           "this egraph reads format 5; egraph rebuild writes it anew");
     const egraph::StoreError other{.message = "/s/installed.egraph: truncated header"};
-    CHECK(egraph::built_store_error("egraph-build", other) == other.message);
+    CHECK(egraph::built_store_error("egraph-build", other, true) == other.message);
     CHECK(egraph::stored_store_error(other) == other.message);
 }
 

@@ -69,3 +69,7 @@ TEST_CASE("without knowing what runs, nothing is due") {
     CHECK_FALSE(replacement.seen(replaced, at(milliseconds{0})));
     CHECK_FALSE(replacement.seen(replaced, at(milliseconds{5000})));
 }
+
+TEST_CASE("the running tests' own executable is not replaced") {
+    CHECK_FALSE(egraph::executable_replaced());
+}

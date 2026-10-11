@@ -121,7 +121,11 @@ run_builder(const Invocation& invocation, std::string_view mode, const std::file
                                                        std::ostream& warnings);
 
 // Why the store builder (egraph-build, as builder_program names it) has just written cannot be
-// read: for one in another format, that egraph and it are from different versions.
+// read: for one in another format, which of egraph and it is the newer, or, when this egraph was
+// replaced while it ran (an upgrade merged both), that the next run reads it.
+[[nodiscard]] std::string built_store_error(std::string_view builder, const StoreError& error,
+                                            bool replaced);
+// The same, replaced as this process finds its executable now.
 [[nodiscard]] std::string built_store_error(std::string_view builder, const StoreError& error);
 
 // Why a store kept from before cannot be read: for one in another format, how to replace it.

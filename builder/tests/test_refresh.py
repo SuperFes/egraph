@@ -647,7 +647,8 @@ def test_use_changes_are_written_on_yes_and_planned_again(
 
 def test_a_builder_from_another_version_is_named(system, tmp_path):
     """A store egraph-build writes in another format than egraph reads is put down to the two
-    being from different versions; one kept from before says how to replace it."""
+    being from different versions, the builder the older here; one kept from before says how to
+    replace it."""
     from egraph_build.store import FORMAT_VERSION
 
     playground, store, builder, log = system
@@ -665,9 +666,9 @@ def test_a_builder_from_another_version_is_named(system, tmp_path):
     ran = egraph((playground, store, older, log), "orphans")
     assert ran.returncode != 0
     assert (
-        f"egraph and {older} are from different versions: {older} wrote {store} as an "
-        f"egraph store of format {FORMAT_VERSION - 1}, but this egraph reads format "
-        f"{FORMAT_VERSION}; install both from the same release"
+        f"{older} is older than this egraph: it wrote {store} as an egraph store of "
+        f"format {FORMAT_VERSION - 1}, but this egraph reads format {FORMAT_VERSION}; "
+        "install both from the same release"
     ) in ran.stderr
     kept = egraph(system, "--no-refresh", "orphans")
     assert kept.returncode != 0
@@ -676,3 +677,35 @@ def test_a_builder_from_another_version_is_named(system, tmp_path):
         "version"
     ) in kept.stderr
     assert egraph(system, "orphans").returncode == 0
+
+
+def test_an_egraph_upgraded_while_it_runs_says_to_run_it_again(
+    system, tmp_path, monkeypatch
+):
+    """An upgrade merges egraph and egraph-build while the old egraph runs it: the new builder
+    writes a store the old egraph cannot read, and it says the next run will."""
+    from egraph_build.store import FORMAT_VERSION
+
+    playground, store, builder, log = system
+    running = tmp_path / "egraph"
+    shutil.copy(EGRAPH, running)
+    monkeypatch.setattr(sys.modules[__name__], "EGRAPH", str(running))
+    newer = tmp_path / "newer-egraph-build"
+    newer.write_text(
+        "#!/bin/sh\n"
+        f'"{builder}" "$@" || exit\n'
+        f'"{sys.executable}" -c "import struct, sys\n'
+        "with open(sys.argv[1], 'r+b') as f:\n"
+        "    f.seek(8)\n"
+        f"    f.write(struct.pack('<I', {FORMAT_VERSION + 1}))\n"
+        f'" "{store}"\n'
+        f'cp "{running}" "{running}.new" && mv "{running}.new" "{running}"\n'
+    )
+    newer.chmod(0o755)
+    ran = egraph((playground, store, newer, log), "orphans")
+    assert ran.returncode != 0
+    assert (
+        f"this egraph was replaced by another version while it ran, whose {newer} wrote "
+        f"{store} as an egraph store of format {FORMAT_VERSION + 1}, but this egraph reads "
+        f"format {FORMAT_VERSION}; run egraph again"
+    ) in ran.stderr

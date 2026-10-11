@@ -3,6 +3,7 @@
 #include "freshness.hpp"
 #include "history.hpp"
 #include "os.hpp"
+#include "restart.hpp"
 #include "what_if.hpp"
 
 #include <algorithm>
@@ -166,16 +167,25 @@ std::optional<std::string> refresh_store(const Invocation& invocation, std::stri
     return std::nullopt;
 }
 
-std::string built_store_error(std::string_view builder, const StoreError& error) {
+std::string built_store_error(std::string_view builder, const StoreError& error, bool replaced) {
     if (!error.mismatch) {
         return error.message;
     }
     const auto& mismatch = *error.mismatch;
-    return std::format("egraph and {0} are from different versions: {0} wrote {1} as {2} of "
-                       "format {3}, but this egraph reads format {4}; install both from the same "
-                       "release",
-                       builder, mismatch.path.string(), mismatch.kind, mismatch.found,
-                       mismatch.expected);
+    const auto wrote =
+        std::format("{} as {} of format {}, but this egraph reads format {}",
+                    mismatch.path.string(), mismatch.kind, mismatch.found, mismatch.expected);
+    if (replaced) {
+        return std::format("this egraph was replaced by another version while it ran, whose {} "
+                           "wrote {}; run egraph again",
+                           builder, wrote);
+    }
+    return std::format("{} is {} than this egraph: it wrote {}; install both from the same release",
+                       builder, mismatch.found > mismatch.expected ? "newer" : "older", wrote);
+}
+
+std::string built_store_error(std::string_view builder, const StoreError& error) {
+    return built_store_error(builder, error, executable_replaced());
 }
 
 std::string stored_store_error(const StoreError& error) {
