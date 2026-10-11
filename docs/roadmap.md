@@ -1314,18 +1314,10 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
 
 ## 21. The fork's speedups upstream
 
-The portage fork's resolver speedups (`docs/upstream-notes.md`) proposed to portage one at a
-time, lowest risk first. The dev box is the evidence base: 2,324 packages, 8 repositories, envs
-per package, heavy USE and keyword rules. Breadth comes from shadow mode, which anyone can run
-without changing what emerge does.
-
-- Rebase the fork onto current master; measure each commit alone on the stable portage
-  (`perf stat`, interleaved), output identical before any speedup counts.
-- Skipping slot-operator probes without a candidate first: on by default already, about half of
-  `-uDN`'s time.
-- Then the query memo and `regenerate()` replay, opt-in first; then neighborhood completion over
-  the in-process installed index, with shadow-mode results from other systems.
-- Facts persisted across runs and the external index stay out until the in-process ones land.
+- Can we, some how, in a plugable way, since Python can use native libraries, embed ourselves
+  into portage itself to make it awesomer, or replace some of its troublesome areas with our
+  speedups.
+- Worst/best case scenario, we don't use portage anymore.
 
 ## 22. Portage's tools in egraph's space
 
@@ -1335,3 +1327,4 @@ signatures, the privilege drops and sandboxes), the overlapping gentoolkit and p
 tools, and the library underneath, so
 that a system runs without portage installed; then egraph moves into `sys-apps`. Mapped out in
 `docs/vision.md` ("Portage's tools in egraph's space"); not scheduled until the user decides.
+Everthting portage, ported to egraph in a way that doesn't suck.
