@@ -690,8 +690,14 @@ SCENARIOS = {
             "dev-libs/present-1": {"EAPI": "8"},
             "app-misc/slotty-1": {"EAPI": "8", "RDEPEND": "dev-lang/py:3.13"},
             "app-misc/slotty-2": {"EAPI": "8", "RDEPEND": "dev-lang/py:3.14"},
-            "dev-lang/py-3.13.1": {"EAPI": "8", "SLOT": "3.13"},
-            "dev-lang/py-3.14.1": {"EAPI": "8", "SLOT": "3.14"},
+            # The new slot's USE is marked against the installed one's: tk and old dropped,
+            # gdbm new, jit turned off.
+            "dev-lang/py-3.13.1": {
+                "EAPI": "8",
+                "SLOT": "3.13",
+                "IUSE": "+jit tk +old",
+            },
+            "dev-lang/py-3.14.1": {"EAPI": "8", "SLOT": "3.14", "IUSE": "jit +gdbm"},
             "app-misc/grown-1": {"EAPI": "8", "RDEPEND": "dev-libs/fresh"},
             "dev-libs/fresh-1": {
                 "EAPI": "8",
@@ -723,7 +729,12 @@ SCENARIOS = {
             "app-misc/either-1": {"EAPI": "8"},
             "dev-libs/present-1": {"EAPI": "8"},
             "app-misc/slotty-1": {"EAPI": "8", "RDEPEND": "dev-lang/py:3.13"},
-            "dev-lang/py-3.13.1": {"EAPI": "8", "SLOT": "3.13"},
+            "dev-lang/py-3.13.1": {
+                "EAPI": "8",
+                "SLOT": "3.13",
+                "IUSE": "+jit tk +old",
+                "USE": "jit old",
+            },
             "app-misc/grown-1": {"EAPI": "8"},
             "app-misc/host-1": {"EAPI": "8"},
             "app-misc/holder-1": {"EAPI": "8", "RDEPEND": "<app-misc/host-2"},

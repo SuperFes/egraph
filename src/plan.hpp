@@ -190,6 +190,11 @@ struct Plan {
 [[nodiscard]] std::vector<std::uint32_t> other_slots(const Store& store, const Evaluated& evaluated,
                                                      const Merge& merge);
 
+// A new merge's USE as emerge shows it: against the highest version of its cp installed in
+// another slot, when it is new in its slot.
+[[nodiscard]] std::string merge_use(const Store& store, const Evaluated& evaluated,
+                                    const Merge& merge);
+
 // The package.use line emerge asks for the change: ">=cpv flags" when nothing visible or
 // installed of its cp is newer, ">=cpv:slot flags" when nothing in its slot is, else "=cpv flags";
 // the flags by name, "-flag" turning one off.

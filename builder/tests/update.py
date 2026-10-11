@@ -210,19 +210,26 @@ def updates(
 
 
 def use_string(depgraph, pkg):
-    """The USE emerge --verbose shows for pkg as a new package, uncoloured."""
+    """The USE emerge --verbose shows for pkg, new in its slot, uncoloured: against the highest
+    installed version of its cp in another slot, as Display picks it, if there is one.
+    """
     from _emerge.resolver.output import Display
+    from portage.dep import Atom
 
+    vardb = depgraph._frozen_config.trees[pkg.root]["vartree"].dbapi
+    others = vardb.match_pkgs(Atom(pkg.cp))
     display = Display.__new__(Display)
     display.conf = types.SimpleNamespace(
         print_use_string=True,
         alphabetical=False,
-        all_flags=False,
+        all_flags=True,
         pkg_use_enabled=depgraph._pkg_use_enabled,
         reinstall_nodes={},
     )
     display.verboseadd = ""
-    display._display_use(pkg, types.SimpleNamespace(previous_pkg=None))
+    display._display_use(
+        pkg, types.SimpleNamespace(previous_pkg=others[-1] if others else None)
+    )
     return re.sub(r"\x1b\[[0-9;]*m", "", display.verboseadd).strip()
 
 

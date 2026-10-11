@@ -75,6 +75,12 @@ pending_update(const Evaluated& evaluated, std::uint32_t package, UseRebuilds re
 // alnum order, those the profile fixes in parentheses. Empty without flags to show.
 [[nodiscard]] std::string use_display(const Evaluated& evaluated, const Candidate& candidate);
 
+// The same against an installed package, as emerge -v shows a package new in its slot against
+// the highest installed in another: "flag%*" new to IUSE, "flag*" and "-flag*" changed,
+// "-flag%" new and off, then those IUSE lost as "(-flag%)", with "*" where they were on.
+[[nodiscard]] std::string use_display(const Evaluated& evaluated, const Candidate& candidate,
+                                      const Store& store, const Package& previous);
+
 // Indices into Evaluated::candidates that the package's wanted update falls back to when its
 // target is rejected: the other visible versions in the target's slot, newer than the installed
 // one for an upgrade, best first and of one version the target's repository first. None for a

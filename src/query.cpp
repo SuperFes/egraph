@@ -231,7 +231,17 @@ bool alnum_less(std::string_view a, std::string_view b) {
     return whole_a < whole_b;
 }
 
-std::string use_display(const Evaluated& evaluated, const Candidate& candidate) {
+namespace {
+
+// An installed package's IUSE, without defaults, and the flags of it that were on.
+struct Previous {
+    std::set<std::string_view> iuse;
+    std::set<std::string_view> use;
+};
+
+// emerge -v's USE string: plain for a new package, else marked against previous.
+std::string use_string(const Evaluated& evaluated, const Candidate& candidate,
+                       const std::optional<Previous>& previous) {
     const auto strings = [&evaluated](Range range) {
         std::vector<std::string_view> found;
         for (const auto id : evaluated.ids_in(range)) {
@@ -247,32 +257,73 @@ std::string use_display(const Evaluated& evaluated, const Candidate& candidate) 
         std::string_view name;
         bool enabled = false;
         bool forced = false;
+        // In previous's IUSE only.
+        bool removed = false;
+        bool was_known = false;
+        bool was_enabled = false;
     };
-    // Groups by variable, "" for USE.
-    std::map<std::string_view, std::vector<Flag>> groups;
-    for (const auto flag : strings(candidate.iuse)) {
-        std::string_view group;
-        auto name = flag;
+    // The USE_EXPAND variable a flag belongs to, "" for USE, and its name in it.
+    const auto split = [&expand](std::string_view flag) {
         for (const auto variable : expand) {
             if (flag.size() > variable.size() + 1 && flag.starts_with(variable) &&
                 flag.at(variable.size()) == '_') {
-                group = variable;
-                name = flag.substr(variable.size() + 1);
-                break;
+                return std::pair{variable, flag.substr(variable.size() + 1)};
             }
         }
+        return std::pair{std::string_view{}, flag};
+    };
+    std::map<std::string_view, std::vector<Flag>> groups;
+    const auto iuse = strings(candidate.iuse);
+    for (const auto flag : iuse) {
+        const auto [group, name] = split(flag);
         groups[group].push_back({.name = name,
                                  .enabled = std::ranges::binary_search(use, flag),
-                                 .forced = std::ranges::binary_search(forced, flag)});
+                                 .forced = std::ranges::binary_search(forced, flag),
+                                 .removed = false,
+                                 .was_known = previous && previous->iuse.contains(flag),
+                                 .was_enabled = previous && previous->use.contains(flag)});
     }
+    if (previous) {
+        for (const auto flag : previous->iuse) {
+            if (std::ranges::find(iuse, flag) == iuse.end()) {
+                const auto [group, name] = split(flag);
+                groups[group].push_back({.name = name,
+                                         .enabled = false,
+                                         .forced = false,
+                                         .removed = true,
+                                         .was_known = true,
+                                         .was_enabled = previous->use.contains(flag)});
+            }
+        }
+    }
+    const auto text = [&previous](const Flag& flag) {
+        if (flag.removed) {
+            return std::format("(-{}%{})", flag.name, flag.was_enabled ? "*" : "");
+        }
+        std::string_view marks;
+        if (previous && !flag.was_known) {
+            marks = flag.enabled ? "%*" : flag.forced ? "" : "%";
+        } else if (previous && flag.enabled != flag.was_enabled) {
+            marks = "*";
+        }
+        const auto shown = std::format("{}{}{}", flag.enabled ? "" : "-", flag.name, marks);
+        return flag.forced ? std::format("({})", shown) : shown;
+    };
+    // Enabled, then disabled, then removed, each in alnum order.
+    const auto rank = [](const Flag& flag) {
+        if (flag.removed) {
+            return 2;
+        }
+        return flag.enabled ? 0 : 1;
+    };
     std::string shown;
     for (auto& [group, flags] : groups) {
         if (std::ranges::binary_search(hidden, group)) {
             continue;
         }
-        std::ranges::sort(flags, [](const Flag& a, const Flag& b) {
-            if (a.enabled != b.enabled) {
-                return a.enabled;
+        std::ranges::sort(flags, [&rank](const Flag& a, const Flag& b) {
+            if (rank(a) != rank(b)) {
+                return rank(a) < rank(b);
             }
             return alnum_less(a.name, b.name);
         });
@@ -282,14 +333,35 @@ std::string use_display(const Evaluated& evaluated, const Candidate& candidate) 
         });
         shown += std::format("{}{}=\"", shown.empty() ? "" : " ", variable);
         for (std::size_t i = 0; i < flags.size(); ++i) {
-            const auto& flag = flags.at(i);
-            const auto text = std::format("{}{}", flag.enabled ? "" : "-", flag.name);
-            shown += std::format("{}{}", i == 0 ? "" : " ",
-                                 flag.forced ? std::format("({})", text) : text);
+            shown += std::format("{}{}", i == 0 ? "" : " ", text(flags.at(i)));
         }
         shown += '"';
     }
     return shown;
+}
+
+} // namespace
+
+std::string use_display(const Evaluated& evaluated, const Candidate& candidate) {
+    return use_string(evaluated, candidate, std::nullopt);
+}
+
+std::string use_display(const Evaluated& evaluated, const Candidate& candidate, const Store& store,
+                        const Package& previous) {
+    Previous found;
+    for (const auto id : store.ids_in(previous.iuse)) {
+        auto flag = store.string(id);
+        if (flag.starts_with('+') || flag.starts_with('-')) {
+            flag.remove_prefix(1);
+        }
+        found.iuse.insert(flag);
+    }
+    for (const auto id : store.ids_in(previous.use)) {
+        if (const auto flag = store.string(id); found.iuse.contains(flag)) {
+            found.use.insert(flag);
+        }
+    }
+    return use_string(evaluated, candidate, found);
 }
 
 namespace {
@@ -392,7 +464,7 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& origi
             } else if (merge.named_by) {
                 why = argument_text(*merge.named_by);
             }
-            const auto use = use_display(evaluated, evaluated.candidates.at(merge.candidate));
+            const auto use = merge_use(store, evaluated, merge);
             if (!use.empty() || !why.empty() || !beside.empty()) {
                 line += std::format("\t{}", use);
             }

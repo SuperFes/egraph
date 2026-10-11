@@ -2061,6 +2061,14 @@ std::string wait_letters(const WaitKinds& kinds) {
     return letters;
 }
 
+std::string merge_use(const Store& store, const Evaluated& evaluated, const Merge& merge) {
+    const auto& candidate = evaluated.candidates.at(merge.candidate);
+    if (const auto others = other_slots(store, evaluated, merge); !others.empty()) {
+        return use_display(evaluated, candidate, store, store.packages.at(others.back()));
+    }
+    return use_display(evaluated, candidate);
+}
+
 std::vector<std::uint32_t> other_slots(const Store& store, const Evaluated& evaluated,
                                        const Merge& merge) {
     if (merge.replaces) {

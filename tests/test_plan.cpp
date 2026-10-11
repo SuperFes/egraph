@@ -1155,6 +1155,66 @@ TEST_CASE("a group of hidden flags alone shows nothing") {
     CHECK(egraph::use_display(system.evaluated, system.evaluated.candidates.front()).empty());
 }
 
+namespace {
+
+// Python 3.15 new in its slot beside 3.13 and 3.14, which differ in IUSE and USE.
+egraph::test::System slotted_system() {
+    auto system = make_system(
+        {{.cpv = "dev-lang/py-3.13.1", .slot = "3.13", .iuse = "on", .use = "on"},
+         {.cpv = "dev-lang/py-3.14.1",
+          .slot = "3.14",
+          .iuse = "+on was_on_now_off was_off_now_on stays_off gone_on gone_off llvm_slot_19 "
+                  "python_targets_py3_11",
+          .use = "on was_on_now_off gone_on llvm_slot_19 python_targets_py3_11 elibc_glibc"},
+         {.cpv = "app-misc/user-1", .deps = {{"RDEPEND", "dev-lang/py:3.15"}}}},
+        {{.cpv = "dev-lang/py-3.15.0",
+          .slot = "3.15",
+          .iuse = "on was_on_now_off was_off_now_on stays_off fresh_on fresh_off pinned "
+                  "llvm_slot_21",
+          .use = "on was_off_now_on fresh_on llvm_slot_21 elibc_glibc",
+          .forced = "pinned"},
+         {.cpv = "app-misc/user-1", .deps = {{"RDEPEND", "dev-lang/py:3.15"}}}});
+    egraph::test::set_use_expand(system, {"llvm_slot", "python_targets"}, {});
+    return system;
+}
+
+} // namespace
+
+TEST_CASE("a new slot's USE marks what changed since the highest installed in another slot") {
+    const auto system = slotted_system();
+    const auto& [store, evaluated] = system;
+    constexpr auto expected =
+        R"x(USE="fresh_on%* on was_off_now_on* -fresh_off% (-pinned) -stays_off -was_on_now_off* )x"
+        R"x((-gone_off%) (-gone_on%*)" LLVM_SLOT="21%* (-19%*)" PYTHON_TARGETS="(-py3_11%*)")x";
+    const auto plan = egraph::plan_updates(store, evaluated, egraph::UseRebuilds::none);
+    REQUIRE(plan.merges.size() == 1);
+    CHECK(egraph::use_display(evaluated, evaluated.candidates.at(plan.merges.front().candidate),
+                              store, *std::ranges::find_if(store.packages, [&](const auto& pkg) {
+                                  return store.string(pkg.cpv) == "dev-lang/py-3.14.1";
+                              })) == expected);
+    CHECK(egraph::merge_use(store, evaluated, plan.merges.front()) == expected);
+    CHECK(egraph::update_lines(store, evaluated, egraph::UseRebuilds::none).front() ==
+          std::format("dev-lang/py-3.15.0\tnew-slot\tdev-lang/py-3.15.0\ttest_repo\t{}\t"
+                      "app-misc/user-1 dev-lang/py:3.15\t"
+                      "dev-lang/py-3.13.1:3.13 dev-lang/py-3.14.1:3.14",
+                      expected));
+}
+
+TEST_CASE("a merge new to its cp shows its USE unmarked") {
+    const auto system = flagged_system();
+    const auto& [store, evaluated] = system;
+    const egraph::Merge merge{.candidate = 0,
+                              .replaces = {},
+                              .kind = egraph::UpdateKind::upgrade,
+                              .flags = {},
+                              .pulled_by = {},
+                              .named_by = {},
+                              .rebuilt_for = {},
+                              .waits = {}};
+    CHECK(egraph::merge_use(store, evaluated, merge) ==
+          egraph::use_display(evaluated, evaluated.candidates.front()));
+}
+
 TEST_CASE("a new package's line carries its USE before why it comes in") {
     const auto system = flagged_system();
     CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none,

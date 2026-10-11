@@ -305,7 +305,7 @@ Pretend planned_merges(const Store& store, const Evaluated& original, const Plan
             .kind = std::string{merge.replaces ? kind_text(merge.kind)
                                 : other_slots(store, evaluated, merge).empty() ? "new"
                                                                                : "new-slot"},
-            .use = merge.replaces ? std::string{} : use_display(evaluated, candidate)});
+            .use = merge.replaces ? std::string{} : merge_use(store, evaluated, merge)});
     }
     for (const auto& each : plan.uninstalls) {
         // emerge leaves a replaced slot to its depclean.
