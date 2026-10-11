@@ -6,6 +6,7 @@ import shutil
 import subprocess
 
 import portage
+import portage.package.ebuild.config
 import pytest
 from conftest import portdb
 from test_build import age, fresh_databases
@@ -117,17 +118,44 @@ def test_binaries_whose_deps_changed_are_marked(binary_system):
     assert found["app-misc/c-2", 0].ignored == 0
 
 
+# Portage releases before the user patch digest neither record nor compare it.
+records_user_patches = hasattr(portage.package.ebuild.config.config, "userPatchDigest")
+
+
+def add_user_patch(playground):
+    patches = os.path.join(playground.eroot, "etc", "portage", "patches")
+    os.makedirs(os.path.join(patches, "app-misc", "p"))
+    with open(os.path.join(patches, "app-misc", "p", "fix.patch"), "w") as f:
+        f.write("--- a\n+++ b\n")
+
+
+@pytest.mark.skipif(
+    not records_user_patches, reason="this portage records no user patch digest"
+)
 def test_a_binary_without_the_user_patches_is_marked(gnupg_home):
     playground = binary_playground()
     try:
-        patches = os.path.join(playground.eroot, "etc", "portage", "patches")
-        os.makedirs(os.path.join(patches, "app-misc", "p"))
-        with open(os.path.join(patches, "app-misc", "p", "fix.patch"), "w") as f:
-            f.write("--- a\n+++ b\n")
+        add_user_patch(playground)
         _, db = fresh_databases(playground)
         found = by_cpv(binaries.read(db)[1])
         assert found["app-misc/p-1", 0].ignored == binaries.USER_PATCHES
         assert found["app-misc/a-1", 0].ignored == 0
+    finally:
+        playground.cleanup()
+
+
+def test_a_portage_without_the_user_patch_digest_marks_no_binary_for_patches(
+    gnupg_home, monkeypatch
+):
+    monkeypatch.delattr(
+        portage.package.ebuild.config.config, "userPatchDigest", raising=False
+    )
+    playground = binary_playground()
+    try:
+        add_user_patch(playground)
+        _, db = fresh_databases(playground)
+        found = by_cpv(binaries.read(db)[1])
+        assert found["app-misc/p-1", 0].ignored == 0
     finally:
         playground.cleanup()
 
@@ -232,14 +260,13 @@ def test_a_changed_binary_index_reads_only_the_binaries_again(aged_binary_system
 
 def test_new_user_patches_read_every_binary_again(aged_binary_system):
     previous = first_index(aged_binary_system)
-    patches = os.path.join(aged_binary_system.eroot, "etc", "portage", "patches")
-    os.makedirs(os.path.join(patches, "app-misc", "p"))
-    with open(os.path.join(patches, "app-misc", "p", "fix.patch"), "w") as f:
-        f.write("--- a\n+++ b\n")
+    add_user_patch(aged_binary_system)
     result = rebuilt(aged_binary_system, previous)
     assert not result.full
     found = by_cpv(result.index.binaries)
-    assert found["app-misc/p-1", 0].ignored == binaries.USER_PATCHES
+    assert found["app-misc/p-1", 0].ignored == (
+        binaries.USER_PATCHES if records_user_patches else 0
+    )
 
 
 def test_a_cp_read_again_reads_its_binaries_again(aged_binary_system):

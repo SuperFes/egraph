@@ -219,10 +219,17 @@ class Ignored:
         except InvalidDependString:
             # An ebuild whose deps do not parse; depgraph cannot build it either.
             pass
-        settings = self._portdb.settings
-        if entry.get("USER_PATCHES", "").lower() != settings.userPatchDigest(cpv):
+        wanted = _user_patch_digest(self._portdb.settings, cpv)
+        if wanted is not None and entry.get("USER_PATCHES", "").lower() != wanted:
             ignored |= USER_PATCHES
         return ignored
+
+
+def _user_patch_digest(settings, cpv):
+    """The digest of cpv's user patches as emerge records it in a binary's USER_PATCHES; None
+    on a portage that predates it, which neither records nor compares one."""
+    digest = getattr(settings, "userPatchDigest", None)
+    return None if digest is None else digest(cpv)
 
 
 def _entries(settings, ignored, source, index, admitted, keep):
