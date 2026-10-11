@@ -311,6 +311,27 @@ TEST_CASE("a target's own dependency holds another update back to a version it a
                               "dev-libs/moving-1 held <- app-misc/strict-2 <dev-libs/moving-2"});
 }
 
+TEST_CASE("an update's pinned dependency takes the version it pins over a newer one held back") {
+    // The old meta pins its lib to 1.*, which holds the lib's best version back; the new meta
+    // pins 2.*, which a fallback of the lib's update matches, as emerge follows the atom to it.
+    const auto system =
+        make_system({{.cpv = "app-misc/meta-1", .deps = {{"RDEPEND", "=dev-libs/lib-1*"}}},
+                     {.cpv = "dev-libs/lib-1"}},
+                    {{.cpv = "app-misc/meta-1", .deps = {{"RDEPEND", "=dev-libs/lib-1*"}}},
+                     {.cpv = "app-misc/meta-2", .deps = {{"RDEPEND", "=dev-libs/lib-2*"}}},
+                     {.cpv = "dev-libs/lib-1"},
+                     {.cpv = "dev-libs/lib-2"},
+                     {.cpv = "dev-libs/lib-9999"}},
+                    {"app-misc/meta"});
+    const std::vector<std::string> expected{
+        "app-misc/meta-1 -> app-misc/meta-2", "dev-libs/lib-1 -> dev-libs/lib-2",
+        "dev-libs/lib-1 held <- app-misc/meta-2 =dev-libs/lib-2*"};
+    const egraph::Targets world{.scope = {}, .roots = true, .deep = true};
+    CHECK(plan(system, egraph::UseRebuilds::none, world) == expected);
+    // As every installed package is an argument of emerge -uD @installed.
+    CHECK(plan(system) == expected);
+}
+
 TEST_CASE("a dependent's || takes another alternative rather than hold an update") {
     const auto system =
         make_system({{.cpv = "app-misc/either-1",

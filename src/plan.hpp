@@ -208,7 +208,8 @@ struct Plan {
 // What emerge -uD would merge for targets, with store's dependencies (read with or without
 // dynamic deps) for the installed packages and the candidates' own for what it merges:
 // - each package's pending update, or the best visible version in its slot that no member's
-//   dependency rejects; held back when none is left;
+//   dependency rejects; held back when none is left. A merge's dependency that only a later
+//   version of an update satisfies rejects the ones before it, as emerge follows the atom;
 // - with targets.roots, the best visible version a root atom matches, new in its slot;
 // - whatever a member's dependencies need that nothing in the plan satisfies: the best visible
 //   version that matches, new in its slot, the first alternative of a || that can be satisfied

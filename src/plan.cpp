@@ -1244,6 +1244,40 @@ class Planner {
         return std::nullopt;
     }
 
+    // The first atom under node index that a later fallback of an update matches, the update
+    // merging another version in its slot, and that installed package: emerge follows the atom
+    // to the version it matches, so the update moves on rather than reject what needs it.
+    std::optional<std::pair<std::uint32_t, std::string>>
+    displaced_match(const Tables& tables, std::span<const Node> list, std::size_t index) {
+        for (std::size_t i = index; i < list.size(); ++i) {
+            if (i != index && !descends(list, i, index)) {
+                continue;
+            }
+            const auto& node = element(list, i);
+            if (node.type != NodeType::atom) {
+                continue;
+            }
+            const auto& wanted = atom(tables.string(node.atom));
+            if (!wanted) {
+                continue;
+            }
+            for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
+                const auto& choice = choices_.at(id);
+                if (!choice.merged() || store().string(store().packages.at(id).cp) != wanted->cp) {
+                    continue;
+                }
+                const auto later = std::span{choice.options}.subspan(choice.at + 1);
+                if (std::ranges::any_of(later, [&](std::uint32_t option) {
+                        return matches(store(), evaluated(), evaluated().candidates.at(option),
+                                       *wanted);
+                    })) {
+                    return std::pair{id, std::string(tables.string(node.atom))};
+                }
+            }
+        }
+        return std::nullopt;
+    }
+
     static bool descends(std::span<const Node> list, std::size_t node, std::size_t ancestor) {
         for (auto at = element(list, node).parent; at != no_parent; at = element(list, at).parent) {
             if (at == ancestor) {
@@ -1519,6 +1553,11 @@ class Planner {
                     }
                     const Reason failed{.member = item.member, .atom = first_atom(tables, list, i)};
                     if (const auto held = replaced_match(tables, list, i)) {
+                        rejected[held->first].push_back(
+                            {.member = item.member, .atom = held->second});
+                        continue;
+                    }
+                    if (const auto held = displaced_match(tables, list, i)) {
                         rejected[held->first].push_back(
                             {.member = item.member, .atom = held->second});
                         continue;
