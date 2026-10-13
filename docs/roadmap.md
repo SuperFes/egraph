@@ -998,7 +998,7 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
       updates the set; esc closes the page.
     - 17d4b3 (done): `@preserved-rebuild`'s page opened by itself when a run the app started leaves
       preserved libraries.
-  - 17d4c: a package's page showing every piece of metadata the stores hold, not only the
+  - 17d4c (done): a package's page showing every piece of metadata the stores hold, not only the
     ebuild's.
   - 17d4d: REQUIRED_USE (`^^`, `??`, `||`, conditionals) on the USE table's toggles: flags a
     toggle alone would break it with marked; a toggle that breaks it adds the fewest other

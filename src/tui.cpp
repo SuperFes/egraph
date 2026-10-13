@@ -370,6 +370,15 @@ std::string toggles(const Evaluated& evaluated, const Possible& entry) {
 // sorted as links are, then forward what nothing installed satisfies.
 // The USE of the package's own version as its ebuild stacks: its explicit IUSE, each flag with
 // where it was last set, and the files package.env gives it; nothing without the ebuild.
+// The zone the page reads times in: the local one, else UTC.
+const std::chrono::time_zone& page_zone() {
+    try {
+        return *std::chrono::current_zone();
+    } catch (const std::runtime_error&) {
+        return *std::chrono::locate_zone("UTC");
+    }
+}
+
 std::vector<Row> use_rows(const Store& installed, const Evaluated& evaluated,
                           const Evaluated& untried, std::uint32_t package) {
     const auto own = evaluated.packages.at(package).own;
@@ -527,6 +536,120 @@ std::optional<std::size_t> parent_of(const std::vector<Row>& rows, std::size_t i
 }
 
 } // namespace
+
+std::vector<Row> detail_rows(const Store& installed,
+                             std::optional<std::reference_wrapper<const Evaluated>> evaluated,
+                             bool dynamic_deps, std::uint32_t package,
+                             std::span<const std::string> advisories,
+                             const std::chrono::time_zone& zone) {
+    std::vector<Row> rows{text_row(RowType::heading, "Details")};
+    // The key on the first line of each fact, lined up under it on the rest.
+    const auto add = [&rows](std::string_view key, std::string_view value,
+                             RowType type = RowType::note) {
+        rows.push_back(text_row(type, std::format("{:<14}{}", key, value)));
+    };
+    const auto& pkg = installed.packages.at(package);
+    const auto slot = installed.string(pkg.slot);
+    const auto sub_slot = installed.string(pkg.sub_slot);
+    add("slot", sub_slot.empty() || sub_slot == slot ? std::string{slot}
+                                                     : std::format("{}/{}", slot, sub_slot));
+    add("repository", installed.string(pkg.repo));
+    add("EAPI", installed.string(pkg.eapi));
+    if (pkg.merged != 0) {
+        const std::chrono::sys_seconds time{std::chrono::seconds{pkg.merged}};
+        auto merged = std::format("{:%Y-%m-%d %H:%M}", std::chrono::zoned_time{&zone, time});
+        if (pkg.counter != 0) {
+            merged += std::format("  COUNTER {}", pkg.counter);
+        }
+        add("merged", merged);
+    }
+    if (pkg.size != 0) {
+        add("size", byte_size(pkg.size));
+    }
+    if (evaluated) {
+        const Evaluated& store = *evaluated;
+        const auto& deps = store.packages.at(package);
+        const auto* const source = !dynamic_deps                      ? "the vdb's"
+                                   : deps.source == DepSource::ebuild ? "the ebuild's"
+                                   : deps.source == DepSource::moved
+                                       ? "the vdb's, its package moved"
+                                       : "the vdb's";
+        add("dependencies", source);
+        std::string reasons;
+        for (const auto id :
+             store.ids_in(dynamic_deps ? deps.mask_reasons : deps.vdb_mask_reasons)) {
+            reasons += std::format("{}{}", reasons.empty() ? "" : ", ", store.string(id));
+        }
+        if (dynamic_deps ? deps.masked : deps.vdb_masked) {
+            add("masked", reasons.empty() ? std::string{"yes"} : reasons);
+            if (const auto file = store.string(deps.mask_file); !file.empty()) {
+                add("", file);
+            }
+            for (const auto line : std::views::split(store.string(deps.mask_comment), '\n')) {
+                if (!std::string_view{line}.empty()) {
+                    add("", std::string_view{line});
+                }
+            }
+        }
+        const auto version = [&store](std::uint32_t index) {
+            const auto& candidate = store.candidates.at(index);
+            return std::format("{}::{}", store.string(candidate.cpv), store.string(candidate.repo));
+        };
+        if (deps.target) {
+            add("update", version(*deps.target));
+        }
+        std::string flags;
+        for (const auto id : store.ids_in(deps.rebuild)) {
+            flags += std::format("{}{}", flags.empty() ? "" : " ", store.string(id));
+        }
+        if (!flags.empty()) {
+            add("--newuse", flags);
+        }
+        add("ebuild", deps.own ? version(*deps.own) : std::string{"none visible"});
+        if (deps.own) {
+            std::string tokens;
+            for (const auto id : store.ids_in(store.candidates.at(*deps.own).required_use)) {
+                tokens += std::format("{}{}", tokens.empty() ? "" : " ", store.string(id));
+            }
+            if (!tokens.empty()) {
+                add("REQUIRED_USE", human_readable_required_use(tokens));
+            }
+        }
+    }
+    std::string_view key = "provides";
+    for (const auto& [category, soname] : installed.pairs_in(pkg.provided)) {
+        add(key, std::format("{}: {}", installed.string(category), installed.string(soname)));
+        key = "";
+    }
+    key = "requires";
+    for (const auto& required : installed.required_in(pkg.required)) {
+        std::string providers;
+        for (const auto id : installed.ids_in(required.providers)) {
+            providers += std::format("{}{}", providers.empty() ? "" : ", ",
+                                     installed.string(installed.packages.at(id).cpv));
+        }
+        add(key,
+            std::format("{}: {}  {}", installed.string(required.category),
+                        installed.string(required.soname),
+                        providers.empty() ? "nothing provides it" : "from " + providers),
+            providers.empty() ? RowType::alert : RowType::note);
+        key = "";
+    }
+    key = "errors";
+    for (const auto& [kind, message] : installed.pairs_in(pkg.errors)) {
+        add(key, std::format("{}: {}", installed.string(kind), installed.string(message)),
+            RowType::alert);
+        key = "";
+    }
+    if (!advisories.empty()) {
+        std::string ids;
+        for (const auto& id : advisories) {
+            ids += std::format("{}{}", ids.empty() ? "" : " ", id);
+        }
+        add("GLSAs", ids);
+    }
+    return rows;
+}
 
 bool available() {
     return EGRAPH_HAVE_TUI != 0;
@@ -1678,6 +1801,12 @@ void App::open(std::uint32_t package) {
         std::ranges::move(use_rows(installed(), evaluated(), untried(), package),
                           std::back_inserter(page.rows));
     }
+    page.rows.push_back(text_row(RowType::note, ""));
+    std::ranges::move(
+        detail_rows(installed(),
+                    has_evaluated() ? std::optional{std::cref(evaluated())} : std::nullopt,
+                    dynamic_deps_, package, advisories_of(package), page_zone()),
+        std::back_inserter(page.rows));
     // Last, so that what keeps the package and its dependencies open in view.
     if (auto versions = version_rows(store().string(store().packages.at(package).cp));
         !versions.empty()) {

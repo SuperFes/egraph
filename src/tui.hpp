@@ -548,6 +548,18 @@ struct PlanRow {
     std::vector<bool> rails;
 };
 
+// A package's details as the stores hold them, after a "Details" heading, a row each, the value
+// after the key: its slot, repository, EAPI, when it was merged (read in zone) and its COUNTER,
+// its size, its provided and required sonames (with what provides each), and the dependency
+// strings portage could not parse; with the evaluated store, where its dependencies were read
+// from, why it is masked, its update, its own version's ebuild and REQUIRED_USE, the flags
+// --newuse rebuilds it for, and the GLSAs given that affect it.
+[[nodiscard]] std::vector<Row>
+detail_rows(const Store& installed,
+            std::optional<std::reference_wrapper<const Evaluated>> evaluated, bool dynamic_deps,
+            std::uint32_t package, std::span<const std::string> advisories,
+            const std::chrono::time_zone& zone);
+
 // The plan as a tree under each root set, chains as update_tree_lines finds them with kept.
 [[nodiscard]] std::vector<PlanRow> plan_rows(const Store& store, const Evaluated& evaluated,
                                              const Kept& kept, const Plan& plan);

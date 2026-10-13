@@ -462,14 +462,15 @@ TEST_CASE("l unfolds and then steps in; rdeps unfold upwards") {
     app.handle(key(KeyKind::down));
     const auto& page = app.pages().back();
     REQUIRE(page.rows.at(page.cursor.at).reverse);
+    const auto parent = page.cursor.at;
     app.handle(key(KeyKind::tab));
-    const auto& child = app.pages().back().rows.back();
+    const auto& child = app.pages().back().rows.at(parent + 1);
     CHECK(child.reverse);
     CHECK(child.depth == 1);
     CHECK(child.link.package == 0);
     CHECK(child.cycle);
     app.handle(key(KeyKind::tab));
-    CHECK(app.pages().back().rows.back().depth == 0);
+    CHECK(app.pages().back().rows.at(parent + 1).type != RowType::link);
 }
 
 TEST_CASE("a page starts with the chain that keeps its package") {
@@ -4567,4 +4568,57 @@ TEST_CASE("a package no longer installed has no page to open from its builds") {
     CHECK(app.pages().empty());
     REQUIRE(app.dialog());
     CHECK(app.dialog()->title == "dev-libs/gone is not installed");
+}
+
+namespace {
+
+std::vector<std::string> row_texts(const std::vector<egraph::tui::Row>& rows) {
+    std::vector<std::string> texts;
+    for (const auto& row : rows) {
+        texts.push_back(row.text);
+    }
+    return texts;
+}
+
+} // namespace
+
+TEST_CASE("a package's details are every fact the stores hold of it") {
+    auto system = egraph::test::make_system(
+        {{.cpv = "app-misc/a-1",
+          .deps = {{"RDEPEND", "dev-libs/c"}},
+          .slot = "2",
+          .sub_slot = "2.1",
+          .masked = {"package.mask"},
+          .provides = "x86_64:liba.so.1 x86_64:liba-extra.so.1",
+          .required = "x86_64:libc.so.6 x86_64:libgone.so.3"},
+         {.cpv = "dev-libs/c-1", .provides = "x86_64:libc.so.6"}},
+        {{.cpv = "app-misc/a-1", .slot = "2", .sub_slot = "2.1", .required_use = "^^ ( x y )"},
+         {.cpv = "app-misc/a-2", .slot = "2", .sub_slot = "2.1"},
+         {.cpv = "dev-libs/c-1"}},
+        {"app-misc/a"});
+    auto& pkg = system.store.packages.at(0);
+    pkg.merged = 1'760'000'000;
+    pkg.counter = 42;
+    pkg.size = 3 * 1024 * 1024;
+    const auto& utc = *std::chrono::locate_zone("UTC");
+    const std::vector<std::string> advisories{"202609-03"};
+    const auto rows = egraph::tui::detail_rows(system.store, std::cref(system.evaluated), true, 0,
+                                               advisories, utc);
+    CHECK(row_texts(rows) ==
+          std::vector<std::string>{
+              "Details", "slot          2/2.1", "repository    test_repo", "EAPI          8",
+              "merged        2025-10-09 08:53  COUNTER 42", "size          3.0 MiB",
+              "dependencies  the ebuild's", "masked        package.mask",
+              "update        app-misc/a-2::test_repo", "ebuild        app-misc/a-1::test_repo",
+              "REQUIRED_USE  exactly-one-of ( x y )", "provides      x86_64: liba.so.1",
+              "              x86_64: liba-extra.so.1",
+              "requires      x86_64: libc.so.6  from dev-libs/c-1",
+              "              x86_64: libgone.so.3  nothing provides it",
+              "GLSAs         202609-03"});
+    CHECK(rows.at(14).type == egraph::tui::RowType::alert);
+    // The installed store alone: only what it holds.
+    const auto alone = egraph::tui::detail_rows(system.store, std::nullopt, true, 1, {}, utc);
+    CHECK(row_texts(alone) == std::vector<std::string>{"Details", "slot          0",
+                                                       "repository    test_repo", "EAPI          8",
+                                                       "provides      x86_64: libc.so.6"});
 }

@@ -1674,7 +1674,10 @@ page by itself.
 on the list opens a package's page: what keeps it, its dependencies both ways, the USE flags of its own
 version as
 .B use
-shows them, with the files package.env gives it, and its versions in the repositories.
+shows them, with the files package.env gives it, its details (slot, repository, EAPI, when it
+was merged, its size, where its dependencies were read from, why it is masked, its update and
+its own version's ebuild, the sonames it provides and requires with what provides each, its
+GLSAs), and its versions in the repositories.
 .B space
 on a flag toggles it for the package and
 .B *
