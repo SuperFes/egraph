@@ -277,6 +277,8 @@ Exit run_shell(Session& session, const Invocation& invocation, std::istream& in,
 std::optional<tui::StatusShown> shown_status(const Invocation& invocation);
 // The notices beside that status file, for the interface's notices page; none without them.
 std::optional<tui::NoticesShown> shown_notice_page(const Invocation& invocation);
+// What needs the user once emerge has run, through egraph-build.
+std::expected<Notices, std::string> read_notices(const Invocation& invocation);
 // Dismisses the notice, or puts it off for later, as egraph notices --dismiss or --later.
 std::expected<void, std::string> set_aside_from_page(const Invocation& invocation,
                                                      const Notice& notice,
@@ -1019,25 +1021,43 @@ Job<tui::RunResult> start_action(const Invocation& invocation, const std::filesy
     if (!child) {
         return ready(tui::RunResult{.error = child.error().message});
     }
-    return [running = Detached{std::move(*child)}, state, output, since,
-            merges =
-                action.kind != tui::Action::Kind::remove &&
-                action.kind != tui::Action::Kind::sync]() mutable -> std::optional<tui::RunResult> {
-        auto ended = running.child.poll();
-        if (!ended) {
+    const bool merges =
+        action.kind != tui::Action::Kind::remove && action.kind != tui::Action::Kind::sync;
+    return [running = Detached{std::move(*child)}, state, output, since, merges, &invocation,
+            outcome = std::optional<tui::RunResult>{},
+            notices = std::future<std::expected<Notices, std::string>>{}]() mutable
+               -> std::optional<tui::RunResult> {
+        if (!outcome) {
+            auto ended = running.child.poll();
+            if (!ended) {
+                return std::nullopt;
+            }
+            if (!*ended) {
+                return tui::RunResult{.error = std::move(ended->error().message)};
+            }
+            outcome = tui::RunResult{.error = {},
+                                     .status = **ended,
+                                     .failures = {},
+                                     .output = output.string(),
+                                     .tail = {}};
+            if (outcome->status != 0) {
+                if (merges) {
+                    outcome->failures = recorded_failures(state, since);
+                }
+                outcome->tail = tui::plain_tail(file_tail(output).value_or(""), tail_lines);
+            }
+            if (!merges) {
+                return outcome;
+            }
+            // What the merges left preserved, beside the interface.
+            notices =
+                std::async(std::launch::async, [&invocation] { return read_notices(invocation); });
+        }
+        if (notices.wait_for(std::chrono::seconds{0}) != std::future_status::ready) {
             return std::nullopt;
         }
-        if (!*ended) {
-            return tui::RunResult{.error = std::move(ended->error().message)};
-        }
-        tui::RunResult outcome{
-            .error = {}, .status = **ended, .failures = {}, .output = output.string(), .tail = {}};
-        if (outcome.status != 0) {
-            if (merges) {
-                outcome.failures = recorded_failures(state, since);
-            }
-            outcome.tail = tui::plain_tail(file_tail(output).value_or(""), tail_lines);
-        }
+        const auto read = notices.get();
+        outcome->preserved = read && read->preserved && !read->preserved->empty();
         return outcome;
     };
 }

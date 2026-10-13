@@ -3367,6 +3367,21 @@ TEST_CASE("a confirmed action runs in the emerge view, one at a time, and outliv
     CHECK(app.done());
 }
 
+TEST_CASE("a run that leaves preserved libraries opens @preserved-rebuild's page") {
+    egraph::tui::App app{both(), true};
+    app.handle(character(U'U'));
+    confirm(app);
+    app.finish_run({.preserved = true});
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->title == "egraph exec finished");
+    CHECK(app.dialog()->lines ==
+          std::vector<std::string>{
+              "It left preserved libraries: @preserved-rebuild rebuilds what uses them."});
+    CHECK(app.scope() == egraph::tui::Scope{.set = "preserved-rebuild"});
+    REQUIRE(app.set_load_requested().has_value());
+    CHECK(app.set_load_requested()->name == "preserved-rebuild");
+}
+
 TEST_CASE("a finished run says so, and a failed one shows the end of each failure's log") {
     egraph::tui::App app{both(), true};
     FakeScreen screen{12, 160, {}};

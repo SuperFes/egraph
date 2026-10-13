@@ -1977,8 +1977,17 @@ void App::finish_run(RunResult result) {
               .lines = lines(result.error)});
         return;
     }
+    const bool rebuild = result.preserved && has_evaluated();
+    if (rebuild) {
+        open_set("preserved-rebuild");
+    }
     if (result.status == 0) {
-        show({.error = false, .title = std::format("{} finished", command), .lines = {}});
+        show({.error = false,
+              .title = std::format("{} finished", command),
+              .lines = rebuild ? std::vector<std::string>{"It left preserved libraries: "
+                                                          "@preserved-rebuild rebuilds what uses "
+                                                          "them."}
+                               : std::vector<std::string>{}});
         return;
     }
     std::vector<std::string> shown;

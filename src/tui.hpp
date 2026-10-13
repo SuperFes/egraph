@@ -326,6 +326,8 @@ struct RunResult {
     std::vector<RunFailure> failures{};
     std::string output{};
     std::vector<std::string> tail{};
+    // It left preserved libraries, which @preserved-rebuild rebuilds what uses.
+    bool preserved = false;
 };
 // Starts a confirmed action beside the interface; the job ends with the run. Dropped, as when the
 // interface quits, it leaves the run going.
