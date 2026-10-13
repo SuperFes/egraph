@@ -1683,7 +1683,10 @@ on a flag toggles it for the package and
 .B *
 for every package, as
 .B \-\-use
-tries a line: the views show the stores with the lines tried, made in the background, a flag
+tries a line. A flag whose toggle alone would leave the package's REQUIRED_USE unsatisfied is
+marked; toggled, it takes with it the one smallest set of the package's other flags that mends
+it (undone with it), and with several such sets, or none, it is refused, saying which.
+The views show the stores with the lines tried, made in the background, a flag
 they change saying what it was, and the sets' plans what they change in them, as
 .B updates
 marks it: a merge they add, or change, tried, and one they drop listed dimmed.

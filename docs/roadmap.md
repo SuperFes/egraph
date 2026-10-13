@@ -22,7 +22,7 @@ Update the status column as steps land.
 | 14 | Plans | done |
 | 15 | A system package | done |
 | 16 | Daily use in place of emerge | done |
-| 17 | `egraphd`, the service | 17d4 in progress |
+| 17 | `egraphd`, the service | done |
 | 18 | Explaining and checking the configuration | done |
 | 19 | What-if | done |
 | 20 | Build knowledge | done |
@@ -960,7 +960,7 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     tab meanwhile; the updates filter, the plan view and `U` follow the page. Reading the
     stored lines instead was dropped: the views need the plan itself, and the corner needs only
     the counts.
-- 17d4: sets, the package page and REQUIRED_USE on toggles (the user's outlines, 2026-10-07).
+- 17d4 (done): sets, the package page and REQUIRED_USE on toggles (the user's outlines, 2026-10-07).
   Decided with the user (2026-10-12): a set's atoms come from egraph-build on demand, through
   portage's own set configuration, rather than stored or ported (the set classes that read the
   repositories, the preserved libraries' registry or VCS remotes would each need porting); the
@@ -1000,7 +1000,7 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
       preserved libraries.
   - 17d4c (done): a package's page showing every piece of metadata the stores hold, not only the
     ebuild's.
-  - 17d4d: REQUIRED_USE (`^^`, `??`, `||`, conditionals) on the USE table's toggles: flags a
+  - 17d4d (done): REQUIRED_USE (`^^`, `??`, `||`, conditionals) on the USE table's toggles: flags a
     toggle alone would break it with marked; a toggle that breaks it adds the fewest other
     flips that mend it, undone with it, else is refused with the constraint spelled out
     (`check_required_use`, no portage call).

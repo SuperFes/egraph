@@ -135,6 +135,8 @@ struct Row {
     std::optional<bool> was;
     // For a flag row, the width its flag is padded to.
     std::size_t column = 0;
+    // For a flag row, toggling it alone would leave REQUIRED_USE unsatisfied.
+    bool breaks = false;
 };
 
 // Sets each row's last and rails, walking up from the bottom: a level's line continues past a
@@ -955,8 +957,11 @@ class App {
     void own(std::shared_ptr<const Loaded> loaded);
     // Stores to try the lines on from now on, if there are lines.
     void rebase(const std::shared_ptr<const Stores>& stores);
-    // Toggles the flag for atom: takes back the line's token for it, or adds one turning it.
-    void toggle(const FlagState& flag, const std::string& atom);
+    // Toggles the flag for atom: takes back the line's token for it, or adds one turning it. Where
+    // that alone would leave the page's package's REQUIRED_USE unsatisfied, the one smallest set
+    // of other toggles that mends it comes with it, for the package; with several or none it is
+    // refused, saying why.
+    void toggle(const FlagState& flag, const std::string& atom, const Page& page);
     // Tries lines in place of the current ones, which undo brings back; the first turn the list
     // to the what-if page, and none show the stores untried.
     void set_lines(std::vector<WhatIfLine> lines, bool undoable = true);
@@ -1904,7 +1909,8 @@ template <class S> void draw_page(S& screen, App& app, const Glyphs& glyph, Size
                                   ' '),
                       {}},
                      {row.text, tone_pen(Tone::note)},
-                     {row.was ? (*row.was ? "  was on" : "  was off") : "", tone_pen(Tone::count)}},
+                     {row.was ? (*row.was ? "  was on" : "  was off") : "", tone_pen(Tone::count)},
+                     {row.breaks ? "  breaks REQUIRED_USE alone" : "", tone_pen(Tone::bad)}},
                     size.cols, bg);
             }
             break;

@@ -1837,6 +1837,77 @@ TEST_CASE("space toggles a flag for the package, tried in the background, and ag
     CHECK(&app.evaluated() == &app.untried());
 }
 
+namespace {
+
+egraph::Stores exclusive() {
+    auto system = egraph::test::make_system(
+        {{.cpv = "app-misc/a-1"}},
+        {{.cpv = "app-misc/a-1", .iuse = "a b c x", .use = "a x", .required_use = "^^ ( a b c )"}});
+    egraph::test::set_ledger(system.evaluated,
+                             {.conf = {{.file = "mc", .line = 3, .tokens = "a x"}}});
+    return {.installed = std::move(system.store), .evaluated = std::move(system.evaluated)};
+}
+
+// The page's flags a toggle alone would leave REQUIRED_USE unsatisfied with.
+std::vector<std::string> breaking(const egraph::tui::App& app) {
+    std::vector<std::string> flags;
+    for (const auto& row : app.pages().back().rows) {
+        if (row.flag && row.breaks) {
+            flags.push_back(row.flag->flag);
+        }
+    }
+    return flags;
+}
+
+} // namespace
+
+TEST_CASE("a toggle REQUIRED_USE forbids alone takes the fewest flips that mend it, or says why "
+          "not") {
+    egraph::tui::App app{exclusive(), true};
+    app.handle(character(U'u'));
+    app.handle(key(KeyKind::enter));
+    REQUIRE(app.pages().size() == 1);
+    CHECK(breaking(app) == std::vector<std::string>{"a", "b", "c"});
+    FakeScreen screen{24, 100, {}};
+    select_flag(app, "b");
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "breaks REQUIRED_USE alone"));
+
+    // b on takes a off with it, as one change.
+    app.handle(character(U' '));
+    REQUIRE(app.what_if().size() == 1);
+    CHECK(app.what_if().front().tokens == std::vector<std::string>{"b", "-a"});
+    REQUIRE(app.dialog().has_value());
+    CHECK_FALSE(app.dialog()->error);
+    CHECK(app.dialog()->lines ==
+          std::vector<std::string>{"Turning b on alone leaves app-misc/a's REQUIRED_USE "
+                                   "unsatisfied: exactly-one-of ( a b c )",
+                                   "Also turning a off, which mends it."});
+    app.handle(character(U'x'));
+    app.handle(key(KeyKind::escape));
+    REQUIRE(app.on_what_if());
+    app.handle(character(U'u'));
+    CHECK(app.what_if().empty());
+
+    // a off leaves b or c to turn on, which is the user's to pick.
+    app.handle(key(KeyKind::enter));
+    select_flag(app, "a");
+    app.handle(character(U' '));
+    CHECK(app.what_if().empty());
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->error);
+    CHECK(app.dialog()->lines ==
+          std::vector<std::string>{"Turning a off alone leaves app-misc/a's REQUIRED_USE "
+                                   "unsatisfied: exactly-one-of ( a b c )",
+                                   "Turn one of these on first: b, c."});
+    app.handle(character(U'x'));
+    // x is free of it.
+    select_flag(app, "x");
+    app.handle(character(U' '));
+    CHECK(app.what_if().size() == 1);
+    CHECK_FALSE(app.dialog().has_value());
+}
+
 TEST_CASE("a try that takes a while is polled until it ends") {
     const egraph::test::TempDir config;
     egraph::tui::App app{flagged(), true};

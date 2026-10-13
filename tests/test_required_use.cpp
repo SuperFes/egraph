@@ -77,3 +77,45 @@ TEST_CASE("operators read as portage spells them out") {
     CHECK(egraph::human_readable_required_use("^^ ( a b ) || ( c ?? ( d e ) )") ==
           "exactly-one-of ( a b ) any-of ( c at-most-one-of ( d e ) )");
 }
+
+namespace {
+
+egraph::Mend mend(std::string_view required, std::string_view use, std::string_view free,
+                  std::string_view flag) {
+    const auto flags = split(use);
+    const auto changeable = split(free);
+    return egraph::mend_required_use(split(required), {flags.begin(), flags.end()}, changeable,
+                                     flag, false);
+}
+
+using Mends = std::vector<std::vector<std::string>>;
+
+} // namespace
+
+TEST_CASE("a toggle that keeps REQUIRED_USE satisfied needs no mending") {
+    const auto kept = mend("^^ ( a b )", "a", "a b", "x");
+    CHECK(kept.broken.empty());
+    CHECK(kept.mends.empty());
+    // Unsatisfied already, a toggle breaks nothing, mending it or not.
+    CHECK(mend("^^ ( a b )", "a b", "a b x", "x").broken.empty());
+    CHECK(mend("^^ ( a b )", "", "a b", "a").broken.empty());
+}
+
+TEST_CASE("a toggle that breaks REQUIRED_USE is mended by the fewest other toggles") {
+    // On with another on: the other goes off.
+    auto broken = mend("^^ ( a b c )", "a", "a b c", "b");
+    CHECK(broken.broken == "^^ ( a b c )");
+    CHECK(broken.mends == Mends{{"-a"}});
+    CHECK(mend("?? ( a b )", "a", "a b", "b").mends == Mends{{"-a"}});
+    // Off with nothing else on: either of the others, which is for the user to pick.
+    CHECK(mend("^^ ( a b c )", "a", "a b c", "a").mends == Mends{{"b"}, {"c"}});
+    CHECK(mend("|| ( a b )", "a", "a b", "a").mends == Mends{{"b"}});
+    // A conditional's flag on brings what it needs.
+    CHECK(mend("x? ( y z )", "", "x y z", "x").mends == Mends{{"y", "z"}});
+    // Flags it does not name never mend it.
+    CHECK(mend("|| ( a b )", "a", "a b unrelated", "a").mends == Mends{{"b"}});
+    // What cannot change does not mend it.
+    const auto fixed = mend("x? ( y )", "", "x", "x");
+    CHECK(fixed.broken == "x? ( y )");
+    CHECK(fixed.mends.empty());
+}

@@ -222,4 +222,70 @@ std::string human_readable_required_use(std::string_view constraints) {
     return text;
 }
 
+Mend mend_required_use(std::span<const std::string_view> tokens,
+                       const std::set<std::string_view>& enabled,
+                       std::span<const std::string_view> free, std::string_view flag,
+                       bool empty_true) {
+    const auto toggled = [](std::set<std::string_view> flags, std::string_view each) {
+        if (!flags.erase(each)) {
+            flags.insert(each);
+        }
+        return flags;
+    };
+    const auto after = toggled(enabled, flag);
+    const auto checked = check_required_use(tokens, after, empty_true);
+    // Unsatisfied already, the toggle breaks nothing.
+    if (checked.satisfied || !check_required_use(tokens, enabled, empty_true).satisfied) {
+        return {};
+    }
+    Mend mend{.broken = checked.unsatisfied, .mends = {}};
+    // Only the flags it names can mend it.
+    std::set<std::string_view> named;
+    for (auto token : tokens) {
+        if (token.starts_with('!')) {
+            token.remove_prefix(1);
+        }
+        if (token.ends_with('?')) {
+            token.remove_suffix(1);
+        }
+        named.insert(token);
+    }
+    std::vector<std::string_view> others;
+    for (const auto each : free) {
+        if (each != flag && named.contains(each) && !std::ranges::contains(others, each)) {
+            others.push_back(each);
+        }
+    }
+    std::ranges::sort(others);
+    // Each combination of size others, by the indices picked so far.
+    std::vector<std::size_t> picked;
+    const auto search = [&](this const auto& self, std::size_t size, std::size_t from) -> void {
+        if (picked.size() == size) {
+            auto flags = after;
+            std::vector<std::string> mended;
+            for (const auto index : picked) {
+                const auto each = others.at(index);
+                mended.push_back(flags.contains(each) ? "-" + std::string{each}
+                                                      : std::string{each});
+                flags = toggled(std::move(flags), each);
+            }
+            if (check_required_use(tokens, flags, empty_true).satisfied) {
+                std::ranges::sort(mended);
+                mend.mends.push_back(std::move(mended));
+            }
+            return;
+        }
+        for (auto index = from; index < others.size(); ++index) {
+            picked.push_back(index);
+            self(size, index + 1);
+            picked.pop_back();
+        }
+    };
+    for (std::size_t size = 1; size <= 3 && mend.mends.empty(); ++size) {
+        search(size, 0);
+    }
+    std::ranges::sort(mend.mends);
+    return mend;
+}
+
 } // namespace egraph

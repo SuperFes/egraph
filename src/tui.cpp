@@ -1,5 +1,7 @@
 #include "tui.hpp"
 
+#include "required_use.hpp"
+
 #include "build_info.hpp"
 #include "build_views.hpp"
 #include "request.hpp"
@@ -370,6 +372,38 @@ std::string toggles(const Evaluated& evaluated, const Possible& entry) {
 // sorted as links are, then forward what nothing installed satisfies.
 // The USE of the package's own version as its ebuild stacks: its explicit IUSE, each flag with
 // where it was last set, and the files package.env gives it; nothing without the ebuild.
+// A version's REQUIRED_USE and the flags it is built with, the states shown over its USE; and
+// the flags package.use may change.
+struct OwnRequired {
+    std::vector<std::string_view> tokens;
+    std::set<std::string_view> enabled;
+    std::vector<std::string_view> free;
+    bool empty_true = false;
+};
+
+OwnRequired own_required(const Evaluated& evaluated, const Candidate& candidate,
+                         std::span<const FlagState> states) {
+    OwnRequired found{
+        .tokens = {}, .enabled = {}, .free = {}, .empty_true = candidate.empty_groups_true};
+    for (const auto id : evaluated.ids_in(candidate.required_use)) {
+        found.tokens.push_back(evaluated.string(id));
+    }
+    for (const auto id : evaluated.ids_in(candidate.use)) {
+        found.enabled.insert(evaluated.string(id));
+    }
+    for (const auto& state : states) {
+        if (state.enabled) {
+            found.enabled.insert(state.flag);
+        } else {
+            found.enabled.erase(state.flag);
+        }
+        if (!state.fixed) {
+            found.free.push_back(state.flag);
+        }
+    }
+    return found;
+}
+
 // The zone the page reads times in: the local one, else UTC.
 const std::chrono::time_zone& page_zone() {
     try {
@@ -417,6 +451,19 @@ std::vector<Row> use_rows(const Store& installed, const Evaluated& evaluated,
         width =
             std::max(width, state.flag.size() + (state.enabled ? 0 : 1) + (state.fixed ? 2 : 0));
     }
+    // The flags whose toggle alone would leave REQUIRED_USE, satisfied now, unsatisfied.
+    const auto required = own_required(evaluated, candidate, states);
+    std::set<std::string> breaking;
+    if (!required.tokens.empty() &&
+        check_required_use(required.tokens, required.enabled, required.empty_true).satisfied) {
+        for (const auto& state : states) {
+            if (!state.fixed && !mend_required_use(required.tokens, required.enabled, {},
+                                                   state.flag, required.empty_true)
+                                     .broken.empty()) {
+                breaking.insert(state.flag);
+            }
+        }
+    }
     for (auto& state : states) {
         const auto& last = state.last;
         auto row = text_row(RowType::flag, use_place(last ? layer_name(last->layer) : "",
@@ -428,6 +475,7 @@ std::vector<Row> use_rows(const Store& installed, const Evaluated& evaluated,
                 row.was = was;
             }
         }
+        row.breaks = breaking.contains(state.flag);
         row.flag = std::move(state);
         row.column = width + 2;
         rows.push_back(std::move(row));
@@ -1110,8 +1158,10 @@ void App::finish_try(TryResult result) {
     rebuild_env_ = rebuild_env_ && !env_changes_.empty();
 }
 
-void App::toggle(const FlagState& flag, const std::string& atom) {
-    auto lines = lines_;
+namespace {
+
+// Takes back the line's token for the flag, or adds one turning it.
+void toggle_in(std::vector<WhatIfLine>& lines, const FlagState& flag, const std::string& atom) {
     auto line = std::ranges::find_if(lines, [&](const WhatIfLine& each) {
         return each.file == WhatIfLine::File::use && each.atom == atom;
     });
@@ -1128,7 +1178,90 @@ void App::toggle(const FlagState& flag, const std::string& atom) {
                          .atom = atom,
                          .tokens = {flag.enabled ? off : flag.flag}});
     }
+}
+
+// "a off", "b on" for each of a mend's toggles.
+std::vector<std::string> spelled_toggles(std::span<const std::string> toggles) {
+    std::vector<std::string> spelled;
+    for (const auto& token : toggles) {
+        spelled.push_back(token.starts_with('-') ? std::format("{} off", token.substr(1))
+                                                 : std::format("{} on", token));
+    }
+    return spelled;
+}
+
+std::string joined_words(std::span<const std::string> words, std::string_view separator) {
+    std::string text;
+    for (const auto& word : words) {
+        text += std::format("{}{}", text.empty() ? "" : separator, word);
+    }
+    return text;
+}
+
+} // namespace
+
+void App::toggle(const FlagState& flag, const std::string& atom, const Page& page) {
+    auto lines = lines_;
+    toggle_in(lines, flag, atom);
+    const auto own = has_evaluated() ? evaluated().packages.at(page.package).own : std::nullopt;
+    if (!own) {
+        set_lines(std::move(lines));
+        return;
+    }
+    std::vector<FlagState> states;
+    for (const auto& row : page.rows) {
+        if (row.flag) {
+            states.push_back(*row.flag);
+        }
+    }
+    const auto required = own_required(evaluated(), evaluated().candidates.at(*own), states);
+    const auto mend = mend_required_use(required.tokens, required.enabled, required.free, flag.flag,
+                                        required.empty_true);
+    if (mend.broken.empty()) {
+        set_lines(std::move(lines));
+        return;
+    }
+    const std::string cp{store().string(store().packages.at(page.package).cp)};
+    const auto why =
+        std::format("Turning {} {} alone leaves {}'s REQUIRED_USE unsatisfied: {}", flag.flag,
+                    flag.enabled ? "off" : "on", cp, human_readable_required_use(mend.broken));
+    if (mend.mends.size() != 1) {
+        std::string first = "No change of up to three of its other flags mends it.";
+        if (!mend.mends.empty()) {
+            const auto single = std::ranges::all_of(mend.mends, [&](const auto& each) {
+                return each.size() == 1 &&
+                       each.front().starts_with('-') == mend.mends.front().front().starts_with('-');
+            });
+            std::vector<std::string> choices;
+            for (const auto& each : mend.mends) {
+                choices.push_back(single ? std::string{std::string_view{each.front()}.substr(
+                                               each.front().starts_with('-') ? 1 : 0)}
+                                         : joined_words(spelled_toggles(each), " and "));
+            }
+            first = single
+                        ? std::format("Turn one of these {} first: {}.",
+                                      mend.mends.front().front().starts_with('-') ? "off" : "on",
+                                      joined_words(choices, ", "))
+                        : std::format("Turn one of these first: {}.", joined_words(choices, "; "));
+        }
+        show({.error = true, .title = "REQUIRED_USE", .lines = {why, first}});
+        return;
+    }
+    for (const auto& token : mend.mends.front()) {
+        const bool on = !token.starts_with('-');
+        toggle_in(lines,
+                  {.flag = on ? token : token.substr(1),
+                   .enabled = !on,
+                   .fixed = false,
+                   .explicit_iuse = true,
+                   .last = std::nullopt},
+                  cp);
+    }
     set_lines(std::move(lines));
+    show({.error = false,
+          .title = "REQUIRED_USE",
+          .lines = {why, std::format("Also turning {}, which mends it.",
+                                     joined_words(spelled_toggles(mend.mends.front()), " and "))}});
 }
 
 void App::set_lines(std::vector<WhatIfLine> lines, bool undoable) {
@@ -3163,7 +3296,8 @@ void App::handle_page(const Key& key) {
                 toggle(flag,
                        is(key, U'*')
                            ? std::string{"*/*"}
-                           : std::string{store().string(store().packages.at(page.package).cp)});
+                           : std::string{store().string(store().packages.at(page.package).cp)},
+                       page);
             }
         } else if (is_move(key)) {
             move_on_page(page, key, height_);
