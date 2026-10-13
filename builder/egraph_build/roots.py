@@ -1,8 +1,9 @@
-"""Root sets: the packages depclean keeps whatever depends on them.
+"""Root sets: the packages depclean keeps whatever depends on them; and every other set.
 
 @selected (the world file and world_sets), @system and @profile, as portage's set
-configuration expands them. Sets live in portage's private _sets package; this is the one
-place that uses it, so drift in portage breaks this module and nothing else.
+configuration expands them; the others listed, and expanded as emerge's arguments, on
+demand. Sets live in portage's private _sets package; this is the one place that uses it, so
+drift in portage breaks this module and nothing else.
 """
 
 import os
@@ -65,6 +66,80 @@ def root_atoms(vardb):
             for atom in config.getSetAtoms(set_name):
                 atoms[name][atom] = set_name
     return atoms
+
+
+class SetInfo(NamedTuple):
+    name: str
+    # The class portage builds it with, as its name.
+    kind: str
+    description: str
+    # Whether emerge records it in world_sets when asked for it without --oneshot.
+    world_candidate: bool
+
+
+class SetAtoms(NamedTuple):
+    name: str
+    # (set, atom) as emerge's arguments hold them: a nested set's atoms under its own name.
+    atoms: tuple = ()
+    # Why emerge could not load it; None when it could.
+    error: object = None
+
+
+def set_list(vardb):
+    """Every set portage's set configuration defines, by name, and the errors it met."""
+    config = _set_config(vardb)
+    sets = config.getSets()
+    return (
+        tuple(
+            SetInfo(
+                name,
+                type(sets[name]).__name__,
+                sets[name].getMetadata("DESCRIPTION"),
+                bool(sets[name].world_candidate),
+            )
+            for name in sorted(sets)
+        ),
+        tuple(config.errors),
+    )
+
+
+def _expanded(config, name):
+    """As depgraph's _expand_set_args: the set, then each nested set it reaches, depth first
+    through each one's nested sets in sorted order, each once."""
+    sets = config.getSets()
+    found, seen, stack = [], set(), [name]
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        pset = sets[current]
+        found.extend((current, str(atom)) for atom in sorted(pset.getAtoms(), key=str))
+        for token in sorted(pset.getNonAtoms()):
+            if token.startswith("@") and token[1:] in sets:
+                stack.append(token[1:])
+    return tuple(found)
+
+
+def set_atoms(vardb, names):
+    """A SetAtoms for each name, in the order given."""
+    from portage.exception import PortageException
+
+    config = _set_config(vardb)
+    found = []
+    for name in names:
+        if name not in config.getSets():
+            found.append(SetAtoms(name, (), "no such set"))
+            continue
+        try:
+            # Raises for a nested set that does not exist, as emerge refuses it.
+            config.getSetAtoms(name)
+            found.append(SetAtoms(name, _expanded(config, name)))
+        except PackageSetNotFound as e:
+            found.append(SetAtoms(name, (), f"it names a set that does not exist: {e}"))
+        except PortageException as e:
+            found.append(SetAtoms(name, (), f"{type(e).__name__}: {e}"))
+    return tuple(found)
 
 
 def read_roots(vardb, match):

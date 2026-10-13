@@ -968,7 +968,7 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
   of a user's file that egraph's contradicts goes to the audit (`vision.md`).
   - 17d4a: every set portage's configuration defines as a target (99 here: portage's own, the
     user's, and the kde overlay's 78), not only those the store holds.
-    - 17d4a1: `egraph-build --sets [NAME...]`: every set's name, class, description and
+    - 17d4a1 (done): `egraph-build --sets [NAME...]`: every set's name, class, description and
       whether it may go in world_sets; with names, each one's atoms as emerge's arguments hold
       them (a nested set's under its own name), or why it cannot be loaded. A `sets` scenario:
       a repository `sets.conf` (a multiset directory, world candidates), a user set nesting

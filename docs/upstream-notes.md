@@ -43,6 +43,10 @@ Each commit passes the resolver suite on its own.
   `Package`, which has them (steam-overlay's `package.use.force` on `games-util/steam-launcher`).
   The builder hands `setcpv` a stand-in for the Package (`ebuild.set_ebuild`);
   `test_candidates_use_is_emerges` holds every candidate's USE to emerge's `Package`.
+- `@changed-deps` is always empty: `ChangedDepsSet.load` compares the lists `strip_slots`
+  returns, but it strips in place and returns None, so every package's are `[None, None]`.
+  egraph takes the set as portage gives it (`test_portages_own_sets_read_the_vdb_and_the_repositories`);
+  `--changed-deps` itself goes through the depgraph and is unaffected.
 
 ## Divergences from portage
 

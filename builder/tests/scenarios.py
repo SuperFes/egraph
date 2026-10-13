@@ -1740,4 +1740,66 @@ SCENARIOS = {
         },
         "world": ("app-misc/k", "app-misc/m"),
     },
+    # Sets beyond the root ones: a repository's (a multiset directory of world candidates, one
+    # nesting another, one naming what nothing provides), the user's (one nesting the
+    # repository's, one naming a set that does not exist), and portage's own that read the vdb
+    # and the repositories.
+    "sets": {
+        "world": ["app-misc/viewer", "app-misc/live"],
+        "world_sets": ["@mine"],
+        "sets": {
+            "mine": ["@tools", "app-misc/solo"],
+            "broken": ["@nonexistent", "app-misc/solo"],
+        },
+        "files": {
+            "var/repositories/test_repo/sets.conf": (
+                "[test sets]",
+                "class = portage.sets.files.StaticFileSet",
+                "multiset = true",
+                "directory = ${repository:test_repo}/sets/",
+                "world-candidate = True",
+            ),
+            "var/repositories/test_repo/sets/desktop": (
+                "app-misc/viewer",
+                "app-misc/editor",
+                "@tools",
+            ),
+            "var/repositories/test_repo/sets/tools": ("dev-util/tool",),
+            "var/repositories/test_repo/sets/absent": ("app-misc/nowhere",),
+        },
+        "ebuilds": {
+            "app-misc/viewer-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/viewer-2": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/editor-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "RDEPEND": "dev-libs/a",
+            },
+            "dev-libs/a-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "dev-util/tool-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/solo-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            "app-misc/live-9999": {"EAPI": "8", "KEYWORDS": "", "PROPERTIES": "live"},
+            # Older than the installed version.
+            "app-misc/old-1": {"EAPI": "8", "KEYWORDS": "x86"},
+            # Its dependencies changed without a revision bump.
+            "app-misc/changed-1": {
+                "EAPI": "8",
+                "KEYWORDS": "x86",
+                "RDEPEND": "dev-util/tool",
+            },
+        },
+        "installed": {
+            "app-misc/viewer-1": {"EAPI": "8"},
+            "dev-util/tool-1": {"EAPI": "8"},
+            "app-misc/solo-1": {"EAPI": "8"},
+            "app-misc/live-9999": {"EAPI": "8", "KEYWORDS": "", "PROPERTIES": "live"},
+            "app-misc/old-2": {"EAPI": "8"},
+            "app-misc/changed-1": {"EAPI": "8"},
+            # No ebuild left.
+            "app-misc/gone-1": {"EAPI": "8"},
+        },
+        "user_config": {
+            "package.accept_keywords": ("=app-misc/live-9999 **",),
+        },
+    },
 }

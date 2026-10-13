@@ -96,6 +96,14 @@ def parser():
         "libraries, as JSON, to --output",
     )
     mode.add_argument(
+        "--sets",
+        dest="mode",
+        action="store_const",
+        const="sets",
+        help="write every package set portage's configuration defines, or each ENTRY's atoms "
+        "as emerge expands the set, as JSON, to --output",
+    )
+    mode.add_argument(
         "--news-read",
         dest="mode",
         action="store_const",
@@ -146,16 +154,16 @@ def parser():
     p.add_argument(
         "--output",
         type=Path,
-        help="file --pending, --kernel-sources, --emerge-options and --notices write, apart from "
-        "anything portage "
-        "prints; the directory --copy-portage makes",
+        help="file --pending, --kernel-sources, --emerge-options, --notices and --sets write, "
+        "apart from anything portage prints; the directory --copy-portage makes",
     )
     p.add_argument(
         "entries",
         nargs="*",
         metavar="ENTRY",
         help="with --pending: a merge list entry, ebuild:CPV or binary:CPV; with "
-        "--evaluate: a cp in a repository; with --news-read: a news item, REPO/ITEM",
+        "--evaluate: a cp in a repository; with --news-read: a news item, REPO/ITEM; with "
+        "--sets: a set's name",
     )
     p.add_argument(
         "--store",
@@ -350,6 +358,51 @@ def write_notices(args):
     return EXIT_OK
 
 
+def write_sets(args):
+    import json
+
+    from egraph_build import roots
+
+    if args.output is None:
+        print("egraph-build: --sets needs --output", file=sys.stderr)
+        return EXIT_USAGE
+    vardb = _tree(args.config_root, args.root, args.eprefix)["vartree"].dbapi
+    sets, errors = roots.set_list(vardb)
+    known = {info.name: info for info in sets}
+    entries = []
+    if args.entries:
+        for found in roots.set_atoms(vardb, args.entries):
+            entry = {"name": found.name}
+            if found.name in known:
+                info = known[found.name]
+                entry.update(
+                    {
+                        "class": info.kind,
+                        "description": info.description,
+                        "world_candidate": info.world_candidate,
+                    }
+                )
+            if found.error is None:
+                entry["atoms"] = [list(pair) for pair in found.atoms]
+            else:
+                entry["error"] = found.error
+            entries.append(entry)
+    else:
+        entries = [
+            {
+                "name": info.name,
+                "class": info.kind,
+                "description": info.description,
+                "world_candidate": info.world_candidate,
+            }
+            for info in sets
+        ]
+    args.output.write_text(
+        json.dumps({"sets": entries, "errors": list(errors)}, indent=1)
+    )
+    return EXIT_OK
+
+
 def read_news(args):
     from egraph_build import notices
     from portage.exception import PortageException
@@ -509,6 +562,8 @@ def main(argv=None):
         return write_notices(args)
     if args.mode == "news-read":
         return read_news(args)
+    if args.mode == "sets":
+        return write_sets(args)
     if args.mode == "evaluate":
         if not args.entries:
             print("egraph-build: --evaluate takes the cps to evaluate", file=sys.stderr)
