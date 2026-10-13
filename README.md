@@ -42,7 +42,7 @@ ln -s /usr/share/egraph/post_emerge /etc/portage/bin/post_emerge
 
 - `src/`: the `egraph` binary (C++23): store reader, freshness check, queries, CLI.
 - `builder/`: `egraph-build` (Python): evaluates packages through portage and writes the store.
-- `docs/`: design, store format, roadmap, measured findings, notes for upstream portage.
+- `docs/`: design, store format, roadmap, measured findings, notes on portage.
 
 ## License
 

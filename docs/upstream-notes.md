@@ -1,7 +1,7 @@
-# Notes for upstream portage
+# Notes on portage
 
-A record of what upstream could take, with evidence. Nothing here goes upstream until it is
-stable and proven.
+A record of where portage and egraph part ways, with evidence: the fork's commits, portage bugs
+egraph works around, and divergences. A record only; nothing here is sent upstream.
 
 ## Portage fork commits
 

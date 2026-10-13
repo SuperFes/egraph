@@ -26,7 +26,7 @@ Update the status column as steps land.
 | 18 | Explaining and checking the configuration | done |
 | 19 | What-if | done |
 | 20 | Build knowledge | done |
-| 21 | The fork's speedups upstream | planned |
+| 21 | Upstream work | dropped |
 | 22 | Portage's tools in egraph's space | to map out |
 
 ## 0. Scaffold
@@ -1347,12 +1347,11 @@ observability go in too, marked as emerge's, with what it reports. Core first (2
   installed packages GLSAs affect, loading the repository index as the search does, and once
   it is loaded every affected package's line names its GLSAs.
 
-## 21. The fork's speedups upstream
+## 21. Upstream work
 
-- Can we, some how, in a plugable way, since Python can use native libraries, embed ourselves
-  into portage itself to make it awesomer, or replace some of its troublesome areas with our
-  speedups.
-- Worst/best case scenario, we don't use portage anymore.
+Dropped (2026-10-13): portage stays portage's. Nothing of egraph or the fork goes upstream, as
+speedups, embedding or patches; the portage bugs egraph works around stay recorded in
+`docs/upstream-notes.md`, and the fork remains a private reference.
 
 ## 22. Portage's tools in egraph's space
 
