@@ -249,11 +249,20 @@ using NewsMarker = std::function<std::expected<void, std::string>(const Notice&)
 // A program the interface steps aside for, given the terminal until it exits: its exit status.
 using TerminalProgram = std::function<std::expected<int, std::string>()>;
 
-// The pages of the package list, each the set its plan updates: -uDN @installed, @world or
-// @system.
-enum class Scope : std::uint8_t { installed, world, system };
-inline constexpr std::array scopes{Scope::installed, Scope::world, Scope::system};
-[[nodiscard]] std::string_view scope_name(Scope scope);
+// A page of the package list, the set its plan updates: -uDN @installed, @world or @system.
+struct Scope {
+    // Without its @.
+    std::string set;
+    bool operator==(const Scope&) const = default;
+    static const Scope installed;
+    static const Scope world;
+    static const Scope system;
+};
+inline const Scope Scope::installed{.set = "installed"};
+inline const Scope Scope::world{.set = "world"};
+inline const Scope Scope::system{.set = "system"};
+// The set as emerge's argument: "@world".
+[[nodiscard]] std::string scope_name(const Scope& scope);
 
 // What the interface carries out once confirmed: merges through egraph exec, removals through
 // egraph remove, syncs through egraph sync.
@@ -660,9 +669,11 @@ class App {
     [[nodiscard]] const std::vector<TriedMerge>& current_tried() const { return current().tried; }
     [[nodiscard]] const std::vector<Remedy>& remedies() const { return current().remedies; }
     // The list's page, whose set the plan updates.
-    [[nodiscard]] Scope scope() const { return scope_; }
+    [[nodiscard]] const Scope& scope() const { return scope_; }
+    // The list's pages, in order.
+    [[nodiscard]] const std::vector<Scope>& scopes() const { return scopes_; }
     // Whether the scope has its plan made, for these stores.
-    [[nodiscard]] bool scope_planned(Scope scope) const;
+    [[nodiscard]] bool scope_planned(const Scope& scope) const;
     // Why the page's set could not be planned.
     [[nodiscard]] const std::optional<std::string>& scope_error() const { return current().error; }
     // Whether run() is to make a page's plan in the background: the page's, missing, or one
@@ -891,6 +902,8 @@ class App {
     [[nodiscard]] std::vector<std::uint32_t> reinstalled() const;
     // The page's plan, or none yet.
     [[nodiscard]] const ScopePlan& current() const;
+    // The index of the scope's page in scopes_; scopes_.size() when it has none.
+    [[nodiscard]] std::size_t page_of(const Scope& scope) const;
     // Moves the list to the page step pages on, the first and last staying put.
     void turn_page(int step);
     void filter();
@@ -962,8 +975,10 @@ class App {
     std::vector<std::size_t> broken_;
     std::vector<std::size_t> broken_at_run_time_;
     std::vector<Masking> masking_;
-    // By scope.
-    std::array<std::optional<ScopePlan>, scopes.size()> plans_;
+    std::vector<Scope> scopes_{Scope::installed, Scope::world, Scope::system};
+    // By page, as scopes_.
+    std::vector<std::optional<ScopePlan>> plans_ =
+        std::vector<std::optional<ScopePlan>>(scopes_.size());
     // A plan of nothing, shown while the page's is made.
     ScopePlan blank_;
     Scope scope_ = Scope::installed;
@@ -1251,7 +1266,8 @@ inline std::vector<Span> page_spans(const App& app, const Glyphs& glyph) {
     if (!app.has_evaluated()) {
         spans.push_back({" packages ", elsewhere ? tone_pen(Tone::note) : picked});
     }
-    for (const auto scope : app.has_evaluated() ? std::span{scopes} : std::span<const Scope>{}) {
+    for (const auto& scope :
+         app.has_evaluated() ? std::span{app.scopes()} : std::span<const Scope>{}) {
         const bool shown = !elsewhere && scope == app.scope();
         const bool waiting = app.planning() == scope || (shown && !app.scope_planned(scope));
         auto text =

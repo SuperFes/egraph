@@ -668,7 +668,7 @@ std::vector<TriedMerge> tried_merges(std::span<const std::string> records) {
 
 namespace {
 
-ScopePlan scoped(Scope scope, Plan plan, const Store& store, const Evaluated& evaluated,
+ScopePlan scoped(const Scope& scope, Plan plan, const Store& store, const Evaluated& evaluated,
                  const Graph& graph, const Targets& targets, const Rescope& rescope) {
     const auto count = store.packages.size();
     ScopePlan made{.scope = scope,
@@ -700,8 +700,8 @@ ScopePlan scoped(Scope scope, Plan plan, const Store& store, const Evaluated& ev
 
 // The plan of -uDN on the set, as exec makes it for a set argument: depclean's kept packages
 // and what the set reaches in scope, the set's atoms emerge's arguments.
-ScopePlan plan_set(Scope scope, const Store& store, const Evaluated& evaluated, const Graph& graph,
-                   const std::vector<Masking>& masking, bool dynamic_deps,
+ScopePlan plan_set(const Scope& scope, const Store& store, const Evaluated& evaluated,
+                   const Graph& graph, const std::vector<Masking>& masking, bool dynamic_deps,
                    const std::shared_ptr<const Stores>& untried,
                    const std::vector<std::uint32_t>& reinstall = {}) {
     // With lines tried, what they change against the plan made the same way without them (and
@@ -803,16 +803,8 @@ std::vector<Span> status_spans(const StatusShown& shown, const Glyphs& glyph, Se
     return spans;
 }
 
-std::string_view scope_name(Scope scope) {
-    switch (scope) {
-    case Scope::installed:
-        return "@installed";
-    case Scope::world:
-        return "@world";
-    case Scope::system:
-        return "@system";
-    }
-    return "@installed";
+std::string scope_name(const Scope& scope) {
+    return "@" + scope.set;
 }
 
 App::Loaded::Loaded(std::shared_ptr<const Stores> shared, bool dynamic_deps)
@@ -895,7 +887,7 @@ void App::index() {
     }
     masking_.clear();
     ++generation_;
-    plans_ = {};
+    plans_.assign(scopes_.size(), std::nullopt);
     blank_ = {.scope = scope_,
               .plan = {},
               .updates = std::vector<std::optional<PendingUpdate>>(count),
@@ -1036,7 +1028,7 @@ void App::set_lines(std::vector<WhatIfLine> lines, bool undoable) {
 
 void App::replan() {
     ++generation_;
-    plans_ = {};
+    plans_.assign(scopes_.size(), std::nullopt);
     if (list_.only == Only::updates) {
         filter();
     }
@@ -1248,13 +1240,22 @@ void App::recompute() {
     }
 }
 
-const ScopePlan& App::current() const {
-    const auto& plan = plans_.at(static_cast<std::size_t>(scope_));
-    return plan ? *plan : blank_;
+std::size_t App::page_of(const Scope& scope) const {
+    return static_cast<std::size_t>(std::ranges::find(scopes_, scope) - scopes_.begin());
 }
 
-bool App::scope_planned(Scope scope) const {
-    return plans_.at(static_cast<std::size_t>(scope)).has_value();
+const ScopePlan& App::current() const {
+    if (const auto page = page_of(scope_); page < plans_.size()) {
+        if (const auto& plan = plans_.at(page)) {
+            return *plan;
+        }
+    }
+    return blank_;
+}
+
+bool App::scope_planned(const Scope& scope) const {
+    const auto page = page_of(scope);
+    return page < plans_.size() && plans_.at(page).has_value();
 }
 
 bool App::scope_plan_requested() const {
@@ -1290,9 +1291,14 @@ void App::finish_scope_plan(ScopePlan plan) {
     if (plan.error) {
         show({.error = true, .title = "No plan", .lines = {*plan.error}});
     }
-    const auto scope = plan.scope;
-    plans_.at(static_cast<std::size_t>(scope)) = std::move(plan);
-    if (scope == scope_ && list_.only == Only::updates) {
+    const auto page = page_of(plan.scope);
+    // Its page closed meanwhile.
+    if (page == scopes_.size()) {
+        return;
+    }
+    const bool shown = plan.scope == scope_;
+    plans_.at(page) = std::move(plan);
+    if (shown && list_.only == Only::updates) {
         filter();
     }
 }
@@ -1494,13 +1500,13 @@ void App::work_on(const Notice& notice) {
 }
 
 void App::turn_page(int step) {
-    const std::size_t sets = has_evaluated() ? scopes.size() : 1;
+    const std::size_t sets = has_evaluated() ? scopes_.size() : 1;
     const auto notices = static_cast<int>(sets);
     const auto what_if = notices + (notices_ ? 1 : 0);
     const auto count = what_if + (lines_.empty() ? 0 : 1);
     const int shown = on_what_if()      ? what_if
                       : on_notices_     ? notices
-                      : has_evaluated() ? static_cast<int>(scope_)
+                      : has_evaluated() ? static_cast<int>(page_of(scope_))
                                         : 0;
     const auto at = shown + step;
     if (at < 0 || at >= count) {
@@ -1511,7 +1517,7 @@ void App::turn_page(int step) {
     if (on_what_if_ || on_notices_ || !has_evaluated()) {
         return;
     }
-    scope_ = scopes.at(static_cast<std::size_t>(at));
+    scope_ = scopes_.at(static_cast<std::size_t>(at));
     if (list_.only == Only::updates) {
         filter();
     }
