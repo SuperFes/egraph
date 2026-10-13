@@ -53,7 +53,8 @@ and accepts, as the what-if changes are saved. Recorded 2026-10-08.
   twice, entries restating a default (an IUSE default, the profile's USE, a keyword already
   stable), license, keyword and restriction tokens nothing installed needs, entries for versions
   no longer in any repository, `package.env` entries and env files nothing uses, `savedconfig`
-  for packages gone.
+  for packages gone; a user's line that egraph's own files (step 19f) contradict, naming the
+  file and line to update or remove.
 - World: entries the system pulls in anyway (in `@system`, the profile's packages, or a
   dependency of another world entry the user would keep), and sets naming nothing installed.
 - Repositories: overlays nothing installed comes from, repository configuration naming ones

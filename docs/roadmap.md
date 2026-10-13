@@ -22,7 +22,7 @@ Update the status column as steps land.
 | 14 | Plans | done |
 | 15 | A system package | done |
 | 16 | Daily use in place of emerge | done |
-| 17 | `egraphd`, the service | done |
+| 17 | `egraphd`, the service | 17d4 in progress |
 | 18 | Explaining and checking the configuration | done |
 | 19 | What-if | done |
 | 20 | Build knowledge | done |
@@ -960,20 +960,33 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
     tab meanwhile; the updates filter, the plan view and `U` follow the page. Reading the
     stored lines instead was dropped: the views need the plan itself, and the corner needs only
     the counts.
-- 17d4 (outlines, not scheduled; the user's, 2026-10-07):
-  - utility pages for sets portage resolves on demand, `@preserved-rebuild` (opened by itself
-    at the end of an emerge that leaves preserved libraries) and `@smart-live-rebuild`;
-  - the other package sets, as a thing of their own: repositories ship any number of them;
-  - a package's page showing every piece of metadata the stores hold, not only the ebuild's.
-  - USE flags on a package's page, toggled in place: REQUIRED_USE (`^^`, `??`, `||`, conditionals)
-    greys out or flips what a toggle excludes, and the plan is redone with the change, its new
-    rebuilds and pulls lit up; the evaluated store already holds REQUIRED_USE and the dependency
-    trees, so it needs no portage call. A trial edit at first; persisting it is open: perhaps a
-    USE database egraph manages (system, package and wildcard levels) as the one place USE
-    lives, importing the existing `package.use` files and again whenever they change, and
-    rendered to one generated file portage reads; retiring the imported files is the user's
-    choice, never automatic, but egraph warns when a file no longer matches what the database
-    holds (a flag changed or dropped there), naming the file and line to update or remove.
+- 17d4: sets, the package page and REQUIRED_USE on toggles (the user's outlines, 2026-10-07).
+  Decided with the user (2026-10-12): a set's atoms come from egraph-build on demand, through
+  portage's own set configuration, rather than stored or ported (the set classes that read the
+  repositories, the preserved libraries' registry or VCS remotes would each need porting); the
+  outline's USE database is dropped, step 19f's own files having taken its place, and warning
+  of a user's file that egraph's contradicts goes to the audit (`vision.md`).
+  - 17d4a: every set portage's configuration defines as a target (99 here: portage's own, the
+    user's, and the kde overlay's 78), not only those the store holds.
+    - 17d4a1: `egraph-build --sets [NAME...]`: every set's name, class, description and
+      whether it may go in world_sets; with names, each one's atoms as emerge's arguments hold
+      them (a nested set's under its own name), or why it cannot be loaded. A `sets` scenario:
+      a repository `sets.conf` (a multiset directory, world candidates), a user set nesting
+      another, `@live-rebuild` over INHERITED.
+    - 17d4a2: requests naming a set the store does not hold expand it through the builder, in
+      one call (`@preserved-rebuild` folded in), its atoms' cps evaluated as typed atoms' are;
+      held to emerge's plans with each of the scenario's sets.
+    - 17d4a3: `egraph sets [NAME...]`: the list, or a set's atoms; completions offer them.
+  - 17d4b: sets in the living app: a page listing every set, enter planning one as a page
+    beside `@world` and `@system` (in the background, as they are; `@smart-live-rebuild`, where
+    installed, is one of them, slow for its VCS checks); `@preserved-rebuild`'s page opened by
+    itself when a run the app started leaves preserved libraries.
+  - 17d4c: a package's page showing every piece of metadata the stores hold, not only the
+    ebuild's.
+  - 17d4d: REQUIRED_USE (`^^`, `??`, `||`, conditionals) on the USE table's toggles: flags a
+    toggle alone would break it with marked; a toggle that breaks it adds the fewest other
+    flips that mend it, undone with it, else is refused with the constraint spelled out
+    (`check_required_use`, no portage call).
 - 17e: notifications, moved here from step 20: GLSAs matched against the store, a stale sync,
   broken soname dependencies after a merge, unread news, masked installed packages; in the
   status file and the log, and on the desktop through a user-side `egraph notify` (the service
