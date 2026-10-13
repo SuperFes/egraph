@@ -23,9 +23,9 @@ Update the status column as steps land.
 | 15 | A system package | done |
 | 16 | Daily use in place of emerge | done |
 | 17 | `egraphd`, the service | done |
-| 18 | Explaining and checking the configuration | planned |
+| 18 | Explaining and checking the configuration | done |
 | 19 | What-if | done |
-| 20 | Build knowledge | in progress |
+| 20 | Build knowledge | done |
 | 21 | The fork's speedups upstream | planned |
 | 22 | Portage's tools in egraph's space | to map out |
 
@@ -1062,7 +1062,7 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
   installed versions' own, `--all` for every one; a flag named, every step that set it in the
   order applied. Then: a package's versions share one table, a flag not all of them have alike
   footnoted with the versions (or whole slots) that do.
-- 18e: `egraph config check`: entries matching nothing (dead) or nothing installed, flags outside
+- 18e (done): `egraph config check`: entries matching nothing (dead) or nothing installed, flags outside
   the IUSE of all they match, keywords accepted without the entry, masks and unmasks that change
   nothing, entries contradicting each other; the other `package.*` files join the ledger.
   Decided with the user (2026-10-08): every configuration file portage reads for a package, not
@@ -1080,7 +1080,7 @@ listed apart, more quietly; watch keeps one `config` notice counting the finding
     managers stack them, held to their values on every scenario and the live system (no
     fallbacks there). The user's `license_groups` and a repository's `package.unmask` were not
     inputs of the index, so editing them went unnoticed; they are now.
-  - 18e2: visibility evaluated from the ledger's entries rather than portage's net lists, each
+  - 18e2 (done): visibility evaluated from the ledger's entries rather than portage's net lists, each
     mask reason naming the entry that decides it; shadowed as now, the net lists dropped.
     - 18e2a (done): the ledger stacked in C++ as the managers stack it (`stack_visibility`), every
       atom and token with its entry, held to the index's net lists by the shadow binary on every
