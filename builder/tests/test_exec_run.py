@@ -142,6 +142,29 @@ def test_exec_merges_as_install_does(machines, before, args, facts):
     assert ran.stdout.count("\tmerged") + ran.stdout.count("\tuninstalled") >= 1
 
 
+@pytest.fixture
+def with_set(gnupg_home, tmp_path):
+    """The worker's ebuilds, and a user set, which emerge may record in world_sets."""
+    yield from over(EBUILDS, tmp_path, sets={"mine": ["app-misc/needs"]})
+
+
+@pytest.mark.parametrize(
+    "before, args",
+    [([], ["@mine"]), (["app-misc/needs-1"], ["-n", "@mine"]), ([], ["-1", "@mine"])],
+    ids=["merged", "nothing-to-merge", "oneshot"],
+)
+def test_a_set_goes_in_world_sets_as_install_puts_it(with_set, before, args):
+    """A world candidate set asked for goes in world_sets before anything merges, with nothing
+    to merge too, and never its atoms in the world file; with --oneshot, nowhere."""
+    system, machine = with_set
+    ran = carried_out_as_install(system, machine, before, args)
+    path = machine.path("var/lib/portage/world_sets")
+    with open(path) as f:
+        recorded = f.read().split()
+    assert recorded == ([] if "-1" in args else ["@mine"])
+    assert ("@mine\tfavorite\tworld_sets" in ran.stdout) == ("-1" not in args)
+
+
 # Each slot installs a file of its own.
 SLOTTED = 'S="${WORKDIR}"\nsrc_install() { insinto /usr/share/${PN}-${SLOT}; echo x > "${T}"/x; doins "${T}"/x; }\n'
 

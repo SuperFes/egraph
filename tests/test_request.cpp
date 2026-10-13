@@ -61,8 +61,9 @@ TEST_CASE("a set expands to the root atoms the store holds for it") {
 TEST_CASE("a set the caller gives expands to its atoms, named by it") {
     const auto system = sample();
     const egraph::Sets given{{"preserved-rebuild",
-                              {{.set = "preserved-rebuild", .atom = "dev-libs/lib:0"},
-                               {.set = "preserved-rebuild", .atom = "app-misc/tool:0"}}}};
+                              {.atoms = {{.set = "preserved-rebuild", .atom = "dev-libs/lib:0"},
+                                         {.set = "preserved-rebuild", .atom = "app-misc/tool:0"}},
+                               .world_candidate = false}}};
     const std::vector<std::string> words{"@preserved-rebuild", "app-misc/fresh"};
     CHECK(egraph::parse_request(system.store, system.evaluated, words, given)->arguments ==
           std::vector<egraph::Argument>{{.set = "preserved-rebuild", .atom = "dev-libs/lib:0"},
@@ -74,9 +75,10 @@ TEST_CASE("a given set's nested sets keep their names, and its atoms are taken a
     auto system = sample();
     add_repository_cps(system, {"net-misc/elsewhere"});
     const egraph::Sets given{{"desktop",
-                              {{.set = "desktop", .atom = "net-misc/elsewhere"},
-                               {.set = "desktop", .atom = "app-misc/nowhere"},
-                               {.set = "tools", .atom = ">=app-misc/tool-2"}}}};
+                              {.atoms = {{.set = "desktop", .atom = "net-misc/elsewhere"},
+                                         {.set = "desktop", .atom = "app-misc/nowhere"},
+                                         {.set = "tools", .atom = ">=app-misc/tool-2"}},
+                               .world_candidate = false}}};
     const std::vector<std::string> words{"@desktop"};
     const auto found = egraph::parse_request(system.store, system.evaluated, words, given);
     REQUIRE(found);
@@ -86,6 +88,21 @@ TEST_CASE("a given set's nested sets keep their names, and its atoms are taken a
                                         {.set = "desktop", .atom = "app-misc/nowhere"},
                                         {.set = "tools", .atom = ">=app-misc/tool-2"}});
     CHECK(found->unevaluated == std::vector<std::string>{"net-misc/elsewhere"});
+}
+
+TEST_CASE("the world candidate sets named are the request's favorites, once each") {
+    const auto system = sample();
+    const egraph::Sets given{
+        {"desktop",
+         {.atoms = {{.set = "desktop", .atom = "app-misc/tool"}}, .world_candidate = true}},
+        {"apps", {.atoms = {}, .world_candidate = true}},
+        {"preserved-rebuild", {.atoms = {}, .world_candidate = false}}};
+    const std::vector<std::string> words{"@desktop", "@preserved-rebuild", "@apps", "@desktop",
+                                         "@world"};
+    const auto found = egraph::parse_request(system.store, system.evaluated, words, given);
+    REQUIRE(found);
+    CHECK(found->favorites == std::vector<std::string>{"@apps", "@desktop"});
+    CHECK(parse(system, {"@world", "app-misc/tool"})->favorites.empty());
 }
 
 TEST_CASE("the sets to load are those the store does not hold, each once") {

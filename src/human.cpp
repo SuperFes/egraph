@@ -1283,6 +1283,17 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
     }
     std::ranges::reverse(envs);
+    // The favorites the run records, taken off.
+    std::vector<Fields> favorites;
+    for (std::size_t i = rows.size(); i-- > 0;) {
+        if (rows.at(i).size() != 3 || rows.at(i).at(1) != "favorite") {
+            continue;
+        }
+        favorites.push_back(std::move(rows.at(i)));
+        rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
+        places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
+    }
+    std::ranges::reverse(favorites);
     // Uninstalls, blocks, unsatisfied dependencies and unmet REQUIRED_USE, taken off: they share
     // no columns with the merges.
     std::vector<Fields> uninstalls;
@@ -1462,8 +1473,10 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             out << paint(glyph.good, Tone::good) << ' ' << paint("Nothing to update.", Tone::good)
                 << '\n';
         }
-        // emerge warns of masked installed packages with nothing to merge too.
-        if (counts.at(5) + unlisted == 0 && !refusals && masked.empty() && !trying) {
+        // emerge warns of masked installed packages with nothing to merge too, and records the
+        // favorites.
+        if (counts.at(5) + unlisted == 0 && !refusals && masked.empty() && !trying &&
+            favorites.empty()) {
             return;
         }
     }
@@ -1661,6 +1674,18 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             for (const auto line : comment) {
                 out << "    " << paint(line, Tone::note) << '\n';
             }
+        }
+    }
+    if (!favorites.empty()) {
+        out << '\n' << paint("Favorites to record", Tone::heading) << '\n';
+        std::size_t width = 0;
+        for (const auto& row : favorites) {
+            width = std::max(width, row.at(0).size());
+        }
+        for (const auto& row : favorites) {
+            out << "  " << paint(row.at(0), Tone::name)
+                << std::string(width - row.at(0).size() + 2, ' ')
+                << paint(std::format("in {}", row.at(2)), Tone::note) << '\n';
         }
     }
     constexpr std::array<std::array<std::string_view, 2>, 12> nouns{

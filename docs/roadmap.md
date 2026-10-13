@@ -978,9 +978,14 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
       atoms' are; held to emerge's plans with each of the scenario's sets. It found the planner
       keeping a set's atom that matches nothing under `-u` and `-n` (`@system`'s too), and a
       non-root set's installed-only atom under a plain merge; emerge refuses both.
-    - 17d4a2b: `exec` without `--oneshot` records a world candidate set it was asked for in
-      world_sets, as emerge's `save_nomerge_favorites` does (its atoms never join the world
-      file); held to emerge's world_sets by `test_requests`.
+    - 17d4a2b (done): `exec` without `--oneshot` records each world candidate set it was asked for in
+      world_sets, as emerge's `save_nomerge_favorites` does before it merges, with nothing to
+      merge too (its atoms never join the world file): shown after the plan, written by
+      `egraph-build --favorites` under the world file's lock; held to `install` by
+      `test_exec_run`. `install` lists them too, and runs emerge for them alone, which it
+      skipped with nothing to merge. Left over, older than sets: emerge records there too the world atom of
+      an argument it leaves installed (`-n`, or `-u` at the best version), which `exec` does
+      not yet.
     - 17d4a3: `egraph sets [NAME...]`: the list, or a set's atoms; completions offer them.
   - 17d4b: sets in the living app: a page listing every set, enter planning one as a page
     beside `@world` and `@system` (in the background, as they are; `@smart-live-rebuild`, where

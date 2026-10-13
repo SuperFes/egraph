@@ -104,6 +104,14 @@ def parser():
         "as emerge expands the set, as JSON, to --output",
     )
     mode.add_argument(
+        "--favorites",
+        dest="mode",
+        action="store_const",
+        const="favorites",
+        help="record each ENTRY, an atom or a @set, in the world file or world_sets, as emerge "
+        "records the favorites it has nothing to merge for",
+    )
+    mode.add_argument(
         "--news-read",
         dest="mode",
         action="store_const",
@@ -163,7 +171,7 @@ def parser():
         metavar="ENTRY",
         help="with --pending: a merge list entry, ebuild:CPV or binary:CPV; with "
         "--evaluate: a cp in a repository; with --news-read: a news item, REPO/ITEM; with "
-        "--sets: a set's name",
+        "--sets: a set's name; with --favorites: an atom or a @set",
     )
     p.add_argument(
         "--store",
@@ -403,6 +411,32 @@ def write_sets(args):
     return EXIT_OK
 
 
+def record_favorites(args):
+    from egraph_build import worker
+    from portage.dep import Atom
+    from portage.exception import InvalidAtom, PortageException
+
+    try:
+        for entry in args.entries:
+            if not entry.startswith("@"):
+                Atom(entry, allow_repo=True)
+    except InvalidAtom as e:
+        print(f"egraph-build: --favorites: not an atom: {e}", file=sys.stderr)
+        return EXIT_USAGE
+    eroot = _tree(args.config_root, args.root, args.eprefix)["vartree"].settings[
+        "EROOT"
+    ]
+    try:
+        recorded = worker.record_favorites(eroot, args.entries)
+    except (OSError, PortageException) as e:
+        print(f"egraph-build: cannot record the favorites: {e}", file=sys.stderr)
+        return EXIT_FAILURE
+    for entry in recorded:
+        name = "world_sets" if entry.startswith("@") else "world"
+        print(f'>>> Recording {entry} in "{name}" favorites file...')
+    return EXIT_OK
+
+
 def read_news(args):
     from egraph_build import notices
     from portage.exception import PortageException
@@ -564,6 +598,8 @@ def main(argv=None):
         return read_news(args)
     if args.mode == "sets":
         return write_sets(args)
+    if args.mode == "favorites":
+        return record_favorites(args)
     if args.mode == "evaluate":
         if not args.entries:
             print("egraph-build: --evaluate takes the cps to evaluate", file=sys.stderr)

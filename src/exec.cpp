@@ -292,6 +292,16 @@ std::optional<std::string> world_atom(const Store& store, const Evaluated& evalu
     return world;
 }
 
+std::vector<std::string> favorite_lines(std::span<const std::string> favorites) {
+    std::vector<std::string> lines;
+    lines.reserve(favorites.size());
+    for (const auto& favorite : favorites) {
+        lines.push_back(std::format("{}\tfavorite\t{}", favorite,
+                                    favorite.starts_with('@') ? "world_sets" : "world"));
+    }
+    return lines;
+}
+
 std::vector<Step> run_steps(const Store& store, const Evaluated& original, const Plan& plan,
                             std::span<const Argument> arguments, bool oneshot) {
     const auto& evaluated = plan.evaluated_or(original);

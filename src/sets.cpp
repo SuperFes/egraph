@@ -108,7 +108,8 @@ std::expected<Sets, std::string> loaded_sets(const SetList& list) {
             return std::unexpected(std::format("@{}: {}", set.name, *set.error));
         }
         if (set.atoms) {
-            sets.emplace(set.name, *set.atoms);
+            sets.emplace(set.name,
+                         GivenSet{.atoms = *set.atoms, .world_candidate = set.world_candidate});
         }
     }
     return sets;

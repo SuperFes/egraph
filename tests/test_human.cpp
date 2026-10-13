@@ -390,6 +390,25 @@ TEST_CASE("updates line up versions and repositories, and count each kind") {
     CHECK(none.str() == "+ Nothing to update.\n");
 }
 
+TEST_CASE("updates list the favorites a run records after the plan, nothing to update or not") {
+    std::ostringstream out;
+    egraph::human_updates(out,
+                          std::vector<std::string>{"a/b-1\tupgrade\ta/b-2\tr",
+                                                   "@desktop\tfavorite\tworld_sets",
+                                                   "app-misc/x\tfavorite\tworld"},
+                          plain);
+    CHECK(out.str() == "U a/b  1 > 2  ::r\n"
+                       "\nFavorites to record\n"
+                       "  @desktop    in world_sets\n"
+                       "  app-misc/x  in world\n"
+                       "\n1 upgrade\n");
+    std::ostringstream none;
+    egraph::human_updates(none, std::vector<std::string>{"@desktop\tfavorite\tworld_sets"}, plain);
+    CHECK(none.str() == "+ Nothing to update.\n"
+                        "\nFavorites to record\n"
+                        "  @desktop  in world_sets\n");
+}
+
 TEST_CASE("updates say how long the plan will take, from the build history") {
     std::ostringstream out;
     egraph::human_updates(out,

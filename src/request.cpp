@@ -585,7 +585,11 @@ std::expected<Request, std::string> parse_request(const Store& store, const Eval
                 continue;
             }
             if (const auto found = given.find(name); found != given.end()) {
-                for (const auto& argument : found->second) {
+                if (found->second.world_candidate &&
+                    !std::ranges::contains(request.favorites, word)) {
+                    request.favorites.push_back(word);
+                }
+                for (const auto& argument : found->second.atoms) {
                     const auto atom = parse_atom(argument.atom);
                     if (atom && unevaluated(*atom) &&
                         !std::ranges::contains(request.unevaluated, atom->cp)) {
@@ -623,6 +627,7 @@ std::expected<Request, std::string> parse_request(const Store& store, const Eval
         request.arguments.push_back({.set = "", .atom = std::move(*text)});
     }
     std::ranges::sort(request.unevaluated);
+    std::ranges::sort(request.favorites);
     return request;
 }
 

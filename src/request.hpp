@@ -20,10 +20,22 @@ struct Request {
     // The cps of arguments that only the repositories know: the builder evaluates them before
     // they are planned. Sorted, distinct.
     std::vector<std::string> unevaluated;
+    // "@set" for each set named that emerge records in world_sets unless --oneshot, sorted,
+    // distinct.
+    std::vector<std::string> favorites;
 };
 
-// Sets the store does not hold, by name, each with its atoms as emerge's arguments hold them.
-using Sets = std::map<std::string, std::vector<Argument>, std::less<>>;
+// A set the store does not hold.
+struct GivenSet {
+    // As emerge's arguments hold them.
+    std::vector<Argument> atoms;
+    // Whether emerge records it in world_sets when asked for it without --oneshot.
+    bool world_candidate = false;
+    bool operator==(const GivenSet&) const = default;
+};
+
+// Sets the store does not hold, by name.
+using Sets = std::map<std::string, GivenSet, std::less<>>;
 
 // The sets words name that the store does not hold, in order, each once: for the caller to give
 // parse_request.

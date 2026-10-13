@@ -538,6 +538,11 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
                                                     const std::filesystem::path& output,
                                                     std::span<const std::string> names = {});
 
+// The egraph-build command line that records entries, atoms and @sets, in the world file or
+// world_sets, as emerge records the favorites it has nothing to merge for.
+[[nodiscard]] std::vector<std::string> favorites_command(const Invocation& invocation,
+                                                         std::span<const std::string> entries);
+
 // The egraph-build command line that copies the running portage to directory, for workers to run
 // from (worker_command and --portage-copy) while a run merges a new one.
 [[nodiscard]] std::vector<std::string> copy_portage_command(const Invocation& invocation,

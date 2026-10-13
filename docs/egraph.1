@@ -881,7 +881,10 @@ does. The targets join
 as
 .B emerge
 adds them, unless
-.BR \-\-oneshot .
+.BR \-\-oneshot ;
+a set portage records in world_sets is listed after the plan, as a
+.B favorite
+line, and recorded with nothing to merge too.
 .TP
 .B \-\-dynamic\-deps
 .TP
@@ -925,6 +928,12 @@ holds): a build starts once nothing it reaches through what each package waits f
 is still to merge, a built package merges once no build runs, in the order the builds finished,
 and each package a blocker needs gone, or old slot the plan replaces, is uninstalled once the
 merges that need it gone are done.
+Before the first build, the sets
+.B install
+would list as favorites are recorded in world_sets, as
+.B emerge
+records them, through
+.BR "egraph\-build \-\-favorites" .
 A line is shown for each phase as it starts. With more than one job, what the builds print goes
 only to their logs, and a build starts beside others only while
 .B PORTAGE_TMPDIR

@@ -177,3 +177,29 @@ def test_egraph_plans_a_set_through_the_builder_and_says_why_one_cannot_be(
     assert broken.stderr == (
         "egraph: plan: @broken: it names a set that does not exist: nonexistent\n"
     )
+
+
+def test_favorites_are_recorded_as_emerge_records_them(gnupg_home, capsys):
+    from portage.tests.resolver.ResolverPlayground import ResolverPlayground
+
+    playground = ResolverPlayground(
+        installed={"app-misc/a-1": {"EAPI": "8"}},
+        sets={"mine": ["app-misc/a"]},
+        world_sets=["@kept"],
+    )
+    try:
+        eroot = playground.eroot
+        argv = ["--favorites", "--config-root", eroot]
+        argv += ["--eprefix", playground.settings["EPREFIX"]]
+        assert cli.main([*argv, "@mine", "@kept", "app-misc/a"]) == cli.EXIT_OK
+        assert capsys.readouterr().out.splitlines() == [
+            '>>> Recording @mine in "world_sets" favorites file...',
+            '>>> Recording app-misc/a in "world" favorites file...',
+        ]
+        with open(os.path.join(eroot, "var/lib/portage/world_sets")) as f:
+            assert sorted(f.read().split()) == ["@kept", "@mine"]
+        with open(os.path.join(eroot, "var/lib/portage/world")) as f:
+            assert f.read().split() == ["app-misc/a"]
+        assert cli.main([*argv, "not an atom"]) == cli.EXIT_USAGE
+    finally:
+        playground.cleanup()

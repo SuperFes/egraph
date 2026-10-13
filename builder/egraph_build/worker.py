@@ -227,6 +227,23 @@ def _edit_world(eroot, edit):
         world.unlock()
 
 
+def record_favorites(eroot, entries):
+    """Adds entries, atoms and @sets, to the world file and world_sets, as emerge's
+    save_nomerge_favorites does: a set already there is left out. The entries recorded.
+    """
+    recorded = []
+
+    def edit(world):
+        recorded.extend(
+            entry for entry in entries if not (entry.startswith("@") and entry in world)
+        )
+        if recorded:
+            world.update(recorded)
+
+    _edit_world(eroot, edit)
+    return recorded
+
+
 def disk_usage(path):
     """The bytes the files under path take up, each counted once however many its links,
     none for a path that is gone."""

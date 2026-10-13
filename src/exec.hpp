@@ -51,6 +51,10 @@ using Step = std::variant<MergeStep, UninstallStep>;
                                                     const Candidate& candidate,
                                                     std::span<const Argument> arguments);
 
+// The favorites a run records before it merges, "@set" or an atom, as lines:
+// "entry<TAB>favorite<TAB>world_sets" for a set, "entry<TAB>favorite<TAB>world" for an atom.
+[[nodiscard]] std::vector<std::string> favorite_lines(std::span<const std::string> favorites);
+
 // What emerge's scheduler still counts installed as a run goes, for the blockers a merge takes as
 // it merges: what an uninstall removed or a merge replaced (by cpv or slot) is gone, and nothing
 // the run merged counts.

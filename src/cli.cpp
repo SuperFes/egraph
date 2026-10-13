@@ -1736,6 +1736,9 @@ struct Shown {
     std::reference_wrapper<const Evaluated> evaluated;
     // emerge's arguments as the request named them; none for updates.
     std::vector<Argument> arguments;
+    // What the run records in the world file and world_sets before it merges, as emerge's
+    // save_nomerge_favorites; none unless asked for.
+    std::vector<std::string> favorites;
 };
 
 // The time zone times are read and shown in; UTC without one.
@@ -1973,7 +1976,8 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
                             .dynamic_deps = invocation.dynamic_deps},
                 .store = *store,
                 .evaluated = evaluated,
-                .arguments = {}};
+                .arguments = {},
+                .favorites = {}};
     const auto& plan = shown.plan;
     if (command.tree) {
         const auto tree = update_tree_lines(*store, evaluated, (*depclean)->get().kept, plan);
@@ -2025,7 +2029,7 @@ Exit write_resume_list(Exit status, const std::optional<std::filesystem::path>& 
     if (!path) {
         return status;
     }
-    const auto& [plan, request, store, evaluated, arguments] = shown;
+    const auto& [plan, request, store, evaluated, arguments, favorites] = shown;
     if (plan.refused()) {
         err << "egraph: " << name << ": no resume list, as emerge would refuse the plan\n";
         return status;
@@ -2045,7 +2049,7 @@ Exit write_requests(Exit status, const std::optional<std::filesystem::path>& pat
     if (!path) {
         return status;
     }
-    const auto& [plan, request, store, evaluated, arguments] = shown;
+    const auto& [plan, request, store, evaluated, arguments, favorites] = shown;
     if (plan.refused()) {
         err << "egraph: " << name << ": no requests, as emerge would refuse the plan\n";
         return status;
@@ -2102,7 +2106,7 @@ Exit execute(const Updates& given, Session& session, const Invocation& invocatio
     if (!shown) {
         return shown.error();
     }
-    const auto& [plan, request, store, evaluated, arguments] = *shown;
+    const auto& [plan, request, store, evaluated, arguments, favorites] = *shown;
     auto status =
         write_resume_list(finish(command.verify ? verify(invocation, Updates::name, request, store,
                                                          evaluated, plan, out, err)
@@ -2317,11 +2321,13 @@ std::expected<Request, std::string> resolve_request(const PlanCommand& command, 
 }
 
 // The plan for a request, shown; the exit status instead when there is none to show.
+// With favorites, the run records the request's, shown after the plan.
 std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_view name,
                                      Session& session, const Invocation& invocation,
                                      std::ostream& out, std::ostream& err,
                                      std::optional<std::uint32_t> jobs = std::nullopt,
-                                     BuildOrder order = BuildOrder::emerge) {
+                                     BuildOrder order = BuildOrder::emerge,
+                                     bool favorites = false) {
     if (!command.update && (command.deep || command.rebuilds != UseRebuilds::none)) {
         err << "egraph: " << name << ": -D, -N and -U are only planned with -u\n";
         return std::unexpected(Exit::usage);
@@ -2390,7 +2396,8 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
                             .dynamic_deps = invocation.dynamic_deps},
                 .store = *store,
                 .evaluated = evaluated,
-                .arguments = request->arguments};
+                .arguments = request->arguments,
+                .favorites = favorites ? request->favorites : std::vector<std::string>{}};
     std::optional<RemedyInputs> remedies;
     if (command.held) {
         const auto graph = session.graph(invocation.dynamic_deps);
@@ -2407,6 +2414,7 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
     std::ranges::move(estimate_of(session, invocation, *store, evaluated, shown.plan,
                                   shown.arguments, jobs, order),
                       std::back_inserter(lines));
+    std::ranges::move(favorite_lines(shown.favorites), std::back_inserter(lines));
     if (const auto style = output(invocation); style.human) {
         human_updates(out, lines, style.theme, command.table,
                       unlisted_held(shown.plan, command.held), local_clock());
@@ -2427,7 +2435,7 @@ Exit execute(const PlanCommand& given, Session& session, const Invocation& invoc
     if (!shown) {
         return shown.error();
     }
-    const auto& [plan, request, store, evaluated, arguments] = *shown;
+    const auto& [plan, request, store, evaluated, arguments, favorites] = *shown;
     auto status =
         write_resume_list(finish(command.verify ? verify(invocation, PlanCommand::name, request,
                                                          store, evaluated, plan, out, err)
@@ -3023,7 +3031,7 @@ Exit act_on_plan(std::string_view name, bool yes, Session& session, const Invoca
     if (!shown) {
         return shown.error();
     }
-    const auto& [plan, request, store, evaluated, arguments] = *shown;
+    const auto& [plan, request, store, evaluated, arguments, favorites] = *shown;
     if (!yes && !plan.use_changes.empty()) {
         const auto status = offer_use_changes(Exit::refused, plan, store, evaluated, session,
                                               invocation, out, err, act);
@@ -3032,16 +3040,16 @@ Exit act_on_plan(std::string_view name, bool yes, Session& session, const Invoca
         }
     }
     const auto vdb = vdb_of(store);
-    if (const auto status =
-            stopped(stop_before_verifying(
-                        {.refused = plan.refused(),
-                         // Selecting needs no merge.
-                         .empty = !selecting && plan.merges.empty() && plan.uninstalls.empty(),
-                         .writable = os::can_create(vdb / "egraph"),
-                         .yes = yes,
-                         .can_ask = invocation.ask,
-                         .preview = invocation.preview}),
-                    name, merge_words, vdb, output(invocation).human, out, err)) {
+    if (const auto status = stopped(
+            stop_before_verifying({.refused = plan.refused(),
+                                   // Selecting needs no merge, nor recording favorites.
+                                   .empty = !selecting && plan.merges.empty() &&
+                                            plan.uninstalls.empty() && shown->favorites.empty(),
+                                   .writable = os::can_create(vdb / "egraph"),
+                                   .yes = yes,
+                                   .can_ask = invocation.ask,
+                                   .preview = invocation.preview}),
+            name, merge_words, vdb, output(invocation).human, out, err)) {
         return *status;
     }
     if (const auto status = verify(invocation, name, request, store, evaluated, plan, out, err);
@@ -3103,7 +3111,10 @@ Exit execute(const Install& command, Session& session, const Invocation& invocat
              std::ostream& out, std::ostream& err) {
     return run_action(
         Install::name, command.oneshot, command.yes, session, invocation, out, err,
-        [&] { return show_plan(command, Install::name, session, invocation, out, err); },
+        [&] {
+            return show_plan(command, Install::name, session, invocation, out, err, std::nullopt,
+                             BuildOrder::emerge, !command.oneshot);
+        },
         [&](const Invocation& again) { return execute(command, session, again, out, err); });
 }
 
@@ -3508,13 +3519,13 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
         Exec::name, command.yes, session, invocation, out, err,
         [&] {
             return show_plan(command, Exec::name, session, invocation, out, err, command.jobs,
-                             order_of(command));
+                             order_of(command), !command.oneshot && !command.resume);
         },
         [&](const Invocation& again) {
             return carry_out(command, merged, session, again, out, err);
         },
         [&](const Shown& shown) {
-            const auto& [plan, request, store, evaluated, arguments] = shown;
+            const auto& [plan, request, store, evaluated, arguments, favorites] = shown;
             auto all = run_steps(store, evaluated, plan, arguments, command.oneshot);
             const auto total = all.size();
             const auto steps = resumed_steps(store, evaluated, plan, std::move(all), merged);
@@ -3524,7 +3535,7 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
                                        ? std::string{"merge"}
                                        : std::format("{} merges", total - steps.size()));
             }
-            if (steps.empty()) {
+            if (steps.empty() && total != 0) {
                 out << "egraph: exec: the last run merged all of it\n";
                 return Exit::ok;
             }
@@ -3535,9 +3546,25 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
             }
             StepRequests requests{store, evaluated, plan, steps};
             return confirm_and_carry_out(
-                Exec::name, command.yes, "Have egraph-build --worker merge this plan?",
+                Exec::name, command.yes,
+                steps.empty() ? "Have egraph-build record these favorites?"
+                              : "Have egraph-build --worker merge this plan?",
                 "egraph-build --worker", false,
-                [&](const RunSettings& settings) {
+                [&](const RunSettings& settings) -> std::expected<int, std::string> {
+                    // As emerge, before it merges.
+                    if (!favorites.empty()) {
+                        const auto recorded = output_of(favorites_command(invocation, favorites));
+                        if (!recorded) {
+                            return std::unexpected("the favorites could not be recorded: " +
+                                                   recorded.error());
+                        }
+                        if (!recorded->empty()) {
+                            out << *recorded << '\n';
+                        }
+                    }
+                    if (steps.empty()) {
+                        return 0;
+                    }
                     return run_pool(invocation, settings, command, shown, requests, steps, names,
                                     {.arguments = exec_arguments(command), .merged = merged}, out);
                 },
@@ -5645,6 +5672,14 @@ std::vector<std::string> sets_command(const Invocation& invocation,
                                   output.string()};
     add_roots(argv, invocation);
     argv.insert(argv.end(), names.begin(), names.end());
+    return argv;
+}
+
+std::vector<std::string> favorites_command(const Invocation& invocation,
+                                           std::span<const std::string> entries) {
+    std::vector<std::string> argv{builder_program(invocation), "--favorites"};
+    add_roots(argv, invocation);
+    argv.insert(argv.end(), entries.begin(), entries.end());
     return argv;
 }
 

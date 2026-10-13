@@ -69,8 +69,10 @@ TEST_CASE("the sets loaded give their atoms by name, or the first that could not
                          .error = std::nullopt});
     const auto loaded = egraph::loaded_sets(list);
     REQUIRE(loaded);
-    CHECK(*loaded ==
-          egraph::Sets{{"desktop", {{.set = "tools", .atom = "dev-util/tool"}}}, {"empty", {}}});
+    CHECK(*loaded == egraph::Sets{{"desktop",
+                                   {.atoms = {{.set = "tools", .atom = "dev-util/tool"}},
+                                    .world_candidate = true}},
+                                  {"empty", {.atoms = {}, .world_candidate = false}}});
     list.sets.push_back({.name = "nope",
                          .kind = "",
                          .description = "",

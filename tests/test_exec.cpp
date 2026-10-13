@@ -283,3 +283,11 @@ TEST_CASE("a plan merging portage is told from one that does not") {
     CHECK_FALSE(egraph::merges_cp(plan, system.evaluated, "app-misc/foo"));
     CHECK_FALSE(egraph::merges_cp(egraph::Plan{}, system.evaluated, "sys-apps/portage"));
 }
+
+TEST_CASE("the favorites a run records are lines naming the file each goes to") {
+    const std::vector<std::string> favorites{"@desktop", "app-misc/x"};
+    CHECK(
+        egraph::favorite_lines(favorites) ==
+        std::vector<std::string>{"@desktop\tfavorite\tworld_sets", "app-misc/x\tfavorite\tworld"});
+    CHECK(egraph::favorite_lines({}).empty());
+}

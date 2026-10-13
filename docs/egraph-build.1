@@ -3,7 +3,7 @@
 egraph-build \- evaluate the installed packages through portage and write egraph's store
 .SH SYNOPSIS
 .B egraph-build
-.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-repository | \-\-repository\-json | \-\-pending | \-\-kernel\-sources | \-\-emerge\-options | \-\-notices | \-\-sets | \-\-news\-read | \-\-worker ]
+.RB [ \-\-full | \-\-incremental | \-\-evaluate | \-\-json | \-\-evaluated\-json | \-\-repository | \-\-repository\-json | \-\-pending | \-\-kernel\-sources | \-\-emerge\-options | \-\-notices | \-\-sets | \-\-favorites | \-\-news\-read | \-\-worker ]
 .RI [ options ]
 .RI [ entry ...]
 .SH DESCRIPTION
@@ -115,6 +115,13 @@ as JSON, to
 .BR \-\-output ;
 with entries, each set named with its atoms as emerge's arguments hold them, a nested set's
 under its own name, or why emerge could not load it.
+.TP
+.B \-\-favorites
+Record each entry, an atom or a
+.RI @ set ,
+in the world file or world_sets, as emerge records the favorites it has nothing to merge for:
+under the world file's lock, a set already there left out, and each recorded named as emerge
+names it.
 .TP
 .B \-\-news\-read
 Mark each news item named,
