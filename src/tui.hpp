@@ -20,6 +20,7 @@
 #include "repository.hpp"
 #include "screen.hpp"
 #include "search.hpp"
+#include "sets.hpp"
 #include "status.hpp"
 #include "steve.hpp"
 #include "store.hpp"
@@ -37,6 +38,7 @@
 #include <format>
 #include <functional>
 #include <iosfwd>
+#include <map>
 #include <memory>
 #include <optional>
 #include <ranges>
@@ -254,13 +256,19 @@ struct Scope {
     // Without its @.
     std::string set;
     bool operator==(const Scope&) const = default;
-    static const Scope installed;
-    static const Scope world;
-    static const Scope system;
+    [[nodiscard]] static const Scope& installed() {
+        static const Scope scope{.set = "installed"};
+        return scope;
+    }
+    [[nodiscard]] static const Scope& world() {
+        static const Scope scope{.set = "world"};
+        return scope;
+    }
+    [[nodiscard]] static const Scope& system() {
+        static const Scope scope{.set = "system"};
+        return scope;
+    }
 };
-inline const Scope Scope::installed{.set = "installed"};
-inline const Scope Scope::world{.set = "world"};
-inline const Scope Scope::system{.set = "system"};
 // The set as emerge's argument: "@world".
 [[nodiscard]] std::string scope_name(const Scope& scope);
 
@@ -272,7 +280,7 @@ struct Action {
     // Atoms, or for a sync repositories; an update without any takes every update of the scope's
     // set.
     std::vector<std::string> targets{};
-    Scope scope = Scope::installed;
+    Scope scope = Scope::installed();
     // For a removal, as remove --with-bdeps.
     bool build_deps = true;
     bool operator==(const Action&) const = default;
@@ -343,6 +351,28 @@ struct Tried {
 using TryResult = std::expected<Tried, std::string>;
 // Tries lines as with_what_if does, evaluating the cps they newly reach.
 using Trier = std::function<Job<TryResult>(const TryRequest&)>;
+
+// Every set portage's configuration defines, as egraph-build lists them.
+using SetListResult = std::expected<SetList, std::string>;
+using SetLister = std::function<Job<SetListResult>()>;
+// A set the stores do not hold, to load for its page.
+struct SetRequest {
+    // Without its @.
+    std::string name;
+    std::shared_ptr<const Stores> stores;
+};
+struct LoadedSet {
+    std::string name;
+    GivenSet set;
+    // New stores where the cps its atoms name were evaluated first; none when those asked for
+    // know them all.
+    std::shared_ptr<const Stores> stores;
+    // Cps its atoms name, not evaluated (--no-refresh).
+    std::vector<std::string> unevaluated{};
+};
+using SetResult = std::expected<LoadedSet, std::string>;
+// Loads a set's atoms as egraph-build expands it, evaluating the cps they name.
+using SetLoader = std::function<Job<SetResult>(const SetRequest&)>;
 // What saving lines would write (saved_files), and writing it (write_saved).
 using SavePreviewer = std::function<std::expected<std::vector<SavedFile>, std::string>(
     const std::vector<WhatIfLine>&)>;
@@ -380,6 +410,8 @@ struct Services {
     NewsMarker mark_read{};
     TerminalProgram dispatch_conf{};
     Trier try_lines{};
+    SetLister list_sets{};
+    SetLoader load_set{};
     SavePreviewer preview_save{};
     SaveWriter write_save{};
     BuildsReader read_builds{};
@@ -567,7 +599,7 @@ struct TriedMerge {
 [[nodiscard]] std::vector<TriedMerge> tried_merges(std::span<const std::string> records);
 
 struct ScopePlan {
-    Scope scope = Scope::installed;
+    Scope scope = Scope::installed();
     Plan plan;
     std::vector<std::optional<PendingUpdate>> updates;
     // What the merge a slot-operator rebuild is for; empty otherwise.
@@ -684,6 +716,27 @@ class App {
     // Makes the page's missing plan beside the caller.
     [[nodiscard]] Job<ScopePlan> start_scope_plan();
     void finish_scope_plan(ScopePlan plan);
+    // The sets page, after the notices and the what-if page, in place of the list: every set
+    // portage defines, enter opening one as a page after the others.
+    [[nodiscard]] bool on_sets() const { return on_sets_; }
+    // The sets listed, once loaded, or why they could not be.
+    [[nodiscard]] const std::optional<SetListResult>& set_list() const { return set_list_; }
+    [[nodiscard]] const Cursor& set_cursor() const { return set_cursor_; }
+    // Whether run() is to list the sets: the page is shown and they are not listed.
+    [[nodiscard]] bool set_list_requested() const {
+        return on_sets_ && !set_list_ && !listing_sets_;
+    }
+    void start_set_list() { listing_sets_ = true; }
+    void finish_set_list(SetListResult result);
+    // The set the shown page needs loaded before it is planned, not loaded yet.
+    [[nodiscard]] std::optional<SetRequest> set_load_requested() const;
+    // The set being loaded.
+    [[nodiscard]] const std::optional<std::string>& loading_set() const { return loading_set_; }
+    // Whether the page shown is a set's opened from the sets page, which esc closes.
+    [[nodiscard]] bool closable_page() const;
+    void start_set_load(std::string name) { loading_set_ = std::move(name); }
+    // Keeps its atoms for its page, and the stores the cps they name were evaluated into.
+    void finish_set_load(SetResult result);
     // The status file the watch service writes, as last read.
     [[nodiscard]] const std::optional<StatusShown>& status() const { return status_; }
     void finish_status(std::optional<StatusShown> status) { status_ = std::move(status); }
@@ -906,6 +959,11 @@ class App {
     [[nodiscard]] std::size_t page_of(const Scope& scope) const;
     // Moves the list to the page step pages on, the first and last staying put.
     void turn_page(int step);
+    // Turns to the set's page, opening one after the others where it has none.
+    void open_set(const std::string& name);
+    // Closes the page shown, when it is a set's opened from the sets page.
+    void close_set_page();
+    void handle_sets(const Key& key);
     void filter();
     void recompute();
     // advisories_ from indexed_ over the installed store, or none without it.
@@ -975,13 +1033,21 @@ class App {
     std::vector<std::size_t> broken_;
     std::vector<std::size_t> broken_at_run_time_;
     std::vector<Masking> masking_;
-    std::vector<Scope> scopes_{Scope::installed, Scope::world, Scope::system};
+    std::vector<Scope> scopes_{Scope::installed(), Scope::world(), Scope::system()};
+    bool on_sets_ = false;
+    std::optional<SetListResult> set_list_;
+    bool listing_sets_ = false;
+    Cursor set_cursor_;
+    // The atoms of the sets loaded for their pages, and why a set could not be.
+    Sets given_;
+    std::map<std::string, std::string, std::less<>> set_errors_;
+    std::optional<std::string> loading_set_;
     // By page, as scopes_.
     std::vector<std::optional<ScopePlan>> plans_ =
         std::vector<std::optional<ScopePlan>>(scopes_.size());
     // A plan of nothing, shown while the page's is made.
     ScopePlan blank_;
-    Scope scope_ = Scope::installed;
+    Scope scope_ = Scope::installed();
     std::optional<Scope> planning_;
     // Counts the stores shown, so that a plan made for others is dropped.
     std::size_t generation_ = 0;
@@ -1262,7 +1328,7 @@ inline std::vector<Span> rebuild_flags(std::string_view flags) {
 inline std::vector<Span> page_spans(const App& app, const Glyphs& glyph) {
     const Pen picked{.fg = palette::crust, .bg = palette::mauve, .bold = true};
     std::vector<Span> spans{{" ", {}}};
-    const bool elsewhere = app.on_notices() || app.on_what_if();
+    const bool elsewhere = app.on_notices() || app.on_what_if() || app.on_sets();
     if (!app.has_evaluated()) {
         spans.push_back({" packages ", elsewhere ? tone_pen(Tone::note) : picked});
     }
@@ -1283,6 +1349,13 @@ inline std::vector<Span> page_spans(const App& app, const Glyphs& glyph) {
     if (const auto lines = app.what_if().size(); lines != 0) {
         spans.push_back({.text = std::format(" what if {} ", lines),
                          .pen = app.on_what_if() ? picked : tone_pen(Tone::use)});
+    }
+    if (app.has_evaluated()) {
+        const bool listing = app.on_sets() && !app.set_list();
+        spans.push_back({.text = listing
+                                     ? std::format(" {} sets ", spinner_frame(app.frame(), glyph))
+                                     : std::string{" sets "},
+                         .pen = app.on_sets() ? picked : tone_pen(Tone::note)});
     }
     return spans;
 }
@@ -1444,6 +1517,65 @@ inline Tone notice_tone(NoticeKind kind) {
 }
 
 // The notices, one a row with its kind and age, and the selected one's detail below them.
+// The sets page: every set portage defines, with its description, those emerge records in
+// world_sets marked.
+template <class S> void draw_sets(S& screen, App& app, const Glyphs& glyph, Size size) {
+    static const std::vector<PackageSet> none;
+    const auto& listed = app.set_list();
+    const auto& sets = listed && *listed ? (*listed)->sets : none;
+    std::vector<Span> title{{std::format(" {} egraph ", glyph.package),
+                             {.fg = palette::mauve, .bg = std::nullopt, .bold = true}},
+                            {std::format(" {}  ", app.store().meta.eroot), tone_pen(Tone::note)}};
+    if (listed && *listed) {
+        title.push_back(
+            {sets.size() == 1 ? std::string{"1 set"} : std::format("{} sets", sets.size()),
+             tone_pen(Tone::count)});
+    }
+    draw_title(screen, app, size.cols, title, glyph);
+    put_spans(screen, 1, 0, page_spans(app, glyph), size.cols);
+    const unsigned first = 3;
+    const unsigned height = size.rows > first + 1 ? size.rows - first - 1 : 0;
+    app.set_height(height);
+    if (!listed) {
+        put_spans(screen, first, 2,
+                  {{std::format("{} listing the sets", spinner_frame(app.frame(), glyph)),
+                    tone_pen(Tone::note)}},
+                  size.cols);
+        return;
+    }
+    if (!*listed) {
+        put_spans(screen, first, 2, {{listed->error(), tone_pen(Tone::bad)}}, size.cols);
+        return;
+    }
+    std::size_t width = 0;
+    for (const auto& set : sets) {
+        width = std::max(width, set.name.size() + 1);
+    }
+    const auto& cursor = app.set_cursor();
+    for (unsigned line = 0; line < height; ++line) {
+        const auto index = cursor.top + line;
+        if (index >= sets.size()) {
+            break;
+        }
+        const auto& set = sets.at(index);
+        const bool selected = index == cursor.at;
+        if (selected) {
+            screen.fill_row(first + line, {.fg = std::nullopt, .bg = palette::surface});
+        }
+        const auto bg = selected ? std::optional<Color>{palette::surface} : std::nullopt;
+        const auto name = "@" + set.name;
+        std::vector<Span> row{
+            {.text = name, .pen = {.fg = palette::text, .bg = bg, .bold = selected}},
+            {.text = std::string(width - name.size() + 2, ' ') + set.description,
+             .pen = {.fg = palette::text, .bg = bg, .bold = false}}};
+        if (set.world_candidate) {
+            row.push_back(
+                {.text = "  [world]", .pen = {.fg = palette::overlay, .bg = bg, .bold = false}});
+        }
+        put_spans(screen, first + line, 2, row, size.cols);
+    }
+}
+
 template <class S> void draw_notices(S& screen, App& app, const Glyphs& glyph, Size size) {
     static const std::vector<Notice> none;
     const auto& shown = app.notices();
@@ -2613,6 +2745,8 @@ template <class S> void draw(S& screen, App& app, const Glyphs& glyph) {
             draw_plan(screen, app, glyph, size);
         } else if (app.built()) {
             draw_builds(screen, app, glyph, size);
+        } else if (app.on_sets()) {
+            draw_sets(screen, app, glyph, size);
         } else if (app.on_what_if()) {
             draw_what_if(screen, app, glyph, size);
         } else if (app.on_notices()) {
@@ -2690,6 +2824,8 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
     std::optional<Job<RunResult>> running;
     std::optional<Job<ScopePlan>> scoped;
     std::optional<Job<TryResult>> tried;
+    std::optional<Job<SetListResult>> set_listed;
+    std::optional<Job<SetResult>> set_loaded;
     const auto read_status = [&] {
         if (services.status) {
             app.finish_status(services.status());
@@ -2743,6 +2879,25 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
                                                 "this egraph has no way to try configuration"})});
             },
             [&](TryResult result) { app.finish_try(std::move(result)); });
+        const auto sets_listed = poll(
+            set_listed, app.set_list_requested() || set_listed.has_value(),
+            [&] {
+                app.start_set_list();
+                return services.list_sets ? services.list_sets()
+                                          : ready(SetListResult{std::unexpected(std::string{
+                                                "this egraph has no way to list the sets"})});
+            },
+            [&](SetListResult result) { app.finish_set_list(std::move(result)); });
+        const auto set_loaded_now = poll(
+            set_loaded, app.set_load_requested().has_value() || set_loaded.has_value(),
+            [&] {
+                auto request = *app.set_load_requested();
+                app.start_set_load(request.name);
+                return services.load_set ? services.load_set(request)
+                                         : ready(SetResult{std::unexpected(std::string{
+                                               "this egraph has no way to load a set"})});
+            },
+            [&](SetResult result) { app.finish_set_load(std::move(result)); });
         if (now() >= next_status) {
             next_status = now() + stale_interval;
             read_status();
@@ -2772,7 +2927,8 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
         if (checked == Polled::finished || rebuilt == Polled::finished ||
             refreshed == Polled::finished || indexed == Polled::finished ||
             ran == Polled::finished || planned == Polled::finished ||
-            tried_lines == Polled::finished || found_stale) {
+            tried_lines == Polled::finished || sets_listed == Polled::finished ||
+            set_loaded_now == Polled::finished || found_stale) {
             // Drawn below before any key is read.
         } else if (const auto& lines = app.save_preview_requested()) {
             app.finish_save_preview(services.preview_save

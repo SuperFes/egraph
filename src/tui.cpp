@@ -703,7 +703,7 @@ ScopePlan scoped(const Scope& scope, Plan plan, const Store& store, const Evalua
 ScopePlan plan_set(const Scope& scope, const Store& store, const Evaluated& evaluated,
                    const Graph& graph, const std::vector<Masking>& masking, bool dynamic_deps,
                    const std::shared_ptr<const Stores>& untried,
-                   const std::vector<std::uint32_t>& reinstall = {}) {
+                   const std::vector<std::uint32_t>& reinstall = {}, const Sets& given = {}) {
     // With lines tried, what they change against the plan made the same way without them (and
     // without the rebuilds they ask for).
     const auto tried = [&](const Plan& plan, const Targets& targets) {
@@ -719,7 +719,7 @@ ScopePlan plan_set(const Scope& scope, const Store& store, const Evaluated& eval
             update_lines(store, evaluated, plan, shown_rebuilds, HeldLines::none, false, targets)));
     };
     // Every installed package, as index() plans it.
-    if (scope == Scope::installed) {
+    if (scope == Scope::installed()) {
         Targets targets;
         targets.reinstall = reinstall;
         auto made = scoped(scope, plan_updates(store, evaluated, shown_rebuilds, targets), store,
@@ -728,7 +728,7 @@ ScopePlan plan_set(const Scope& scope, const Store& store, const Evaluated& eval
         return made;
     }
     const auto request =
-        parse_request(store, evaluated, std::array{std::string{scope_name(scope)}});
+        parse_request(store, evaluated, std::array{std::string{scope_name(scope)}}, given);
     if (!request) {
         ScopePlan failed = scoped(scope, {}, store, evaluated, graph, {}, {});
         failed.error = std::format("cannot plan {}: {}", scope_name(scope), request.error());
@@ -763,6 +763,14 @@ ScopePlan plan_set(const Scope& scope, const Store& store, const Evaluated& eval
     made.tried = std::move(changes);
     return made;
 }
+
+// Whether the store holds the set itself, so it is planned without egraph-build.
+bool store_held(std::string_view set) {
+    return sets_to_load(std::array{std::format("@{}", set)}).empty();
+}
+
+// The list's pages it always has: @installed, @world and @system.
+constexpr std::size_t standing_pages = 3;
 
 } // namespace
 
@@ -907,8 +915,8 @@ void App::index() {
     // The first page's, at once; the others' in the background once shown, as are all with lines
     // tried, planned twice.
     if (has_evaluated() && !untried_) {
-        auto installed =
-            plan_set(Scope::installed, store, evaluated(), graph, masking_, dynamic_deps_, nullptr);
+        auto installed = plan_set(Scope::installed(), store, evaluated(), graph, masking_,
+                                  dynamic_deps_, nullptr);
         installed.generation = generation_;
         plans_.front() = std::move(installed);
     }
@@ -1259,22 +1267,39 @@ bool App::scope_planned(const Scope& scope) const {
 }
 
 bool App::scope_plan_requested() const {
-    return planning_ || (has_evaluated() && !scope_planned(scope_));
+    // A set egraph-build loads waits for its atoms.
+    const auto& set = scope_.set;
+    const bool plannable = store_held(set) || given_.contains(set) || set_errors_.contains(set);
+    return planning_ || (has_evaluated() && !scope_planned(scope_) && plannable);
 }
 
 Job<ScopePlan> App::start_scope_plan() {
     planning_ = scope_;
+    Sets given;
+    if (const auto found = given_.find(scope_.set); found != given_.end()) {
+        given.insert(*found);
+    }
+    std::optional<std::string> failed;
+    if (const auto found = set_errors_.find(scope_.set); found != set_errors_.end()) {
+        failed = found->second;
+    }
     // Copies and shared stores, as the app may move on to others meanwhile.
     auto made =
-        std::async(std::launch::async,
-                   [scope = scope_, loaded = owned_, store = store_, evaluated = evaluated_,
-                    graph = graph_, masking = masking_, dynamic_deps = dynamic_deps_,
-                    generation = generation_, untried = untried_, reinstall = reinstalled()] {
-                       auto plan = plan_set(scope, store.get(), evaluated.get(), graph.get(),
-                                            masking, dynamic_deps, untried, reinstall);
-                       plan.generation = generation;
-                       return plan;
-                   });
+        std::async(std::launch::async, [scope = scope_, loaded = owned_, store = store_,
+                                        evaluated = evaluated_, graph = graph_, masking = masking_,
+                                        dynamic_deps = dynamic_deps_, generation = generation_,
+                                        untried = untried_, reinstall = reinstalled(),
+                                        given = std::move(given), failed = std::move(failed)] {
+            auto plan = failed
+                            ? scoped(scope, {}, store.get(), evaluated.get(), graph.get(), {}, {})
+                            : plan_set(scope, store.get(), evaluated.get(), graph.get(), masking,
+                                       dynamic_deps, untried, reinstall, given);
+            if (failed) {
+                plan.error = failed;
+            }
+            plan.generation = generation;
+            return plan;
+        });
     return [made = std::move(made)]() mutable -> std::optional<ScopePlan> {
         if (made.wait_for(std::chrono::seconds{0}) != std::future_status::ready) {
             return std::nullopt;
@@ -1300,6 +1325,90 @@ void App::finish_scope_plan(ScopePlan plan) {
     plans_.at(page) = std::move(plan);
     if (shown && list_.only == Only::updates) {
         filter();
+    }
+}
+
+void App::finish_set_list(SetListResult result) {
+    listing_sets_ = false;
+    set_list_ = std::move(result);
+    set_cursor_ = {};
+}
+
+std::optional<SetRequest> App::set_load_requested() const {
+    const auto& set = scope_.set;
+    if (!has_evaluated() || on_sets_ || loading_set_ || store_held(set) || given_.contains(set) ||
+        set_errors_.contains(set)) {
+        return std::nullopt;
+    }
+    return SetRequest{.name = set, .stores = shared()};
+}
+
+void App::finish_set_load(SetResult result) {
+    const auto name = loading_set_.value_or(result ? result->name : std::string{});
+    loading_set_.reset();
+    if (!result) {
+        set_errors_.insert_or_assign(name, std::move(result.error()));
+        return;
+    }
+    given_.insert_or_assign(result->name, std::move(result->set));
+    if (!result->unevaluated.empty()) {
+        std::string cps;
+        for (const auto& cp : result->unevaluated) {
+            cps += (cps.empty() ? "" : ", ") + cp;
+        }
+        show({.error = true,
+              .title = "Not evaluated",
+              .lines = {std::format("{}: named by @{}, but not evaluated (--no-refresh)", cps,
+                                    result->name)}});
+    }
+    if (result->stores) {
+        finish_refresh(std::move(result->stores));
+    }
+}
+
+void App::open_set(const std::string& name) {
+    Scope scope{.set = name};
+    if (page_of(scope) == scopes_.size()) {
+        scopes_.push_back(scope);
+        plans_.emplace_back();
+    }
+    on_sets_ = false;
+    scope_ = std::move(scope);
+    if (list_.only == Only::updates) {
+        filter();
+    }
+}
+
+bool App::closable_page() const {
+    const auto page = page_of(scope_);
+    return !on_sets_ && page >= standing_pages && page < scopes_.size();
+}
+
+void App::close_set_page() {
+    if (!closable_page()) {
+        return;
+    }
+    const auto page = page_of(scope_);
+    scopes_.erase(scopes_.begin() + static_cast<std::ptrdiff_t>(page));
+    plans_.erase(plans_.begin() + static_cast<std::ptrdiff_t>(page));
+    scope_ = scopes_.at(page - 1);
+    if (list_.only == Only::updates) {
+        filter();
+    }
+}
+
+void App::handle_sets(const Key& key) {
+    const auto count = set_list_ && *set_list_ ? (*set_list_)->sets.size() : 0;
+    if (is(key, U'q') || is(key, U'Q')) {
+        done_ = true;
+    } else if (key.kind == KeyKind::left || is(key, U'h')) {
+        turn_page(-1);
+    } else if (key.kind == KeyKind::right || is(key, U'l')) {
+        turn_page(1);
+    } else if (key.kind == KeyKind::enter && set_cursor_.at < count) {
+        open_set((*set_list_)->sets.at(set_cursor_.at).name);
+    } else if (is_move(key)) {
+        move(set_cursor_, count, key, height_);
     }
 }
 
@@ -1503,8 +1612,10 @@ void App::turn_page(int step) {
     const std::size_t sets = has_evaluated() ? scopes_.size() : 1;
     const auto notices = static_cast<int>(sets);
     const auto what_if = notices + (notices_ ? 1 : 0);
-    const auto count = what_if + (lines_.empty() ? 0 : 1);
-    const int shown = on_what_if()      ? what_if
+    const auto all_sets = what_if + (lines_.empty() ? 0 : 1);
+    const auto count = all_sets + (has_evaluated() ? 1 : 0);
+    const int shown = on_sets_          ? all_sets
+                      : on_what_if()    ? what_if
                       : on_notices_     ? notices
                       : has_evaluated() ? static_cast<int>(page_of(scope_))
                                         : 0;
@@ -1512,9 +1623,10 @@ void App::turn_page(int step) {
     if (at < 0 || at >= count) {
         return;
     }
+    on_sets_ = has_evaluated() && at == all_sets;
     on_what_if_ = !lines_.empty() && at == what_if;
     on_notices_ = notices_.has_value() && at == notices;
-    if (on_what_if_ || on_notices_ || !has_evaluated()) {
+    if (on_sets_ || on_what_if_ || on_notices_ || !has_evaluated()) {
         return;
     }
     scope_ = scopes_.at(static_cast<std::size_t>(at));
@@ -1613,7 +1725,8 @@ void App::handle(const Key& key) {
                          checked_->stage == Checked::Stage::rebuilding)) {
             ++checked_->frame;
         }
-        if (refresh_requested() || index_requested() || running_ || planning_ || trying_) {
+        if (refresh_requested() || index_requested() || running_ || planning_ || trying_ ||
+            listing_sets_ || loading_set_) {
             ++frame_;
         }
     } else if (keys_shown_) {
@@ -1651,6 +1764,8 @@ void App::handle(const Key& key) {
         handle_plan(key);
     } else if (built_) {
         handle_builds(key);
+    } else if (on_sets_) {
+        handle_sets(key);
     } else if (on_what_if()) {
         handle_what_if(key);
     } else if (on_notices_) {
@@ -2141,7 +2256,7 @@ void App::handle_steve(const Key& key) {
 
 std::optional<std::chrono::milliseconds> App::refresh() const {
     if (check_requested() || rebuild_requested() || refresh_requested() || index_requested() ||
-        running_ || planning_ || trying_) {
+        running_ || planning_ || trying_ || listing_sets_ || loading_set_) {
         return wait_interval;
     }
     if (watched_ && pages_.empty()) {
@@ -2361,6 +2476,8 @@ void App::handle_list(const Key& key) {
     } else if (key.kind == KeyKind::escape && !list_.query.empty()) {
         list_.query.clear();
         filter();
+    } else if (key.kind == KeyKind::escape) {
+        close_set_page();
     } else if (key.kind == KeyKind::enter) {
         if (list_.cursor.at < list_.shown.size()) {
             open(list_.shown.at(list_.cursor.at));
@@ -3009,7 +3126,7 @@ std::optional<Action> notice_action(const Notice& notice) {
     case NoticeKind::stale:
         return Action{.kind = Action::Kind::sync, .targets = {named}};
     case NoticeKind::plan:
-        return Action{.kind = Action::Kind::update, .targets = {}, .scope = Scope::world};
+        return Action{.kind = Action::Kind::update, .targets = {}, .scope = Scope::world()};
     case NoticeKind::masked:
     case NoticeKind::news:
     case NoticeKind::config:
@@ -3514,7 +3631,13 @@ std::vector<Hint> list_keys(const App& app, const Glyphs& glyph) {
     if (evaluated) {
         filter("u", Only::updates, "updates");
     }
-    keys.push_back({.key = "esc", .meaning = "clear the filter", .bar = !list.query.empty()});
+    if (!list.query.empty() || !app.closable_page()) {
+        keys.push_back({.key = "esc", .meaning = "clear the filter", .bar = !list.query.empty()});
+    } else {
+        keys.push_back({.key = "esc",
+                        .meaning = std::format("close {}", scope_name(app.scope())),
+                        .bar = true});
+    }
     keys.push_back({.key = "/", .meaning = "filter"});
     keys.push_back({.key = "s", .meaning = "search the repositories"});
     if (evaluated) {
@@ -3670,6 +3793,16 @@ std::vector<Hint> what_if_keys(const App& app, const Glyphs& glyph) {
     return keys;
 }
 
+std::vector<Hint> set_keys(const App& app, const Glyphs& glyph) {
+    const auto& listed = app.set_list();
+    const bool on_set = listed && *listed && app.set_cursor().at < (*listed)->sets.size();
+    std::vector<Hint> keys{{.key = std::string{glyph.move}, .meaning = "move"},
+                           {.key = std::string{glyph.pages}, .meaning = "page"},
+                           {.key = std::string{glyph.enter}, .meaning = "open", .bar = on_set}};
+    add_common(keys);
+    return keys;
+}
+
 std::vector<Hint> notice_keys(const App& app, const Glyphs& glyph) {
     if (app.putting_off()) {
         std::vector<Hint> keys;
@@ -3729,6 +3862,9 @@ std::vector<Hint> view_keys(const App& app, const Glyphs& glyph) {
     }
     if (const auto& built = app.built()) {
         return builds_keys(*built, glyph);
+    }
+    if (app.on_sets()) {
+        return set_keys(app, glyph);
     }
     if (app.on_what_if()) {
         return what_if_keys(app, glyph);

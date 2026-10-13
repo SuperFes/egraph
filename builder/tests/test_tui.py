@@ -172,6 +172,45 @@ def test_tui_lists_and_shows_pending_updates(playgrounds, tmp_path):
         tmux(socket, "kill-server")
 
 
+def test_tui_lists_the_sets_and_plans_one_on_its_page(playgrounds, tmp_path):
+    from conftest import builder_script
+    from egraph_build import roots
+
+    system = playgrounds("sets")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path, request_all=True)
+    skip_without_tui()
+    names = [info.name for info in roots.set_list(system.vardb)[0]]
+
+    socket = f"egraph-test-{os.getpid()}"
+    environment = " ".join(
+        f"{name}={shlex.quote(value)}"
+        for name, value in system.vardb.settings.environ().items()
+    )
+    command = (
+        f"env {environment} {EGRAPH} --store {path} --no-refresh "
+        f"--config-root {system.eroot} --builder {builder_script(tmp_path)} tui; "
+        "echo EXIT=$?; sleep 30"
+    )
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "120", "-y", "40", command)
+    try:
+        wait_for(socket, " @installed ")
+        for _ in range(3):
+            tmux(socket, "send-keys", "-t", "t", "Right")
+        wait_for(socket, "@desktop", "[world]", "@live-rebuild")
+        for _ in range(names.index("desktop")):
+            tmux(socket, "send-keys", "-t", "t", "j")
+        tmux(socket, "send-keys", "-t", "t", "Enter")
+        # Its page, after the others, planned as exec -uDN @desktop would.
+        wait_for(socket, " @system  @desktop ", "app-misc/viewer-1", gone=["planning"])
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        wait_for(socket, " @system  sets ", gone=["@desktop"])
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")
+
+
 def test_tui_searches_the_repositories(playgrounds, tmp_path):
     system = playgrounds("visibility")
     path = tmp_path / "installed.egraph"

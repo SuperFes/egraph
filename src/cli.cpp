@@ -2283,6 +2283,95 @@ std::expected<Sets, std::string> given_sets(std::span<const std::string> targets
     return loaded_sets(*list);
 }
 
+// Every set portage defines, listed beside the interface.
+Job<tui::SetListResult> background_set_list(const Invocation& invocation) {
+    auto listed = std::async(std::launch::async,
+                             [&invocation] { return tui::SetListResult{read_sets(invocation)}; });
+    return [listed = std::move(listed)]() mutable -> std::optional<tui::SetListResult> {
+        if (listed.wait_for(std::chrono::seconds{0}) != std::future_status::ready) {
+            return std::nullopt;
+        }
+        return listed.get();
+    };
+}
+
+// A set's atoms for its page in the interface, beside it: loaded by egraph-build, then the cps
+// they name that the stores do not know evaluated, as plan evaluates a request's.
+Job<tui::SetResult> background_set(const Invocation& invocation, Session& session,
+                                   const tui::SetRequest& request) {
+    using Read = std::expected<GivenSet, std::string>;
+    auto read = std::async(std::launch::async, [&invocation, name = request.name]() -> Read {
+        const auto list = read_sets(invocation, std::array{name});
+        if (!list) {
+            return std::unexpected(list.error());
+        }
+        auto sets = loaded_sets(*list);
+        if (!sets) {
+            return std::unexpected(std::move(sets.error()));
+        }
+        if (auto found = sets->find(name); found != sets->end()) {
+            return std::move(found->second);
+        }
+        return std::unexpected(std::format("@{}: egraph-build did not load it", name));
+    });
+    struct State {
+        std::string name;
+        std::shared_ptr<const Stores> base;
+        std::future<Read> read;
+        std::optional<GivenSet> set;
+        std::optional<Job<std::optional<std::string>>> build;
+    };
+    State state{.name = request.name,
+                .base = request.stores,
+                .read = std::move(read),
+                .set = std::nullopt,
+                .build = std::nullopt};
+    return [state = std::move(state), &invocation, &session,
+            path = store_path(invocation)]() mutable -> std::optional<tui::SetResult> {
+        if (state.build) {
+            auto ended = (*state.build)();
+            if (!ended) {
+                return std::nullopt;
+            }
+            state.build.reset();
+            if (*ended) {
+                return tui::SetResult{std::unexpected(std::move(**ended))};
+            }
+            auto loaded = load_stores(path);
+            if (!loaded) {
+                return tui::SetResult{std::unexpected(
+                    built_store_error(builder_program(invocation), loaded.error()))};
+            }
+            return tui::LoadedSet{.name = state.name,
+                                  .set = std::move(*state.set),
+                                  .stores = share(session, std::move(*loaded), path)};
+        }
+        if (state.read.wait_for(std::chrono::seconds{0}) != std::future_status::ready) {
+            return std::nullopt;
+        }
+        auto set = state.read.get();
+        if (!set) {
+            return tui::SetResult{std::unexpected(std::move(set.error()))};
+        }
+        const auto& base = *state.base;
+        const Sets given{{state.name, *set}};
+        const auto parsed = parse_request(base.installed, base.evaluated,
+                                          std::array{std::format("@{}", state.name)}, given);
+        if (!parsed) {
+            return tui::SetResult{std::unexpected(parsed.error())};
+        }
+        if (parsed->unevaluated.empty() || invocation.no_refresh) {
+            return tui::LoadedSet{.name = state.name,
+                                  .set = std::move(*set),
+                                  .stores = nullptr,
+                                  .unevaluated = parsed->unevaluated};
+        }
+        state.set = std::move(*set);
+        state.build = background_build(invocation, "--evaluate", path, parsed->unevaluated);
+        return std::nullopt;
+    };
+}
+
 std::expected<Request, std::string> resolve_request(const PlanCommand& command, Session& session,
                                                     const Invocation& invocation) {
     const auto given = given_sets(command.targets, invocation);
@@ -3980,6 +4069,11 @@ Exit execute(const Tui& tui_command, Session& session, const Invocation& invocat
          .try_lines =
              [&invocation, &session](const tui::TryRequest& request) {
                  return background_try(invocation, session, request);
+             },
+         .list_sets = [&invocation] { return background_set_list(invocation); },
+         .load_set =
+             [&invocation, &session](const tui::SetRequest& request) {
+                 return background_set(invocation, session, request);
              },
          .preview_save =
              [&invocation](const std::vector<WhatIfLine>& lines) {

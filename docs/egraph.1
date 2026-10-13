@@ -1657,9 +1657,18 @@ The list has a page per set its updates are planned for:
 and
 .BR @system ,
 turned with the left and right arrows
-.RB ( h " and " l );
+.RB ( h " and " l ),
+and any other set opened from the sets page, the last: every set portage defines, as
+.B sets
+lists them;
 .B enter
-opens a package's page: what keeps it, its dependencies both ways, the USE flags of its own
+there opens a set as a page after the others, its atoms loaded by
+.B egraph\-build \-\-sets
+(the packages they name evaluated first) and planned in the background, for the session;
+.B esc
+closes it.
+.B enter
+on the list opens a package's page: what keeps it, its dependencies both ways, the USE flags of its own
 version as
 .B use
 shows them, with the files package.env gives it, and its versions in the repositories.

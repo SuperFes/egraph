@@ -2000,7 +2000,7 @@ TEST_CASE("the plans follow the lines tried, marking what they add and change") 
     for (int page = 0; page < 3; ++page) {
         app.handle(key(KeyKind::left));
     }
-    REQUIRE(app.scope() == egraph::tui::Scope::installed);
+    REQUIRE(app.scope() == egraph::tui::Scope::installed());
     app.handle(character(U'u'));
     REQUIRE(app.list().shown == std::vector<std::uint32_t>{0});
     egraph::tui::draw(screen, app, ascii);
@@ -2037,7 +2037,7 @@ TEST_CASE("a merge the lines tried drop is listed after the plan, dimmed") {
     for (int page = 0; page < 3; ++page) {
         app.handle(key(KeyKind::left));
     }
-    REQUIRE(app.scope() == egraph::tui::Scope::installed);
+    REQUIRE(app.scope() == egraph::tui::Scope::installed());
     // Still listed with the updates, as dropped.
     CHECK(app.list().shown == std::vector<std::uint32_t>{0});
     egraph::tui::draw(screen, app, ascii);
@@ -2073,7 +2073,7 @@ TEST_CASE("the first line turns the list to the what-if page, which drops, undoe
     // Back to the sets and here again.
     app.handle(key(KeyKind::left));
     CHECK_FALSE(app.on_what_if());
-    CHECK(app.scope() == egraph::tui::Scope::system);
+    CHECK(app.scope() == egraph::tui::Scope::system());
     app.handle(key(KeyKind::right));
     CHECK(app.on_what_if());
 
@@ -3226,8 +3226,9 @@ TEST_CASE("enter on a notice updates, rebuilds or syncs what it is about") {
     CHECK(notice_work(check) == "check");
     // The plan a configuration edit changed, as watch plans it.
     const Notice plan{.kind = NoticeKind::plan, .key = "plan"};
-    CHECK(notice_action(plan) ==
-          Action{.kind = Action::Kind::update, .targets = {}, .scope = egraph::tui::Scope::world});
+    CHECK(notice_action(plan) == Action{.kind = Action::Kind::update,
+                                        .targets = {},
+                                        .scope = egraph::tui::Scope::world()});
     CHECK(notice_work(plan) == "update");
 }
 
@@ -3582,12 +3583,12 @@ TEST_CASE("left and right turn the list's pages, each planning its set as exec w
     CHECK(contains(screen.line(1), " @installed  @world  @system "));
     CHECK(std::ranges::contains(egraph::tui::view_keys(app, ascii),
                                 egraph::tui::Hint{.key = "h/l", .meaning = "page", .bar = false}));
-    CHECK(app.scope() == Scope::installed);
+    CHECK(app.scope() == Scope::installed());
     CHECK_FALSE(app.scope_plan_requested());
     CHECK(shown_cpvs(app) == std::vector<std::string>{"app-misc/glibmm-1", "app-misc/loose-1"});
 
     app.handle(key(KeyKind::right));
-    CHECK(app.scope() == Scope::world);
+    CHECK(app.scope() == Scope::world());
     CHECK(app.pages().empty());
     CHECK(app.scope_plan_requested());
     CHECK(shown_cpvs(app).empty());
@@ -3611,12 +3612,17 @@ TEST_CASE("left and right turn the list's pages, each planning its set as exec w
 
     // An empty @system asks for nothing.
     app.handle(character(U'l'));
-    CHECK(app.scope() == Scope::system);
+    CHECK(app.scope() == Scope::system());
     plan_page(app);
     CHECK(shown_cpvs(app).empty());
     CHECK(app.plan().merges.empty());
+    // Then the sets page, the last.
     app.handle(key(KeyKind::right));
-    CHECK(app.scope() == Scope::system);
+    CHECK(app.on_sets());
+    app.handle(key(KeyKind::right));
+    CHECK(app.on_sets());
+    app.handle(character(U'h'));
+    CHECK(app.scope() == Scope::system());
 
     // Each page keeps its plan.
     app.handle(character(U'h'));
@@ -3624,7 +3630,7 @@ TEST_CASE("left and right turn the list's pages, each planning its set as exec w
     CHECK(shown_cpvs(app) == std::vector<std::string>{"app-misc/glibmm-1"});
     app.handle(key(KeyKind::left));
     app.handle(key(KeyKind::left));
-    CHECK(app.scope() == Scope::installed);
+    CHECK(app.scope() == Scope::installed());
     CHECK(shown_cpvs(app) == std::vector<std::string>{"app-misc/glibmm-1", "app-misc/loose-1"});
     app.handle(key(KeyKind::enter));
     CHECK(app.pages().size() == 1);
@@ -3636,9 +3642,9 @@ TEST_CASE("a page's plan made for stores since replaced is dropped and made agai
     auto job = app.start_scope_plan();
     app.finish_refresh(shared(glibmm_system("2")));
     app.finish_scope_plan(egraph::test::finish(std::move(job)));
-    CHECK_FALSE(app.scope_planned(Scope::world));
+    CHECK_FALSE(app.scope_planned(Scope::world()));
     plan_page(app);
-    CHECK(app.scope_planned(Scope::world));
+    CHECK(app.scope_planned(Scope::world()));
     CHECK(shown_cpvs(app) == std::vector<std::string>{"app-misc/glibmm-1"});
 }
 
@@ -3649,6 +3655,173 @@ TEST_CASE("run makes a page's plan in the background, saying so meanwhile") {
     CHECK(contains(screen.text(), "planning @world"));
     // Its spinner turns.
     CHECK(screen.timeouts.back() == egraph::tui::wait_interval);
+}
+
+namespace {
+
+egraph::SetList listed_sets() {
+    egraph::SetList list;
+    list.sets.push_back({.name = "loosen",
+                         .kind = "StaticFileSet",
+                         .description = "the loose ones",
+                         .world_candidate = true,
+                         .atoms = std::nullopt,
+                         .error = std::nullopt});
+    list.sets.push_back({.name = "world",
+                         .kind = "StaticFileSet",
+                         .description = "everything kept",
+                         .world_candidate = false,
+                         .atoms = std::nullopt,
+                         .error = std::nullopt});
+    return list;
+}
+
+egraph::tui::LoadedSet loosen() {
+    return {
+        .name = "loosen",
+        .set = {.atoms = {{.set = "loosen", .atom = "app-misc/loose"}}, .world_candidate = true},
+        .stores = nullptr};
+}
+
+} // namespace
+
+TEST_CASE("the sets tab lists every set, enter opening one as a page planned as exec would") {
+    egraph::tui::App app{shared(glibmm_system()), true};
+    app.handle(key(KeyKind::right));
+    app.handle(key(KeyKind::right));
+    CHECK_FALSE(app.on_sets());
+    CHECK_FALSE(app.set_list_requested());
+    app.handle(key(KeyKind::right));
+    REQUIRE(app.on_sets());
+    FakeScreen loading{16, 120, {}};
+    egraph::tui::draw(loading, app, ascii);
+    CHECK(contains(loading.line(1), " @installed  @world  @system  | sets "));
+    REQUIRE(app.set_list_requested());
+    app.start_set_list();
+    CHECK_FALSE(app.set_list_requested());
+    // Keys are waited for no longer than the job takes to look at.
+    CHECK(app.refresh() == egraph::tui::wait_interval);
+    app.finish_set_list(listed_sets());
+    FakeScreen screen{16, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "@loosen  the loose ones  [world]"));
+    CHECK(contains(screen.text(), "@world   everything kept"));
+    CHECK(std::ranges::contains(egraph::tui::view_keys(app, ascii),
+                                egraph::tui::Hint{.key = "enter", .meaning = "open", .bar = true}));
+
+    app.handle(key(KeyKind::enter));
+    CHECK_FALSE(app.on_sets());
+    CHECK(app.scope() == Scope{.set = "loosen"});
+    CHECK(app.scopes().size() == 4);
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.line(1), " @installed  @world  @system  | @loosen  sets "));
+    // Its atoms first, then its plan.
+    CHECK_FALSE(app.scope_plan_requested());
+    const auto request = app.set_load_requested();
+    REQUIRE(request.has_value());
+    CHECK(request->name == "loosen");
+    app.start_set_load("loosen");
+    CHECK_FALSE(app.set_load_requested().has_value());
+    CHECK(app.refresh() == egraph::tui::wait_interval);
+    app.finish_set_load(loosen());
+    CHECK_FALSE(app.set_load_requested().has_value());
+    plan_page(app);
+    CHECK(shown_cpvs(app) == std::vector<std::string>{"app-misc/loose-1"});
+    CHECK(app.update_of(1).has_value());
+
+    app.handle(character(U'U'));
+    REQUIRE(app.preview_requested().has_value());
+    CHECK(egraph::tui::action_arguments(*app.preview_requested()) ==
+          std::vector<std::string>{"exec", "--oneshot", "-u", "-N", "-D", "@loosen"});
+    app.finish_preview({.ready = false, .out = "", .err = ""});
+    app.handle(key(KeyKind::escape));
+
+    // Opened again, it keeps its atoms; a set the list has a page for turns to it.
+    app.handle(key(KeyKind::right));
+    REQUIRE(app.on_sets());
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    CHECK(app.scope() == Scope::world());
+    CHECK(app.scopes().size() == 4);
+
+    // esc closes a set's page, back to the one before it.
+    app.handle(key(KeyKind::right));
+    app.handle(key(KeyKind::right));
+    REQUIRE(app.scope() == Scope{.set = "loosen"});
+    app.handle(key(KeyKind::escape));
+    CHECK(app.scopes().size() == 3);
+    CHECK(app.scope() == Scope::system());
+    // The three stay.
+    app.handle(key(KeyKind::escape));
+    CHECK(app.scopes().size() == 3);
+    app.handle(key(KeyKind::right));
+    REQUIRE(app.on_sets());
+    app.handle(key(KeyKind::up));
+    app.handle(key(KeyKind::enter));
+    CHECK(app.scope() == Scope{.set = "loosen"});
+    CHECK_FALSE(app.set_load_requested().has_value());
+}
+
+TEST_CASE("a set that cannot be listed or loaded says why") {
+    egraph::tui::App app{shared(glibmm_system()), true};
+    for (int i = 0; i < 3; ++i) {
+        app.handle(key(KeyKind::right));
+    }
+    app.start_set_list();
+    app.finish_set_list(std::unexpected(std::string{"egraph-build: no portage"}));
+    CHECK_FALSE(app.set_list_requested());
+    FakeScreen screen{16, 120, {}};
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "egraph-build: no portage"));
+
+    app.finish_set_list(listed_sets());
+    app.handle(key(KeyKind::enter));
+    app.start_set_load("loosen");
+    app.finish_set_load(std::unexpected(std::string{"@loosen: no such set"}));
+    CHECK_FALSE(app.set_load_requested().has_value());
+    plan_page(app);
+    REQUIRE(app.scope_error().has_value());
+    CHECK(*app.scope_error() == "@loosen: no such set");
+}
+
+TEST_CASE("a set whose cps were evaluated to load it brings the new stores") {
+    egraph::tui::App app{shared(glibmm_system()), true};
+    for (int i = 0; i < 3; ++i) {
+        app.handle(key(KeyKind::right));
+    }
+    app.finish_set_list(listed_sets());
+    app.handle(key(KeyKind::enter));
+    app.start_set_load("loosen");
+    auto loaded = loosen();
+    loaded.stores = shared(glibmm_system("2"));
+    app.finish_set_load(loaded);
+    CHECK(std::ranges::any_of(app.installed().packages, [&app](const egraph::Package& pkg) {
+        return app.installed().string(pkg.cpv) == "app-misc/loose-2";
+    }));
+    CHECK(app.scope() == Scope{.set = "loosen"});
+    plan_page(app);
+    CHECK(shown_cpvs(app).empty());
+}
+
+TEST_CASE("run lists the sets and loads a set for its page in the background") {
+    egraph::tui::App app{shared(glibmm_system()), true};
+    FakeScreen screen{
+        16,
+        120,
+        {key(KeyKind::right), key(KeyKind::right), key(KeyKind::right), key(KeyKind::enter)}};
+    std::vector<std::string> asked;
+    egraph::tui::run(
+        screen, app, ascii,
+        {.check = no_check,
+         .list_sets = [] { return egraph::ready(egraph::tui::SetListResult{listed_sets()}); },
+         .load_set =
+             [&asked](const egraph::tui::SetRequest& request) {
+                 asked.push_back(request.name);
+                 return egraph::ready(egraph::tui::SetResult{loosen()});
+             }});
+    CHECK(asked == std::vector<std::string>{"loosen"});
+    CHECK(app.scope() == Scope{.set = "loosen"});
+    CHECK(contains(screen.text(), "planning @loosen"));
 }
 
 TEST_CASE("the corner shows the status file's plan of @world") {
@@ -3718,8 +3891,10 @@ TEST_CASE("the notices page follows the sets, its tab counting them") {
         app.handle(key(KeyKind::right));
     }
     REQUIRE(app.on_notices());
-    // The last page.
+    // Then the sets page, the last.
     app.handle(key(KeyKind::right));
+    CHECK(app.on_sets());
+    app.handle(key(KeyKind::left));
     CHECK(app.on_notices());
     egraph::tui::draw(screen, app, ascii);
     const auto text = screen.text();
@@ -3740,7 +3915,7 @@ TEST_CASE("the notices page follows the sets, its tab counting them") {
 
     app.handle(character(U'h'));
     CHECK_FALSE(app.on_notices());
-    CHECK(app.scope() == Scope::system);
+    CHECK(app.scope() == Scope::system());
 }
 
 TEST_CASE("enter on a notice previews its action, or asks before a sync") {
@@ -4163,7 +4338,7 @@ TEST_CASE("notices read again keep the cursor on its notice, and the page goes w
     CHECK(app.notice_cursor().at == 0);
     app.finish_notices(std::nullopt);
     CHECK_FALSE(app.on_notices());
-    CHECK(app.scope() == Scope::system);
+    CHECK(app.scope() == Scope::system());
 }
 
 TEST_CASE("run reads the notices with the status and sets them aside through its services") {
