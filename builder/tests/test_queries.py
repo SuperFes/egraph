@@ -8,7 +8,7 @@ import pytest
 from portage.versions import cpv_getkey, cpv_getversion, vercmp
 
 from compare import _sonames, possible_mismatches
-from conftest import dynamic_option, portdb, write_stores
+from conftest import builder_script, dynamic_option, portdb, write_stores
 from egraph_build import oracle, roots
 from egraph_build.cli import EXIT_REFUSED
 from egraph_build.model import Edge
@@ -349,12 +349,13 @@ def masked_rows(output):
 
 
 def plan_requests(name):
-    """What a scenario is asked for: each cp, each ebuild's =cpv and slot atom, and the root
-    sets."""
+    """What a scenario is asked for: each cp, each ebuild's =cpv and slot atom, the root sets
+    and the other sets it names."""
     from portage.versions import cpv_getkey
 
     scenario = SCENARIOS[name]
     requests = {"@world", "@selected", "@system"}
+    requests.update(f"@{s}" for s in scenario.get("requested_sets", ()))
     for key in ("ebuilds", "installed"):
         for cpv in scenario.get(key, {}):
             requests.add(cpv_getkey(cpv.split("::")[0]))
@@ -364,6 +365,16 @@ def plan_requests(name):
         if "SLOT" in metadata:
             requests.add(f"{cpv_getkey(cpv)}:{metadata['SLOT'].split('/')[0]}")
     return sorted(requests - set(scenario.get("unrequested", ())))
+
+
+def loading_sets(system, tmp_path, target):
+    """The options and environment egraph needs to have egraph-build load a set the store does
+    not hold from system's configuration; none for any other target."""
+    if not target.startswith("@") or target[1:] in ("world", "selected", "system"):
+        return [], None
+    builder = builder_script(tmp_path)
+    options = ["--config-root", system.eroot, "--builder", str(builder)]
+    return options, system.vardb.settings.environ()
 
 
 def plan_merges(text):
@@ -443,7 +454,8 @@ def test_plans_are_emerges(playgrounds, tmp_path, name, mode):
         expected = update.updates(
             system.trees, system.eroot, target=[target], **options
         )
-        result = egraph(path, "plan", *flags, target, check=False)
+        loading, env = loading_sets(system, tmp_path, target)
+        result = egraph(path, *loading, "plan", *flags, target, check=False, env=env)
         if not expected.success and not refuses(expected):
             continue
         if result.returncode == 1 and target in expected.unsatisfied:

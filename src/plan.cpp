@@ -369,10 +369,13 @@ class Planner {
             }
         }
         if (!best) {
-            // A root set's atom may keep what is installed, and @selected's match nothing.
+            // As emerge's depgraph: only @selected's atoms may match nothing, and only
+            // @selected's and @system's keep what is installed from a plain merge.
             const auto& set = arg.named.set;
-            const bool lenient = arg.matches.empty() ? set == "selected" : !set.empty();
-            if (selection == Selection::reinstall && !lenient) {
+            const bool refused = arg.matches.empty() ? set != "selected"
+                                                     : selection == Selection::reinstall &&
+                                                           set != "selected" && set != "system";
+            if (refused) {
                 unmatched_.insert(i);
             }
             return;

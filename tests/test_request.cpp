@@ -60,12 +60,40 @@ TEST_CASE("a set expands to the root atoms the store holds for it") {
 
 TEST_CASE("a set the caller gives expands to its atoms, named by it") {
     const auto system = sample();
-    const egraph::Sets given{{"preserved-rebuild", {"dev-libs/lib:0", "app-misc/tool:0"}}};
+    const egraph::Sets given{{"preserved-rebuild",
+                              {{.set = "preserved-rebuild", .atom = "dev-libs/lib:0"},
+                               {.set = "preserved-rebuild", .atom = "app-misc/tool:0"}}}};
     const std::vector<std::string> words{"@preserved-rebuild", "app-misc/fresh"};
     CHECK(egraph::parse_request(system.store, system.evaluated, words, given)->arguments ==
           std::vector<egraph::Argument>{{.set = "preserved-rebuild", .atom = "dev-libs/lib:0"},
                                         {.set = "preserved-rebuild", .atom = "app-misc/tool:0"},
                                         {.set = "", .atom = "app-misc/fresh"}});
+}
+
+TEST_CASE("a given set's nested sets keep their names, and its atoms are taken as they are") {
+    auto system = sample();
+    add_repository_cps(system, {"net-misc/elsewhere"});
+    const egraph::Sets given{{"desktop",
+                              {{.set = "desktop", .atom = "net-misc/elsewhere"},
+                               {.set = "desktop", .atom = "app-misc/nowhere"},
+                               {.set = "tools", .atom = ">=app-misc/tool-2"}}}};
+    const std::vector<std::string> words{"@desktop"};
+    const auto found = egraph::parse_request(system.store, system.evaluated, words, given);
+    REQUIRE(found);
+    // What nothing matches is the plan's to refuse, as emerge's depgraph does for a set's atom.
+    CHECK(found->arguments ==
+          std::vector<egraph::Argument>{{.set = "desktop", .atom = "net-misc/elsewhere"},
+                                        {.set = "desktop", .atom = "app-misc/nowhere"},
+                                        {.set = "tools", .atom = ">=app-misc/tool-2"}});
+    CHECK(found->unevaluated == std::vector<std::string>{"net-misc/elsewhere"});
+}
+
+TEST_CASE("the sets to load are those the store does not hold, each once") {
+    const std::vector<std::string> words{"@world",     "@desktop",  "app-misc/tool",
+                                         "@installed", "@selected", "@system",
+                                         "@profile",   "@desktop",  "@preserved-rebuild"};
+    CHECK(egraph::sets_to_load(words) == std::vector<std::string>{"desktop", "preserved-rebuild"});
+    CHECK(egraph::sets_to_load(std::vector<std::string>{"app-misc/tool"}).empty());
 }
 
 TEST_CASE("a name without a category takes the one the stores know it in") {

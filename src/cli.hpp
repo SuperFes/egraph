@@ -532,6 +532,12 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
 [[nodiscard]] std::vector<std::string> notices_command(const Invocation& invocation,
                                                        const std::filesystem::path& output);
 
+// The egraph-build command line that writes every set portage's configuration defines, or with
+// names those sets' atoms, as JSON, to output.
+[[nodiscard]] std::vector<std::string> sets_command(const Invocation& invocation,
+                                                    const std::filesystem::path& output,
+                                                    std::span<const std::string> names = {});
+
 // The egraph-build command line that copies the running portage to directory, for workers to run
 // from (worker_command and --portage-copy) while a run merges a new one.
 [[nodiscard]] std::vector<std::string> copy_portage_command(const Invocation& invocation,

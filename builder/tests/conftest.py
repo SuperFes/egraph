@@ -31,6 +31,7 @@ def playground_arguments(name):
     arguments.pop("pulls", None)
     arguments.pop("held", None)
     arguments.pop("files", None)
+    arguments.pop("requested_sets", None)
     arguments["installed"] = {
         cpv: {"KEYWORDS": "x86", **metadata}
         for cpv, metadata in arguments.get("installed", {}).items()
@@ -235,9 +236,8 @@ def write_index(system, path, eroot="/"):
     store.write(store.repository_path(path), store.encode_repository(index, meta))
 
 
-def notice_lines(system, path, tmp_path):
-    """egraph notices as lines, on the stores at path (not refreshed), egraph-build reading the
-    rest of system."""
+def builder_script(tmp_path):
+    """An egraph-build for egraph to run: this checkout's, on the portage the tests import."""
     builder = tmp_path / "egraph-build"
     builder_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     portage_lib = os.path.dirname(os.path.dirname(portage.__file__))
@@ -246,6 +246,13 @@ def notice_lines(system, path, tmp_path):
         f'PYTHONPATH="{builder_dir}:{portage_lib}" exec "{sys.executable}" -m egraph_build "$@"\n'
     )
     builder.chmod(0o755)
+    return builder
+
+
+def notice_lines(system, path, tmp_path):
+    """egraph notices as lines, on the stores at path (not refreshed), egraph-build reading the
+    rest of system."""
+    builder = builder_script(tmp_path)
     result = subprocess.run(
         [os.environ["EGRAPH"], "--store", str(path), "--no-refresh"]
         + ["--config-root", system.eroot, "--builder", str(builder), "notices"],

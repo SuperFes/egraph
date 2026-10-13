@@ -1745,6 +1745,17 @@ SCENARIOS = {
     # repository's, one naming a set that does not exist), and portage's own that read the vdb
     # and the repositories.
     "sets": {
+        # Asked for by name, beside the root sets, in every plan comparison.
+        "requested_sets": (
+            "desktop",
+            "tools",
+            "absent",
+            "mine",
+            "broken",
+            "live-rebuild",
+            "downgrade",
+            "unavailable",
+        ),
         "world": ["app-misc/viewer", "app-misc/live"],
         "world_sets": ["@mine"],
         "sets": {

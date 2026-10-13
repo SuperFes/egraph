@@ -1,6 +1,7 @@
 """Package sets as the builder lists and expands them, against emerge's own set configuration."""
 
 import json
+import os
 
 import pytest
 
@@ -70,6 +71,28 @@ def test_an_unknown_set_is_named_as_such(playgrounds):
     assert unknown == roots.SetAtoms("nope", (), "no such set")
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads anything")
+def test_an_unreadable_registry_says_so(playgrounds, tmp_path):
+    from portage.util._dyn_libs.PreservedLibsRegistry import PreservedLibsRegistry
+
+    path = tmp_path / "preserved_libs_registry"
+    path.write_text('{"a/b:0": ["a/b-2", "1", ["/usr/lib/liba.so.1"]]}')
+    path.chmod(0)
+    vardb = playgrounds("sets").vardb
+    readable = vardb._plib_registry
+    vardb._plib_registry = PreservedLibsRegistry(vardb.settings["ROOT"], str(path))
+    try:
+        (preserved,) = roots.set_atoms(vardb, ["preserved-rebuild"])
+    finally:
+        vardb._plib_registry = readable
+    assert preserved.error == f"cannot read {path}: permission denied"
+
+
+def test_without_preserved_libraries_preserved_rebuild_is_empty(playgrounds):
+    (preserved,) = roots.set_atoms(playgrounds("sets").vardb, ["preserved-rebuild"])
+    assert preserved == roots.SetAtoms("preserved-rebuild", ())
+
+
 @pytest.mark.parametrize("name", sorted(SCENARIOS))
 def test_each_sets_atoms_are_getsetatoms(playgrounds, name):
     """Every set that loads, on every scenario: its atoms, nested ones included, are those
@@ -117,3 +140,40 @@ def test_the_cli_writes_the_list_and_the_atoms(playgrounds, tmp_path):
 
 def test_it_needs_an_output():
     assert cli.main(["--sets"]) == cli.EXIT_USAGE
+
+
+@pytest.mark.skipif(not os.environ.get("EGRAPH"), reason="set EGRAPH (meson test does)")
+def test_egraph_plans_a_set_through_the_builder_and_says_why_one_cannot_be(
+    playgrounds, tmp_path
+):
+    import subprocess
+
+    from conftest import builder_script, write_stores
+
+    system = playgrounds("sets")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path, request_all=True)
+
+    def plan(target):
+        return subprocess.run(
+            [os.environ["EGRAPH"], "--store", str(path), "--no-refresh"]
+            + ["--config-root", system.eroot]
+            + ["--builder", str(builder_script(tmp_path)), "plan", "-u", target],
+            capture_output=True,
+            text=True,
+            env=system.vardb.settings.environ(),
+        )
+
+    desktop = plan("@desktop")
+    assert desktop.returncode == 0, desktop.stderr
+    assert {line.split("\t")[2] for line in desktop.stdout.splitlines()} >= {
+        "app-misc/viewer-2",
+        "app-misc/editor-1",
+    }
+    nope = plan("@nope")
+    assert (nope.returncode, nope.stderr) == (1, "egraph: plan: @nope: no such set\n")
+    broken = plan("@broken")
+    assert broken.returncode == 1
+    assert broken.stderr == (
+        "egraph: plan: @broken: it names a set that does not exist: nonexistent\n"
+    )

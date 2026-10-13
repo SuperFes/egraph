@@ -1541,9 +1541,31 @@ TEST_CASE("plain emerge refuses an argument with no visible version, installed o
     world.request.back().set = "system";
     CHECK(plan(system, egraph::UseRebuilds::none, world) ==
           std::vector<std::string>{"unsatisfied argument app-misc/nowhere"});
-    // -u keeps what it has.
+    // -u and -n keep what is installed, but not what matches nothing.
     world.selection = egraph::Selection::update;
-    CHECK(plan(system, egraph::UseRebuilds::none, world).empty());
+    CHECK(plan(system, egraph::UseRebuilds::none, world) ==
+          std::vector<std::string>{"unsatisfied argument app-misc/nowhere"});
+    world.selection = egraph::Selection::noreplace;
+    CHECK(plan(system, egraph::UseRebuilds::none, world) ==
+          std::vector<std::string>{"unsatisfied argument app-misc/nowhere"});
+}
+
+TEST_CASE("a set other than the root ones keeps nothing it names from a plain merge") {
+    const auto system = make_system({{.cpv = "app-misc/gone-1"}}, {{.cpv = "app-misc/other-1"}}, {},
+                                    {"app-misc/gone"});
+    for (const std::string_view set : {"mine", "profile"}) {
+        auto mine = reinstall({});
+        mine.request = {{.set = std::string(set), .atom = "app-misc/gone"}};
+        CHECK(plan(system, egraph::UseRebuilds::none, mine) ==
+              std::vector<std::string>{"unsatisfied argument app-misc/gone"});
+        mine.selection = egraph::Selection::update;
+        CHECK(plan(system, egraph::UseRebuilds::none, mine).empty());
+        mine.selection = egraph::Selection::noreplace;
+        CHECK(plan(system, egraph::UseRebuilds::none, mine).empty());
+        mine.request = {{.set = std::string(set), .atom = "app-misc/nowhere"}};
+        CHECK(plan(system, egraph::UseRebuilds::none, mine) ==
+              std::vector<std::string>{"unsatisfied argument app-misc/nowhere"});
+    }
 }
 
 TEST_CASE("-uD refuses what it reaches and keeps with a run-time dependency nothing satisfies") {

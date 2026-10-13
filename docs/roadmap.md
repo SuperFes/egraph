@@ -973,9 +973,14 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
       them (a nested set's under its own name), or why it cannot be loaded. A `sets` scenario:
       a repository `sets.conf` (a multiset directory, world candidates), a user set nesting
       another, `@live-rebuild` over INHERITED.
-    - 17d4a2: requests naming a set the store does not hold expand it through the builder, in
-      one call (`@preserved-rebuild` folded in), its atoms' cps evaluated as typed atoms' are;
-      held to emerge's plans with each of the scenario's sets.
+    - 17d4a2 (done): requests naming a set the store does not hold expand it through the
+      builder, in one call (`@preserved-rebuild` folded in), its atoms' cps evaluated as typed
+      atoms' are; held to emerge's plans with each of the scenario's sets. It found the planner
+      keeping a set's atom that matches nothing under `-u` and `-n` (`@system`'s too), and a
+      non-root set's installed-only atom under a plain merge; emerge refuses both.
+    - 17d4a2b: `exec` without `--oneshot` records a world candidate set it was asked for in
+      world_sets, as emerge's `save_nomerge_favorites` does (its atoms never join the world
+      file); held to emerge's world_sets by `test_requests`.
     - 17d4a3: `egraph sets [NAME...]`: the list, or a set's atoms; completions offer them.
   - 17d4b: sets in the living app: a page listing every set, enter planning one as a page
     beside `@world` and `@system` (in the background, as they are; `@smart-live-rebuild`, where

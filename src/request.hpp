@@ -22,14 +22,20 @@ struct Request {
     std::vector<std::string> unevaluated;
 };
 
+// Sets the store does not hold, by name, each with its atoms as emerge's arguments hold them.
+using Sets = std::map<std::string, std::vector<Argument>, std::less<>>;
+
+// The sets words name that the store does not hold, in order, each once: for the caller to give
+// parse_request.
+[[nodiscard]] std::vector<std::string> sets_to_load(std::span<const std::string> words);
+
 // The arguments words name, each a set the store holds (@world, @selected, @system, @profile,
 // @installed) or an atom; an atom without a category takes the one the repositories or the
 // installed packages know its name in, the one outside virtual, acct-group and acct-user when
 // the others are there, as emerge picks. An error for an unknown set, an invalid or ambiguous
 // atom, and an atom that nothing installed and no visible ebuild matches, once evaluated. A set
-// in given expands to its atoms instead.
-// Sets the store does not hold, by name, each with its atoms.
-using Sets = std::map<std::string, std::vector<std::string>, std::less<>>;
+// in given expands to its atoms instead, those of cps only the repositories know unevaluated;
+// what none matches is the plan's to refuse, as emerge's depgraph does.
 
 [[nodiscard]] std::expected<Request, std::string> parse_request(const Store& store,
                                                                 const Evaluated& evaluated,

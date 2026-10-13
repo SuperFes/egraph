@@ -123,7 +123,7 @@ def _expanded(config, name):
 
 def set_atoms(vardb, names):
     """A SetAtoms for each name, in the order given."""
-    from portage.exception import PortageException
+    from portage.exception import CommandNotFound, PermissionDenied, PortageException
 
     config = _set_config(vardb)
     found = []
@@ -137,6 +137,10 @@ def set_atoms(vardb, names):
             found.append(SetAtoms(name, _expanded(config, name)))
         except PackageSetNotFound as e:
             found.append(SetAtoms(name, (), f"it names a set that does not exist: {e}"))
+        except PermissionDenied as e:
+            found.append(SetAtoms(name, (), f"cannot read {e}: permission denied"))
+        except CommandNotFound as e:
+            found.append(SetAtoms(name, (), f"{e} is not installed"))
         except PortageException as e:
             found.append(SetAtoms(name, (), f"{type(e).__name__}: {e}"))
     return tuple(found)

@@ -44,6 +44,7 @@
 #include "schedule.hpp"
 #include "selection.hpp"
 #include "session.hpp"
+#include "sets.hpp"
 #include "status.hpp"
 #include "steve.hpp"
 #include "store.hpp"
@@ -2246,26 +2247,36 @@ std::expected<Notices, std::string> read_notices(const Invocation& invocation) {
     return parse_notices(text.str());
 }
 
-// The sets a request may name that egraph-build loads as emerge does: @preserved-rebuild.
+// Portage's sets, through egraph-build: every one, or with names those sets' atoms.
+std::expected<SetList, std::string> read_sets(const Invocation& invocation,
+                                              std::span<const std::string> names = {}) {
+    const auto output = std::filesystem::path{scratch_store()}.replace_extension(".sets");
+    const auto ran = output_of(sets_command(invocation, output, names));
+    std::ostringstream text;
+    if (std::ifstream in{output}; in) {
+        text << in.rdbuf();
+    }
+    std::error_code ignored;
+    std::filesystem::remove(output, ignored);
+    if (!ran) {
+        return std::unexpected(ran.error());
+    }
+    return parse_sets(text.str());
+}
+
+// The sets the targets name that the store does not hold, loaded by egraph-build as emerge
+// loads them.
 std::expected<Sets, std::string> given_sets(std::span<const std::string> targets,
                                             const Invocation& invocation) {
-    constexpr std::string_view name = "preserved-rebuild";
-    if (!std::ranges::contains(targets, std::format("@{}", name))) {
+    const auto names = sets_to_load(targets);
+    if (names.empty()) {
         return Sets{};
     }
-    const auto notices = read_notices(invocation);
-    if (!notices) {
-        return std::unexpected(std::format("@{}: {}", name, notices.error()));
+    const auto list = read_sets(invocation, names);
+    if (!list) {
+        return std::unexpected(list.error());
     }
-    if (!notices->preserved) {
-        return std::unexpected(std::format(
-            "@{}: the preserved libraries' registry cannot be read; run egraph as root", name));
-    }
-    if (!notices->rebuild) {
-        return std::unexpected(
-            std::format("@{}: what uses the preserved libraries cannot be found", name));
-    }
-    return Sets{{std::string(name), *notices->rebuild}};
+    return loaded_sets(*list);
 }
 
 std::expected<Request, std::string> resolve_request(const PlanCommand& command, Session& session,
@@ -5624,6 +5635,16 @@ std::vector<std::string> notices_command(const Invocation& invocation,
     std::vector<std::string> argv{builder_program(invocation), "--notices", "--output",
                                   output.string()};
     add_roots(argv, invocation);
+    return argv;
+}
+
+std::vector<std::string> sets_command(const Invocation& invocation,
+                                      const std::filesystem::path& output,
+                                      std::span<const std::string> names) {
+    std::vector<std::string> argv{builder_program(invocation), "--sets", "--output",
+                                  output.string()};
+    add_roots(argv, invocation);
+    argv.insert(argv.end(), names.begin(), names.end());
     return argv;
 }
 

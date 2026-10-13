@@ -542,12 +542,41 @@ class Reach {
 
 } // namespace
 
+std::vector<std::string> sets_to_load(std::span<const std::string> words) {
+    std::vector<std::string> names;
+    for (const auto& word : words) {
+        if (!word.starts_with('@')) {
+            continue;
+        }
+        const auto name = word.substr(1);
+        if (name != "installed" && !known_set(name) && !std::ranges::contains(names, name)) {
+            names.push_back(name);
+        }
+    }
+    return names;
+}
+
 std::expected<Request, std::string> parse_request(const Store& store, const Evaluated& evaluated,
                                                   std::span<const std::string> words,
                                                   const Sets& given) {
     Request request;
     // Filled on the first atom: the cps the stores answer for, and those with every repository's.
     std::optional<std::pair<Cps, Cps>> cps;
+    const auto known_cps = [&]() -> const std::pair<Cps, Cps>& {
+        if (!cps) {
+            auto known = evaluated_cps(store, evaluated);
+            auto all = known;
+            for (const auto id : evaluated.ids_in(evaluated.repository_cps)) {
+                all.emplace(evaluated.string(id));
+            }
+            cps.emplace(std::move(known), std::move(all));
+        }
+        return *cps;
+    };
+    const auto unevaluated = [&](const Atom& atom) {
+        const auto& [known, all] = known_cps();
+        return !known.contains(atom.cp) && all.contains(atom.cp);
+    };
     for (const auto& word : words) {
         if (word.starts_with('@')) {
             const auto name = std::string_view{word}.substr(1);
@@ -556,8 +585,13 @@ std::expected<Request, std::string> parse_request(const Store& store, const Eval
                 continue;
             }
             if (const auto found = given.find(name); found != given.end()) {
-                for (const auto& atom : found->second) {
-                    request.arguments.push_back({.set = std::string(name), .atom = atom});
+                for (const auto& argument : found->second) {
+                    const auto atom = parse_atom(argument.atom);
+                    if (atom && unevaluated(*atom) &&
+                        !std::ranges::contains(request.unevaluated, atom->cp)) {
+                        request.unevaluated.push_back(atom->cp);
+                    }
+                    request.arguments.push_back(argument);
                 }
                 continue;
             }
@@ -573,22 +607,13 @@ std::expected<Request, std::string> parse_request(const Store& store, const Eval
             }
             continue;
         }
-        if (!cps) {
-            auto known = evaluated_cps(store, evaluated);
-            auto all = known;
-            for (const auto id : evaluated.ids_in(evaluated.repository_cps)) {
-                all.emplace(evaluated.string(id));
-            }
-            cps.emplace(std::move(known), std::move(all));
-        }
-        const auto& [known, all] = *cps;
         auto text = word.starts_with('!') ? std::expected<std::string, std::string>{word}
-                                          : with_category(word, all);
+                                          : with_category(word, known_cps().second);
         if (!text) {
             return std::unexpected(text.error());
         }
         const auto atom = parse_atom(*text);
-        if (atom && !known.contains(atom->cp) && all.contains(atom->cp)) {
+        if (atom && unevaluated(*atom)) {
             if (!std::ranges::contains(request.unevaluated, atom->cp)) {
                 request.unevaluated.push_back(atom->cp);
             }

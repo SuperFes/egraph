@@ -696,12 +696,12 @@ would merge for the targets, in the lines
 .B updates
 prints: atoms (a name without its category takes the one the repositories know it in) and the sets
 .BR @world ", " @selected ", " @system ", " @profile ", " @installed
-and
-.BR @preserved\-rebuild ,
-which
-.B egraph\-build \-\-notices
-loads as emerge does (as root: only root and the portage group may read the registry of
-preserved libraries).
+from the store, and any other set portage's set configuration defines (its own, the user's and
+the repositories'), which
+.B egraph\-build \-\-sets
+loads as emerge does
+.RB ( @preserved\-rebuild
+as root: only root and the portage group may read the registry of preserved libraries).
 A package the request names is merged even when installed, as plain
 .B emerge
 does. A package only the repositories know is evaluated first by
