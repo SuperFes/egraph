@@ -850,15 +850,20 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   emerge takes the best version that matches, a rebuild as configured (or an older version, its
   ebuild gone) when the installed one fails only the USE dependencies; a version range it fails
   still holds the merge back. The `use-rebuild` scenario holds it to emerge.
-- 16s: the masked installed packages for a plan of atoms (found by `--verify` on the dev box,
+- 16s (done): the masked installed packages for a plan of atoms (found by `--verify` on the dev box,
   2026-10-06): emerge warns only of those in its graph, which it completes from the root sets
   only under `--complete-graph` (or a `--rebuild-if-*` option) or once a merge changes an
   installed package's version, slot or sub-slot, IUSE or enabled USE, or adds a new slot
   (`_complete_graph`'s complete_if_new_use, _ver and _slot, on by default); otherwise its graph
-  is the arguments, the merges and what they pull in. egraph always completes it, so
-  `plan dev-db/redis` (a rebuild, nothing changing) warns of biber and biblatex where emerge
-  does not. `updates` agrees, `@installed` making every package an argument; nothing compares
-  the masked list for `plan` requests yet.
+  is the arguments, the merges and what they pull in. egraph always completed it, so
+  `plan dev-db/redis` (a rebuild, nothing changing) warned of biber and biblatex where emerge
+  does not. The masked list now reads emerge's graph: completed under those conditions or once
+  the plan uninstalls something (emerge completes it then too), else the arguments, the merges
+  and what they pull in, an installed package's dependencies followed only with -D; blockers
+  still weigh the completed graph, as emerge's uninstalls do. An empty set is planned rather
+  than refused up front, since emerge builds its graph for one too: nothing merged, a
+  license-masked package warned of. `test_plans_are_emerges` holds it to emerge for every
+  request.
 
 ## 17. `egraphd`, the service
 

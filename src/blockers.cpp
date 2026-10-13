@@ -45,19 +45,21 @@ class Weigher {
                 replacing_.emplace(*merge.replaces, merge.candidate);
             }
         }
-        complete();
+        needed_ = graph(true, true);
     }
 
     // The masked installed packages emerge warns of (_masked_installed): kept, not visible, and
-    // in the completed graph or masked by LICENSE.
-    [[nodiscard]] std::vector<std::uint32_t> masked() const {
+    // in its graph, completed or not, or masked by LICENSE.
+    [[nodiscard]] std::vector<std::uint32_t> masked(bool complete) {
+        const auto narrow = complete ? std::set<Member>{} : graph(false, targets_ref_.get().deep);
+        const auto& in_graph = complete ? needed_ : narrow;
         std::vector<std::uint32_t> found;
         for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
             const auto& pkg = evaluated().packages.at(id);
             const auto hidden = targets_ref_.get().dynamic_deps ? pkg.hidden : pkg.vdb_hidden;
             if (kept_.at(id) && (hidden == Hidden::license ||
                                  (hidden == Hidden::hidden &&
-                                  needed_.contains({.candidate = false, .index = id})))) {
+                                  in_graph.contains({.candidate = false, .index = id})))) {
                 found.push_back(id);
             }
         }
@@ -242,14 +244,19 @@ class Weigher {
         return false;
     }
 
-    // What the node selects joins the completed graph: an atom's best match, a group's
-    // members, a ||'s first alternative left satisfied.
-    void take(const Tables& tables, std::span<const Node> list, std::size_t index,
-              std::vector<Member>& queue) {
+    // A graph being walked, and the members whose dependencies are still to follow.
+    struct Walk {
+        std::set<Member> reached;
+        std::vector<Member> queue;
+    };
+
+    // What the node selects joins the graph: an atom's best match, a group's members, a ||'s
+    // first alternative left satisfied.
+    void take(const Tables& tables, std::span<const Node> list, std::size_t index, Walk& walk) {
         const auto& node = element(list, index);
         if (node.type == NodeType::atom) {
             if (const auto found = select(tables, node)) {
-                reach(*found, queue);
+                reach(*found, walk);
             }
             return;
         }
@@ -261,35 +268,41 @@ class Weigher {
                 continue;
             }
             if (node.type == NodeType::all_of) {
-                take(tables, list, child, queue);
+                take(tables, list, child, walk);
             } else if (satisfied(tables, list, child)) {
-                take(tables, list, child, queue);
+                take(tables, list, child, walk);
                 return;
             }
         }
     }
 
-    void reach(const Member& member, std::vector<Member>& queue) {
-        if (needed_.insert(member).second) {
-            queue.push_back(member);
+    static void reach(const Member& member, Walk& walk) {
+        if (walk.reached.insert(member).second) {
+            walk.queue.push_back(member);
         }
     }
 
-    // emerge completes its graph before uninstalling anything: the root sets, its arguments and
-    // the merges, and what their dependencies select, deep.
-    void complete() {
-        std::vector<Member> queue;
+    // emerge's graph: its arguments and the merges, and what their dependencies select; with
+    // roots the root sets too, as emerge completes it before uninstalling anything. Without
+    // deep, an installed package's dependencies are not followed.
+    std::set<Member> graph(bool roots, bool deep) {
+        Walk walk;
+        const auto& targets = targets_ref_.get();
+        // Without a request, the root sets are emerge's arguments.
+        const bool arguments = targets.roots && targets.request.empty();
         for (const auto& root : store().roots) {
+            if (!roots && !arguments) {
+                break;
+            }
             if (const auto found =
                     select(store().ids_in(root.matches), atom(store().string(root.atom)))) {
-                reach(*found, queue);
+                reach(*found, walk);
             }
         }
-        const auto& targets = targets_ref_.get();
         if (!targets.roots) {
             for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
                 if (kept_.at(id)) {
-                    reach({.candidate = false, .index = id}, queue);
+                    reach({.candidate = false, .index = id}, walk);
                 }
             }
         }
@@ -302,25 +315,29 @@ class Weigher {
                 }
             }
             if (const auto found = select(ids, wanted)) {
-                reach(*found, queue);
+                reach(*found, walk);
             }
         }
         for (const auto candidate : merged_) {
-            reach({.candidate = true, .index = candidate}, queue);
+            reach({.candidate = true, .index = candidate}, walk);
         }
-        while (!queue.empty()) {
-            const auto member = queue.back();
-            queue.pop_back();
+        while (!walk.queue.empty()) {
+            const auto member = walk.queue.back();
+            walk.queue.pop_back();
+            if (!deep && !member.candidate) {
+                continue;
+            }
             const auto& tables = this->tables(member);
             for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
                 const auto list = nodes(member, kind);
                 for (std::size_t i = 0; i < list.size(); ++i) {
                     if (element(list, i).parent == no_parent) {
-                        take(tables, list, i, queue);
+                        take(tables, list, i, walk);
                     }
                 }
             }
         }
+        return std::move(walk.reached);
     }
 
     // One blocker of holder, as _validate_blockers weighs it.
@@ -431,11 +448,64 @@ std::vector<std::string> blocker_lines(const Store& store, std::span<const std::
     return lines;
 }
 
+namespace {
+
+// IUSE without defaults, and the flags of it enabled.
+std::pair<std::set<std::string_view>, std::set<std::string_view>>
+iuse_and_use(const Tables& tables, std::span<const std::uint32_t> iuse,
+             std::span<const std::uint32_t> use) {
+    std::set<std::string_view> names;
+    for (const auto id : iuse) {
+        auto flag = tables.string(id);
+        if (flag.starts_with('+') || flag.starts_with('-')) {
+            flag.remove_prefix(1);
+        }
+        names.insert(flag);
+    }
+    std::set<std::string_view> enabled;
+    for (const auto id : use) {
+        if (const auto flag = tables.string(id); names.contains(flag)) {
+            enabled.insert(flag);
+        }
+    }
+    return {std::move(names), std::move(enabled)};
+}
+
+} // namespace
+
+bool completes_graph(const Store& store, const Evaluated& evaluated, const Plan& plan) {
+    if (!plan.uninstalls.empty()) {
+        return true;
+    }
+    return std::ranges::any_of(plan.merges, [&](const Merge& merge) {
+        const auto& candidate = evaluated.candidates.at(merge.candidate);
+        const auto cp = evaluated.string(candidate.cp);
+        if (!merge.replaces) {
+            return std::ranges::any_of(
+                store.packages, [&](const Package& pkg) { return store.string(pkg.cp) == cp; });
+        }
+        const auto& installed = store.packages.at(*merge.replaces);
+        const auto version = [&cp](std::string_view cpv) {
+            return parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
+        };
+        const auto from = version(store.string(installed.cpv));
+        const auto to = version(evaluated.string(candidate.cpv));
+        if (!from || !to || vercmp(*from, *to) != 0 ||
+            store.string(installed.slot) != evaluated.string(candidate.slot) ||
+            store.string(installed.sub_slot) != evaluated.string(candidate.sub_slot)) {
+            return true;
+        }
+        return iuse_and_use(store, store.ids_in(installed.iuse), store.ids_in(installed.use)) !=
+               iuse_and_use(evaluated, evaluated.ids_in(candidate.iuse),
+                            evaluated.ids_in(candidate.use));
+    });
+}
+
 void weigh_blockers(const Store& store, const Evaluated& evaluated, const Targets& targets,
                     Plan& plan) {
     Weigher weigher(store, evaluated, targets, plan);
     weigher.run(plan);
-    plan.masked = weigher.masked();
+    plan.masked = weigher.masked(completes_graph(store, evaluated, plan));
 }
 
 } // namespace egraph

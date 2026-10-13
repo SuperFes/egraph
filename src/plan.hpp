@@ -251,4 +251,10 @@ struct Plan {
 [[nodiscard]] Plan plan_updates(const Store& store, const Evaluated& evaluated,
                                 UseRebuilds rebuilds, const Targets& targets = {});
 
+// The plan for arguments that name nothing, as an empty set: emerge still builds its graph, so
+// it merges nothing and warns of the masked installed packages it always does, those masked by
+// LICENSE.
+[[nodiscard]] Plan empty_plan(const Store& store, const Evaluated& evaluated,
+                              const Targets& targets);
+
 } // namespace egraph

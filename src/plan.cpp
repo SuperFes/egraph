@@ -2183,6 +2183,17 @@ RequiredUse required_use_of(const Evaluated& evaluated, const Candidate& candida
     return check_required_use(tokens, enabled, candidate.empty_groups_true);
 }
 
+Plan empty_plan(const Store& store, const Evaluated& evaluated, const Targets& targets) {
+    Plan plan;
+    for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
+        const auto& pkg = evaluated.packages.at(id);
+        if ((targets.dynamic_deps ? pkg.hidden : pkg.vdb_hidden) == Hidden::license) {
+            plan.masked.push_back(id);
+        }
+    }
+    return plan;
+}
+
 Plan plan_updates(const Store& store, const Evaluated& evaluated, UseRebuilds rebuilds,
                   const Targets& targets) {
     // emerge restarts with each USE change autounmask asks for, as many times as it backtracks.

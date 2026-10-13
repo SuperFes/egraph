@@ -430,14 +430,15 @@ PLAN_MODES = {
 @pytest.mark.parametrize("name", sorted(SCENARIOS))
 def test_plans_are_emerges(playgrounds, tmp_path, name, mode):
     """What emerge --pretend merges for each request, with -u, -uD, -n or neither: atoms, slot
-    atoms, =cpv and sets."""
+    atoms, =cpv and sets; and the masked installed packages it warns of, which only a
+    completed graph reaches past the request."""
     import update
 
     system = playgrounds(name)
     path = tmp_path / "installed.egraph"
     write_stores(system, path, request_all=True)
     options, flags = PLAN_MODES[mode]
-    differences = set()
+    differences, masked = set(), set()
     for target in plan_requests(name):
         expected = update.updates(
             system.trees, system.eroot, target=[target], **options
@@ -463,7 +464,10 @@ def test_plans_are_emerges(playgrounds, tmp_path, name, mode):
         use = new_use(result.stdout)
         for cpv in use.keys() & expected.use.keys():
             assert use[cpv] == expected.use[cpv], (target, cpv)
+        if masked_rows(result.stdout) != expected.masked:
+            masked.add((target, masked_rows(result.stdout), expected.masked))
     assert not differences
+    assert not masked
 
 
 def removals(text):
@@ -891,6 +895,22 @@ def test_use_changes_once_made_are_emerges(playgrounds, tmp_path, mode):
         assert expected.success, (target, lines)
         assert ties(plan_merges(result.stdout), expected.merges), target
     assert checked
+
+
+def test_an_empty_set_plans_nothing_but_warns_of_a_license_mask(playgrounds, tmp_path):
+    """emerge builds its graph for an empty set as for any other, so it merges nothing but
+    warns of the license-masked package, as it always does."""
+    import update
+
+    scenario = playgrounds("repository")
+    path = tmp_path / "installed.egraph"
+    write_stores(scenario, path)
+    expected = update.updates(scenario.trees, scenario.eroot, target=["@system"])
+    assert expected.success and not expected.merges
+    assert expected.masked == {"app-misc/eula-1"}
+    output = egraph(path, "plan", "@system").stdout
+    assert not plan_merges(output)
+    assert masked_rows(output) == expected.masked
 
 
 def test_masked_installed_packages_are_warned_of(playgrounds, tmp_path):

@@ -29,8 +29,17 @@ namespace egraph {
 // sets, emerge's arguments (every installed package without targets.roots) or a merge, through
 // dependencies of every kind, each atom taking the best version left that matches and a || its
 // first alternative left satisfied. What cannot be resolved so, and a blocker between two
-// merges, is a block. Sets plan's masked from the same completed graph.
+// merges, is a block. Sets plan's masked from emerge's graph: the completed one when
+// completes_graph, else the arguments, the merges and what they pull in (deep only with
+// targets.deep).
 void weigh_blockers(const Store& store, const Evaluated& evaluated, const Targets& targets,
                     Plan& plan);
+
+// Whether emerge completes its graph from the root sets (_complete_graph's complete_if_new_use,
+// _ver and _slot): a merge changes the installed package in its slot's version, slot or
+// sub-slot, IUSE or enabled USE, or adds a slot to an installed cp; or the plan uninstalls a
+// package.
+[[nodiscard]] bool completes_graph(const Store& store, const Evaluated& evaluated,
+                                   const Plan& plan);
 
 } // namespace egraph

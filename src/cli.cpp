@@ -2330,10 +2330,8 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
         return std::unexpected(fail(err, store.error()));
     }
     const auto& evaluated = stores->get().evaluated;
-    // An empty set asks for nothing.
-    if (!request->installed && request->arguments.empty()) {
-        return std::unexpected(Exit::ok);
-    }
+    // An empty set asks for nothing, which plan_updates would take for the root sets.
+    const bool nothing = !request->installed && request->arguments.empty();
     const auto selection = command.update      ? Selection::update
                            : command.noreplace ? Selection::noreplace
                                                : Selection::reinstall;
@@ -2370,8 +2368,9 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
             targets.reinstall.push_back(change.package);
         }
     }
-    Shown shown{.plan = plan_keeping_kernel(invocation, *store, evaluated, command.rebuilds,
-                                            targets, name, err),
+    Shown shown{.plan = nothing ? empty_plan(*store, evaluated, targets)
+                                : plan_keeping_kernel(invocation, *store, evaluated,
+                                                      command.rebuilds, targets, name, err),
                 .request = {.targets = command.targets,
                             .update = command.update,
                             .deep = command.deep,

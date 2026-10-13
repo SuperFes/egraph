@@ -359,3 +359,115 @@ TEST_CASE("update lines end with the uninstalls, then the blocks") {
     REQUIRE(table.size() == 3);
     CHECK(table.back() == "\t\tapp-misc/new-1\tblocks\t!app-misc/old\tapp-misc/old-1");
 }
+
+namespace {
+
+std::uint32_t candidate_of(const egraph::test::System& system, std::string_view cpv) {
+    const auto& candidates = system.evaluated.candidates;
+    for (std::uint32_t id = 0; id < candidates.size(); ++id) {
+        if (system.evaluated.string(candidates.at(id).cpv) == cpv) {
+            return id;
+        }
+    }
+    FAIL("no candidate " << cpv);
+    return 0;
+}
+
+std::uint32_t installed_of(const egraph::test::System& system, std::string_view cpv) {
+    const auto& packages = system.store.packages;
+    for (std::uint32_t id = 0; id < packages.size(); ++id) {
+        if (system.store.string(packages.at(id).cpv) == cpv) {
+            return id;
+        }
+    }
+    FAIL("no installed " << cpv);
+    return 0;
+}
+
+} // namespace
+
+TEST_CASE("emerge completes its graph once a merge changes something installed") {
+    const auto system = make_system({{.cpv = "app-misc/same-1", .iuse = "a", .use = "a"},
+                                     {.cpv = "app-misc/up-1"},
+                                     {.cpv = "app-misc/flags-1", .iuse = "a b", .use = "a"},
+                                     {.cpv = "app-misc/iuse-1", .iuse = "a", .use = "a"},
+                                     {.cpv = "app-misc/sub-1", .sub_slot = "1"},
+                                     {.cpv = "app-misc/slotted-1", .slot = "1"}},
+                                    {{.cpv = "app-misc/same-1", .iuse = "a", .use = "a"},
+                                     {.cpv = "app-misc/up-2"},
+                                     {.cpv = "app-misc/flags-1", .iuse = "a b", .use = "a b"},
+                                     {.cpv = "app-misc/iuse-1", .iuse = "a b", .use = "a"},
+                                     {.cpv = "app-misc/sub-1", .sub_slot = "2"},
+                                     {.cpv = "app-misc/slotted-2", .slot = "2"},
+                                     {.cpv = "app-misc/fresh-1"}});
+    const auto completes = [&](std::string_view cpv, std::optional<std::string_view> replaces) {
+        egraph::Merge merge;
+        merge.candidate = candidate_of(system, cpv);
+        if (replaces) {
+            merge.replaces = installed_of(system, *replaces);
+        }
+        egraph::Plan plan;
+        plan.merges.push_back(merge);
+        return egraph::completes_graph(system.store, system.evaluated, plan);
+    };
+    CHECK_FALSE(egraph::completes_graph(system.store, system.evaluated, {}));
+    // A rebuild with nothing changed, and a cp new to the system.
+    CHECK_FALSE(completes("app-misc/same-1", "app-misc/same-1"));
+    CHECK_FALSE(completes("app-misc/fresh-1", std::nullopt));
+    CHECK(completes("app-misc/up-2", "app-misc/up-1"));
+    CHECK(completes("app-misc/flags-1", "app-misc/flags-1"));
+    CHECK(completes("app-misc/iuse-1", "app-misc/iuse-1"));
+    CHECK(completes("app-misc/sub-1", "app-misc/sub-1"));
+    CHECK(completes("app-misc/slotted-2", std::nullopt));
+    egraph::Plan uninstalling;
+    uninstalling.uninstalls.push_back(
+        {.package = installed_of(system, "app-misc/up-1"), .why = std::nullopt, .after = {}});
+    CHECK(egraph::completes_graph(system.store, system.evaluated, uninstalling));
+}
+
+TEST_CASE("only the masked installed packages in emerge's graph are warned of") {
+    // top needs lib, lib needs deep; other is in world alone. deep and other are masked.
+    const auto masked = [](std::vector<Available> extra, egraph::Hidden other) {
+        std::vector<Available> available{
+            {.cpv = "app-misc/top-1", .deps = {{"RDEPEND", "dev-libs/lib"}}},
+            {.cpv = "dev-libs/lib-1", .deps = {{"RDEPEND", "dev-libs/deep"}}}};
+        available.insert(available.end(), extra.begin(), extra.end());
+        auto system =
+            make_system({{.cpv = "app-misc/top-1", .deps = {{"RDEPEND", "dev-libs/lib"}}},
+                         {.cpv = "dev-libs/lib-1", .deps = {{"RDEPEND", "dev-libs/deep"}}},
+                         {.cpv = "dev-libs/deep-1"},
+                         {.cpv = "app-misc/other-1"}},
+                        std::move(available), {"app-misc/top", "app-misc/other"});
+        system.evaluated.packages.at(installed_of(system, "dev-libs/deep-1")).hidden =
+            egraph::Hidden::hidden;
+        system.evaluated.packages.at(installed_of(system, "app-misc/other-1")).hidden = other;
+        return [system](bool deep, bool request = true) {
+            egraph::Targets targets{.scope = {}, .roots = true, .deep = deep};
+            if (request) {
+                targets.request.push_back({.set = "", .atom = "app-misc/top"});
+                targets.selection = egraph::Selection::reinstall;
+            }
+            const auto plan = egraph::plan_updates(system.store, system.evaluated,
+                                                   egraph::UseRebuilds::none, targets);
+            std::vector<std::string> found;
+            for (const auto id : plan.masked) {
+                found.emplace_back(system.store.string(system.store.packages.at(id).cpv));
+            }
+            return found;
+        };
+    };
+    // A rebuild of top changes nothing: the graph is top and what it pulls in, deep with -D.
+    const auto rebuilt = masked({}, egraph::Hidden::hidden);
+    CHECK(rebuilt(false).empty());
+    CHECK(rebuilt(true) == std::vector<std::string>{"dev-libs/deep-1"});
+    // emerge -u @world with nothing to update: the root sets are the arguments.
+    CHECK(rebuilt(false, false) == std::vector<std::string>{"app-misc/other-1"});
+    CHECK(rebuilt(true, false) == std::vector<std::string>{"dev-libs/deep-1", "app-misc/other-1"});
+    // Its upgrade completes the graph from the root sets.
+    const auto upgraded = masked({{.cpv = "app-misc/top-2", .deps = {{"RDEPEND", "dev-libs/lib"}}}},
+                                 egraph::Hidden::hidden);
+    CHECK(upgraded(false) == std::vector<std::string>{"dev-libs/deep-1", "app-misc/other-1"});
+    // A license mask is warned of wherever the package is.
+    CHECK(masked({}, egraph::Hidden::license)(false) ==
+          std::vector<std::string>{"app-misc/other-1"});
+}
