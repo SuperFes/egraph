@@ -250,6 +250,13 @@ struct Sync : Updates {
 // How long a notice is put off for.
 enum class PutOff : std::uint8_t { hour, day, week };
 
+// The package sets portage's set configuration defines, or the atoms of those named.
+struct SetsCommand {
+    static constexpr std::string_view name = "sets";
+    // Without the leading @, as given or not.
+    std::vector<std::string> names;
+};
+
 // What needs the user: GLSAs, configuration updates waiting, unread news and the rest.
 struct NoticesCommand {
     static constexpr std::string_view name = "notices";
@@ -383,9 +390,9 @@ struct Affected {
 using Command =
     std::variant<std::monostate, Deps, Rdeps, Why, Match, UseCommand, Soname, Broken, Search,
                  Versions, ConfigCommand, Blockers, Orphans, Updates, PlanCommand, Update, Install,
-                 Exec, Remove, Select, Deselect, Save, Sync, NoticesCommand, Export, Stats,
-                 LogCommand, BuildsCommand, Diff, HistoryCommand, StatusCommand, Rebuild, Refresh,
-                 Watch, Check, Notify, Tui, Shell, Complete, Affected>;
+                 Exec, Remove, Select, Deselect, Save, Sync, SetsCommand, NoticesCommand, Export,
+                 Stats, LogCommand, BuildsCommand, Diff, HistoryCommand, StatusCommand, Rebuild,
+                 Refresh, Watch, Check, Notify, Tui, Shell, Complete, Affected>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.

@@ -966,7 +966,7 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
   repositories, the preserved libraries' registry or VCS remotes would each need porting); the
   outline's USE database is dropped, step 19f's own files having taken its place, and warning
   of a user's file that egraph's contradicts goes to the audit (`vision.md`).
-  - 17d4a: every set portage's configuration defines as a target (99 here: portage's own, the
+  - 17d4a (done): every set portage's configuration defines as a target (99 here: portage's own, the
     user's, and the kde overlay's 78), not only those the store holds.
     - 17d4a1 (done): `egraph-build --sets [NAME...]`: every set's name, class, description and
       whether it may go in world_sets; with names, each one's atoms as emerge's arguments hold
@@ -986,7 +986,8 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
       skipped with nothing to merge. Left over, older than sets: emerge records there too the world atom of
       an argument it leaves installed (`-n`, or `-u` at the best version), which `exec` does
       not yet.
-    - 17d4a3: `egraph sets [NAME...]`: the list, or a set's atoms; completions offer them.
+    - 17d4a3 (done): `egraph sets [NAME...]`: the list, or a set's atoms with what each matches
+      installed; completion asks egraph-build for the set names after `@`.
   - 17d4b: sets in the living app: a page listing every set, enter planning one as a page
     beside `@world` and `@system` (in the background, as they are; `@smart-live-rebuild`, where
     installed, is one of them, slow for its VCS checks); `@preserved-rebuild`'s page opened by

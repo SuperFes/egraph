@@ -203,3 +203,45 @@ def test_favorites_are_recorded_as_emerge_records_them(gnupg_home, capsys):
         assert cli.main([*argv, "not an atom"]) == cli.EXIT_USAGE
     finally:
         playground.cleanup()
+
+
+@pytest.mark.skipif(not os.environ.get("EGRAPH"), reason="set EGRAPH (meson test does)")
+def test_egraph_sets_lists_them_and_their_atoms(playgrounds, tmp_path):
+    import subprocess
+
+    from conftest import builder_script, write_stores
+
+    system = playgrounds("sets")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path)
+
+    def sets(*names):
+        return subprocess.run(
+            [os.environ["EGRAPH"], "--store", str(path), "--no-refresh"]
+            + ["--config-root", system.eroot]
+            + ["--builder", str(builder_script(tmp_path)), "sets", *names],
+            capture_output=True,
+            text=True,
+            env=system.vardb.settings.environ(),
+        )
+
+    listed = sets()
+    assert (listed.returncode, listed.stderr) == (0, "")
+    expected, _ = roots.set_list(system.vardb)
+    rows = [line.split("\t") for line in listed.stdout.splitlines()]
+    assert [row[:3] for row in rows] == [
+        [f"@{info.name}", info.kind, "world" if info.world_candidate else ""]
+        for info in expected
+    ]
+    atoms = sets("@desktop", "mine")
+    assert (atoms.returncode, atoms.stderr) == (0, "")
+    assert atoms.stdout.splitlines() == [
+        "@desktop\t@desktop\tapp-misc/editor\t",
+        "@desktop\t@desktop\tapp-misc/viewer\tapp-misc/viewer-1",
+        "@desktop\t@tools\tdev-util/tool\tdev-util/tool-1",
+        "@mine\t@mine\tapp-misc/solo\tapp-misc/solo-1",
+        "@mine\t@tools\tdev-util/tool\tdev-util/tool-1",
+    ]
+    broken = sets("broken")
+    assert broken.returncode == 1
+    assert "@broken: it names a set that does not exist" in broken.stderr

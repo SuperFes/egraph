@@ -806,6 +806,54 @@ void human_selection(std::ostream& out, std::span<const std::string> records, co
     }
 }
 
+void human_sets(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto rows = split_all(records);
+    std::size_t width = 0;
+    for (const auto& row : rows) {
+        width = std::max(width, row.at(0).size());
+    }
+    for (const auto& row : rows) {
+        out << paint(row.at(0), Tone::name);
+        if (!row.at(3).empty() || !row.at(2).empty()) {
+            out << std::string(width - row.at(0).size() + 2, ' ') << row.at(3);
+        }
+        if (!row.at(2).empty()) {
+            out << paint(std::format("  [{}]", row.at(2)), Tone::note);
+        }
+        out << '\n';
+    }
+}
+
+void human_set_atoms(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
+    const auto& paint = theme.paint;
+    const auto rows = split_all(records);
+    for (std::size_t first = 0; first < rows.size();) {
+        const auto set = rows.at(first).at(0);
+        auto last = first;
+        std::size_t width = 0;
+        for (; last < rows.size() && rows.at(last).at(0) == set; ++last) {
+            width = std::max(width, rows.at(last).at(2).size());
+        }
+        out << (first == 0 ? "" : "\n") << paint(set, Tone::heading) << '\n';
+        for (auto i = first; i < last; ++i) {
+            const auto& row = rows.at(i);
+            out << "  " << paint_atom(row.at(2), paint)
+                << std::string(width - row.at(2).size() + 2, ' ');
+            if (row.at(3).empty()) {
+                out << paint("not installed", Tone::note);
+            } else {
+                out << row.at(3);
+            }
+            if (row.at(1) != set) {
+                out << paint(std::format("  from {}", row.at(1)), Tone::note);
+            }
+            out << '\n';
+        }
+        first = last;
+    }
+}
+
 void human_elog(std::ostream& out, std::span<const std::string> records, const Theme& theme) {
     const auto& paint = theme.paint;
     std::string_view package;

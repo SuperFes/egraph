@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,13 +31,17 @@ enum class Completing : std::uint8_t {
 // slots after ":", repositories after "::"; sets after "@". Names without a category join the
 // categories for atoms once the word is not empty, as requests fill the category in. With the
 // repository index, atoms' versions and slots are every one in the repositories, and the
-// repositories every one configured; without it, those the stores hold.
+// repositories every one configured; without it, those the stores hold. sets: the names of the
+// sets portage's configuration defines, offered beside the store's.
 [[nodiscard]] std::vector<std::string>
 complete_word(const Store& store, const Evaluated& evaluated,
               std::optional<std::reference_wrapper<const RepositoryIndex>> index, Completing what,
-              std::string_view word);
+              std::string_view word, std::span<const std::string> sets = {});
 
 // Whether completing word needs the index's versions, slots or repositories.
 [[nodiscard]] bool needs_index(Completing what, std::string_view word);
+
+// Whether completing word offers sets, which portage's configuration names.
+[[nodiscard]] bool needs_sets(Completing what, std::string_view word);
 
 } // namespace egraph

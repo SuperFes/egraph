@@ -1212,6 +1212,24 @@ sync too, for the repositories that synced; the exit status is then 1.
 .B \-\-verify
 As for
 .BR updates .
+.SS sets \fR[\fIset\fR...]
+The package sets portage's set configuration defines: its own, the user's and the
+repositories', as
+.B egraph\-build \-\-sets
+lists them. Without sets, one a line:
+.IR @name ,
+the class portage builds it with,
+.B world
+when
+.B emerge
+records it in world_sets once asked for it (else empty), and its description. With sets (with
+or without their
+.BR @ ),
+each one's atoms as
+.B emerge
+expands them, one a line: the set named, the set holding the atom (it, or one nested in it),
+the atom, and the installed packages it matches, space-separated. A set portage cannot load,
+or does not define, is an error.
 .SS notices
 What needs attention once
 .B emerge

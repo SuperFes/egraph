@@ -7,8 +7,8 @@ namespace egraph {
 
 namespace {
 
-constexpr std::array<std::string_view, 5> sets{"@installed", "@profile", "@selected", "@system",
-                                               "@world"};
+constexpr std::array<std::string_view, 5> store_sets{"@installed", "@profile", "@selected",
+                                                     "@system", "@world"};
 
 // One version a word may name: installed, or in a repository.
 struct Entry {
@@ -29,8 +29,12 @@ std::string_view category(std::string_view cp) {
 class Words {
   public:
     Words(const Store& store, const Evaluated& evaluated,
-          std::optional<std::reference_wrapper<const RepositoryIndex>> index, Completing what)
+          std::optional<std::reference_wrapper<const RepositoryIndex>> index, Completing what,
+          std::span<const std::string> sets)
         : atoms_{what != Completing::installed} {
+        for (const auto& set : sets) {
+            sets_.insert("@" + set);
+        }
         for (const auto& pkg : store.packages) {
             entries_.push_back({.cp = store.string(pkg.cp),
                                 .cpv = store.string(pkg.cpv),
@@ -75,7 +79,10 @@ class Words {
             }
         } else if (word.starts_with('@')) {
             if (atoms_) {
-                for (const auto set : sets) {
+                for (const auto set : store_sets) {
+                    offer("", set, word);
+                }
+                for (const auto& set : sets_) {
                     offer("", set, word);
                 }
             }
@@ -156,6 +163,7 @@ class Words {
     std::vector<Entry> entries_;
     std::set<std::string_view> repositories_;
     std::set<std::string_view> cps_;
+    std::set<std::string> sets_;
     std::set<std::string> found_;
 };
 
@@ -164,8 +172,12 @@ class Words {
 std::vector<std::string>
 complete_word(const Store& store, const Evaluated& evaluated,
               std::optional<std::reference_wrapper<const RepositoryIndex>> index, Completing what,
-              std::string_view word) {
-    return Words{store, evaluated, index, what}.complete(what, word);
+              std::string_view word, std::span<const std::string> sets) {
+    return Words{store, evaluated, index, what, sets}.complete(what, word);
+}
+
+bool needs_sets(Completing what, std::string_view word) {
+    return what == Completing::atoms && word.starts_with('@');
 }
 
 bool needs_index(Completing what, std::string_view word) {

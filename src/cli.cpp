@@ -4084,8 +4084,17 @@ Exit execute(const Complete& command, Session&, const Invocation& invocation, st
     if (index) {
         view = std::cref(*index);
     }
-    write_lines(
-        out, complete_word(newest->installed, newest->evaluated, view, command.what, command.word));
+    // From egraph-build, so only for the words that offer them; the store's alone without it.
+    std::vector<std::string> sets;
+    if (needs_sets(command.what, command.word)) {
+        if (const auto list = read_sets(invocation)) {
+            for (const auto& set : list->sets) {
+                sets.push_back(set.name);
+            }
+        }
+    }
+    write_lines(out, complete_word(newest->installed, newest->evaluated, view, command.what,
+                                   command.word, sets));
     return Exit::ok;
 }
 
@@ -4747,6 +4756,46 @@ std::optional<tui::StatusShown> shown_status(const Invocation& invocation) {
     return tui::StatusShown{.status = std::move(found->status), .current = found->current};
 }
 
+Exit execute(const SetsCommand& command, Session& session, const Invocation& invocation,
+             std::ostream& out, std::ostream& err) {
+    std::vector<std::string> names;
+    for (const auto& name : command.names) {
+        names.push_back(name.starts_with('@') ? name.substr(1) : name);
+    }
+    const auto list = read_sets(invocation, names);
+    if (!list) {
+        return fail(err, std::format("sets: {}", list.error()));
+    }
+    for (const auto& error : list->errors) {
+        err << "egraph: sets: " << error << '\n';
+    }
+    const auto human = style(invocation).human;
+    if (names.empty()) {
+        const auto lines = set_lines(*list);
+        if (human) {
+            human_sets(out, lines, output(invocation).theme);
+        } else {
+            write_lines(out, lines);
+        }
+        return Exit::ok;
+    }
+    const auto sets = loaded_sets(*list);
+    if (!sets) {
+        return fail(err, std::format("sets: {}", sets.error()));
+    }
+    const auto stores = session.stores();
+    if (!stores) {
+        return fail(err, stores.error());
+    }
+    const auto lines = set_atom_lines(stores->get().installed, names, *sets);
+    if (human) {
+        human_set_atoms(out, lines, output(invocation).theme);
+    } else {
+        write_lines(out, lines);
+    }
+    return Exit::ok;
+}
+
 Exit execute(const StatusCommand& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
     std::expected<FoundStatus, std::string> found = std::unexpected(std::string{});
@@ -5342,6 +5391,12 @@ void configure(CLI::App& app, Invocation& invocation) {
                                        {"forward", Direction::forward},
                                        {"both", Direction::both}}));
 
+    add_field(add_command<SetsCommand>(app, invocation,
+                                       "The package sets portage defines (its own, the user's "
+                                       "and the repositories'), or the atoms of those named"),
+              invocation, "names", &SetsCommand::names,
+              "Sets, with or without their @; every set, without its atoms, without any")
+        ->type_name("SET");
     CLI::App* notices_cmd = add_command<NoticesCommand>(
         app, invocation,
         "What needs attention: GLSAs, missing libraries, configuration updates, unread news and "

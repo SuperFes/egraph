@@ -5,6 +5,7 @@
 
 #include "query.hpp"
 #include "request.hpp"
+#include "store.hpp"
 
 #include <expected>
 #include <optional>
@@ -40,5 +41,15 @@ struct SetList {
 // Each set the list holds the atoms of, by name; the first that could not be loaded instead,
 // as "@name: why".
 [[nodiscard]] std::expected<Sets, std::string> loaded_sets(const SetList& list);
+
+// "@name<TAB>class<TAB>world<TAB>description" for each set the list holds, by name; "world" is
+// empty unless emerge records the set in world_sets.
+[[nodiscard]] std::vector<std::string> set_lines(const SetList& list);
+
+// For each set named, in order, each of its atoms: "@name<TAB>@holder<TAB>atom<TAB>cpvs", the
+// holder the set the atom is in (the one named, or one nested in it), cpvs the installed
+// packages the atom matches, space-separated.
+[[nodiscard]] std::vector<std::string>
+set_atom_lines(const Store& store, std::span<const std::string> names, const Sets& sets);
 
 } // namespace egraph

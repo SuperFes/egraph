@@ -1549,3 +1549,30 @@ TEST_CASE("a slower build reads with its time against before's and what changed 
     egraph::human_slowdowns(none, {}, plain);
     CHECK(none.str() == "+ Nothing got slower.\n");
 }
+
+TEST_CASE("sets line up their descriptions, marking those that may go in world_sets") {
+    std::ostringstream out;
+    egraph::human_sets(out,
+                       std::vector<std::string>{"@desktop\tStaticFileSet\tworld\tfrom a file",
+                                                "@live-rebuild\tVariableSet\t\tby PROPERTIES"},
+                       plain);
+    CHECK(out.str() == "@desktop       from a file  [world]\n"
+                       "@live-rebuild  by PROPERTIES\n");
+}
+
+TEST_CASE("a set's atoms are listed under it, with what each matches installed") {
+    std::ostringstream out;
+    egraph::human_set_atoms(
+        out,
+        std::vector<std::string>{"@desktop\t@desktop\tapp-misc/viewer\tapp-misc/viewer-1",
+                                 "@desktop\t@desktop\tapp-misc/editor\t",
+                                 "@desktop\t@tools\tdev-util/tool\tdev-util/tool-1 dev-util/tool-2",
+                                 "@other\t@other\ta/b\t"},
+        plain);
+    CHECK(out.str() == "@desktop\n"
+                       "  app-misc/viewer  app-misc/viewer-1\n"
+                       "  app-misc/editor  not installed\n"
+                       "  dev-util/tool    dev-util/tool-1 dev-util/tool-2  from @tools\n"
+                       "\n@other\n"
+                       "  a/b  not installed\n");
+}

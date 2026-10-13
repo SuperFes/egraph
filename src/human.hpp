@@ -266,6 +266,14 @@ void human_deselect(std::ostream& out, std::span<const std::string> records, con
 // selection_changes' records, after an action: what joined @selected, then what left it.
 void human_selection(std::ostream& out, std::span<const std::string> records, const Theme& theme);
 
+// set_lines' records: each set's name and description, aligned, those emerge records in
+// world_sets marked.
+void human_sets(std::ostream& out, std::span<const std::string> records, const Theme& theme);
+
+// set_atom_lines' records: each set named, then its atoms with the installed packages each
+// matches, and the nested set it comes from.
+void human_set_atoms(std::ostream& out, std::span<const std::string> records, const Theme& theme);
+
 // elog_lines records: each package's messages under its name, by class and phase.
 void human_elog(std::ostream& out, std::span<const std::string> records, const Theme& theme);
 

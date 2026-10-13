@@ -95,6 +95,14 @@ TEST_CASE("after @, the sets, for atoms") {
     CHECK(complete(Completing::atoms, "@s") == Words{"@selected", "@system"});
     CHECK(complete(Completing::atoms, "@").size() == 5);
     CHECK(complete(Completing::installed, "@").empty());
+    const auto system = sample();
+    const std::vector<std::string> sets{"desktop", "selected", "kde-plasma"};
+    CHECK(egraph::complete_word(system.store, system.evaluated, std::nullopt, Completing::atoms,
+                                "@", sets) == Words{"@desktop", "@installed", "@kde-plasma",
+                                                    "@profile", "@selected", "@system", "@world"});
+    CHECK(egraph::needs_sets(Completing::atoms, "@k"));
+    CHECK_FALSE(egraph::needs_sets(Completing::atoms, "k"));
+    CHECK_FALSE(egraph::needs_sets(Completing::installed, "@"));
 }
 
 TEST_CASE("repositories by name") {

@@ -1,5 +1,7 @@
 #include "sets.hpp"
 
+#include "atom.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -113,6 +115,39 @@ std::expected<Sets, std::string> loaded_sets(const SetList& list) {
         }
     }
     return sets;
+}
+
+std::vector<std::string> set_lines(const SetList& list) {
+    std::vector<std::string> lines;
+    lines.reserve(list.sets.size());
+    for (const auto& set : list.sets) {
+        lines.push_back(std::format("@{}\t{}\t{}\t{}", set.name, set.kind,
+                                    set.world_candidate ? "world" : "", set.description));
+    }
+    return lines;
+}
+
+std::vector<std::string> set_atom_lines(const Store& store, std::span<const std::string> names,
+                                        const Sets& sets) {
+    std::vector<std::string> lines;
+    for (const auto& name : names) {
+        const auto found = sets.find(name);
+        if (found == sets.end()) {
+            continue;
+        }
+        for (const auto& [holder, text] : found->second.atoms) {
+            std::string cpvs;
+            if (const auto atom = parse_atom(text)) {
+                for (const auto& pkg : store.packages) {
+                    if (matches(store, pkg, *atom)) {
+                        cpvs += std::format("{}{}", cpvs.empty() ? "" : " ", store.string(pkg.cpv));
+                    }
+                }
+            }
+            lines.push_back(std::format("@{}\t@{}\t{}\t{}", name, holder, text, cpvs));
+        }
+    }
+    return lines;
 }
 
 } // namespace egraph

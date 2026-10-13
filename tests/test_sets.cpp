@@ -1,4 +1,5 @@
 #include "sets.hpp"
+#include "system_builder.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -86,4 +87,40 @@ TEST_CASE("the sets loaded give their atoms by name, or the first that could not
                          .atoms = std::nullopt,
                          .error = "it names a set that does not exist: x"});
     CHECK(egraph::loaded_sets(list).error() == "@nope: no such set");
+}
+
+TEST_CASE("the set list is a line per set, saying which emerge records in world_sets") {
+    egraph::SetList list;
+    list.sets.push_back({.name = "desktop",
+                         .kind = "StaticFileSet",
+                         .description = "from a file",
+                         .world_candidate = true,
+                         .atoms = std::nullopt,
+                         .error = std::nullopt});
+    list.sets.push_back({.name = "live-rebuild",
+                         .kind = "VariableSet",
+                         .description = "by PROPERTIES",
+                         .world_candidate = false,
+                         .atoms = std::nullopt,
+                         .error = std::nullopt});
+    CHECK(egraph::set_lines(list) ==
+          std::vector<std::string>{"@desktop\tStaticFileSet\tworld\tfrom a file",
+                                   "@live-rebuild\tVariableSet\t\tby PROPERTIES"});
+}
+
+TEST_CASE("a set's atoms are lines naming the set holding each and what it matches installed") {
+    const auto system = egraph::test::make_system(
+        {{.cpv = "app-misc/viewer-1"}, {.cpv = "dev-util/tool-1"}, {.cpv = "dev-util/tool-2"}}, {});
+    const egraph::Sets sets{{"desktop",
+                             {.atoms = {{.set = "desktop", .atom = "app-misc/viewer"},
+                                        {.set = "desktop", .atom = "app-misc/editor"},
+                                        {.set = "tools", .atom = "dev-util/tool"}},
+                              .world_candidate = true}},
+                            {"empty", {.atoms = {}, .world_candidate = false}}};
+    const std::vector<std::string> names{"empty", "desktop"};
+    CHECK(egraph::set_atom_lines(system.store, names, sets) ==
+          std::vector<std::string>{
+              "@desktop\t@desktop\tapp-misc/viewer\tapp-misc/viewer-1",
+              "@desktop\t@desktop\tapp-misc/editor\t",
+              "@desktop\t@tools\tdev-util/tool\tdev-util/tool-1 dev-util/tool-2"});
 }
