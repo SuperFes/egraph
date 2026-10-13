@@ -988,10 +988,16 @@ changes the system (the acting jobs, distfile prefetch and `egencache`, are visi
       not yet.
     - 17d4a3 (done): `egraph sets [NAME...]`: the list, or a set's atoms with what each matches
       installed; completion asks egraph-build for the set names after `@`.
-  - 17d4b: sets in the living app: a page listing every set, enter planning one as a page
-    beside `@world` and `@system` (in the background, as they are; `@smart-live-rebuild`, where
-    installed, is one of them, slow for its VCS checks); `@preserved-rebuild`'s page opened by
-    itself when a run the app started leaves preserved libraries.
+  - 17d4b: sets in the living app. Decided with the user (2026-10-12): a `sets` tab after the
+    notices lists every set; enter opens one as a page after `@system`, kept for the session
+    only (esc closes it).
+    - 17d4b1: the list's pages as values rather than a closed enum, the three as before.
+    - 17d4b2: the `sets` tab (the list from egraph-build, in the background), enter opening a
+      set's page: its atoms loaded and planned in the background, as `@world`'s are
+      (`@smart-live-rebuild`, where installed, is one of them, slow for its VCS checks); `U`
+      updates the set; esc closes the page.
+    - 17d4b3: `@preserved-rebuild`'s page opened by itself when a run the app started leaves
+      preserved libraries.
   - 17d4c: a package's page showing every piece of metadata the stores hold, not only the
     ebuild's.
   - 17d4d: REQUIRED_USE (`^^`, `??`, `||`, conditionals) on the USE table's toggles: flags a
