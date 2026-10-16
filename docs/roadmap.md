@@ -27,7 +27,7 @@ Update the status column as steps land.
 | 19 | What-if | done |
 | 20 | Build knowledge | done |
 | 21 | Upstream work | dropped |
-| 22 | Portage's tools in egraph's space | mapped out, not scheduled |
+| 22 | Portage's tools in egraph's space | mapped out |
 
 ## 0. Scaffold
 
@@ -1367,11 +1367,11 @@ speedups, embedding or patches; the portage bugs egraph works around stay record
 programs, syncing with its verification (signed Manifests and commits, keys, gpkg
 signatures, the privilege drops and sandboxes), the overlapping gentoolkit and portage-utils
 tools, and the library underneath, so
-that a system runs without portage installed; then egraph moves into `sys-apps`. Mapped out in
-`docs/vision.md` ("Portage's tools in egraph's space"); not scheduled until the user decides.
+that a system runs without portage installed; then egraph moves into `sys-apps`. Sketched in
+`docs/vision.md` ("Portage's tools in egraph's space"), mapped out below.
 Everthting portage, ported to egraph in a way that doesn't suck.
 
-Mapped out 2026-10-16, a proposal for the user to order and schedule. Where things stand: of
+Mapped out 2026-10-16. Where things stand: of
 the sixteen programs `sys-apps/portage` puts on PATH, egraph covers part of `emerge` and
 pieces of `glsa-check`, `portageq`, `emaint sync` and `dispatch-conf`; `update`, `install`,
 `remove`, `select` and `deselect` still run emerge, `sync` runs emaint, and `exec` runs
@@ -1469,10 +1469,33 @@ the last step drops it to a test dependency.
   is gone (its own test suite run against egraph, PMS tests); eclasses and scripts that call
   `portageq` or `emerge` directly; the package's dependencies; egraph into `sys-apps`.
 
-Decisions for the user before scheduling: the order (proposed: 22a1 and 22b first, then 22c,
-22d, 22g, 22h; 22e and 22f wherever binaries or native sync are wanted); CONTENTS' storage
-cost; the OpenPGP implementation for 22e and 22f (gpgme, sequoia, or gpg run as portage runs
-it); which of portage's own state files egraph writes once it replaces their writer
-(`glsa_injected`, news' read lists, the config archive, mtimedb's `ldpath`), against the rule
-that egraph keeps its own; and whether the replacements answer to portage's names
-(`portageq` on PATH for eclasses) or only as `egraph-*` links.
+Decided with the user (2026-10-16):
+
+- Order: egraph's to choose, by what each step unblocks (22a1 and 22b first, then 22c, 22d,
+  22g, 22h; 22e and 22f once binaries or native sync are wanted).
+- CONTENTS is stored; its size is no concern.
+- OpenPGP through gpgme (GnuPG's own library), confined to one source file as os.cpp confines
+  the C APIs: gemato, `gpkg-sign` and `git verify-commit` all run GnuPG, so verdicts match
+  the oracle's, and signing reaches the keys and smartcards people keep in gpg-agent.
+  Sequoia's C interface is abandoned and librnp cannot reach gpg-agent's keys.
+- Front ends are `egraph-*` links only (`egraph-portageq`, `egraph-ebuild`), never portage's
+  names on PATH. Inside a build, `portageq`, `has_version` and `best_version` are the build
+  environment's own helpers (22h), as portage's are, so eclasses never need it on PATH.
+- State shared with portage where both write it, so egraph and emerge can each run at any
+  time, beside each other: the same files, in the same formats, under the same locks. The
+  locks are the critical path: portage takes `fcntl.lockf` (POSIX record locks, which Linux
+  keeps apart from `flock`, and drops when any descriptor of the file closes) on
+  `.<name>.portage_lockfile` beside what it guards, so egraph's own locks (in os.cpp, before
+  any native write) must be the same and outlive no descriptor. Held by tests running egraph
+  and emerge at once, as `test_exec_run` runs a concurrent emerge today.
+  - Shared: the vdb (its directory lock, per-slot locks, `-MERGING-` entries), the COUNTER in
+    `var/cache/edb/counter` (monotonic, under the vdb lock), `preserved_libs_registry`, the
+    conf memory (`var/lib/portage/config`), `world` and `world_sets`, news' read lists,
+    `glsa_injected`, `/etc/config-archive`, `repo_revisions`, the build and category locks
+    under PORTAGE_TMPDIR, the distfile fetch locks, PKGDIR's `Packages`, and env-update's
+    outputs (`profile.env`, `csh.env`, `ld.so.conf`, `ld.so.cache`).
+  - Avoided, egraph keeping its own: `emerge.log`, `/run/portage`, all of mtimedb (no lock,
+    and emerge rewrites the whole file from memory as it exits, so anything else written
+    there is lost; egraph keeps its own `ldpath` mtimes and applied `profiles/updates`, and
+    package moves applied twice change nothing), and portage's caches
+    (`var/cache/edb/dep`, `vdb_metadata.pickle`).
