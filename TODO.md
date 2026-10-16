@@ -94,6 +94,13 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       with the same version, candidates keep the builder's order, not depgraph's priority.
 - [ ] The plan never backtracks: a choice only moves down a version, so a fallback taken for
       one member is kept even when a later rejection makes it needless.
+- [ ] An installed package's `<atom` RDEPEND does not hold an update back: `exec @world`
+      upgraded app-misc/openrgb to 1.0 past openrgb-plugin-skin-1.0_rc2-r1's
+      `<app-misc/openrgb-1.0`, where `-uDN --verify` shows emerge downgrading it back. Start
+      with a playground scenario as a strict xfail against `emerge --pretend`.
+- [ ] `test_plans_are_emerges[waits-*]` fails (found 2026-10-16, already at 1a6d817): the
+      plan differs from emerge's on `=sys-libs/glibc-2` (and virtual/libc under `-uD`). The
+      fork is unchanged since 2026-09-28; bisect egraph's commits since the last green run.
 
 ## Output and UX
 
