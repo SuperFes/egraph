@@ -102,6 +102,10 @@ Removal plan_removal(const Store& store, KeepOptions options,
     return removal;
 }
 
+Removal plan_depclean(const Kept& kept) {
+    return {.removed = orphans(kept), .kept = {}, .orphaned = {}};
+}
+
 std::vector<std::string> removal_lines(const Store& store, const Removal& removal) {
     std::vector<std::string> lines;
     lines.reserve(removal.removed.size() + removal.kept.size() + removal.orphaned.size());

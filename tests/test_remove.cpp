@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -133,4 +134,16 @@ TEST_CASE("a depclean keeps emerge's build-time and dynamic dependency defaults 
     CHECK(egraph::depclean_options(true, true).empty());
     CHECK(egraph::depclean_options(false, false) ==
           std::vector<std::string>{"--with-bdeps=n", "--dynamic-deps=n"});
+}
+
+TEST_CASE("without arguments, a removal is everything depclean keeps nothing of") {
+    auto system = sample();
+    auto& store = system.store;
+    // b's world file atom gone, b goes with it; lib stays for a.
+    store.roots.erase(std::ranges::find_if(store.roots, [&](const egraph::Root& root) {
+        return store.string(root.atom) == "app-misc/b";
+    }));
+    CHECK(egraph::removal_lines(store, egraph::plan_depclean(egraph::keep(store, {}))) ==
+          std::vector<std::string>{"app-misc/b-1\tremove\t"});
+    CHECK(egraph::plan_depclean(egraph::keep(sample().store, {})).removed.empty());
 }

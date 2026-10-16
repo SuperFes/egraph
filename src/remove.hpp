@@ -1,7 +1,7 @@
 #pragma once
 
-// emerge --depclean with arguments: of the installed packages they match, those nothing kept needs
-// are removed.
+// emerge --depclean: with arguments, of the installed packages they match, those nothing kept
+// needs are removed; without, everything nothing kept needs.
 
 #include "depclean.hpp"
 #include "store.hpp"
@@ -41,6 +41,9 @@ struct Removal {
 // "cpv<TAB>remove<TAB>bytes" per removed package, then "cpv<TAB>kept<TAB>by..." per kept one, each
 // set and dependent cpv a field, then "cpv<TAB>orphan<TAB>bytes" per package it orphans; the
 // bytes are size_field's.
+// What a plain emerge --depclean removes: every package kept leaves out.
+[[nodiscard]] Removal plan_depclean(const Kept& kept);
+
 [[nodiscard]] std::vector<std::string> removal_lines(const Store& store, const Removal& removal);
 
 // The cpvs emerge --pretend --depclean would remove, from its "All selected packages:" line,

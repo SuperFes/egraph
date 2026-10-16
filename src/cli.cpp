@@ -3740,11 +3740,26 @@ Exit execute(const Remove& command, Session& session, const Invocation& invocati
         err << "egraph: remove: the @world set is empty\n";
         return Exit::failure;
     }
-    const auto matched = resolve_all(store, command.packages, err);
-    if (!matched) {
-        return Exit::failure;
+    const auto& kept = depclean->get().kept;
+    Removal removal;
+    if (command.packages.empty()) {
+        // Arguments let depclean overlook missing dependencies; without them it refuses.
+        if (const auto unresolved = unresolved_lines(store, kept); !unresolved.empty()) {
+            err << "egraph: remove: depclean would refuse to run; nothing installed satisfies "
+                   "these runtime dependencies:\n";
+            for (const auto& line : unresolved) {
+                err << "  " << line << '\n';
+            }
+            return Exit::failure;
+        }
+        removal = plan_depclean(kept);
+    } else {
+        const auto matched = resolve_all(store, command.packages, err);
+        if (!matched) {
+            return Exit::failure;
+        }
+        removal = plan_removal(store, depclean->get().options, *matched);
     }
-    const auto removal = plan_removal(store, depclean->get().options, *matched);
     const auto lines = removal_lines(store, removal);
     const auto style = output(invocation);
     if (style.human) {
@@ -5445,12 +5460,12 @@ void configure(CLI::App& app, Invocation& invocation) {
     });
     CLI::App* remove_cmd = add_dynamic_deps(add_command<Remove>(
         app, invocation,
-        "Show what emerge --depclean would remove of the packages, then have it remove them once "
-        "confirmed"));
+        "Show what emerge --depclean would remove of the packages, or of everything without "
+        "them, then have it remove them once confirmed"));
     add_field(remove_cmd, invocation, "packages", &Remove::packages,
-              "Portage atoms or installed cpvs; what they match goes unless something keeps it")
-        ->type_name("PACKAGE")
-        ->required();
+              "Portage atoms or installed cpvs; what they match goes unless something keeps it. "
+              "Without them, every orphan goes")
+        ->type_name("PACKAGE");
     add_field(remove_cmd, invocation, "--with-bdeps", &Remove::build_deps,
               "Whether build-time dependencies keep packages, as emerge's option (default y)")
         ->transform(yes_no);

@@ -304,7 +304,7 @@ TEST_CASE("exec takes install's options, and its worker runs under the same root
                                                                          "/prefix"});
 }
 
-TEST_CASE("remove takes atoms, emerge's --with-bdeps and --yes") {
+TEST_CASE("remove takes atoms, or none for every orphan, emerge's --with-bdeps and --yes") {
     const auto remove =
         std::get<egraph::Remove>(parse("remove -y --with-bdeps n a/b =c/d-1").command);
     CHECK(remove.packages == std::vector<std::string>{"a/b", "=c/d-1"});
@@ -314,7 +314,7 @@ TEST_CASE("remove takes atoms, emerge's --with-bdeps and --yes") {
     CHECK(plain.build_deps);
     CHECK_FALSE(plain.yes);
     CHECK_FALSE(parse("remove --dynamic-deps n a/b").dynamic_deps);
-    CHECK_THROWS(parse("remove"));
+    CHECK(std::get<egraph::Remove>(parse("remove -y").command).packages.empty());
 }
 
 TEST_CASE("select and deselect take atoms and --yes") {

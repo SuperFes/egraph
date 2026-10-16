@@ -1089,7 +1089,7 @@ what happened
 .RB ( build\-start ", " built ", " build\-failed ", " merge\-start ", " merged ", "
 .BR merge\-failed ", " uninstall\-start ", " uninstalled ", " uninstall\-failed " or " skipped )
 and the cpv, separated by tabs.
-.SS remove \fIpackage\fR...
+.SS remove \fR[\fIpackage\fR...]
 What
 .B emerge \-\-depclean
 would remove of the installed packages the atoms (or exact cpvs) match: each one nothing else
@@ -1097,7 +1097,10 @@ keeps, as depclean weighs arguments, keeping every installed package they do not
 leaving
 .B @selected
 out, since it deselects them. A package that stays is listed with the packages that need it and
-the sets that keep it. Then, as
+the sets that keep it. Without packages, it is every orphan, as
+.B orphans
+lists them, and like depclean it refuses (exit status 1) while nothing installed satisfies a
+runtime dependency. Then, as
 .B update
 does, the request goes to
 .B emerge \-\-pretend \-\-depclean
@@ -2145,6 +2148,10 @@ would merge, under what keeps it.
 .TP
 .B egraph \-\-layout lines orphans
 What depclean would remove, one cpv a line, for a script.
+.TP
+.B egraph remove
+Clean the system: remove every orphan once confirmed, as
+.BR "emerge \-\-depclean" .
 .SH SEE ALSO
 .BR egraph-build (1),
 .BR emerge (1),
