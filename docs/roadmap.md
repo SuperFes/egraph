@@ -21,13 +21,13 @@ Update the status column as steps land.
 | 13 | A living app | done |
 | 14 | Plans | done |
 | 15 | A system package | done |
-| 16 | Daily use in place of emerge | done |
+| 16 | Daily use in place of emerge | done; 16t todo |
 | 17 | `egraphd`, the service | done |
 | 18 | Explaining and checking the configuration | done |
 | 19 | What-if | done |
 | 20 | Build knowledge | done |
 | 21 | Upstream work | dropped |
-| 22 | Portage's tools in egraph's space | to map out |
+| 22 | Portage's tools in egraph's space | mapped out, not scheduled |
 
 ## 0. Scaffold
 
@@ -864,6 +864,14 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   than refused up front, since emerge builds its graph for one too: nothing merged, a
   license-masked package warned of. `test_plans_are_emerges` holds it to emerge for every
   request.
+- 16t (todo): packages a depclean never removes (requested 2026-10-16: old kernels' sources,
+  kept today with `emerge --depclean --exclude=sys-kernel/gentoo-sources`). emerge's
+  `--exclude` on `remove` and `orphans`, its wildcard atoms (`WildcardPackageSet`), and an
+  egraph list for every depclean, `${PORTAGE_CONFIGROOT}/etc/egraph/depclean-exclude`, one atom
+  per line as `replace-slots` reads, empty by default. As `_calc_depclean` does, every installed
+  package an atom matches becomes a root (an `__excluded__` set), so what it needs stays too;
+  the check against `emerge --pretend --depclean` passes each atom as `--exclude`, held to
+  depclean with `--exclude` on every scenario.
 
 ## 17. `egraphd`, the service
 
@@ -1362,3 +1370,109 @@ tools, and the library underneath, so
 that a system runs without portage installed; then egraph moves into `sys-apps`. Mapped out in
 `docs/vision.md` ("Portage's tools in egraph's space"); not scheduled until the user decides.
 Everthting portage, ported to egraph in a way that doesn't suck.
+
+Mapped out 2026-10-16, a proposal for the user to order and schedule. Where things stand: of
+the sixteen programs `sys-apps/portage` puts on PATH, egraph covers part of `emerge` and
+pieces of `glsa-check`, `portageq`, `emaint sync` and `dispatch-conf`; `update`, `install`,
+`remove`, `select` and `deselect` still run emerge, `sync` runs emaint, and `exec` runs
+portage's `doebuild` and `merge` through the worker. Every builder mode imports portage
+(about 7400 lines of builder, much of it on private `config` internals: `_use_manager`,
+`_locations_manager`, `_getMissing*`, `_getmaskingstatus`, `_plib_registry`, `_linkmap`).
+The rule throughout: portage stays the oracle, each piece held to it in shadow tests, until
+the last step drops it to a test dependency.
+
+- 22a (todo): what the stores lack, which most of the tools below need.
+  - 22a1: CONTENTS, kept apart from the installed store (124 MB of text on the dev box; an
+    interned path tree, measured before it is chosen), refreshed per package as the vdb
+    changes: owners, file lists, file counts, file checks, and later native unmerge.
+  - 22a2: the repository index gains every version's IUSE and dependencies (today only the
+    installed cps' candidates have them), `metadata.xml` (maintainers, upstream, local flag
+    descriptions) and `use.desc`, `use.local.desc` and USE_EXPAND descriptions.
+  - 22a3: the configuration values tools ask for (`envvar`: DISTDIR, PKGDIR, CONFIG_PROTECT
+    and its mask, GENTOO_MIRRORS, the repositories' paths and masters, eclass and license
+    paths), in the evaluated store.
+- 22b (todo): the read-only tools, mostly over data egraph has; first, as the cheapest.
+  - 22b1: `portageq` as an `egraph-portageq` link: its commands and exit codes, held command by
+    command to `bin/portageq` on every scenario; the one eclasses and scripts call
+    (`has_version`, `best_version`, `best_visible`, `envvar`, `get_repo_path`, `contents`,
+    `owners`, `expand_virtual`, `eclass_path`) before the rest.
+  - 22b2: equery's and q*'s queries egraph lacks: owners (`belongs`, `qfile`, with orphan
+    files), file lists, file checks against CONTENTS' digests and mtimes (`check`,
+    `qcheck`), sizes with file counts, flag descriptions in `use`, `metadata.xml` on the page
+    and in `search`, the keyword matrix (`eshowkw`, `qkeyword`), dependents among ebuilds
+    not installed (`depends -a`), a depth-N tree in the human layout, the ebuild a package
+    builds from (`which`), vdb keys (`has`), `qatom`.
+  - 22b3: `glsa-check`'s other modes: every GLSA, one in full, `--fix` from the command line,
+    and `--inject` (portage's own file; a decision, see below).
+  - 22b4: news and elog on the command line: news listed, read and purged as `eselect news`
+    does, elog files browsed and deleted as `eread` does; sync history beside `qlop`'s.
+- 22c (todo): maintenance, small writes over what egraph knows.
+  - 22c1: `eclean`: distfiles and binary packages nothing installed or planned needs, from the
+    fetch groups and the binaries section, with eclean's `--deep`-style choices; old kernels'
+    sources and builds as `eclean-kernel` finds them, beside 16t's excludes.
+  - 22c2: `emaint`: world and vdb checks and fixes, leftover merges, logs, the binhost index,
+    package moves (`moveinst`, `movebin`, `fixpackages`, from `profiles/updates`, which
+    dynamic deps read already), stale repository revisions.
+  - 22c3: `regenworld` from egraph's history (`emerge.log` only when imported).
+  - 22c4: `etc-update`, `dispatch-conf`, `archive-conf`: `._cfg` files merged in the living app
+    and on the command line, the archive and conf memory kept as dispatch-conf keeps them.
+  - 22c5: `env-update`: `profile.env`, `csh.env`, `ld.so.conf` and `ldconfig` (needed before
+    exec merges without portage, 22g).
+- 22d (todo): the rest of emerge, continuing step 16: `--exclude` (16t), `--unmerge`,
+  `--prune`, `--info`, `--config`, `--fetchonly`, `--emptytree`, `--nodeps`/`--onlydeps`,
+  `--changed-deps`, `--rebuild-if-*`, `--newrepo`, `--load-average` for exec, `--with-bdeps`
+  on plans, autounmask beyond USE (keywords, masks, licenses), and the binary package options
+  (`-k`, `-K`, `-g`, `-G`, `-b`, `-B`, their excludes); then each delegating action moved onto
+  `exec`, so none runs emerge.
+- 22e (todo): binary packages: reading and writing gpkg and xpak, `quickpkg`, `exec` building
+  and taking binaries, `Packages` indexes written, binhosts fetched, `gpkg-sign` and
+  signature checks (`BINPKG_GPG_VERIFY`).
+- 22f (todo): syncing and its trust chain, native: rsync, git and webrsync per `repos.conf`
+  (depth, user, auto-sync), `metadata/timestamp` against stale mirrors, the hooks, signed
+  Manifests (gemato's job), git commit signatures, webrsync snapshots' signatures, keys from
+  `sec-keys/openpgp-keys-gentoo-release` refreshed over WKD, `usersync`; `emerge-webrsync`
+  with it; `emirrordist` last, if ever.
+- 22g (todo, the large part): the library, in the order the builder's import loses its uses.
+  Each lands in C++ held to portage, as `test_match` and `test_ledger` hold today's pieces
+  (atom.cpp, version.cpp, use_reduce.cpp, required_use.cpp, use_stack.cpp,
+  visibility_stack.cpp).
+  - 22g1: atoms, dependency strings, versions and EAPI rules, everything the builder still
+    asks of `portage.dep` (`use_reduce`'s modes, `paren_reduce`, `check_required_use`,
+    `match_from_list`, soname deps, `_get_eapi_attrs`).
+  - 22g2: the vdb read directly, and `vardb.match`'s semantics (implicit IUSE, USE-dep
+    defaults) on it.
+  - 22g3: the configuration: `make.conf` and `make.defaults` (bash-style expansion and
+    `source`), the profile stack (parents, EAPI, profile formats, portage-1 directories),
+    `repos.conf`, `package.*`, USE stacking, use.force and use.mask with their stable
+    variants, IUSE_EFFECTIVE, keyword, license, properties and restrict acceptance, masks
+    with their reasons, CHOST.
+  - 22g4: repositories: md5-cache and layout.conf read directly; metadata generated for
+    repositories without a cache, which needs ebuild.sh's sourcing (22h's bash side).
+  - 22g5: sets (`sets.conf`, the world files, every set class portage ships), news items
+    with their display conditions, GLSA XML, binrepos.conf and `Packages` indexes.
+  - 22g6: preserved libraries' registry and the linkage map, with ELF read in C++ (bounds
+    checked, as the store is read) in place of scanelf.
+- 22h (todo): the executor without portage's Python: portage's bash side (ebuild.sh, the
+  phase functions, the helpers, the QA checks) carried as our own copy; phases run with
+  egraph answering the IPC (`has_version`, `best_version`); fetching (mirrors,
+  `thirdpartymirrors`, FETCHCOMMAND, Manifest hashes); merge and unmerge into the vdb (CONTENTS
+  written, config protection, collision protection, preserved libraries, 22c5); locks,
+  userpriv, cgroups, and the sandbox (mount namespace and landlock in place of `LD_PRELOAD`).
+  Held by building every package both ways and diffing image and vdb entry, as
+  `test_worker` does.
+- 22i (todo): `ebuild` as `egraph-ebuild`, on 22h: packages named rather than files, named
+  options in place of ordered phases, manifests, bumps and keyword edits (`ekeyword`), a
+  phase run again on a kept build directory, a shell at the phase that failed, the image
+  diffed against what is installed, builds in a throwaway prefix; `egencache` for local
+  repositories; pkgcheck where installed.
+- 22j (todo): parity: portage a test dependency only; what replaces it as the oracle once it
+  is gone (its own test suite run against egraph, PMS tests); eclasses and scripts that call
+  `portageq` or `emerge` directly; the package's dependencies; egraph into `sys-apps`.
+
+Decisions for the user before scheduling: the order (proposed: 22a1 and 22b first, then 22c,
+22d, 22g, 22h; 22e and 22f wherever binaries or native sync are wanted); CONTENTS' storage
+cost; the OpenPGP implementation for 22e and 22f (gpgme, sequoia, or gpg run as portage runs
+it); which of portage's own state files egraph writes once it replaces their writer
+(`glsa_injected`, news' read lists, the config archive, mtimedb's `ldpath`), against the rule
+that egraph keeps its own; and whether the replacements answer to portage's names
+(`portageq` on PATH for eclasses) or only as `egraph-*` links.

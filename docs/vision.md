@@ -118,7 +118,7 @@ drops to a test dependency only at parity. egraph never writes portage's own fil
     only when the user imports it).
   - `quickpkg`, `gpkg-sign`, binary packages (gpkg and xpak) and binhosts.
   - `egencache`: metadata caches for local repositories.
-  - `glsa-check`: GLSAs matched against the store (roadmap 20 already plans it).
+  - `glsa-check`: GLSAs matched against the store (done in `notices`, roadmap 17e1 and 20j).
   - `emerge-webrsync`, `emirrordist`: snapshot syncing and mirroring.
 - Syncing and its trust chain, as portage does it today: (todo)
   - `repos.conf`'s sync settings (`sync-type` rsync, git, webrsync; `sync-uri`, `auto-sync`,
