@@ -98,6 +98,11 @@ Portage's answers, computed with no index. Every query egraph answers needs one 
       upgraded app-misc/openrgb to 1.0 past openrgb-plugin-skin-1.0_rc2-r1's
       `<app-misc/openrgb-1.0`, where `-uDN --verify` shows emerge downgrading it back. Start
       with a playground scenario as a strict xfail against `emerge --pretend`.
+- [ ] The plan picks each dependency atom's package alone; emerge's `_minimize_children` then
+      drops a package one list's other atoms already cover (depclean.cpp emulates it, the plan
+      does not). dev-lang/swift-bin-6.3.3 (guru) has RDEPEND `dev-lang/python:3.14` and a bare
+      `dev-lang/python`: `-uD` pulls python-3.16.0_alpha1 into a new slot for the bare atom,
+      where emerge satisfies both with the installed 3.14.8.
 - [ ] `test_plans_are_emerges[waits-*]` fails (found 2026-10-16, already at 1a6d817): the
       plan differs from emerge's on `=sys-libs/glibc-2` (and virtual/libc under `-uD`). The
       fork is unchanged since 2026-09-28; bisect egraph's commits since the last green run.
