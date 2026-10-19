@@ -57,7 +57,8 @@ struct Removal {
                                                            std::span<const std::string> emerge);
 
 // emerge's options for a depclean of targets, before the targets: --with-bdeps=n without
-// build_deps, --dynamic-deps=n without dynamic.
-[[nodiscard]] std::vector<std::string> depclean_options(bool build_deps, bool dynamic);
+// build_deps, --dynamic-deps=n without dynamic, and an --exclude for each exclusion.
+[[nodiscard]] std::vector<std::string> depclean_options(bool build_deps, bool dynamic,
+                                                        std::span<const Exclusion> exclude = {});
 
 } // namespace egraph

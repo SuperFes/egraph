@@ -23,9 +23,10 @@ class Depclean(NamedTuple):
     parents: dict
 
 
-def depclean(trees, eroot, with_bdeps=True, dynamic_deps=False, args=()):
+def depclean(trees, eroot, with_bdeps=True, dynamic_deps=False, args=(), exclude=()):
     """depclean's answer, with --dynamic-deps=n unless dynamic_deps; with args, the atoms
-    emerge --depclean is given, whose removals orphans then holds."""
+    emerge --depclean is given, whose removals orphans then holds; with exclude, the values of
+    its --exclude."""
     import _emerge.emergelog
     from _emerge.actions import _calc_depclean
     from _emerge.Package import Package
@@ -38,6 +39,8 @@ def depclean(trees, eroot, with_bdeps=True, dynamic_deps=False, args=()):
         options["--with-bdeps"] = "n"
     if not dynamic_deps:
         options["--dynamic-deps"] = "n"
+    if exclude:
+        options["--exclude"] = list(exclude)
     settings = trees[eroot]["root_config"].settings
     noiselimit = portage.util.noiselimit
     disabled = _emerge.emergelog._disable

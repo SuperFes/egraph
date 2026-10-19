@@ -32,6 +32,7 @@ for variable in (
     os.environ.pop(variable, None)
 os.environ["EGRAPH_LOG"] = "file"
 os.environ["EGRAPH_REPLACE_SLOTS"] = "/dev/null"
+os.environ["EGRAPH_DEPCLEAN_EXCLUDE"] = "/dev/null"
 
 
 def playground_arguments(name):

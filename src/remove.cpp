@@ -182,13 +182,17 @@ std::vector<std::string> removal_differences(const Store& store, const Removal& 
     return lines;
 }
 
-std::vector<std::string> depclean_options(bool build_deps, bool dynamic) {
+std::vector<std::string> depclean_options(bool build_deps, bool dynamic,
+                                          std::span<const Exclusion> exclude) {
     std::vector<std::string> options;
     if (!build_deps) {
         options.emplace_back("--with-bdeps=n");
     }
     if (!dynamic) {
         options.emplace_back("--dynamic-deps=n");
+    }
+    for (const auto& each : exclude) {
+        options.push_back(std::format("--exclude={}", each.text));
     }
     return options;
 }

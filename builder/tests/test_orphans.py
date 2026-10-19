@@ -61,6 +61,76 @@ def test_orphans_are_what_depclean_removes(system, with_bdeps, dynamic_deps):
     assert unresolved(result.stderr) == expected.unresolved
 
 
+def exclusions(scenario, orphaned):
+    """Exclusions of the orphans, as emerge --exclude takes them: the first one's cp, the last
+    one's name with its slot, and every package in the middle one's category."""
+    from portage.versions import catpkgsplit
+
+    if not orphaned:
+        return []
+    first, middle, last = orphaned[0], orphaned[len(orphaned) // 2], orphaned[-1]
+    category, name, _, _ = catpkgsplit(last)
+    (slot,) = scenario.vardb.aux_get(last, ["SLOT"])
+    return [
+        ["/".join(catpkgsplit(first)[:2])],
+        [f"{name}:{slot.split('/')[0]}"],
+        [f"{catpkgsplit(middle)[0]}/*"],
+    ]
+
+
+def test_exclusions_are_depclean_excludes(system, dynamic_deps):
+    """What --exclude keeps, as emerge --depclean --exclude keeps it."""
+    scenario, path = system
+    plain = depclean(scenario.trees, scenario.eroot, dynamic_deps=dynamic_deps)
+    if not plain.kept:
+        pytest.skip("depclean refuses here")
+    for exclude in exclusions(scenario, sorted(plain.orphans)):
+        expected = depclean(
+            scenario.trees, scenario.eroot, dynamic_deps=dynamic_deps, exclude=exclude
+        )
+        result = orphans(
+            path,
+            *dynamic_option(dynamic_deps),
+            *(f"--exclude={atom}" for atom in exclude),
+        )
+        assert (result.returncode != 0) == (expected.returncode != 0), result.stderr
+        assert cpvs_of(result.stdout) == expected.orphans, exclude
+        assert unresolved(result.stderr) == expected.unresolved, exclude
+
+
+def test_exclusions_take_what_emerge_takes(playgrounds, tmp_path):
+    """--exclude refuses exactly the atoms emerge's option does."""
+    from portage.repository.config import _find_bad_atoms
+
+    path = tmp_path / "installed.egraph"
+    write_stores(playgrounds("reference"), path)
+    for text in (
+        "app-misc/foo",
+        "foo",
+        "app-misc/*",
+        "*/foo",
+        "*/*",
+        "app-misc/foo:2",
+        "foo:2",
+        "app-misc/foo:2/3",
+        "app-*/foo",
+        ">=app-misc/foo-1",
+        "=app-misc/foo-1",
+        "~app-misc/foo-1",
+        "app-misc/foo-1",
+        "app-misc/foo[bar]",
+        "app-misc/foo::gentoo",
+        "!app-misc/foo",
+        "app-misc/",
+        "/foo",
+    ):
+        result = orphans(path, f"--exclude={text}")
+        assert (result.returncode == 2) == bool(_find_bad_atoms([text])), (
+            text,
+            result.stderr,
+        )
+
+
 def test_roots_scenario_by_hand(playgrounds, tmp_path):
     """What depclean removes there, worked out by hand."""
     path = tmp_path / "installed.egraph"

@@ -18,6 +18,7 @@
 #include "emerge_log.hpp"
 #include "estimate.hpp"
 #include "evaluated.hpp"
+#include "exclude.hpp"
 #include "exec.hpp"
 #include "freshness.hpp"
 #include "graph.hpp"
@@ -100,6 +101,21 @@ CLI::Option* add_field(CLI::App* sub, Invocation& invocation, std::string option
         std::move(option),
         [&invocation, field](const T& value) { std::get<C>(invocation.command).*field = value; },
         std::move(description));
+}
+
+// emerge --exclude, once per atom (or several to a value, space-separated), so that it never
+// takes a command's packages.
+template <class C> void add_exclude(CLI::App* sub, Invocation& invocation) {
+    sub->add_option_function<std::string>(
+           "--exclude",
+           [&invocation](const std::string& value) {
+               std::get<C>(invocation.command).exclude.push_back(value);
+           },
+           "Packages depclean keeps whatever needs them, and what they need, as emerge's option: "
+           "package names and slot atoms, wildcards allowed")
+        ->type_name("ATOM")
+        ->multi_option_policy(CLI::MultiOptionPolicy::TakeAll)
+        ->trigger_on_parse();
 }
 
 // Converts an option's value from one of the names, which the help shows in this order; anything
@@ -1157,6 +1173,26 @@ std::expected<std::vector<Atom>, Exit> replace_list(const Invocation& invocation
     return std::move(*found);
 }
 
+// What depclean excludes for command: the depclean-exclude list's, then given's.
+std::expected<std::vector<Exclusion>, Exit> exclusions(const Invocation& invocation,
+                                                       std::span<const std::string> given,
+                                                       std::string_view command,
+                                                       std::ostream& err) {
+    auto found = read_exclude_list(
+        invocation.depclean_exclude.value_or(depclean_exclude_path(config_root(invocation))));
+    if (!found) {
+        err << "egraph: " << command << ": " << found.error() << '\n';
+        return std::unexpected(Exit::failure);
+    }
+    auto more = parse_exclusions(given);
+    if (!more) {
+        err << "egraph: " << command << ": --exclude: " << more.error() << '\n';
+        return std::unexpected(Exit::usage);
+    }
+    std::ranges::move(*more, std::back_inserter(*found));
+    return std::move(*found);
+}
+
 // The slots of plan's replacements that hold the running kernel's sources, as egraph-build
 // reads their CONTENTS: every one when it cannot tell.
 std::vector<std::uint32_t> running_kernel_slots(const Invocation& invocation, const Store& store,
@@ -1693,7 +1729,11 @@ Exit execute(const Blockers& command, Session& session, const Invocation& invoca
 
 Exit execute(const Orphans& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
-    const auto depclean = session.depclean(command.build_deps, invocation.dynamic_deps);
+    const auto exclude = exclusions(invocation, command.exclude, Orphans::name, err);
+    if (!exclude) {
+        return exclude.error();
+    }
+    const auto depclean = session.depclean(command.build_deps, invocation.dynamic_deps, *exclude);
     if (!depclean) {
         return fail(err, depclean.error());
     }
@@ -3730,7 +3770,11 @@ std::vector<std::string> depclean_targets(const Store& store,
 
 Exit execute(const Remove& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
-    const auto depclean = session.depclean(command.build_deps, invocation.dynamic_deps);
+    const auto exclude = exclusions(invocation, command.exclude, Remove::name, err);
+    if (!exclude) {
+        return exclude.error();
+    }
+    const auto depclean = session.depclean(command.build_deps, invocation.dynamic_deps, *exclude);
     if (!depclean) {
         return fail(err, depclean.error());
     }
@@ -3778,7 +3822,7 @@ Exit execute(const Remove& command, Session& session, const Invocation& invocati
                     Remove::name, remove_words, vdb, style.human, out, err)) {
         return *status;
     }
-    auto options = depclean_options(command.build_deps, invocation.dynamic_deps);
+    auto options = depclean_options(command.build_deps, invocation.dynamic_deps, *exclude);
     const auto targets = depclean_targets(store, command.packages);
     std::vector<std::string> pretend{"--pretend", "--depclean", "--color=n", "--nospinner",
                                      "--ignore-default-opts"};
@@ -3885,7 +3929,11 @@ Exit execute(const Save&, Session& session, const Invocation& invocation, std::o
 
 Exit execute(const Deselect& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
-    const auto depclean = session.depclean(true, invocation.dynamic_deps);
+    const auto exclude = exclusions(invocation, {}, Deselect::name, err);
+    if (!exclude) {
+        return exclude.error();
+    }
+    const auto depclean = session.depclean(true, invocation.dynamic_deps, *exclude);
     if (!depclean) {
         return fail(err, depclean.error());
     }
@@ -3935,7 +3983,11 @@ Exit execute(const Deselect& command, Session& session, const Invocation& invoca
 
 Exit execute(const Why& command, Session& session, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
-    const auto depclean = session.depclean(command.build_deps, invocation.dynamic_deps);
+    const auto exclude = exclusions(invocation, {}, Why::name, err);
+    if (!exclude) {
+        return exclude.error();
+    }
+    const auto depclean = session.depclean(command.build_deps, invocation.dynamic_deps, *exclude);
     if (!depclean) {
         return fail(err, depclean.error());
     }
@@ -3990,6 +4042,10 @@ Exit execute(const Tui& tui_command, Session& session, const Invocation& invocat
     if (!stores) {
         err << "egraph: " << stores.error() << '\n';
         return Exit::failure;
+    }
+    auto exclude = exclusions(invocation, {}, Tui::name, err);
+    if (!exclude) {
+        return exclude.error();
     }
     std::vector<std::string> warnings;
     for (std::string line; std::getline(warned, line);) {
@@ -4128,7 +4184,7 @@ Exit execute(const Tui& tui_command, Session& session, const Invocation& invocat
          .applied_advisories =
              [](const std::filesystem::path& eroot) { return applied_advisories(eroot); },
          .zone = local_zone},
-        warnings, tui_command.notices, err);
+        warnings, tui_command.notices, std::move(*exclude), err);
 }
 
 Exit execute(const Shell&, Session& session, const Invocation& invocation, std::ostream& out,
@@ -5152,6 +5208,11 @@ void configure(CLI::App& app, Invocation& invocation) {
                    "under the configuration root)")
         ->type_name("FILE")
         ->envname("EGRAPH_REPLACE_SLOTS");
+    app.add_option("--depclean-exclude", invocation.depclean_exclude,
+                   "Packages depclean never removes, as emerge --exclude names them (default: "
+                   "etc/egraph/depclean-exclude under the configuration root)")
+        ->type_name("FILE")
+        ->envname("EGRAPH_DEPCLEAN_EXCLUDE");
     app.add_option("--builder", invocation.builder,
                    "egraph-build command that refreshes the store (default: the one next to "
                    "egraph, else egraph-build in PATH)")
@@ -5350,6 +5411,7 @@ void configure(CLI::App& app, Invocation& invocation) {
     add_field(orphans_cmd, invocation, "--with-bdeps", &Orphans::build_deps,
               "Whether build-time dependencies keep packages, as emerge's option (default y)")
         ->transform(yes_no);
+    add_exclude<Orphans>(orphans_cmd, invocation);
 
     add_updates_options<Updates>(
         add_dynamic_deps(add_command<Updates>(
@@ -5469,6 +5531,7 @@ void configure(CLI::App& app, Invocation& invocation) {
     add_field(remove_cmd, invocation, "--with-bdeps", &Remove::build_deps,
               "Whether build-time dependencies keep packages, as emerge's option (default y)")
         ->transform(yes_no);
+    add_exclude<Remove>(remove_cmd, invocation);
     add_yes<Remove>(remove_cmd, invocation);
     CLI::App* select_cmd = add_dynamic_deps(add_command<Select>(
         app, invocation,
@@ -5805,6 +5868,7 @@ std::vector<std::string> egraph_options(const Invocation& invocation) {
     pass("--eprefix", invocation.eprefix);
     pass("--store", invocation.store);
     pass("--replace-slots", invocation.replace_slots);
+    pass("--depclean-exclude", invocation.depclean_exclude);
     pass("--builder", invocation.builder);
     pass("--emerge", invocation.emerge);
     pass("--dispatch-conf", invocation.dispatch_conf);

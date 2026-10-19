@@ -124,6 +124,8 @@ struct Orphans {
     static constexpr std::string_view name = "orphans";
     // emerge --with-bdeps: whether build-time dependencies keep packages.
     bool build_deps = true;
+    // emerge --exclude, beside the depclean-exclude list's.
+    std::vector<std::string> exclude;
 };
 
 struct Updates {
@@ -217,6 +219,8 @@ struct Remove {
     std::vector<std::string> packages;
     // emerge --with-bdeps: whether build-time dependencies keep packages.
     bool build_deps = true;
+    // emerge --exclude, beside the depclean-exclude list's.
+    std::vector<std::string> exclude;
     // Run without asking.
     bool yes = false;
 };
@@ -408,6 +412,8 @@ struct Invocation {
     std::optional<std::filesystem::path> store;
     // The replace-slots list; unset, the configuration root's.
     std::optional<std::filesystem::path> replace_slots;
+    // The depclean-exclude list; unset, the configuration root's.
+    std::optional<std::filesystem::path> depclean_exclude;
     // Run to refresh a stale store; unset, the egraph-build next to egraph, else the one in PATH.
     std::optional<std::string> builder;
     // Run to verify a plan; unset, the emerge in PATH.

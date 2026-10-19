@@ -503,6 +503,28 @@ TEST_CASE("a page starts with the chain that keeps its package") {
     CHECK(app.pages().back().package == 0);
 }
 
+TEST_CASE("an exclusion keeps its package off the orphans, kept by @exclude") {
+    const auto store = build_only();
+    const auto graph = egraph::build_graph(store);
+    egraph::tui::App app{store, graph};
+    FakeScreen screen{24, 120, {}};
+    app.handle(character(U'o'));
+    app.handle(character(U'b'));
+    REQUIRE(app.list().shown == std::vector<std::uint32_t>{1});
+    const std::vector<std::string> values{"dev-libs/b"};
+    auto exclude = egraph::parse_exclusions(values);
+    REQUIRE(exclude);
+    app.exclude(std::move(*exclude));
+    CHECK(app.list().shown.empty());
+    CHECK_FALSE(app.root_of(1));
+    app.handle(character(U'o'));
+    egraph::tui::draw(screen, app, ascii);
+    app.handle(key(KeyKind::down));
+    app.handle(key(KeyKind::enter));
+    egraph::tui::draw(screen, app, ascii);
+    CHECK(contains(screen.text(), "@ @exclude dev-libs/b  dev-libs/b"));
+}
+
 TEST_CASE("o shows only orphans, and b drops build-time dependencies") {
     const auto store = build_only();
     const auto graph = egraph::build_graph(store);

@@ -640,6 +640,8 @@ class App {
     App(Stores stores, bool dynamic_deps, Update update = Update::preview);
 
     void handle(const Key& key);
+    // Has depclean keep what the exclusions match, as emerge --exclude.
+    void exclude(std::vector<Exclusion> exclude);
     [[nodiscard]] bool done() const { return done_; }
 
     // The package list: every installed package whose cpv contains the query.
@@ -1052,6 +1054,7 @@ class App {
     std::vector<std::size_t> broken_;
     std::vector<std::size_t> broken_at_run_time_;
     std::vector<Masking> masking_;
+    std::vector<Exclusion> exclude_;
     std::vector<Scope> scopes_{Scope::installed(), Scope::world(), Scope::system()};
     bool on_sets_ = false;
     std::optional<SetListResult> set_list_;
@@ -3038,10 +3041,10 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
 }
 
 // Opens the terminal and runs the interface over the stores, first showing any warnings from
-// opening them, on the notices page where asked; errors go to err.
+// opening them, on the notices page where asked, its depclean excluding exclude; errors go to err.
 [[nodiscard]] Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps,
                                 GlyphSet glyphs, const Services& services,
                                 std::span<const std::string> warnings, bool notices_first,
-                                std::ostream& err);
+                                std::vector<Exclusion> exclude, std::ostream& err);
 
 } // namespace egraph::tui

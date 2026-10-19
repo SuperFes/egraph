@@ -1494,15 +1494,25 @@ std::optional<std::uint32_t> App::link_of(const std::vector<std::string>& fields
     return std::nullopt;
 }
 
+void App::exclude(std::vector<Exclusion> exclude) {
+    exclude_ = std::move(exclude);
+    recompute();
+    filter();
+}
+
 void App::recompute() {
     kept_ = keep(store(), {.build_deps = build_deps_,
                            .masking = masking_,
                            .removed = {},
                            .protect = {},
                            .dropped = {},
-                           .without_selected = false});
+                           .without_selected = false,
+                           .exclude = exclude_});
     root_of_.assign(store().packages.size(), std::nullopt);
     for (const auto& pull : kept_.roots) {
+        if (!pull.excluded.empty()) {
+            continue;
+        }
         auto& root = root_of_.at(pull.child);
         if (!root || pull.root < *root) {
             root = pull.root;
@@ -4206,7 +4216,7 @@ DriftSign drift_sign(char sign) {
 
 Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps, GlyphSet glyphs,
                   const Services& services, std::span<const std::string> warnings,
-                  bool notices_first, std::ostream& err) {
+                  bool notices_first, std::vector<Exclusion> exclude, std::ostream& err) {
 #if EGRAPH_HAVE_TUI
     auto screen = Screen::open();
     if (!screen) {
@@ -4214,6 +4224,9 @@ Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps, Glyph
         return Exit::failure;
     }
     App app{std::move(stores), dynamic_deps, services.rebuild ? Update::save : Update::preview};
+    if (!exclude.empty()) {
+        app.exclude(std::move(exclude));
+    }
     if (!warnings.empty()) {
         app.show({.error = false, .title = "Warning", .lines = {warnings.begin(), warnings.end()}});
     }
@@ -4232,6 +4245,7 @@ Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps, Glyph
     (void)services;
     (void)warnings;
     (void)notices_first;
+    (void)exclude;
     err << "egraph: tui: this egraph was built without Notcurses (meson -Dtui=enabled)\n";
     return Exit::not_implemented;
 #endif

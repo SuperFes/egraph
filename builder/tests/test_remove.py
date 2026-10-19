@@ -106,3 +106,36 @@ def test_removals_without_arguments_are_what_depclean_removes(
     assert result.returncode in (0, 1, 2), result.stderr
     assert "refuse" not in result.stderr
     assert removals(result.stdout) == expected.orphans
+
+
+def test_removals_with_exclusions_are_depclean_excludes(
+    scenario, tmp_path, dynamic_deps
+):
+    """Each argument's removal with its last removal's cp excluded, as emerge --depclean
+    --exclude keeps it, and what that leaves."""
+    from portage.versions import cpv_getkey
+
+    path = tmp_path / "installed.egraph"
+    write_stores(scenario, path)
+    differences = []
+    for argument in arguments(scenario):
+        plain = depclean(
+            scenario.trees, scenario.eroot, True, dynamic_deps, args=[argument]
+        )
+        if not plain.kept or not plain.orphans:
+            continue
+        exclude = [cpv_getkey(sorted(plain.orphans)[-1])]
+        expected = depclean(
+            scenario.trees,
+            scenario.eroot,
+            True,
+            dynamic_deps,
+            args=[argument],
+            exclude=exclude,
+        )
+        ours = removed(
+            path, argument, *dynamic_option(dynamic_deps), f"--exclude={exclude[0]}"
+        )
+        if ours != expected.orphans:
+            differences.append((argument, exclude, ours, expected.orphans))
+    assert differences == []

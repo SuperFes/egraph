@@ -134,6 +134,11 @@ TEST_CASE("a depclean keeps emerge's build-time and dynamic dependency defaults 
     CHECK(egraph::depclean_options(true, true).empty());
     CHECK(egraph::depclean_options(false, false) ==
           std::vector<std::string>{"--with-bdeps=n", "--dynamic-deps=n"});
+    const std::vector<std::string> values{"sys-kernel/gentoo-sources */*-bin:0"};
+    const auto exclude = egraph::parse_exclusions(values);
+    REQUIRE(exclude);
+    CHECK(egraph::depclean_options(true, true, *exclude) ==
+          std::vector<std::string>{"--exclude=sys-kernel/gentoo-sources", "--exclude=*/*-bin:0"});
 }
 
 TEST_CASE("without arguments, a removal is everything depclean keeps nothing of") {

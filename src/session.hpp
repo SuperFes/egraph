@@ -16,10 +16,14 @@
 #include <filesystem>
 #include <functional>
 #include <iosfwd>
+#include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <vector>
 
 namespace egraph {
 
@@ -67,7 +71,9 @@ class Session {
         KeepOptions options;
         Kept kept;
     };
-    [[nodiscard]] Loaded<Depclean> depclean(bool build_deps, bool dynamic) EGRAPH_LIFETIMEBOUND;
+    [[nodiscard]] Loaded<Depclean>
+    depclean(bool build_deps, bool dynamic,
+             std::span<const Exclusion> exclude = {}) EGRAPH_LIFETIMEBOUND;
 
     // Has egraph-build evaluate cps into the store this invocation may write (the system store
     // as root, the user's otherwise) and answers from it from now on, as adopt(); the error when
@@ -100,8 +106,8 @@ class Session {
     std::filesystem::path repository_used_;
     std::optional<Store> dynamic_;
     std::array<std::optional<Graph>, 2> graphs_;
-    // By build_deps, then dynamic.
-    std::array<std::optional<Depclean>, 4> depclean_;
+    // By build_deps, dynamic and the exclusions' texts.
+    std::map<std::tuple<bool, bool, std::vector<std::string>>, Depclean> depclean_;
 };
 
 // Runs egraph-build, its output to log when given; the error when it could not run or did not

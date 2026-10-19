@@ -411,6 +411,25 @@ def test_a_removal_names_what_it_frees_and_the_orphans_depclean_then_takes(syste
     assert "freeing 4.0 KiB" in shown.stdout
 
 
+def test_an_exclusion_keeps_what_a_removal_would_orphan(system):
+    """emerge --depclean is handed the exclusion and agrees: what it matches stays."""
+    machine = system(removable=True)
+    age(machine.playground.eroot)
+    result = machine.egraph(
+        "remove", "--yes", "--exclude=app-misc/lib", "app-misc/user"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    rows = [line.split("\t") for line in result.stdout.splitlines()]
+    assert [
+        row[:2] for row in rows if row[1:2] in (["remove"], ["orphan"], ["kept"])
+    ] == [["app-misc/user-1", "remove"]]
+    assert not machine.installed("app-misc/user-1")
+    assert machine.installed("app-misc/lib-1")
+    again = machine.egraph("orphans")
+    assert again.returncode == 0, again.stderr
+    assert again.stdout.split("\t")[0] == "app-misc/lib-1"
+
+
 def test_what_something_needs_is_kept_and_nothing_is_asked(system):
     machine = system(removable=True)
     result = machine.egraph("--layout", "human", "remove", "--yes", "app-misc/lib")

@@ -21,7 +21,7 @@ Update the status column as steps land.
 | 13 | A living app | done |
 | 14 | Plans | done |
 | 15 | A system package | done |
-| 16 | Daily use in place of emerge | done; 16t todo |
+| 16 | Daily use in place of emerge | done |
 | 17 | `egraphd`, the service | done |
 | 18 | Explaining and checking the configuration | done |
 | 19 | What-if | done |
@@ -864,14 +864,17 @@ emerge skips its deep walk over @world. Then egraph schedules and runs the merge
   than refused up front, since emerge builds its graph for one too: nothing merged, a
   license-masked package warned of. `test_plans_are_emerges` holds it to emerge for every
   request.
-- 16t (todo): packages a depclean never removes (requested 2026-10-16: old kernels' sources,
+- 16t (done): packages a depclean never removes (requested 2026-10-16: old kernels' sources,
   kept today with `emerge --depclean --exclude=sys-kernel/gentoo-sources`). emerge's
   `--exclude` on `remove` and `orphans`, its wildcard atoms (`WildcardPackageSet`), and an
   egraph list for every depclean, `${PORTAGE_CONFIGROOT}/etc/egraph/depclean-exclude`, one atom
   per line as `replace-slots` reads, empty by default. As `_calc_depclean` does, every installed
   package an atom matches becomes a root (an `__excluded__` set), so what it needs stays too;
   the check against `emerge --pretend --depclean` passes each atom as `--exclude`, held to
-  depclean with `--exclude` on every scenario.
+  depclean with `--exclude` on every scenario. Landed as 16t1 (the atoms, as emerge validates
+  them), 16t2 (roots of their own, `@exclude` in `why`) and 16t3 (`--exclude`,
+  `--depclean-exclude` and the list for `orphans`, `remove`, `why`, `deselect` and the
+  interface; not for plans, whose scope ignores it as `emerge -uD` does).
 
 ## 17. `egraphd`, the service
 

@@ -407,8 +407,9 @@ unit_env = environment()
 foreach variable : egraph_variables
   unit_env.set(variable, '')
 endforeach
-# The host's replace-slots list stays out of the plans tests make.
+# The host's replace-slots and depclean-exclude lists stay out of what tests answer.
 unit_env.set('EGRAPH_REPLACE_SLOTS', '/dev/null')
+unit_env.set('EGRAPH_DEPCLEAN_EXCLUDE', '/dev/null')
 test('unit', unit_tests, protocol: 'exitcode', env: unit_env)
 
 # The builder imports portage, so its tests run under whichever portage is on PYTHONPATH:
@@ -431,6 +432,7 @@ if pytest.found()
   # Runs log to their playground's file, not the journal of the system running the tests.
   builder_env.set('EGRAPH_LOG', 'file')
   builder_env.set('EGRAPH_REPLACE_SLOTS', '/dev/null')
+  builder_env.set('EGRAPH_DEPCLEAN_EXCLUDE', '/dev/null')
   if get_option('portage_lib') != ''
     builder_env.set('PYTHONPATH', get_option('portage_lib'))
   endif

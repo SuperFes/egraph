@@ -351,7 +351,7 @@ void Session::reload() {
     installed_.reset();
     dynamic_.reset();
     graphs_ = {};
-    depclean_ = {};
+    depclean_.clear();
 }
 
 void Session::adopt(std::shared_ptr<const Stores> stores, std::filesystem::path used) {
@@ -361,7 +361,7 @@ void Session::adopt(std::shared_ptr<const Stores> stores, std::filesystem::path 
     installed_.reset();
     dynamic_.reset();
     graphs_ = {};
-    depclean_ = {};
+    depclean_.clear();
 }
 
 std::optional<std::string> Session::evaluate(std::span<const std::string> cps) {
@@ -403,9 +403,16 @@ Loaded<Graph> Session::graph(bool dynamic) {
     return std::cref(*graph);
 }
 
-Loaded<Session::Depclean> Session::depclean(bool build_deps, bool dynamic) {
-    auto& depclean = depclean_.at((build_deps ? 2U : 0U) + (dynamic ? 1U : 0U));
-    if (!depclean) {
+Loaded<Session::Depclean> Session::depclean(bool build_deps, bool dynamic,
+                                            std::span<const Exclusion> exclude) {
+    std::vector<std::string> texts;
+    texts.reserve(exclude.size());
+    for (const auto& each : exclude) {
+        texts.push_back(each.text);
+    }
+    auto key = std::tuple{build_deps, dynamic, std::move(texts)};
+    auto found = depclean_.find(key);
+    if (found == depclean_.end()) {
         const auto both = stores();
         if (!both) {
             return std::unexpected(both.error());
@@ -425,12 +432,16 @@ Loaded<Session::Depclean> Session::depclean(bool build_deps, bool dynamic) {
                             .removed = {},
                             .protect = {},
                             .dropped = {},
-                            .without_selected = false};
+                            .without_selected = false,
+                            .exclude = {exclude.begin(), exclude.end()}};
         auto kept = keep(store->get(), options);
-        depclean =
-            Depclean{.store = *store, .options = std::move(options), .kept = std::move(kept)};
+        found = depclean_
+                    .emplace(std::move(key), Depclean{.store = *store,
+                                                      .options = std::move(options),
+                                                      .kept = std::move(kept)})
+                    .first;
     }
-    return std::cref(*depclean);
+    return std::cref(found->second);
 }
 
 } // namespace egraph

@@ -85,6 +85,20 @@ under the configuration root; see
 .I /dev/null
 keeps every slot, as emerge.
 .TP
+.BI \-\-depclean\-exclude " file"
+The list of packages depclean never removes (default
+.BR $EGRAPH_DEPCLEAN_EXCLUDE ,
+else
+.I etc/egraph/depclean\-exclude
+under the configuration root; see
+.BR FILES ),
+for
+.BR orphans ,
+.BR remove ,
+.BR why ,
+.B deselect
+and the interface.
+.TP
 .BI \-\-builder " command"
 The
 .B egraph-build
@@ -452,6 +466,19 @@ records (an empty field without one); for people, with what they free together.
 .B \-\-dynamic\-deps
 .TP
 .B \-\-with\-bdeps
+.TP
+.BI \-\-exclude " atom"
+Keep every installed package the atom matches, and what it needs, as
+.B emerge \-\-depclean \-\-exclude
+does: a package name, with or without its category, or a slot atom, wildcards allowed, such as
+.BR sys\-kernel/gentoo\-sources
+to keep old kernels' sources. Repeated, or several to a value; beside the
+.I depclean\-exclude
+list's, and named
+.B @exclude
+where
+.B why
+shows what keeps a package.
 .SS updates
 The installed packages
 .B emerge \-u
@@ -1120,6 +1147,11 @@ lines), the world file's atoms that matched only what goes taken as deselected.
 .BR \-\-with\-bdeps " y|n"
 Whether build-time dependencies keep packages, as emerge's option (default
 .BR y ).
+.TP
+.BI \-\-exclude " atom"
+As for
+.BR orphans ,
+and passed on to emerge.
 .TP
 .BR \-y ", " \-\-yes
 Run emerge without asking.
@@ -1928,6 +1960,14 @@ Atoms, one a line
 .RB ( #
 starts a comment), of the packages whose old slots a plan replaces rather than keeps beside a new
 one; none by default, as emerge.
+.TP
+.I ${PORTAGE_CONFIGROOT}/etc/egraph/depclean\-exclude
+Atoms as
+.B \-\-exclude
+takes them, any number a line
+.RB ( #
+starts a comment), of the packages every depclean keeps whatever needs them; none by default,
+as emerge.
 .TP
 .I ${PORTAGE_CONFIGROOT}/etc/egraph/egraph.conf
 Settings,
