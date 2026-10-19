@@ -16,6 +16,23 @@ from portage.util._eventloop.global_event_loop import global_event_loop
 
 from scenarios import SCENARIOS
 
+# As meson test sets them, for pytest run directly too: the host's options stay out, and runs
+# log to their playground's file rather than the journal of the system running the tests.
+for variable in (
+    "EGRAPH_STORE",
+    "EGRAPH_BUILD",
+    "EGRAPH_EMERGE",
+    "EGRAPH_LAYOUT",
+    "EGRAPH_GLYPHS",
+    "EGRAPH_LOG_FILE",
+    "ROOT",
+    "PORTAGE_CONFIGROOT",
+    "PORTAGE_OVERRIDE_EPREFIX",
+):
+    os.environ.pop(variable, None)
+os.environ["EGRAPH_LOG"] = "file"
+os.environ["EGRAPH_REPLACE_SLOTS"] = "/dev/null"
+
 
 def playground_arguments(name):
     """A scenario's ResolverPlayground arguments.
