@@ -1393,6 +1393,29 @@ class Planner {
         return std::nullopt;
     }
 
+    // The run-time dependencies of the installed package that merges leave unsatisfied, each
+    // with the installed package its merge replaces.
+    std::vector<std::pair<std::uint32_t, std::string>> conflicts_of(std::uint32_t id) {
+        const Member member{.candidate = false, .index = id};
+        const auto& tables = this->tables(member);
+        std::vector<std::pair<std::uint32_t, std::string>> found;
+        for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+            if (dep_kinds.at(kind) == "DEPEND" || dep_kinds.at(kind) == "BDEPEND") {
+                continue;
+            }
+            const auto list = nodes(member, kind);
+            const auto ok = satisfied_nodes(tables, list);
+            for (std::size_t i = 0; i < list.size(); ++i) {
+                if (element(list, i).parent == no_parent && !ok.at(i)) {
+                    if (auto held = replaced_match(tables, list, i)) {
+                        found.push_back(std::move(*held));
+                    }
+                }
+            }
+        }
+        return found;
+    }
+
     // The first atom under node index that a later fallback of an update matches, the update
     // merging another version in its slot, and that installed package: emerge follows the atom
     // to the version it matches, so the update moves on rather than reject what needs it.
@@ -1561,6 +1584,21 @@ class Planner {
                 // A rebuild's own dependencies stand in for the installed ones. Plain -u
                 // rebuilds nothing installed: the binding holds the merge back.
                 if (const auto broken = broken_bindings(item.member.index); !broken.empty()) {
+                    // A merge that also leaves another of its dependencies unsatisfied is a
+                    // slot conflict, which emerge's backtracking masks the merge for before
+                    // any rebuild could follow, but for one an argument must merge with no
+                    // version left to fall back to.
+                    if (const auto conflicts = conflicts_of(item.member.index);
+                        !conflicts.empty() &&
+                        std::ranges::none_of(conflicts, [this](const auto& each) {
+                            const auto& choice = choices_.at(each.first);
+                            return must(each.first) && choice.at + 1 >= choice.options.size();
+                        })) {
+                        for (const auto& [replaced, atom] : conflicts) {
+                            rejected[replaced].push_back({.member = item.member, .atom = atom});
+                        }
+                        continue;
+                    }
                     // Plain emerge rebuilds them for what it is asked to merge.
                     const bool rebuilds = (deep() && triggered(item.member.index, broken) &&
                                            std::ranges::none_of(broken,

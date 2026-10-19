@@ -1886,3 +1886,22 @@ TEST_CASE("an update held back falls back to rebuilding its own version for chan
           std::vector<std::string>{"app-misc/kept-1 -> app-misc/kept-1",
                                    "app-misc/kept-1 held <- app-misc/keeper-1 <app-misc/kept-2"});
 }
+
+TEST_CASE("a merge breaking a dependent's binding and its other atoms falls back instead") {
+    // As app-misc/openrgb-plugin-skin's <app-misc/openrgb-1.0 beside its binding.
+    const auto system = make_system(
+        {{.cpv = "app-misc/fx-1", .deps = {{"RDEPEND", ">=app-misc/host-1:0/4= <app-misc/host-2"}}},
+         {.cpv = "app-misc/host-1", .sub_slot = "4"}},
+        {{.cpv = "app-misc/fx-1", .deps = {{"RDEPEND", ">=app-misc/host-1:= <app-misc/host-2"}}},
+         {.cpv = "app-misc/fx-2", .deps = {{"RDEPEND", ">=app-misc/host-2:="}}},
+         {.cpv = "app-misc/host-1", .sub_slot = "4"},
+         {.cpv = "app-misc/host-2", .sub_slot = "5"}});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"app-misc/host"})) ==
+          std::vector<std::string>{"app-misc/host-1 -> app-misc/host-1",
+                                   "app-misc/host-1 held <- app-misc/fx-1 <app-misc/host-2"});
+    // With no other version to fall back to, the dependent moves on instead.
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"=app-misc/host-2"})) ==
+          std::vector<std::string>{
+              "app-misc/fx-1 -> app-misc/fx-2 for app-misc/host-2 >=app-misc/host-1:0/4=",
+              "app-misc/host-1 -> app-misc/host-2"});
+}

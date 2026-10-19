@@ -1423,6 +1423,38 @@ SCENARIOS = {
             "app-misc/twice-1": {"EAPI": "8", "RDEPEND": "app-misc/m:1 app-misc/m"},
         },
     },
+    # An installed plugin's upper bound on its host, as app-misc/openrgb-plugin-skin's
+    # <app-misc/openrgb-1.0, where nothing in the world sets needs the plugin: emerge's
+    # complete graph (--complete-graph-if-new-ver) keeps the host below it, even where another
+    # plugin's newer version needs the host's newer one (fx).
+    "upper-bound": {
+        "bounded": True,
+        "world": ["app-misc/host", "app-misc/fx"],
+        "ebuilds": {
+            "app-misc/host-1": {"EAPI": "8", "SLOT": "0/4"},
+            "app-misc/host-2": {"EAPI": "8", "SLOT": "0/5"},
+            "app-misc/skin-1": {
+                "EAPI": "8",
+                "RDEPEND": ">=app-misc/host-1:= <app-misc/host-2",
+            },
+            "app-misc/fx-1": {
+                "EAPI": "8",
+                "RDEPEND": ">=app-misc/host-1:= <app-misc/host-2",
+            },
+            "app-misc/fx-2": {"EAPI": "8", "RDEPEND": ">=app-misc/host-2:="},
+        },
+        "installed": {
+            "app-misc/host-1": {"EAPI": "8", "SLOT": "0/4"},
+            "app-misc/skin-1": {
+                "EAPI": "8",
+                "RDEPEND": ">=app-misc/host-1:0/4= <app-misc/host-2",
+            },
+            "app-misc/fx-1": {
+                "EAPI": "8",
+                "RDEPEND": ">=app-misc/host-1:0/4= <app-misc/host-2",
+            },
+        },
+    },
     # A USE dependency the installed version was built without, which package.use now enables,
     # as dev-db/redis[jemalloc] needs dev-libs/jemalloc[stats]: emerge rebuilds the installed
     # version as configured (lib), or takes an older one when the installed one's ebuild is gone
