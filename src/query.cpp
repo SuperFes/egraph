@@ -678,8 +678,11 @@ std::vector<std::string> update_tree_lines(const Store& store, const Evaluated& 
         if (!path) {
             return std::format("\t{}", store.string(store.packages.at(id).cpv));
         }
-        auto chain = std::format("@{}\t{}", store.string(store.roots.at(path->root.root).set),
-                                 store.string(store.packages.at(path->root.child).cpv));
+        const auto set = path->root.excluded.empty()
+                             ? store.string(store.roots.at(path->root.root).set)
+                             : std::string_view{"exclude"};
+        auto chain =
+            std::format("@{}\t{}", set, store.string(store.packages.at(path->root.child).cpv));
         for (const auto& edge : path->edges) {
             chain += std::format("\t{}", store.string(store.packages.at(edge.child).cpv));
         }

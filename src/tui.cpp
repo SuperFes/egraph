@@ -202,11 +202,17 @@ std::vector<Row> kept_rows(const Store& store, const Kept& kept, std::uint32_t p
                                                       "refuses to work with"
                                                     : "nothing: depclean would remove it"));
     } else {
-        const auto& root = store.roots.at(path->root.root);
-        auto root_row = text_row(RowType::root, std::format("@{}", store.string(root.set)));
-        root_row.link.atom = root.atom;
+        // An exclusion has no atom in the store; its package's cp stands in.
+        const auto excluded = !path->root.excluded.empty();
+        const auto atom = excluded ? store.packages.at(path->root.child).cp
+                                   : store.roots.at(path->root.root).atom;
+        auto root_row = text_row(
+            RowType::root,
+            excluded ? std::format("@exclude {}", path->root.excluded)
+                     : std::format("@{}", store.string(store.roots.at(path->root.root).set)));
+        root_row.link.atom = atom;
         rows.push_back(std::move(root_row));
-        auto first = link_row({.package = path->root.child, .atom = root.atom}, 1, false);
+        auto first = link_row({.package = path->root.child, .atom = atom}, 1, false);
         first.type = RowType::path;
         rows.push_back(std::move(first));
         for (const auto& edge : path->edges) {

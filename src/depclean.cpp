@@ -86,6 +86,20 @@ class Depclean {
                 add(*child);
             }
         }
+        // As emerge's __excluded__ set, after the others.
+        for (std::uint32_t pkg = 0; pkg < store().packages.size() && !options_.exclude.empty();
+             ++pkg) {
+            if (gone(pkg)) {
+                continue;
+            }
+            const auto found = std::ranges::find_if(options_.exclude, [&](const Exclusion& each) {
+                return excludes(store(), store().packages.at(pkg), each);
+            });
+            if (found != options_.exclude.end()) {
+                kept_.roots.push_back({.root = 0, .child = pkg, .excluded = found->text});
+                add(pkg);
+            }
+        }
         for (std::uint32_t pkg = 0; pkg < options_.protect.size(); ++pkg) {
             if (options_.protect.at(pkg) && !gone(pkg)) {
                 add(pkg);
@@ -576,10 +590,15 @@ std::optional<Path> why(const Kept& kept, std::uint32_t package) {
 }
 
 std::vector<std::string> path_lines(const Store& store, const Path& path) {
-    const auto& root = store.roots.at(path.root.root);
-    std::vector<std::string> lines{
-        std::format("@{}\t{}\t{}", store.string(root.set), store.string(root.atom),
-                    store.string(store.packages.at(path.root.child).cpv))};
+    const auto cpv = store.string(store.packages.at(path.root.child).cpv);
+    std::vector<std::string> lines;
+    if (path.root.excluded.empty()) {
+        const auto& root = store.roots.at(path.root.root);
+        lines.push_back(
+            std::format("@{}\t{}\t{}", store.string(root.set), store.string(root.atom), cpv));
+    } else {
+        lines.push_back(std::format("@exclude\t{}\t{}", path.root.excluded, cpv));
+    }
     for (const auto& edge : path.edges) {
         lines.push_back(edge_line(store, edge));
     }

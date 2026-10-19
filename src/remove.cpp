@@ -88,7 +88,9 @@ Removal plan_removal(const Store& store, KeepOptions options,
         by_cpv(store, held.dependents);
         std::set<std::string> sets;
         for (const auto& pull : kept.roots) {
-            if (pull.child == id) {
+            if (pull.child == id && !pull.excluded.empty()) {
+                sets.insert("@exclude");
+            } else if (pull.child == id) {
                 // A set world_sets names, rather than the @selected it is part of.
                 const auto& root = store.roots.at(pull.root);
                 const auto via = store.string(root.via);

@@ -147,3 +147,21 @@ TEST_CASE("without arguments, a removal is everything depclean keeps nothing of"
           std::vector<std::string>{"app-misc/b-1\tremove\t"});
     CHECK(egraph::plan_depclean(egraph::keep(sample().store, {})).removed.empty());
 }
+
+TEST_CASE("a removal keeps what an exclusion matches, naming it") {
+    const auto system = make_system(
+        {{.cpv = "sys-kernel/gentoo-sources-6.1", .slot = "6.1"}, {.cpv = "app-misc/a-1"}}, {},
+        {"app-misc/a"});
+    const auto& store = system.store;
+    const std::vector<std::string> values{"*/gentoo-sources"};
+    auto exclude = egraph::parse_exclusions(values);
+    REQUIRE(exclude);
+    egraph::KeepOptions options{};
+    options.exclude = *exclude;
+    CHECK(egraph::removal_lines(
+              store, egraph::plan_removal(store, options,
+                                          ids_of(store, {"sys-kernel/gentoo-sources-6.1"}))) ==
+          std::vector<std::string>{"sys-kernel/gentoo-sources-6.1\tkept\t@exclude"});
+    CHECK(
+        egraph::removal_lines(store, egraph::plan_depclean(egraph::keep(store, options))).empty());
+}

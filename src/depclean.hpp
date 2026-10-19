@@ -1,5 +1,6 @@
 #pragma once
 
+#include "exclude.hpp"
 #include "graph.hpp"
 #include "store.hpp"
 
@@ -34,6 +35,8 @@ struct KeepOptions {
     // Leave the world file's atoms out of the roots, but not those of the sets world_sets names,
     // as emerge --depclean with arguments does.
     bool without_selected = false;
+    // emerge --exclude: every installed package one matches is a root, after the root sets.
+    std::vector<Exclusion> exclude = {};
 };
 
 // A root atom keeping the installed package it selects.
@@ -41,6 +44,8 @@ struct RootPull {
     // Index into Store::roots.
     std::uint32_t root = 0;
     std::uint32_t child = 0;
+    // The exclusion that made child a root instead, as given; empty for a root set's atom.
+    std::string excluded = {};
 };
 
 // A runtime dependency of a kept package that nothing installed satisfies, which makes depclean
@@ -91,7 +96,8 @@ struct Path {
 // remove it. Ties go to the earlier root, then to runtime dependencies over build-time ones.
 [[nodiscard]] std::optional<Path> why(const Kept& kept, std::uint32_t package);
 
-// "@set<TAB>atom<TAB>cpv" for the root, then an edge_line per dependency.
+// "@set<TAB>atom<TAB>cpv" for the root ("@exclude<TAB>exclusion<TAB>cpv" for an exclusions), then
+// an edge_line per dependency.
 [[nodiscard]] std::vector<std::string> path_lines(const Store& store, const Path& path);
 
 // "parent<TAB>kind<TAB>dependency" for each unresolved dependency, sorted.

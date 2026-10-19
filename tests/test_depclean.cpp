@@ -166,3 +166,32 @@ TEST_CASE("a removed package is kept by nothing, nor what only it kept") {
                                       .without_selected = false})
               .packages == std::vector<bool>{false, false, true, false});
 }
+
+TEST_CASE("an exclusion keeps what it matches and what that needs, as a root of its own") {
+    const auto system =
+        egraph::test::make_system({{.cpv = "app-misc/a-1"},
+                                   {.cpv = "sys-kernel/gentoo-sources-6.1",
+                                    .deps = {{"RDEPEND", "dev-libs/elf"}},
+                                    .slot = "6.1"},
+                                   {.cpv = "sys-kernel/gentoo-sources-6.2", .slot = "6.2"},
+                                   {.cpv = "dev-libs/elf-1"},
+                                   {.cpv = "dev-libs/stray-1"}},
+                                  {}, {"app-misc/a"});
+    const auto& store = system.store;
+    const std::vector<std::string> values{"sys-kernel/gentoo-sources"};
+    auto exclude = egraph::parse_exclusions(values);
+    REQUIRE(exclude);
+    egraph::KeepOptions options{};
+    options.exclude = *exclude;
+    const auto kept = egraph::keep(store, options);
+    CHECK(kept.packages == std::vector<bool>{true, true, true, true, false});
+    CHECK(egraph::orphans(kept) == std::vector<std::uint32_t>{4});
+    // Without it, both sources and what one needs go.
+    CHECK(egraph::orphans(egraph::keep(store, {})) == std::vector<std::uint32_t>{1, 2, 3, 4});
+    const auto path = egraph::why(kept, 3);
+    REQUIRE(path);
+    CHECK(egraph::path_lines(store, *path) ==
+          std::vector<std::string>{
+              "@exclude\tsys-kernel/gentoo-sources\tsys-kernel/gentoo-sources-6.1",
+              "sys-kernel/gentoo-sources-6.1\tRDEPEND\tdev-libs/elf\tdev-libs/elf-1"});
+}

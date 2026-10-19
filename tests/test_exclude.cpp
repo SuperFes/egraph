@@ -12,6 +12,7 @@ namespace {
 
 std::vector<std::string> texts(const std::vector<egraph::Exclusion>& found) {
     std::vector<std::string> out;
+    out.reserve(found.size());
     for (const auto& each : found) {
         out.push_back(each.text);
     }
