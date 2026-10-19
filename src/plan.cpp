@@ -3,6 +3,7 @@
 #include "atom.hpp"
 #include "blockers.hpp"
 #include "graph.hpp"
+#include "minimize.hpp"
 #include "replace.hpp"
 #include "version.hpp"
 
@@ -10,6 +11,7 @@
 #include <array>
 #include <format>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <set>
@@ -922,6 +924,150 @@ class Planner {
         });
     }
 
+    // The atom nodes under node index of list that emerge's dep_check selects: each of an
+    // all-of group's, a ||'s first satisfied alternative's.
+    static void selected_atoms(std::span<const Node> list, std::size_t index,
+                               const std::vector<bool>& ok, std::vector<std::size_t>& atoms) {
+        const auto& node = element(list, index);
+        if (node.type == NodeType::atom) {
+            atoms.push_back(index);
+            return;
+        }
+        if (node.type != NodeType::any_of && node.type != NodeType::all_of) {
+            return;
+        }
+        for (std::size_t child = index + 1; child < list.size(); ++child) {
+            if (element(list, child).parent != index) {
+                continue;
+            }
+            if (node.type == NodeType::all_of) {
+                selected_atoms(list, child, ok, atoms);
+            } else if (ok.at(child)) {
+                selected_atoms(list, child, ok, atoms);
+                return;
+            }
+        }
+    }
+
+    [[nodiscard]] std::string_view cpv_of(const Member& member) const {
+        return member.candidate ? evaluated().string(evaluated().candidates.at(member.index).cpv)
+                                : store().string(store().packages.at(member.index).cpv);
+    }
+
+    [[nodiscard]] std::string_view cp_of(const Member& member) const {
+        return member.candidate ? evaluated().string(evaluated().candidates.at(member.index).cp)
+                                : store().string(store().packages.at(member.index).cp);
+    }
+
+    // Of the candidates this list pulled in, those emerge's _minimize_children leaves out: each
+    // atom selects the highest package the plan holds that it matches, and where the list's
+    // atoms select several of one cp, those go as minimize_children has it; each atom then
+    // keeps the highest left. A dev-lang/python:3.14 beside a bare dev-lang/python takes the
+    // installed 3.14 for both, rather than a newer slot for the bare one.
+    std::set<std::uint32_t> redundant(const Tables& tables, std::span<const Node> list,
+                                      const std::vector<std::uint32_t>& added) {
+        std::set<std::string, std::less<>> cps;
+        for (const auto candidate : added) {
+            cps.emplace(evaluated().string(evaluated().candidates.at(candidate).cp));
+        }
+        if (cps.empty()) {
+            return {};
+        }
+        const auto ok = satisfied_nodes(tables, list);
+        std::vector<std::size_t> nodes;
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            if (element(list, i).parent == no_parent) {
+                selected_atoms(list, i, ok, nodes);
+            }
+        }
+        const auto older = [this](const Member& a, const Member& b) {
+            const auto from = version_of(cpv_of(a), cp_of(a));
+            const auto to = version_of(cpv_of(b), cp_of(b));
+            return from && to && vercmp(*from, *to) < 0;
+        };
+        // Per distinct atom, the packages held that it matches; and per cp, those its atoms
+        // select.
+        struct Matched {
+            std::string cp;
+            std::vector<Member> held;
+        };
+        std::map<std::string_view, Matched> matched;
+        std::map<std::string, std::vector<Member>, std::less<>> selected;
+        for (const auto index : nodes) {
+            const auto& node = element(list, index);
+            const auto text = tables.string(node.atom);
+            const auto& wanted = atom(text);
+            if (!wanted || !cps.contains(wanted->cp) || matched.contains(text)) {
+                continue;
+            }
+            Matched found{.cp = wanted->cp, .held = {}};
+            for (const auto id : tables.ids_in(node.matches)) {
+                if (kept(id)) {
+                    found.held.push_back({.candidate = false, .index = id});
+                }
+            }
+            if (const auto present = present_.find(wanted->cp); present != present_.end()) {
+                for (const auto candidate : present->second) {
+                    if (matches(store(), evaluated(), evaluated().candidates.at(candidate),
+                                *wanted)) {
+                        found.held.push_back({.candidate = true, .index = candidate});
+                    }
+                }
+            }
+            if (found.held.empty()) {
+                continue;
+            }
+            const auto best = *std::ranges::max_element(found.held, older);
+            auto& pkgs = selected[found.cp];
+            if (!std::ranges::contains(pkgs, best)) {
+                pkgs.push_back(best);
+            }
+            matched.emplace(text, std::move(found));
+        }
+        std::set<std::uint32_t> kept_children;
+        std::set<std::uint32_t> contested;
+        for (auto& [cp, pkgs] : selected) {
+            if (pkgs.size() < 2) {
+                continue;
+            }
+            // Installed packages go first, each kind lowest first.
+            std::ranges::sort(pkgs, [&](const Member& a, const Member& b) {
+                return a.candidate != b.candidate ? !a.candidate : older(a, b);
+            });
+            std::vector<std::vector<Member>> lists;
+            for (const auto& [text, found] : matched) {
+                if (found.cp == cp) {
+                    std::vector<Member> each;
+                    std::ranges::copy_if(pkgs, std::back_inserter(each), [&](const Member& pkg) {
+                        return std::ranges::contains(found.held, pkg);
+                    });
+                    lists.push_back(std::move(each));
+                }
+            }
+            minimize_children<Member>(pkgs, lists);
+            for (const auto& pkg : pkgs) {
+                if (pkg.candidate) {
+                    contested.insert(pkg.index);
+                }
+            }
+            for (const auto& each : lists) {
+                if (!each.empty()) {
+                    if (const auto child = *std::ranges::max_element(each, older);
+                        child.candidate) {
+                        kept_children.insert(child.index);
+                    }
+                }
+            }
+        }
+        std::set<std::uint32_t> dropped;
+        for (const auto candidate : added) {
+            if (contested.contains(candidate) && !kept_children.contains(candidate)) {
+                dropped.insert(candidate);
+            }
+        }
+        return dropped;
+    }
+
     [[nodiscard]] std::optional<std::uint32_t> best_match(const Atom& wanted) const {
         const auto found = by_cp_.find(wanted.cp);
         if (found == by_cp_.end()) {
@@ -1486,6 +1632,9 @@ class Planner {
                     deep() && (item.member.candidate ||
                                (reached(item.member.index) && dep_kinds.at(kind) != "DEPEND" &&
                                 dep_kinds.at(kind) != "BDEPEND"));
+                // What the list pulls in, (in a ||, candidate, atom), kept once all of it is
+                // known.
+                std::vector<std::tuple<bool, std::uint32_t, std::string>> added;
                 for (std::size_t i = 0; i < list.size(); ++i) {
                     if (element(list, i).parent != no_parent) {
                         continue;
@@ -1498,14 +1647,7 @@ class Planner {
                         slot_moves(tables, list, i, ok, found);
                         for (auto& [candidate, text] : found) {
                             place(candidate);
-                            reached_pulls.emplace_back(rank, false, candidate);
-                            pulled_.push_back(
-                                {.candidate = candidate,
-                                 .by = Reason{.member = item.member, .atom = std::move(text)},
-                                 .named_by = {},
-                                 .root = item.root});
-                            work.push_back({.member = {.candidate = true, .index = candidate},
-                                            .root = item.root});
+                            added.emplace_back(false, candidate, std::move(text));
                         }
                         continue;
                     }
@@ -1537,14 +1679,7 @@ class Planner {
                     }
                     if (pulled_in) {
                         for (auto& [candidate, text] : pulls) {
-                            reached_pulls.emplace_back(rank, disjunctive, candidate);
-                            pulled_.push_back(
-                                {.candidate = candidate,
-                                 .by = Reason{.member = item.member, .atom = std::move(text)},
-                                 .named_by = {},
-                                 .root = item.root});
-                            work.push_back({.member = {.candidate = true, .index = candidate},
-                                            .root = item.root});
+                            added.emplace_back(disjunctive, candidate, std::move(text));
                         }
                         continue;
                     }
@@ -1591,6 +1726,28 @@ class Planner {
                     if (!disjunctive) {
                         stopped = std::min(stopped.value_or(rank), rank);
                     }
+                }
+                std::vector<std::uint32_t> candidates;
+                candidates.reserve(added.size());
+                for (const auto& each : added) {
+                    candidates.push_back(std::get<1>(each));
+                }
+                const auto dropped = redundant(tables, list, candidates);
+                std::set<std::uint32_t> unplaced;
+                for (auto& [disjunctive, candidate, text] : added) {
+                    if (dropped.contains(candidate)) {
+                        if (unplaced.insert(candidate).second) {
+                            unplace(candidate);
+                        }
+                        continue;
+                    }
+                    reached_pulls.emplace_back(rank, disjunctive, candidate);
+                    pulled_.push_back({.candidate = candidate,
+                                       .by = Reason{.member = item.member, .atom = std::move(text)},
+                                       .named_by = {},
+                                       .root = item.root});
+                    work.push_back(
+                        {.member = {.candidate = true, .index = candidate}, .root = item.root});
                 }
             }
             for (const auto& [rank, disjunctive, candidate] : reached_pulls) {

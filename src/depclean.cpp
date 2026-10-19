@@ -1,6 +1,7 @@
 #include "depclean.hpp"
 
 #include "atom.hpp"
+#include "minimize.hpp"
 #include "query.hpp"
 #include "version.hpp"
 
@@ -287,16 +288,7 @@ class Depclean {
             }
             std::ranges::sort(pkgs,
                               [&](std::uint32_t a, std::uint32_t b) { return compare(a, b) < 0; });
-            for (const auto pkg : pkgs) {
-                const auto needed = std::ranges::any_of(left, [&](const auto& entry) {
-                    return entry.second.size() < 2 && std::ranges::contains(entry.second, pkg);
-                });
-                if (!needed) {
-                    for (auto& entry : left) {
-                        std::erase(entry.second, pkg);
-                    }
-                }
-            }
+            minimize_children<std::uint32_t>(pkgs, left, &decltype(left)::value_type::second);
         }
         for (std::size_t i = 0; i < atoms.size(); ++i) {
             const auto& [index, choice] = atoms.at(i);

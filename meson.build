@@ -334,6 +334,7 @@ unit_tests = executable(
   'tests/test_log.cpp',
   'tests/test_log_read.cpp',
   'tests/test_merge_wait.cpp',
+  'tests/test_minimize.cpp',
   'tests/test_man.cpp',
   'tests/test_notices.cpp',
   'tests/test_notify.cpp',

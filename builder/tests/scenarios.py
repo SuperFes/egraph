@@ -1368,7 +1368,9 @@ SCENARIOS = {
     # available, as virtual/wine's wine-vanilla: -uD goes to the newer slot (w, and z through a
     # ||), but not one nothing satisfies the dependency of (v), nor a lower one than an installed
     # version kept as an argument (y-3, which has no ebuild: emerge passes over it otherwise),
-    # nor one the atom excludes (r).
+    # nor one the atom excludes (r). Nor where another atom of the same list names a slot that also
+    # satisfies it, as dev-lang/swift-bin's dev-lang/python:3.14 beside dev-lang/python: emerge's
+    # _minimize_children takes the one package for both, installed (twice) or pulled in (fresh).
     "dep-slots": {
         "world": [
             "app-misc/plain",
@@ -1376,6 +1378,7 @@ SCENARIOS = {
             "app-misc/stuck",
             "app-misc/older",
             "app-misc/ranged",
+            "app-misc/twice",
         ],
         "ebuilds": {
             "app-misc/w-1": {"EAPI": "8", "SLOT": "1"},
@@ -1395,6 +1398,12 @@ SCENARIOS = {
             "app-misc/stuck-1": {"EAPI": "8", "RDEPEND": "app-misc/v"},
             "app-misc/older-1": {"EAPI": "8", "RDEPEND": "app-misc/y"},
             "app-misc/ranged-1": {"EAPI": "8", "RDEPEND": "<app-misc/r-2"},
+            "app-misc/m-1": {"EAPI": "8", "SLOT": "1"},
+            "app-misc/m-2": {"EAPI": "8", "SLOT": "2"},
+            "app-misc/n-1": {"EAPI": "8", "SLOT": "1"},
+            "app-misc/n-2": {"EAPI": "8", "SLOT": "2"},
+            "app-misc/twice-1": {"EAPI": "8", "RDEPEND": "app-misc/m:1 app-misc/m"},
+            "app-misc/fresh-1": {"EAPI": "8", "RDEPEND": "app-misc/n app-misc/n:1"},
         },
         "installed": {
             "app-misc/w-1": {"EAPI": "8", "SLOT": "1"},
@@ -1410,6 +1419,8 @@ SCENARIOS = {
             "app-misc/stuck-1": {"EAPI": "8", "RDEPEND": "app-misc/v"},
             "app-misc/older-1": {"EAPI": "8", "RDEPEND": "app-misc/y"},
             "app-misc/ranged-1": {"EAPI": "8", "RDEPEND": "<app-misc/r-2"},
+            "app-misc/m-1": {"EAPI": "8", "SLOT": "1"},
+            "app-misc/twice-1": {"EAPI": "8", "RDEPEND": "app-misc/m:1 app-misc/m"},
         },
     },
     # A USE dependency the installed version was built without, which package.use now enables,
