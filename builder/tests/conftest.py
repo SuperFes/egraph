@@ -210,12 +210,15 @@ def portdb(system):
     return system.trees[system.eroot]["porttree"].dbapi
 
 
-def write_stores(system, path, request_all=False, eroot="/"):
+def write_stores(system, path, request_all=False, eroot=None):
     """The installed store at path and the evaluated one beside it, as one builder run writes
     them; with request_all, as if every repository cp had been evaluated on request. They
-    record eroot as the root they describe."""
+    record eroot, the system's own by default, as the root they describe, so nothing egraph
+    reads under it (build history, run state) comes from the host."""
     from egraph_build import evaluated, installed, store
     from egraph_build.profile import implicit_iuse
+
+    eroot = system.eroot if eroot is None else eroot
 
     meta = store.Meta("0", "0", eroot, 0, implicit_iuse(system.vardb.settings))
     store.write(path, store.encode(installed.build(system.vardb), meta))
@@ -227,9 +230,11 @@ def write_stores(system, path, request_all=False, eroot="/"):
     store.write(store.evaluated_path(path), store.encode_evaluated(layer, meta))
 
 
-def write_index(system, path, eroot="/"):
+def write_index(system, path, eroot=None):
     """The repository index beside the installed store at path."""
     from egraph_build import repository, store
+
+    eroot = system.eroot if eroot is None else eroot
 
     meta = store.RepositoryMeta("0", "0", eroot, 0)
     index = repository.read(portdb(system))
