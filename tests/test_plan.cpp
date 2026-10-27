@@ -1887,6 +1887,37 @@ TEST_CASE("an update held back falls back to rebuilding its own version for chan
                                    "app-misc/kept-1 held <- app-misc/keeper-1 <app-misc/kept-2"});
 }
 
+TEST_CASE("a binding whose USE dependency the new sub-slot lacks rebuilds rather than hold") {
+    // As net-libs/nodejs bound to dev-cpp/simdutf[atomic-base64], whose flag a new sub-slot
+    // dropped, with the dependent's ebuild changed in place to accept it.
+    // Under dynamic deps, the installed one's are its ebuild's with its built binding appended.
+    const auto system = make_system(
+        {{.cpv = "app-misc/flagged-1",
+          .deps = {{"RDEPEND",
+                    ">=dev-libs/flags-1-r1:=[atomic(+)] >=dev-libs/flags-1:0/1=[atomic]"}}},
+         {.cpv = "dev-libs/flags-1", .sub_slot = "1", .iuse = "atomic", .use = "atomic"}},
+        {{.cpv = "app-misc/flagged-1", .deps = {{"RDEPEND", ">=dev-libs/flags-1-r1:=[atomic(+)]"}}},
+         {.cpv = "dev-libs/flags-1", .sub_slot = "1"},
+         {.cpv = "dev-libs/flags-2", .sub_slot = "2"}});
+    CHECK(plan(system) ==
+          std::vector<std::string>{"app-misc/flagged-1 -> app-misc/flagged-1 for dev-libs/flags-2 "
+                                   ">=dev-libs/flags-1:0/1=[atomic]",
+                                   "dev-libs/flags-1 -> dev-libs/flags-2"});
+}
+
+TEST_CASE("a merge in the bound sub-slot without a bound USE flag rebuilds what binds to it") {
+    const auto system = make_system(
+        {{.cpv = "app-misc/flagged-1",
+          .deps = {{"RDEPEND", ">=dev-libs/flags-1:=[atomic(+)] >=dev-libs/flags-1:0/1=[atomic]"}}},
+         {.cpv = "dev-libs/flags-1", .sub_slot = "1", .iuse = "atomic", .use = "atomic"}},
+        {{.cpv = "app-misc/flagged-1", .deps = {{"RDEPEND", ">=dev-libs/flags-1:=[atomic(+)]"}}},
+         {.cpv = "dev-libs/flags-1", .sub_slot = "1"}});
+    CHECK(plan(system, egraph::UseRebuilds::none, reinstall({"=dev-libs/flags-1"})) ==
+          std::vector<std::string>{"app-misc/flagged-1 -> app-misc/flagged-1 for dev-libs/flags-1 "
+                                   ">=dev-libs/flags-1:0/1=[atomic]",
+                                   "dev-libs/flags-1 -> dev-libs/flags-1"});
+}
+
 TEST_CASE("a merge breaking a dependent's binding and its other atoms falls back instead") {
     // As app-misc/openrgb-plugin-skin's <app-misc/openrgb-1.0 beside its binding.
     const auto system = make_system(

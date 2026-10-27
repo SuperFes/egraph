@@ -1502,3 +1502,14 @@ Decided with the user (2026-10-16):
     there is lost; egraph keeps its own `ldpath` mtimes and applied `profiles/updates`, and
     package moves applied twice change nothing), and portage's caches
     (`var/cache/edb/dep`, `vdb_metadata.pickle`).
+- 16u (done): a slot-operator binding whose USE dependency the new version has no flag for
+  (net-libs/nodejs's `>=dev-cpp/simdutf-9.2.1:0/36=[atomic-base64]` once simdutf-9.3.2 dropped
+  the flag and moved to 0/37, found on the dev box 2026-10-27) held the update back as a slot
+  conflict, and nodejs's ebuild, changed in place to
+  `>=dev-cpp/simdutf-9.2.1-r1:=[atomic-base64(+)]`, was then unsatisfied, so `-uDN @world` was
+  refused. The binding's own failure no longer counts
+  as a conflict beside it, and a merge failing only a binding's USE dependencies breaks it as a
+  sub-slot change does, so emerge's rebuild follows (also for a reinstall in the same sub-slot).
+  The `dropflag` scenario holds it to emerge. Left open: with dynamic deps, plain `-u @installed`
+  where the dependent's ebuild asks for a newer revision than the installed one, emerge takes the
+  update and the rebuild since keeping the installed version fails that atom; egraph drops it.

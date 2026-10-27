@@ -543,7 +543,8 @@ class Planner {
     }
 
     // The bindings of the installed package's slot-operator atoms that merges break: every
-    // package the atom matches is replaced, by a version in another slot or sub-slot.
+    // package the atom matches is replaced, by a version in another slot or sub-slot, or one
+    // without what the atom's USE dependencies ask for.
     std::vector<Broken> broken_bindings(std::uint32_t id) {
         std::vector<Broken> found;
         // Outside --deep's reach, emerge leaves a binding only a build needs as it was built.
@@ -570,7 +571,8 @@ class Planner {
                     }
                     const auto& candidate = evaluated().candidates.at(*merged);
                     if (evaluated().string(candidate.slot) != bound->first ||
-                        evaluated().string(candidate.sub_slot) != bound->second) {
+                        evaluated().string(candidate.sub_slot) != bound->second ||
+                        lacks_use(candidate, text)) {
                         found.push_back(
                             {.replaced = match, .merged = *merged, .atom = std::string(text)});
                         break;
@@ -579,6 +581,17 @@ class Planner {
             }
         }
         return found;
+    }
+
+    // Whether the candidate matches the atom but for its USE dependencies.
+    [[nodiscard]] bool lacks_use(const Candidate& candidate, std::string_view text) {
+        const auto& wanted = atom(text);
+        if (!wanted || wanted->use.empty() || matches(store(), evaluated(), candidate, *wanted)) {
+            return false;
+        }
+        auto bare = *wanted;
+        bare.use.clear();
+        return matches(store(), evaluated(), candidate, bare);
     }
 
     // A slot-operator binding to a sub-slot, where a package kept installed is in the slot.
@@ -1394,10 +1407,16 @@ class Planner {
     }
 
     // The run-time dependencies of the installed package that merges leave unsatisfied, each
-    // with the installed package its merge replaces.
-    std::vector<std::pair<std::uint32_t, std::string>> conflicts_of(std::uint32_t id) {
+    // with the installed package its merge replaces. The broken bindings are left out: the
+    // rebuild replaces them, whatever else of theirs (a USE dependency) the merge fails.
+    std::vector<std::pair<std::uint32_t, std::string>>
+    conflicts_of(std::uint32_t id, std::span<const Broken> broken) {
         const Member member{.candidate = false, .index = id};
         const auto& tables = this->tables(member);
+        const auto rebound = [&](const Node& node) {
+            return node.type == NodeType::atom &&
+                   std::ranges::contains(broken, tables.string(node.atom), &Broken::atom);
+        };
         std::vector<std::pair<std::uint32_t, std::string>> found;
         for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
             if (dep_kinds.at(kind) == "DEPEND" || dep_kinds.at(kind) == "BDEPEND") {
@@ -1406,7 +1425,8 @@ class Planner {
             const auto list = nodes(member, kind);
             const auto ok = satisfied_nodes(tables, list);
             for (std::size_t i = 0; i < list.size(); ++i) {
-                if (element(list, i).parent == no_parent && !ok.at(i)) {
+                if (element(list, i).parent == no_parent && !ok.at(i) &&
+                    !rebound(element(list, i))) {
                     if (auto held = replaced_match(tables, list, i)) {
                         found.push_back(std::move(*held));
                     }
@@ -1588,7 +1608,7 @@ class Planner {
                     // slot conflict, which emerge's backtracking masks the merge for before
                     // any rebuild could follow, but for one an argument must merge with no
                     // version left to fall back to.
-                    if (const auto conflicts = conflicts_of(item.member.index);
+                    if (const auto conflicts = conflicts_of(item.member.index, broken);
                         !conflicts.empty() &&
                         std::ranges::none_of(conflicts, [this](const auto& each) {
                             const auto& choice = choices_.at(each.first);

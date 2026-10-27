@@ -848,6 +848,33 @@ SCENARIOS = {
             "app-misc/stale-gone-1": {"EAPI": "8", "RDEPEND": "dev-libs/old:0/1="},
         },
     },
+    # A slot-operator binding whose USE dependency the new sub-slot has no flag for, as
+    # net-libs/nodejs's on dev-cpp/simdutf[atomic-base64]: the dependent's ebuild, changed in
+    # place, takes the flag's absence with a (+) default.
+    "dropflag": {
+        "bounded": True,
+        "world": ["app-misc/flagged"],
+        "ebuilds": {
+            "dev-libs/flags-1": {"EAPI": "8", "SLOT": "0/1"},
+            "dev-libs/flags-2": {"EAPI": "8", "SLOT": "0/2"},
+            "app-misc/flagged-1": {
+                "EAPI": "8",
+                "RDEPEND": ">=dev-libs/flags-1:=[atomic(+)]",
+            },
+        },
+        "installed": {
+            "dev-libs/flags-1": {
+                "EAPI": "8",
+                "SLOT": "0/1",
+                "IUSE": "atomic",
+                "USE": "atomic",
+            },
+            "app-misc/flagged-1": {
+                "EAPI": "8",
+                "RDEPEND": ">=dev-libs/flags-1:0/1=[atomic]",
+            },
+        },
+    },
     # What plain -u leaves to -D: a target needing a newer version of a dependency, a kept one
     # with an update of its own, a target whose sub-slot change needs a dependent outside
     # the root sets rebuilt, one bound by such a dependent, a target needing an update another
