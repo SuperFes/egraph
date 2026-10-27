@@ -875,6 +875,32 @@ SCENARIOS = {
             },
         },
     },
+    # As dropflag, the dependent's ebuild also asking for a revision the installed version is
+    # not, as nodejs's >=dev-cpp/simdutf-9.2.1-r1: under dynamic deps, keeping it fails that.
+    "droprev": {
+        "bounded": True,
+        "world": ["app-misc/flagged"],
+        "ebuilds": {
+            "dev-libs/flags-1": {"EAPI": "8", "SLOT": "0/1"},
+            "dev-libs/flags-2": {"EAPI": "8", "SLOT": "0/2"},
+            "app-misc/flagged-1": {
+                "EAPI": "8",
+                "RDEPEND": ">=dev-libs/flags-1-r1:=[atomic(+)]",
+            },
+        },
+        "installed": {
+            "dev-libs/flags-1": {
+                "EAPI": "8",
+                "SLOT": "0/1",
+                "IUSE": "atomic",
+                "USE": "atomic",
+            },
+            "app-misc/flagged-1": {
+                "EAPI": "8",
+                "RDEPEND": ">=dev-libs/flags-1:0/1=[atomic]",
+            },
+        },
+    },
     # What plain -u leaves to -D: a target needing a newer version of a dependency, a kept one
     # with an update of its own, a target whose sub-slot change needs a dependent outside
     # the root sets rebuilt, one bound by such a dependent, a target needing an update another

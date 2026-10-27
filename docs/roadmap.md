@@ -1510,6 +1510,12 @@ Decided with the user (2026-10-16):
   refused. The binding's own failure no longer counts
   as a conflict beside it, and a merge failing only a binding's USE dependencies breaks it as a
   sub-slot change does, so emerge's rebuild follows (also for a reinstall in the same sub-slot).
-  The `dropflag` scenario holds it to emerge. Left open: with dynamic deps, plain `-u @installed`
-  where the dependent's ebuild asks for a newer revision than the installed one, emerge takes the
-  update and the rebuild since keeping the installed version fails that atom; egraph drops it.
+  The `dropflag` scenario holds it to emerge.
+- 16v (done): with dynamic deps, the dependent's ebuild asking for a newer revision than the one
+  installed (nodejs's `-r1`), `-u` (and `-uD` outside the reach) of the bound package alone
+  dropped the update for the binding it breaks. emerge's slot conflict between the installed
+  version and the merge has no answer in the installed one, which fails that atom, so its
+  `_slot_conflict_backtrack_abi` rebuilds the dependent instead; where the installed version
+  satisfies every atom, `_solve_non_slot_operator_slot_conflicts` keeps it and the update is
+  dropped. A merge whose installed version a kept dependent's run-time atom fails, and the merge
+  satisfies, now rebuilds what it breaks the binding of. The `droprev` scenario holds it to emerge.

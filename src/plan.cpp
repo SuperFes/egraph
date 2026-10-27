@@ -1406,6 +1406,36 @@ class Planner {
         return std::nullopt;
     }
 
+    // Whether a kept dependent's run-time atom fails the installed package and the merge
+    // replacing it satisfies it. emerge's slot conflict between the two then has no answer in
+    // the installed version, and it rebuilds what the merge breaks the binding of instead.
+    [[nodiscard]] bool unkeepable(std::uint32_t replaced, std::uint32_t merged) {
+        const auto& installed = store().packages.at(replaced);
+        const auto& candidate = evaluated().candidates.at(merged);
+        const auto cp = store().string(installed.cp);
+        for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
+            if (id == replaced || !kept(id) || !in_scope(id)) {
+                continue;
+            }
+            for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+                if (dep_kinds.at(kind) == "DEPEND" || dep_kinds.at(kind) == "BDEPEND") {
+                    continue;
+                }
+                for (const auto& node : nodes({.candidate = false, .index = id}, kind)) {
+                    if (node.type != NodeType::atom || node.parent != no_parent) {
+                        continue;
+                    }
+                    const auto& wanted = atom(store().string(node.atom));
+                    if (wanted && wanted->cp == cp && !matches(store(), installed, *wanted) &&
+                        matches(store(), evaluated(), candidate, *wanted)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     // The run-time dependencies of the installed package that merges leave unsatisfied, each
     // with the installed package its merge replaces. The broken bindings are left out: the
     // rebuild replaces them, whatever else of theirs (a USE dependency) the merge fails.
@@ -1620,14 +1650,14 @@ class Planner {
                         continue;
                     }
                     // Plain emerge rebuilds them for what it is asked to merge.
-                    const bool rebuilds = (deep() && triggered(item.member.index, broken) &&
-                                           std::ranges::none_of(broken,
-                                                                [this](const Broken& each) {
-                                                                    return alone(each.replaced);
-                                                                })) ||
-                                          std::ranges::any_of(broken, [this](const Broken& each) {
-                                              return must(each.replaced);
-                                          });
+                    const bool rebuilds =
+                        (deep() && triggered(item.member.index, broken) &&
+                         std::ranges::none_of(
+                             broken,
+                             [this](const Broken& each) { return alone(each.replaced); })) ||
+                        std::ranges::any_of(broken, [this](const Broken& each) {
+                            return must(each.replaced) || unkeepable(each.replaced, each.merged);
+                        });
                     if (const auto own =
                             rebuilds ? rebuild_target(item.member.index) : std::nullopt) {
                         const auto& first = broken.front();

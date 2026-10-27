@@ -1903,6 +1903,15 @@ TEST_CASE("a binding whose USE dependency the new sub-slot lacks rebuilds rather
           std::vector<std::string>{"app-misc/flagged-1 -> app-misc/flagged-1 for dev-libs/flags-2 "
                                    ">=dev-libs/flags-1:0/1=[atomic]",
                                    "dev-libs/flags-1 -> dev-libs/flags-2"});
+    // Asked for alone, keeping the installed version fails the dependent's ebuild, so the
+    // merge is no longer one -u may drop.
+    for (const bool deep : {false, true}) {
+        CHECK(plan(system, egraph::UseRebuilds::none,
+                   request({"dev-libs/flags"}, egraph::Selection::update, deep)) ==
+              std::vector<std::string>{"app-misc/flagged-1 -> app-misc/flagged-1 for "
+                                       "dev-libs/flags-2 >=dev-libs/flags-1:0/1=[atomic]",
+                                       "dev-libs/flags-1 -> dev-libs/flags-2"});
+    }
 }
 
 TEST_CASE("a merge in the bound sub-slot without a bound USE flag rebuilds what binds to it") {
@@ -1916,6 +1925,9 @@ TEST_CASE("a merge in the bound sub-slot without a bound USE flag rebuilds what 
           std::vector<std::string>{"app-misc/flagged-1 -> app-misc/flagged-1 for dev-libs/flags-1 "
                                    ">=dev-libs/flags-1:0/1=[atomic]",
                                    "dev-libs/flags-1 -> dev-libs/flags-1"});
+    // Where the installed version satisfies the dependent, -u keeps it instead.
+    CHECK(plan(system, egraph::UseRebuilds::none, request({"dev-libs/flags"})) ==
+          std::vector<std::string>{});
 }
 
 TEST_CASE("a merge breaking a dependent's binding and its other atoms falls back instead") {
