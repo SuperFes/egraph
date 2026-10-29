@@ -1519,3 +1519,20 @@ Decided with the user (2026-10-16):
   satisfies every atom, `_solve_non_slot_operator_slot_conflicts` keeps it and the update is
   dropped. A merge whose installed version a kept dependent's run-time atom fails, and the merge
   satisfies, now rebuilds what it breaks the binding of. The `droprev` scenario holds it to emerge.
+- 16w (todo): a target the plan cannot merge, said plainly (found on the dev box 2026-10-29:
+  `install -1 @preserved-rebuild` for kwin-x11-6.7.5-r1, whose ebuild was dropped, and whose
+  only successor, -r2, pins `=kde-plasma/*-6.7.5*` against an installed Plasma 6.8.2; emerge
+  stops on the slot conflicts, egraph printed "Nothing to merge" and "1 held").
+  - A held update an argument names is listed without `--held`, and the run exits non-zero
+    as emerge's does; today only those nothing can satisfy are (`held_lines`).
+  - Each of the target's own failing atoms names the installed version it would replace and
+    the packages whose atoms keep that version, as emerge's conflict output does; today only
+    the target and its atoms are printed.
+  - A remedy where the held package is an orphan (nothing keeps it): `depclean <cpv>`. The
+    preserved-libraries notice says the same of a consumer that cannot be rebuilt, rather than
+    offering `install -1 @preserved-rebuild`.
+- 16x (todo): the run's display off the TUI (`install`, `exec`). Today each package scrolls a
+  dozen status lines. Instead, the packages being worked on stay on screen, one line each with
+  its current status updated in place; a package that finishes leaves that region and its
+  final line joins the scrollback above; a bottom line holds the run's overall status and
+  stats (done of total, failures, elapsed and estimate). Plain lines as today off a terminal.
