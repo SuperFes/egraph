@@ -1528,7 +1528,7 @@ Decided with the user (2026-10-16):
   - Each of the target's own failing atoms names the installed version it would replace and
     the packages whose atoms keep that version, as emerge's conflict output does; today only
     the target and its atoms are printed.
-  - A remedy where the held package is an orphan (nothing keeps it): `depclean <cpv>`. The
+  - A remedy where the held package is an orphan (nothing keeps it): `remove <cpv>`. The
     preserved-libraries notice says the same of a consumer that cannot be rebuilt, rather than
     offering `install -1 @preserved-rebuild`.
 - 16x (todo): the run's display off the TUI (`install`, `exec`). Today each package scrolls a
