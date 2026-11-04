@@ -1538,8 +1538,9 @@ Decided with the user (2026-10-16):
   the resume entry's options. emerge's slot-operator update probe passes over an excluded child,
   so a build-time binding to one rebuilds nothing. `test_verify.py` holds it to emerge on the
   update scenarios.
-- 16x (todo): the run's display off the TUI (`install`, `exec`). Today each package scrolls a
-  dozen status lines. Instead, the packages being worked on stay on screen, one line each with
-  its current status updated in place; a package that finishes leaves that region and its
-  final line joins the scrollback above; a bottom line holds the run's overall status and
-  stats (done of total, failures, elapsed and estimate). Plain lines as today off a terminal.
+- 16x (done): the run's display off the TUI, for `exec` (`run_display.cpp`). On a terminal, the
+  packages being worked on stay in a region at the bottom, a line each updated in place, cut to
+  the width; a package that finishes (merged, uninstalled, failed, skipped) leaves it and its
+  last line stays above; a totals line beneath holds done of total, failures, elapsed and the
+  estimate left. Off a terminal, or with a script layout, the lines are those it always printed.
+  `install` shows emerge's own output, which egraph does not redraw.

@@ -26,6 +26,7 @@
 #include <string_view>
 #include <sys/file.h>
 #include <sys/inotify.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -739,6 +740,14 @@ std::error_code exec(const std::filesystem::path& file, const std::vector<std::s
 
 bool stdout_is_terminal() {
     return isatty(STDOUT_FILENO) == 1;
+}
+
+std::size_t stdout_columns() {
+    winsize size{};
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) != 0 || size.ws_col == 0) {
+        return 80;
+    }
+    return size.ws_col;
 }
 
 bool stdin_is_terminal() {

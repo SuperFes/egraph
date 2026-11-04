@@ -40,6 +40,7 @@
 #include "request.hpp"
 #include "restart.hpp"
 #include "resume.hpp"
+#include "run_display.hpp"
 #include "run_log.hpp"
 #include "run_state.hpp"
 #include "schedule.hpp"
@@ -3521,6 +3522,16 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
             builds.sampled(step, usage::pages_under(processes, pid) * page, load, free);
         }
     };
+    const auto start = std::chrono::steady_clock::now();
+    RunDisplay display{out,
+                       {.live = invocation.terminal && output(invocation).human,
+                        .human = output(invocation).human,
+                        .width = os::stdout_columns(),
+                        .total = steps.size()}};
+    const auto show_totals = [&] {
+        const std::chrono::duration<double> since = std::chrono::steady_clock::now() - start;
+        display.tick(since.count(), countdown.left(schedule, now()));
+    };
     // Quiet seconds sample the builds; every other one republishes the status.
     bool other_second = false;
     pool.every(std::chrono::seconds{1}, [&] {
@@ -3529,6 +3540,7 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
         if (other_second) {
             publish(true);
         }
+        show_totals();
     });
     const auto builds_file = builds_path(shown.store.get().meta.eroot);
     bool builds_told = false;
@@ -3538,8 +3550,8 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
         }
         if (const auto kept = append_build(builds_file, *record, build_keep);
             !kept && !builds_told) {
-            out << std::format("egraph: exec: cannot record the build in {}: {}\n",
-                               builds_file.string(), kept.error().message());
+            display.note(std::format("egraph: exec: cannot record the build in {}: {}",
+                                     builds_file.string(), kept.error().message()));
             builds_told = true;
         }
     };
@@ -3555,22 +3567,22 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     const auto record = [&] {
         if (const auto written = os::replace_with_text(state_path, run_state_json(state) + '\n');
             !written && !state_told) {
-            out << std::format("egraph: exec: cannot record the run in {}: {}\n",
-                               state_path.string(), written.error().message());
+            display.note(std::format("egraph: exec: cannot record the run in {}: {}",
+                                     state_path.string(), written.error().message()));
             state_told = true;
         }
     };
     record();
-    const bool human = output(invocation).human;
-    const auto start = std::chrono::steady_clock::now();
-    const auto say = [&](std::size_t step, std::string_view what) {
-        const auto& name = names.at(step);
-        if (human) {
-            out << std::format("({} of {}) {}: {}\n", step + 1, steps.size(), name, what);
+    const auto say = [&](std::size_t step, const WorkerEvent& event) {
+        const auto what = describe_event(event);
+        using Kind = WorkerEvent::Kind;
+        if (event.kind == Kind::merged || event.kind == Kind::uninstalled ||
+            event.kind == Kind::failed || event.kind == Kind::error) {
+            display.finish(step, names.at(step), what,
+                           event.kind == Kind::failed || event.kind == Kind::error);
         } else {
-            out << std::format("{}\t{}\t{}\n", step + 1, name, what);
+            display.status(step, names.at(step), what);
         }
-        out << std::flush;
     };
     std::optional<std::string> stuck;
     const auto outcome = run_schedule(
@@ -3586,7 +3598,7 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                 event.kind == WorkerEvent::Kind::sizes) {
                 return;
             }
-            say(step, describe_event(event));
+            say(step, event);
             if (event.kind == WorkerEvent::Kind::phase) {
                 observer.phase(step, event.text);
             }
@@ -3670,13 +3682,14 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
             std::vector<std::size_t> skipped;
             for (const auto& skip : resumed.skipped) {
                 const auto why = describe_skip(skip);
-                say(skip.step, "skipped, " + why);
+                display.finish(skip.step, names.at(skip.step), "skipped, " + why, false);
                 logger.write(events.skipped(skip.step, why, now()));
                 skipped.push_back(skip.step);
             }
             observer.resumed(drained, skipped);
             return skipped;
         });
+    display.close();
     auto ended = pool.finish();
     if (outcome.stopped) {
         const auto& [step, why] = *outcome.stopped;

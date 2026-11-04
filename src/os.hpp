@@ -312,6 +312,9 @@ std::error_code exec(const std::filesystem::path& file, const std::vector<std::s
 // Whether standard output is a terminal.
 bool stdout_is_terminal();
 
+// The columns of the terminal standard output is, 80 where it says none.
+std::size_t stdout_columns();
+
 // Whether standard input is a terminal.
 bool stdin_is_terminal();
 
