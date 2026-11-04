@@ -1569,7 +1569,11 @@ Decided with the user (2026-10-16):
   - After a failure, the saved images of what built are offered to the next run (`--resume`), so
     nothing is compiled twice; `--keep-going` skips as today and the replay merges the rest.
   - A snapshot backend is one interface; btrfs first (`btrfs subvolume snapshot`, read-write,
-    nested subvolumes such as `/var/db/repos` left out as the filesystem does), others later.
+    nested subvolumes left out, as the filesystem does), others later. The dev box: `/` is the
+    subvolume `Root`, with `/var/db`, `/var/cache` and `/var/tmp` inside it, so the repositories
+    and distfiles come with the snapshot for free but what the run fetches must be written
+    through the bind mounts; its nested `home/Fester`, `srv` and `var/lib/{portables,machines}`
+    appear empty in it, and `Applications`, `Games` and `Development` are separate subvolumes.
     Space: the snapshot costs what the run replaces, plus the images; the plan's estimate
     says so, and the run refuses when the free space cannot hold it.
   - Tests: a playground on a btrfs loop image (skipped without btrfs and root) with a
