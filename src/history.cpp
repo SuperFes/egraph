@@ -690,4 +690,29 @@ void write_differences_json(std::ostream& out, std::span<const Difference> chang
     out << R"("since":)" << since.time_since_epoch().count() << "}\n";
 }
 
+std::string settings_example() {
+    const Settings defaults;
+    return std::format(R"(# egraph.conf: settings, "key = value" a line; "#" starts a comment.
+# Each is shown at its default; remove the "#" to change one.
+
+# How long generations of the system store are kept, in days; 0 keeps none.
+#history_days = {}
+
+# How many builds of each package (by cp) the build history keeps; 0 records none.
+#build_keep = {}
+
+# After which refreshes watch plans the updates for status.json: refresh (each), sync (only
+# after a sync or a configuration edit) or never.
+#plan = refresh
+
+# After how many days since its sync a repository is among the notices; 0 never.
+#stale_days = {}
+
+# The terminal notify starts the interface in, its words before the interface's command line;
+# unset, one is found.
+#terminal = wezterm start --
+)",
+                       defaults.history_days, defaults.build_keep, defaults.stale_days);
+}
+
 } // namespace egraph

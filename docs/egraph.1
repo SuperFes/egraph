@@ -403,7 +403,7 @@ the slot (with its sub-slot when that differs), and
 or
 .B masked
 followed by the reasons, tab-separated.
-.SS config check
+.SS config check | example | init
 The entries of the user's configuration, the files under its
 .I /etc/portage
 that portage reads for a package
@@ -446,6 +446,18 @@ In lines, the file, the line, the severity
 the kind
 .RB ( dead ", " contradicted ", " no\-effect " or " not\-installed ),
 the atom, the token (empty where the whole entry is concerned) and the message, tab-separated.
+.B config example
+prints egraph's own
+.IR egraph.conf :
+every setting commented out at its default, with what it does, as the
+.I egraph.conf.dist
+file installed beside it.
+.B config init
+writes that file to
+.IR ${PORTAGE_CONFIGROOT}/etc/egraph/egraph.conf ,
+creating its directory, and prints its path; it fails where the file exists, unless
+.B \-\-force
+replaces it.
 .SS blockers \fR[\fIpackage\fR ...]
 Blockers
 .RB ( ! atom

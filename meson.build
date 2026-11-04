@@ -235,6 +235,12 @@ python.install_sources(
   subdir: 'egraph_build',
 )
 
+# The settings, as `egraph config example` prints them, for the user to copy to egraph.conf.
+install_data(
+  'docs/egraph.conf.dist',
+  install_dir: get_option('sysconfdir') / 'egraph',
+)
+
 foreach page : ['egraph.1', 'egraph-build.1']
   install_man(
     configure_file(

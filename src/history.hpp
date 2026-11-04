@@ -39,6 +39,9 @@ struct Settings {
 // unknown key or a value that does not parse.
 [[nodiscard]] std::expected<Settings, std::string> parse_settings(std::string_view text);
 [[nodiscard]] std::filesystem::path settings_path(const std::filesystem::path& config_root);
+// A commented egraph.conf: every setting at its default, as a line to uncomment. It parses to the
+// defaults, and docs/egraph.conf.dist holds it.
+[[nodiscard]] std::string settings_example();
 // The settings at path; the defaults when there is none.
 [[nodiscard]] std::expected<Settings, std::string> read_settings(const std::filesystem::path& path);
 

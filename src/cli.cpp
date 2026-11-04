@@ -1693,8 +1693,35 @@ Exit execute(const Versions& command, Session& session, const Invocation& invoca
     return Exit::ok;
 }
 
-Exit execute(const ConfigCommand& /*command*/, Session& session, const Invocation& invocation,
+Exit write_example_settings(const ConfigCommand& command, const Invocation& invocation,
+                            std::ostream& out, std::ostream& err) {
+    const auto path = settings_path(config_root(invocation));
+    std::error_code error;
+    if (!command.force && std::filesystem::exists(path, error)) {
+        err << std::format("egraph: config: {} exists; --force replaces it\n", path.string());
+        return Exit::failure;
+    }
+    std::filesystem::create_directories(path.parent_path(), error);
+    if (error) {
+        return fail(err,
+                    std::format("config: {}: {}", path.parent_path().string(), error.message()));
+    }
+    if (const auto written = os::replace_with_text(path, settings_example()); !written) {
+        return fail(err, std::format("config: {}: {}", path.string(), written.error().message()));
+    }
+    out << std::format("{}\n", path.string());
+    return Exit::ok;
+}
+
+Exit execute(const ConfigCommand& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
+    if (command.action == ConfigAction::example) {
+        out << settings_example();
+        return Exit::ok;
+    }
+    if (command.action == ConfigAction::init) {
+        return write_example_settings(command, invocation, out, err);
+    }
     const auto stores = session.stores();
     if (!stores) {
         return fail(err, stores.error());
@@ -5461,13 +5488,20 @@ void configure(CLI::App& app, Invocation& invocation) {
               invocation, "packages", &Versions::packages,
               "Atoms, or names without a category; every version without any")
         ->type_name("ATOM");
-    add_field(add_command<ConfigCommand>(
-                  app, invocation,
-                  "The user's configuration: check lists the entries that do nothing or that "
-                  "later entries undo, and fails on any matching nothing or undone"),
-              invocation, "action", &ConfigCommand::action, "What to do with it: check")
+    CLI::App* config_cmd = add_command<ConfigCommand>(
+        app, invocation,
+        "The user's configuration: check lists the entries that do nothing or that later "
+        "entries undo, and fails on any matching nothing or undone; example prints egraph.conf "
+        "with every setting at its default, and init writes it");
+    add_field(config_cmd, invocation, "action", &ConfigCommand::action,
+              "What to do with it: check, example or init")
         ->required()
-        ->transform(one_of<ConfigAction>({{"check", ConfigAction::check}}));
+        ->transform(one_of<ConfigAction>({{"check", ConfigAction::check},
+                                          {"example", ConfigAction::example},
+                                          {"init", ConfigAction::init}}));
+    config_cmd->add_flag_callback(
+        "--force", [&invocation] { std::get<ConfigCommand>(invocation.command).force = true; },
+        "With init, replace an egraph.conf already there");
     CLI::App* blockers_cmd = add_dynamic_deps(
         add_command<Blockers>(app, invocation, "Blockers between installed packages"));
     add_field(blockers_cmd, invocation, "packages", &Blockers::packages,

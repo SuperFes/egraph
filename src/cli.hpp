@@ -107,12 +107,15 @@ struct Versions {
     std::vector<std::string> packages;
 };
 
-enum class ConfigAction : std::uint8_t { check };
+enum class ConfigAction : std::uint8_t { check, example, init };
 
-// The user's configuration: check lists the entries that do nothing or that later ones undo.
+// The user's configuration: check lists the entries that do nothing or that later ones undo;
+// example prints egraph's own egraph.conf, every setting at its default, and init writes it.
 struct ConfigCommand {
     static constexpr std::string_view name = "config";
     ConfigAction action = ConfigAction::check;
+    // init replaces an egraph.conf already there.
+    bool force = false;
 };
 
 struct Blockers {

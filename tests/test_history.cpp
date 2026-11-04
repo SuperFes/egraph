@@ -444,3 +444,33 @@ TEST_CASE("events read as differences, after their time") {
               "1970-01-01 00:03:20\tapp-misc/foo-1.2\tupgrade\tapp-misc/foo-1.3\t",
               "1970-01-01 00:05:00\tapp-misc/bar-2\tuninstall\t\t"});
 }
+
+TEST_CASE("the example settings parse to the defaults") {
+    const auto parsed = egraph::parse_settings(egraph::settings_example());
+    REQUIRE(parsed);
+    const egraph::Settings defaults;
+    CHECK(parsed->history_days == defaults.history_days);
+    CHECK(parsed->build_keep == defaults.build_keep);
+    CHECK(parsed->stale_days == defaults.stale_days);
+    CHECK(parsed->plan == defaults.plan);
+    CHECK(parsed->terminal == defaults.terminal);
+}
+
+TEST_CASE("every setting's example is a line to uncomment") {
+    const auto text = egraph::settings_example();
+    for (const auto key : {"history_days", "build_keep", "plan", "stale_days", "terminal"}) {
+        CHECK(text.find(std::string{"\n#"} + key + " = ") != std::string::npos);
+        // Uncommented, each still parses.
+        auto set = text;
+        set.replace(set.find(std::string{"#"} + key + " = "), 1, "");
+        CHECK(egraph::parse_settings(set));
+    }
+}
+
+TEST_CASE("the installed dist file is the example") {
+    std::ifstream in{std::string{EGRAPH_SOURCE_DIR} + "/docs/egraph.conf.dist"};
+    REQUIRE(in);
+    std::stringstream text;
+    text << in.rdbuf();
+    CHECK(text.str() == egraph::settings_example());
+}
