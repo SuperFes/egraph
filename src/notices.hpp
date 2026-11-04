@@ -80,6 +80,8 @@ struct Notices {
         std::string package;
         // The installed packages using it, by cpv.
         std::vector<std::string> consumers;
+        // Of them, those nothing keeps installed, which a rebuild would not reach.
+        std::vector<std::string> orphans = {};
     };
     std::vector<ConfigUpdate> config;
     std::vector<News> news;

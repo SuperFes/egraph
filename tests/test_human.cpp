@@ -285,6 +285,26 @@ TEST_CASE("notices list preserved libraries with what they come from and what us
                        "  /usr/lib/libold.so.1  from dev-libs/old-2\n");
 }
 
+TEST_CASE("a preserved library's consumer nothing keeps is removed, not rebuilt") {
+    std::ostringstream out;
+    // Another consumer can be rebuilt, so the rebuild is still offered.
+    egraph::human_notices(out,
+                          std::vector<std::string>{"/usr/lib/libfoo.so.1\tpreserved\tdev-libs/foo-2"
+                                                   "\ta/bar-1 a/baz-1\ta/bar-1"},
+                          plain, egraph::Seconds{});
+    CHECK(out.str() == "Preserved libraries (egraph install -1 @preserved-rebuild):\n"
+                       "  /usr/lib/libfoo.so.1  from dev-libs/foo-2, used by a/bar-1 (nothing "
+                       "keeps it: egraph remove a/bar-1), a/baz-1\n");
+    out.str("");
+    egraph::human_notices(out,
+                          std::vector<std::string>{"/usr/lib/libfoo.so.1\tpreserved\tdev-libs/foo-2"
+                                                   "\ta/bar-1\ta/bar-1"},
+                          plain, egraph::Seconds{});
+    CHECK(out.str() == "Preserved libraries:\n"
+                       "  /usr/lib/libfoo.so.1  from dev-libs/foo-2, used by a/bar-1 (nothing "
+                       "keeps it: egraph remove a/bar-1)\n");
+}
+
 TEST_CASE("notices list the GLSAs first, each affected package with its fixes") {
     std::ostringstream out;
     egraph::human_notices(
@@ -993,6 +1013,30 @@ TEST_CASE("updates end with the dependencies nothing satisfies") {
                          "no visible version matches: emerge refuses the plan\n"
                          "\n"
                          "2 unsatisfied\n");
+}
+
+TEST_CASE("an unsatisfied atom names the installed version and what keeps it") {
+    const std::vector<std::string> records{
+        "a/kwin-2\tunsatisfied\t=dev-libs/pin-1*\tdev-libs/pin-2\ta/holder-1 >=dev-libs/pin-2",
+    };
+    std::ostringstream out;
+    egraph::human_updates(out, records, plain);
+    CHECK(out.str() == "\n"
+                       "Unsatisfied\n"
+                       "! a/kwin-2  needs =dev-libs/pin-1*\n"
+                       "    dev-libs/pin-2  kept by a/holder-1 >=dev-libs/pin-2\n"
+                       "installed packages keep what it needs out: emerge refuses the plan\n"
+                       "\n"
+                       "1 unsatisfied\n");
+}
+
+TEST_CASE("an orphan in the way is offered for removal") {
+    const std::vector<std::string> records{"a/kwin-2\tunsatisfied\tdev-libs/nowhere",
+                                           "a/kwin-1\torphan"};
+    std::ostringstream out;
+    egraph::human_updates(out, records, plain);
+    CHECK(out.str().find("a/kwin-1  nothing needs it: egraph remove a/kwin-1\n") !=
+          std::string::npos);
 }
 
 TEST_CASE("updates end with the REQUIRED_USE their USE leaves unmet") {

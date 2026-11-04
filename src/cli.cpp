@@ -2799,6 +2799,18 @@ std::expected<Notices, std::string> read_notices(std::string_view name, Session&
         notices->masked = masked_installed(installed, evaluated, invocation.dynamic_deps);
         notices->missing = missing_sonames(installed);
         drop_preserved(*notices);
+        if (notices->preserved && !notices->preserved->empty()) {
+            const auto kept = keep(installed, {});
+            std::set<std::string_view> orphaned;
+            for (const auto id : orphans(kept)) {
+                orphaned.insert(installed.string(installed.packages.at(id).cpv));
+            }
+            for (auto& each : *notices->preserved) {
+                std::ranges::copy_if(
+                    each.consumers, std::back_inserter(each.orphans),
+                    [&](const std::string& cpv) { return orphaned.contains(cpv); });
+            }
+        }
         if (index) {
             notices->findings = check_config(installed, evaluated, index->get());
         }

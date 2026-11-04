@@ -145,13 +145,20 @@ std::vector<std::string> notice_lines(const Notices& notices) {
     for (const auto& [repo, item, title, path] : notices.news) {
         lines.push_back(std::format("{}\tnews\t{}\t{}", item, repo, title));
     }
-    for (const auto& [path, package, consumers] :
+    for (const auto& [path, package, consumers, orphans] :
          notices.preserved.value_or(std::vector<Notices::Preserved>{})) {
-        std::string joined;
-        for (const auto& consumer : consumers) {
-            joined += std::format("{}{}", joined.empty() ? "" : " ", consumer);
+        const auto join = [](const std::vector<std::string>& cpvs) {
+            std::string joined;
+            for (const auto& cpv : cpvs) {
+                joined += std::format("{}{}", joined.empty() ? "" : " ", cpv);
+            }
+            return joined;
+        };
+        auto line = std::format("{}\tpreserved\t{}\t{}", path, package, join(consumers));
+        if (!orphans.empty()) {
+            line += std::format("\t{}", join(orphans));
         }
-        lines.push_back(std::format("{}\tpreserved\t{}\t{}", path, package, joined));
+        lines.push_back(std::move(line));
     }
     for (const auto& atom : notices.rebuild.value_or(std::vector<std::string>{})) {
         lines.push_back(std::format("{}\trebuild", atom));
@@ -352,7 +359,7 @@ std::vector<Notice> notice_list(const Notices& notices, Seconds now) {
     if (const auto& preserved = notices.preserved; preserved && !preserved->empty()) {
         std::vector<std::string> detail;
         std::string fingerprint;
-        for (const auto& [path, package, consumers] : *preserved) {
+        for (const auto& [path, package, consumers, orphans] : *preserved) {
             detail.push_back(consumers.empty()
                                  ? path
                                  : std::format("{}, used by {}", path, joined(consumers, ", ")));

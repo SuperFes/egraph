@@ -66,6 +66,7 @@ class Planner {
             alone_.assign(store.packages.size(), false);
             must_.assign(store.packages.size(), false);
             named_.assign(store.packages.size(), false);
+            requested_.assign(store.packages.size(), false);
             for (std::uint32_t i = 0; i < args_.size(); ++i) {
                 select(i);
             }
@@ -232,6 +233,7 @@ class Planner {
     // Those an atom named alone, rather than a set, must merge: with no version left, emerge
     // refuses rather than keep the installed one.
     std::vector<bool> named_;
+    std::vector<bool> requested_;
     // Only the world sets are arguments: -uD skips what they reach and keep whose dependency
     // nothing satisfies, or only what is installed in a slot-operator binding's slot, rather
     // than refuse.
@@ -301,6 +303,10 @@ class Planner {
     [[nodiscard]] bool must(std::uint32_t id) const { return !must_.empty() && must_.at(id); }
 
     [[nodiscard]] bool named(std::uint32_t id) const { return !named_.empty() && named_.at(id); }
+
+    [[nodiscard]] bool requested(std::uint32_t id) const {
+        return !requested_.empty() && requested_.at(id);
+    }
 
     [[nodiscard]] bool argument(std::uint32_t id) const {
         return arguments_.empty() || arguments_.at(id);
@@ -399,6 +405,9 @@ class Planner {
         if (selection != Selection::update || !matched) {
             must_.at(*id) = true;
             named_.at(*id) = named_.at(*id) || arg.named.set.empty();
+            // A set's member asked to be merged, not updated: when what keeps its update out is
+            // an installed package's hold, emerge stops rather than keep the version.
+            requested_.at(*id) = requested_.at(*id) || selection != Selection::update;
         }
         if (selection != Selection::update) {
             forced_.insert_or_assign(*id, Forced{.candidate = best, .argument = i});
@@ -2018,7 +2027,7 @@ class Planner {
                 }
                 plan.merges.push_back(std::move(merge));
             }
-            if (!choice.merged() && named(id)) {
+            if (!choice.merged() && (named(id) || (requested(id) && !choice.unsatisfiable))) {
                 // What an argument must merge, with no version left to merge.
                 for (const auto& reason : choice.reasons) {
                     add_unsatisfied(plan, reason);

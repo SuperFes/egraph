@@ -556,3 +556,14 @@ TEST_CASE("configuration files dealt with since the notices were written are lef
     REQUIRE(none.size() == 1);
     CHECK(none.at(0).kind == NoticeKind::glsa);
 }
+
+TEST_CASE("a preserved library's orphan consumers are a field of its line") {
+    egraph::Notices notices;
+    notices.preserved = {{.path = "/usr/lib/libfoo.so.1",
+                          .package = "dev-libs/foo-2",
+                          .consumers = {"app-misc/bar-1", "app-misc/baz-1"},
+                          .orphans = {"app-misc/bar-1"}}};
+    CHECK(egraph::notice_lines(notices) ==
+          std::vector<std::string>{"/usr/lib/libfoo.so.1\tpreserved\tdev-libs/foo-2\t"
+                                   "app-misc/bar-1 app-misc/baz-1\tapp-misc/bar-1"});
+}

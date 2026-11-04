@@ -986,7 +986,22 @@ void human_notices(std::ostream& out, std::span<const std::string> records, cons
             continue;
         }
         if (first) {
-            heading("Preserved libraries", " (egraph install -1 @preserved-rebuild)");
+            // A rebuild cannot reach a consumer nothing keeps; that one is removed instead.
+            const bool rebuildable = std::ranges::any_of(rows, [](const auto& each) {
+                if (each.at(1) != "preserved") {
+                    return false;
+                }
+                const auto orphans = each.size() > 4 ? each.at(4) : std::string_view{};
+                return std::ranges::any_of(std::views::split(each.at(3), ' '), [&](auto part) {
+                    const std::string_view consumer{part};
+                    return !consumer.empty() &&
+                           !std::ranges::contains(
+                               std::views::split(orphans, ' '), consumer,
+                               [](auto piece) { return std::string_view{piece}; });
+                });
+            });
+            heading("Preserved libraries",
+                    rebuildable ? " (egraph install -1 @preserved-rebuild)" : "");
             first = false;
         }
         out << "  " << row.front() << "  " << paint("from ", Tone::note)
@@ -996,6 +1011,12 @@ void human_notices(std::ostream& out, std::span<const std::string> records, cons
             if (const std::string_view consumer{part}; !consumer.empty()) {
                 out << paint(consumer_first ? ", used by " : ", ", Tone::note)
                     << paint_cpv(consumer, paint);
+                if (row.size() > 4 &&
+                    std::ranges::contains(std::views::split(row.at(4), ' '), consumer,
+                                          [](auto piece) { return std::string_view{piece}; })) {
+                    out << paint(std::format(" (nothing keeps it: egraph remove {})", consumer),
+                                 Tone::note);
+                }
                 consumer_first = false;
             }
         }
@@ -1351,10 +1372,12 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     std::vector<Fields> unmet;
     std::vector<Fields> use_changes;
     std::vector<Fields> masked;
+    std::vector<Fields> orphans;
     for (std::size_t i = rows.size(); i-- > 0;) {
         const auto kind = rows.at(i).size() > 1 ? rows.at(i).at(1) : std::string_view{};
         if (kind != "uninstall" && kind != "blocks" && kind != "unsatisfied" &&
-            kind != "required-use" && kind != "use-change" && kind != "masked") {
+            kind != "required-use" && kind != "use-change" && kind != "masked" &&
+            kind != "orphan") {
             continue;
         }
         auto& into = kind == "uninstall"      ? uninstalls
@@ -1362,6 +1385,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
                      : kind == "unsatisfied"  ? unsatisfied
                      : kind == "required-use" ? unmet
                      : kind == "masked"       ? masked
+                     : kind == "orphan"       ? orphans
                                               : use_changes;
         into.push_back(std::move(rows.at(i)));
         if (kind == "uninstall") {
@@ -1372,6 +1396,7 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
     }
     std::ranges::reverse(uninstalls);
     std::ranges::reverse(masked);
+    std::ranges::reverse(orphans);
     std::ranges::reverse(uninstall_waits);
     std::ranges::reverse(blocks);
     std::ranges::reverse(unsatisfied);
@@ -1675,8 +1700,30 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             out << paint(glyph.broken, Tone::bad) << ' ' << paint_cpv(row.at(0), paint)
                 << spaces(row.at(0).size(), width) << "  " << paint("needs", Tone::note) << ' '
                 << paint(row.at(2), Tone::bad) << '\n';
+            // The installed version it would replace, and what keeps it.
+            for (std::size_t i = 4; i < row.size(); ++i) {
+                const auto split = row.at(i).find(' ');
+                out << "    " << paint_cpv(row.at(3), paint) << "  " << paint("kept by", Tone::note)
+                    << ' ' << paint_cpv(row.at(i).substr(0, split), paint) << ' '
+                    << paint(split == std::string::npos ? std::string{}
+                                                        : row.at(i).substr(split + 1),
+                             Tone::bad)
+                    << '\n';
+            }
         }
-        out << paint("no visible version matches: emerge refuses the plan", Tone::bad) << '\n';
+        const bool kept =
+            std::ranges::any_of(unsatisfied, [](const auto& row) { return row.size() > 4; });
+        out << paint(kept ? "installed packages keep what it needs out: emerge refuses the plan"
+                          : "no visible version matches: emerge refuses the plan",
+                     Tone::bad)
+            << '\n';
+    }
+    if (!orphans.empty()) {
+        out << '\n' << paint("Kept by nothing", Tone::heading) << '\n';
+        for (const auto& row : orphans) {
+            out << paint(glyph.held, Tone::note) << ' ' << paint_cpv(row.at(0), paint) << "  "
+                << paint("nothing needs it: egraph remove", Tone::note) << ' ' << row.at(0) << '\n';
+        }
     }
     if (!unmet.empty()) {
         out << '\n' << paint("Unmet REQUIRED_USE", Tone::heading) << '\n';

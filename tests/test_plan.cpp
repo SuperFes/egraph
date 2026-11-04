@@ -1948,3 +1948,32 @@ TEST_CASE("a merge breaking a dependent's binding and its other atoms falls back
               "app-misc/fx-1 -> app-misc/fx-2 for app-misc/host-2 >=app-misc/host-1:0/4=",
               "app-misc/host-1 -> app-misc/host-2"});
 }
+
+TEST_CASE("a set's member that cannot be merged is an unsatisfied argument, as one named by atom") {
+    // kwin-1's ebuild is gone, and its successor pins a version of pin that holder keeps out.
+    const auto system =
+        make_system({{.cpv = "app-misc/kwin-1"},
+                     {.cpv = "dev-libs/pin-2"},
+                     {.cpv = "app-misc/holder-1", .deps = {{"RDEPEND", ">=dev-libs/pin-2"}}}},
+                    {{.cpv = "app-misc/kwin-2", .deps = {{"RDEPEND", "=dev-libs/pin-1*"}}},
+                     {.cpv = "dev-libs/pin-1"},
+                     {.cpv = "dev-libs/pin-2"},
+                     {.cpv = "app-misc/holder-1", .deps = {{"RDEPEND", ">=dev-libs/pin-2"}}}});
+    auto named = reinstall({"app-misc/kwin"});
+    auto from_set = named;
+    from_set.request.front().set = "preserved-rebuild";
+    const auto by_atom = plan(system, egraph::UseRebuilds::none, named);
+    CHECK(by_atom == std::vector<std::string>{"unsatisfied app-misc/kwin-2 =dev-libs/pin-1*"});
+    CHECK(plan(system, egraph::UseRebuilds::none, from_set) == by_atom);
+}
+
+TEST_CASE(
+    "a set's member whose dependency nothing satisfies stays held, as emerge keeps its version") {
+    const auto system =
+        make_system({{.cpv = "app-misc/gone-1"}},
+                    {{.cpv = "app-misc/gone-2", .deps = {{"RDEPEND", "dev-libs/nowhere"}}}});
+    auto from_set = reinstall({"app-misc/gone"});
+    from_set.request.front().set = "selected";
+    CHECK(plan(system, egraph::UseRebuilds::none, from_set) ==
+          std::vector<std::string>{"app-misc/gone-1 held <- app-misc/gone-2 dev-libs/nowhere"});
+}

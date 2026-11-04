@@ -104,4 +104,51 @@ std::vector<Remedy> remedies(const Store& store, const Evaluated& evaluated, con
     return found;
 }
 
+std::vector<std::optional<Conflict>> conflicts(const Store& store, const Evaluated& evaluated,
+                                               const Graph& graph, const Plan& plan) {
+    std::vector<std::optional<Conflict>> found(plan.unsatisfied.size());
+    for (std::size_t index = 0; index < plan.unsatisfied.size(); ++index) {
+        const auto wanted = parse_atom(plan.unsatisfied.at(index).atom);
+        if (!wanted) {
+            continue;
+        }
+        // The versions that would do, and the slots they are in.
+        std::vector<const Candidate*> would;
+        for (const auto& candidate : evaluated.candidates) {
+            if (evaluated.string(candidate.cp) == wanted->cp &&
+                matches(store, evaluated, candidate, *wanted)) {
+                would.push_back(&candidate);
+            }
+        }
+        for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
+            const auto& pkg = store.packages.at(id);
+            if (store.string(pkg.cp) != wanted->cp || matches(store, pkg, *wanted) ||
+                std::ranges::none_of(would, [&](const Candidate* candidate) {
+                    return evaluated.string(candidate->slot) == store.string(pkg.slot);
+                })) {
+                continue;
+            }
+            Conflict conflict{.installed = id, .holders = {}};
+            for (const auto& edge : graph.rdeps(id)) {
+                const auto keeps = parse_atom(store.string(edge.atom));
+                if (edge.parent == id || !keeps || !matches(store, pkg, *keeps) ||
+                    std::ranges::any_of(would, [&](const Candidate* candidate) {
+                        return matches(store, evaluated, *candidate, *keeps);
+                    })) {
+                    continue;
+                }
+                conflict.holders.emplace_back(edge.parent, std::string{store.string(edge.atom)});
+            }
+            std::ranges::sort(conflict.holders);
+            const auto [from, to] = std::ranges::unique(conflict.holders);
+            conflict.holders.erase(from, to);
+            if (!conflict.holders.empty()) {
+                found.at(index) = std::move(conflict);
+                break;
+            }
+        }
+    }
+    return found;
+}
+
 } // namespace egraph

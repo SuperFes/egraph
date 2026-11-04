@@ -1519,7 +1519,7 @@ Decided with the user (2026-10-16):
   satisfies every atom, `_solve_non_slot_operator_slot_conflicts` keeps it and the update is
   dropped. A merge whose installed version a kept dependent's run-time atom fails, and the merge
   satisfies, now rebuilds what it breaks the binding of. The `droprev` scenario holds it to emerge.
-- 16w (todo): a target the plan cannot merge, said plainly (found on the dev box 2026-10-29:
+- 16w (done): a target the plan cannot merge, said plainly (found on the dev box 2026-10-29:
   `install -1 @preserved-rebuild` for kwin-x11-6.7.5-r1, whose ebuild was dropped, and whose
   only successor, -r2, pins `=kde-plasma/*-6.7.5*` against an installed Plasma 6.8.2; emerge
   stops on the slot conflicts, egraph printed "Nothing to merge" and "1 held").
@@ -1531,6 +1531,13 @@ Decided with the user (2026-10-16):
   - A remedy where the held package is an orphan (nothing keeps it): `remove <cpv>`. The
     preserved-libraries notice says the same of a consumer that cannot be rebuilt, rather than
     offering `install -1 @preserved-rebuild`.
+  - Done: a set's member the request merges (not `-u`) is an unsatisfied argument, as one named by
+    atom, when an installed package's hold keeps its update out (where nothing satisfies a
+    dependency emerge keeps the installed version, so it stays held); an unsatisfied atom names the installed version
+    it would replace and the packages whose atoms keep it (`conflicts`); an installed package
+    nothing keeps, where its update is held or its merge unsatisfied, is offered `egraph remove`
+    (`orphan` records), as is a preserved library's orphan consumer, whose notice then offers
+    the rebuild only for the others.
 - 16y (done): `--exclude` on `updates`, `plan`, `update`, `install` and `exec`, as emerge's: a
   package name or slot atom, wildcards allowed, that the plan neither merges nor replaces
   (`with_exclusions`: matching candidates masked as "exclude option", no pending update or

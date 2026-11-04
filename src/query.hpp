@@ -178,7 +178,10 @@ enum class HeldLines : std::uint8_t {
 // holder and atom empty and the replacing merge's cpv last), then
 // "holder<TAB>blocks<TAB>atom<TAB>blocked" for each blocker emerge cannot resolve, then
 // "cpv<TAB>unsatisfied<TAB>atom" for each dependency nothing satisfies, the cpv empty for an
-// argument, then "cpv<TAB>required-use<TAB>repo<TAB>USE<TAB>unsatisfied<TAB>complete" for each
+// argument; with remedies, when an installed version stands in its way, then the installed cpv it
+// would replace and a "holder cpv atom" field for each package whose atom keeps that version;
+// then "cpv<TAB>orphan" for each installed package nothing keeps (by the remedies' rescope) that
+// a held update or an unsatisfied merge is of, then "cpv<TAB>required-use<TAB>repo<TAB>USE<TAB>unsatisfied<TAB>complete" for each
 // version whose REQUIRED_USE its USE leaves unsatisfied: the constraints left, and the whole
 // REQUIRED_USE when they are only part of it (else empty), then
 // "cpv<TAB>use-change<TAB>repo<TAB>package.use line<TAB>required by..." for each USE change the

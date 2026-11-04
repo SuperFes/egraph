@@ -556,9 +556,50 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& origi
         trailing_rows.push_back(std::format("{}\tblocks\t{}\t{}", member(each.holder), each.atom,
                                             member(each.blocked)));
     }
-    for (const auto& each : plan.unsatisfied) {
-        trailing_rows.push_back(
-            std::format("{}\tunsatisfied\t{}", each.member ? member(*each.member) : "", each.atom));
+    const auto kept = remedies ? conflicts(store, evaluated, remedies->graph, plan)
+                               : std::vector<std::optional<Conflict>>{};
+    for (std::size_t i = 0; i < plan.unsatisfied.size(); ++i) {
+        const auto& each = plan.unsatisfied.at(i);
+        auto row =
+            std::format("{}\tunsatisfied\t{}", each.member ? member(*each.member) : "", each.atom);
+        // The installed version it would replace, then each package keeping it and its atom.
+        if (i < kept.size() && kept.at(i)) {
+            row += std::format("\t{}", package(kept.at(i)->installed));
+            for (const auto& [holder, atom] : kept.at(i)->holders) {
+                row += std::format("\t{} {}", package(holder), atom);
+            }
+        }
+        trailing_rows.push_back(std::move(row));
+    }
+    // An installed package a merge cannot replace, or an update held back, that nothing keeps:
+    // removing it is the way out.
+    if (remedies && remedies->rescope) {
+        const auto scope = remedies->rescope(std::vector<bool>(store.packages.size(), false));
+        std::set<std::uint32_t> orphaned;
+        const auto note = [&](std::uint32_t id) {
+            if (id < scope.size() && !scope.at(id)) {
+                orphaned.insert(id);
+            }
+        };
+        for (const auto& each : plan.held) {
+            note(each.package);
+        }
+        for (const auto& each : plan.unsatisfied) {
+            if (!each.member || !each.member->candidate) {
+                continue;
+            }
+            const auto& candidate = evaluated.candidates.at(each.member->index);
+            for (std::uint32_t id = 0; id < store.packages.size(); ++id) {
+                const auto& pkg = store.packages.at(id);
+                if (store.string(pkg.cp) == evaluated.string(candidate.cp) &&
+                    store.string(pkg.slot) == evaluated.string(candidate.slot)) {
+                    note(id);
+                }
+            }
+        }
+        for (const auto id : orphaned) {
+            trailing_rows.push_back(std::format("{}\torphan", package(id)));
+        }
     }
     for (const auto index : plan.unmet) {
         const auto& candidate = evaluated.candidates.at(index);

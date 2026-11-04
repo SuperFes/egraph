@@ -251,3 +251,50 @@ TEST_CASE("updates --held lists each held update's remedies under it") {
     CHECK(table.size() == lines.size());
     CHECK(table.at(1) == "\t\t" + lines.at(1));
 }
+
+TEST_CASE("an unsatisfied atom names the installed version it would replace and what keeps it") {
+    // kwin-1's ebuild is gone and its successor pins pin-1, which holder's atom keeps out.
+    const auto system = egraph::test::make_system(
+        {{.cpv = "app-misc/kwin-1"},
+         {.cpv = "dev-libs/pin-2"},
+         {.cpv = "app-misc/holder-1", .deps = {{"RDEPEND", ">=dev-libs/pin-2"}}}},
+        {{.cpv = "app-misc/kwin-2", .deps = {{"RDEPEND", "=dev-libs/pin-1*"}}},
+         {.cpv = "dev-libs/pin-1"},
+         {.cpv = "dev-libs/pin-2"},
+         {.cpv = "app-misc/holder-1", .deps = {{"RDEPEND", ">=dev-libs/pin-2"}}}});
+    const auto& [store, evaluated] = system;
+    const auto graph = egraph::build_graph(store);
+    egraph::Targets targets{.scope = {}, .roots = true, .deep = false};
+    targets.request.push_back({.set = "preserved-rebuild", .atom = "app-misc/kwin"});
+    targets.selection = egraph::Selection::reinstall;
+    const auto lines =
+        egraph::update_lines(store, evaluated, egraph::UseRebuilds::none, egraph::HeldLines::none,
+                             false, targets, egraph::RemedyInputs{.graph = graph, .rescope = {}});
+    CHECK(lines == std::vector<std::string>{"app-misc/kwin-2\tunsatisfied\t=dev-libs/pin-1*\t"
+                                            "dev-libs/pin-2\tapp-misc/holder-1 >=dev-libs/pin-2"});
+}
+
+TEST_CASE("an installed package nothing keeps is offered for removal where its update is stuck") {
+    const auto system = egraph::test::make_system(
+        {{.cpv = "app-misc/kwin-1"}, {.cpv = "app-misc/kept-1"}},
+        {{.cpv = "app-misc/kwin-2", .deps = {{"RDEPEND", "dev-libs/nowhere"}}},
+         {.cpv = "app-misc/kept-1"}});
+    const auto& [store, evaluated] = system;
+    const auto graph = egraph::build_graph(store);
+    egraph::Targets targets{.scope = {}, .roots = true, .deep = false};
+    targets.request.push_back({.set = "preserved-rebuild", .atom = "app-misc/kwin"});
+    targets.selection = egraph::Selection::reinstall;
+    // depclean would keep only kept-1.
+    const egraph::Rescope rescope = [&](const std::vector<bool>&) {
+        std::vector<bool> scope(store.packages.size());
+        for (std::size_t id = 0; id < scope.size(); ++id) {
+            scope.at(id) = store.string(store.packages.at(id).cpv) == "app-misc/kept-1";
+        }
+        return scope;
+    };
+    const auto lines = egraph::update_lines(
+        store, evaluated, egraph::UseRebuilds::none, egraph::HeldLines::none, false, targets,
+        egraph::RemedyInputs{.graph = graph, .rescope = rescope});
+    CHECK(std::ranges::contains(lines, std::string{"app-misc/kwin-1\torphan"}));
+    CHECK_FALSE(std::ranges::contains(lines, std::string{"app-misc/kept-1\torphan"}));
+}
