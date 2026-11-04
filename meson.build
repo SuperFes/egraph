@@ -1,7 +1,7 @@
 project(
   'egraph',
   'cpp',
-  version: '0.11.0',
+  version: '0.12.0',
   license: 'GPL-2.0-only',
   meson_version: '>=1.3',
   default_options: [
