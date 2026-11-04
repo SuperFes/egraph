@@ -21,6 +21,10 @@ namespace egraph {
 // rebuilt the repository index (a sync or a configuration edit), or none.
 enum class PlanWhen : std::uint8_t { refresh, sync, never };
 
+// Whether exec runs in a snapshot of the root: never, where the root can be snapshotted and the
+// run is able, or always (failing where it cannot).
+enum class SnapshotRun : std::uint8_t { off, automatic, on };
+
 // egraph's settings, from ${PORTAGE_CONFIGROOT}/etc/egraph/egraph.conf.
 struct Settings {
     // How many days of generations to keep; 0 keeps none.
@@ -33,6 +37,7 @@ struct Settings {
     // The terminal egraph notify's Open starts the interface in, before its command, as words;
     // empty, one found.
     std::string terminal{};
+    SnapshotRun snapshot = SnapshotRun::off;
 };
 
 // "key = value" lines, blank lines and "#" comments skipped. An error names the line of an

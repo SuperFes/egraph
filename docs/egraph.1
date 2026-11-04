@@ -2042,6 +2042,13 @@ starts the interface in, its words before the interface's command line (as
 unset, one found as
 .B notify
 describes.
+.TP
+.BR snapshot " " off | auto | on
+Whether
+.B exec
+builds in a snapshot of the root and merges into the real one only when every package built:
+never (the default), where the root is a btrfs subvolume, the run is root and the space fits
+(else a plain run, said so), or always (failing where it cannot).
 .RE
 .TP
 .I ${EROOT}/var/lib/egraph/builds.jsonl

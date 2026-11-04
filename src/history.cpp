@@ -251,6 +251,17 @@ std::expected<Settings, std::string> parse_settings(std::string_view text) {
                 return std::unexpected(std::format(
                     "line {}: plan takes refresh, sync or never, not {}", line_number, value));
             }
+        } else if (key == "snapshot") {
+            if (value == "off") {
+                settings.snapshot = SnapshotRun::off;
+            } else if (value == "auto") {
+                settings.snapshot = SnapshotRun::automatic;
+            } else if (value == "on") {
+                settings.snapshot = SnapshotRun::on;
+            } else {
+                return std::unexpected(std::format(
+                    "line {}: snapshot takes off, auto or on, not {}", line_number, value));
+            }
         } else {
             return std::unexpected(std::format("line {}: unknown setting {}", line_number, key));
         }
@@ -711,6 +722,12 @@ std::string settings_example() {
 # The terminal notify starts the interface in, its words before the interface's command line;
 # unset, one is found.
 #terminal = wezterm start --
+
+# Whether exec builds in a snapshot of the root and merges into the real one only when every
+# package built: off, auto (where the root is a btrfs subvolume, the run is root and the space
+# fits; else a plain run) or on (fails where it cannot). exec --snapshot and --no-snapshot
+# decide one run.
+#snapshot = off
 )",
                        defaults.history_days, defaults.build_keep, defaults.stale_days);
 }

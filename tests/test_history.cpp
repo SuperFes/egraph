@@ -474,3 +474,17 @@ TEST_CASE("the installed dist file is the example") {
     text << in.rdbuf();
     CHECK(text.str() == egraph::settings_example());
 }
+
+TEST_CASE("snapshot runs are off unless the setting says otherwise") {
+    using egraph::SnapshotRun;
+    CHECK(egraph::parse_settings("")->snapshot == SnapshotRun::off);
+    CHECK(egraph::parse_settings("snapshot = auto\n")->snapshot == SnapshotRun::automatic);
+    CHECK(egraph::parse_settings("snapshot = on # always\n")->snapshot == SnapshotRun::on);
+    CHECK(egraph::parse_settings("snapshot = off\n")->snapshot == SnapshotRun::off);
+}
+
+TEST_CASE("a snapshot setting that is none of off, auto and on is named") {
+    const auto settings = egraph::parse_settings("history_days = 5\nsnapshot = sometimes\n");
+    REQUIRE_FALSE(settings.has_value());
+    CHECK(settings.error() == "line 2: snapshot takes off, auto or on, not sometimes");
+}

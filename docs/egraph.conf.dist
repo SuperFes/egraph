@@ -17,3 +17,9 @@
 # The terminal notify starts the interface in, its words before the interface's command line;
 # unset, one is found.
 #terminal = wezterm start --
+
+# Whether exec builds in a snapshot of the root and merges into the real one only when every
+# package built: off, auto (where the root is a btrfs subvolume, the run is root and the space
+# fits; else a plain run) or on (fails where it cannot). exec --snapshot and --no-snapshot
+# decide one run.
+#snapshot = off
