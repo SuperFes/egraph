@@ -1551,3 +1551,29 @@ Decided with the user (2026-10-16):
   last line stays above; a totals line beneath holds done of total, failures, elapsed and the
   estimate left. Off a terminal, or with a script layout, the lines are those it always printed.
   `install` shows emerge's own output, which egraph does not redraw.
+- 16z (todo): a run in a snapshot (`exec --snapshot`), so a plan that fails or leaves the
+  system half-upgraded never touches it (found on the dev box 2026-11-04: `llvm-23.1.5` merged
+  while `ld.lld` stayed 23.1.4 against the new same-soname `libLLVM.so.23.1`, which crashed, and
+  `clang-23.1.5-r1`'s build with it; emerge orders the same, through a test-dependency cycle
+  between `clang` and `lld`).
+  - The run's root is a snapshot of `/`, entered by the workers (a mount namespace and chroot,
+    behind `src/os.cpp`): every merge of the plan really happens there, with its phases, vdb,
+    `ld.so.cache` and `eselect` state, so a later build sees what emerge would give it. Outside
+    it, bind-mounted writable: distfiles, `PORTAGE_TMPDIR`, ccache and `/run`; the repositories
+    read-only. `egraph-build` runs from the snapshot's own copy.
+  - Each package's built image and vdb entry are kept as it merges in the snapshot (portage's
+    own merge API through the worker, not a new format; shares its storage with 22e).
+  - When every step is done, the images merge into the real root in plan order: its phases run
+    again, config protection and collisions apply, and what changed outside meanwhile is kept.
+    No compiling then. The snapshot is deleted after a failure, a stop and a success alike.
+  - After a failure, the saved images of what built are offered to the next run (`--resume`), so
+    nothing is compiled twice; `--keep-going` skips as today and the replay merges the rest.
+  - A snapshot backend is one interface; btrfs first (`btrfs subvolume snapshot`, read-write,
+    nested subvolumes such as `/var/db/repos` left out as the filesystem does), others later.
+    Space: the snapshot costs what the run replaces, plus the images; the plan's estimate
+    says so, and the run refuses when the free space cannot hold it.
+  - Tests: a playground on a btrfs loop image (skipped without btrfs and root) with a
+    same-soname library upgrade, held to `egraph exec` without a snapshot for the resulting
+    system, and to emerge's for a failed run leaving the root untouched.
+  - Open: whether to make it the default where `/` is a snapshottable subvolume (it changes
+    what a failed run leaves behind: nothing, rather than the merges before it).
