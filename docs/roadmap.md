@@ -1579,5 +1579,8 @@ Decided with the user (2026-10-16):
   - Tests: a playground on a btrfs loop image (skipped without btrfs and root) with a
     same-soname library upgrade, held to `egraph exec` without a snapshot for the resulting
     system, and to emerge's for a failed run leaving the root untouched.
-  - Open: whether to make it the default where `/` is a snapshottable subvolume (it changes
-    what a failed run leaves behind: nothing, rather than the merges before it).
+  - Configured in `egraph.conf` as `snapshot = off | auto | on` (default off, as portage runs);
+    `auto` snapshots where `/` is a snapshottable subvolume, the run is root and the space
+    fits, else runs plainly and says so; `on` fails rather than fall back; `exec --snapshot`
+    and `--no-snapshot` decide one run. Making `auto` the default is a later change of the
+    setting's default, once it has run on the dev box.
