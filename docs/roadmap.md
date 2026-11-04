@@ -1551,7 +1551,7 @@ Decided with the user (2026-10-16):
   last line stays above; a totals line beneath holds done of total, failures, elapsed and the
   estimate left. Off a terminal, or with a script layout, the lines are those it always printed.
   `install` shows emerge's own output, which egraph does not redraw.
-- 16z (todo): a run in a snapshot (`exec --snapshot`), so a plan that fails or leaves the
+- 16z (todo; the btrfs backend, `src/snapshot.cpp`, is in): a run in a snapshot (`exec --snapshot`), so a plan that fails or leaves the
   system half-upgraded never touches it (found on the dev box 2026-11-04: `llvm-23.1.5` merged
   while `ld.lld` stayed 23.1.4 against the new same-soname `libLLVM.so.23.1`, which crashed, and
   `clang-23.1.5-r1`'s build with it; emerge orders the same, through a test-dependency cycle
