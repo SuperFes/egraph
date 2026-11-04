@@ -24,6 +24,8 @@ struct EmergeRequest {
     bool noreplace = false;
     UseRebuilds rebuilds = UseRebuilds::none;
     bool dynamic_deps = true;
+    // emerge --exclude, an atom each.
+    std::vector<std::string> exclude = {};
 };
 
 // emerge's options and arguments for request, pretending and verbose, without the options in

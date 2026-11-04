@@ -608,6 +608,12 @@ the order and the plan's seconds in it and in emerge's.
 .TP
 .B \-\-dynamic\-deps
 .TP
+.BI \-\-exclude " atom"
+Neither merge nor replace the installed packages the atom matches, as
+.B emerge \-\-exclude
+does: a package name, with or without its category, or a slot atom, wildcards allowed. Repeated,
+or several to a value; passed on to emerge.
+.TP
 .B \-\-held
 Also the updates that installed dependents hold back, which of their atoms do, and the commands
 that would get past them.
@@ -774,6 +780,10 @@ also the rebuilds
 .B emerge \-\-changed\-use
 makes.
 .TP
+.BI \-\-exclude " atom"
+As for
+.BR updates .
+.TP
 .B \-\-held
 As for
 .BR updates .
@@ -878,6 +888,10 @@ merges (exit status 2 otherwise); the interface runs no actions yet.
 .TP
 .B \-\-dynamic\-deps
 .TP
+.BI \-\-exclude " atom"
+As for
+.BR updates .
+.TP
 .B \-\-held
 .TP
 .BR \-t ", " \-\-table
@@ -924,6 +938,10 @@ line, and recorded with nothing to merge too.
 .BR \-N ", " \-\-newuse
 .TP
 .BR \-U ", " \-\-changed\-use
+.TP
+.BI \-\-exclude " atom"
+As for
+.BR updates .
 .TP
 .B \-\-held
 .TP
@@ -1017,6 +1035,10 @@ Also run as
 .BR \-N ", " \-\-newuse
 .TP
 .BR \-U ", " \-\-changed\-use
+.TP
+.BI \-\-exclude " atom"
+As for
+.BR updates .
 .TP
 .B \-\-held
 .TP
@@ -1229,6 +1251,10 @@ to judge: syncing as a user who cannot fails there. The updates and notices foll
 sync too, for the repositories that synced; the exit status is then 1.
 .TP
 .B \-\-dynamic\-deps
+.TP
+.BI \-\-exclude " atom"
+As for
+.BR updates .
 .TP
 .B \-\-held
 .TP

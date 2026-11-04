@@ -105,14 +105,17 @@ CLI::Option* add_field(CLI::App* sub, Invocation& invocation, std::string option
 
 // emerge --exclude, once per atom (or several to a value, space-separated), so that it never
 // takes a command's packages.
-template <class C> void add_exclude(CLI::App* sub, Invocation& invocation) {
+template <class C>
+void add_exclude(CLI::App* sub, Invocation& invocation,
+                 const char* description = "Packages depclean keeps whatever needs them, and what "
+                                           "they need, as emerge's option: package names and slot "
+                                           "atoms, wildcards allowed") {
     sub->add_option_function<std::string>(
            "--exclude",
            [&invocation](const std::string& value) {
                std::get<C>(invocation.command).exclude.push_back(value);
            },
-           "Packages depclean keeps whatever needs them, and what they need, as emerge's option: "
-           "package names and slot atoms, wildcards allowed")
+           description)
         ->type_name("ATOM")
         ->multi_option_policy(CLI::MultiOptionPolicy::TakeAll)
         ->trigger_on_parse();
@@ -171,6 +174,10 @@ template <class Field> void add_requests(CLI::App* sub, Field field) {
         ->type_name("FILE");
 }
 
+constexpr const char* plan_exclude_help =
+    "Packages the plan neither merges nor replaces, as emerge's option: package names and slot "
+    "atoms, wildcards allowed";
+
 // updates' options, for C: Updates or a command extending it.
 template <class C> void add_updates_options(CLI::App* sub, Invocation& invocation) {
     const auto updates = [&invocation]() -> Updates& { return std::get<C>(invocation.command); };
@@ -202,6 +209,7 @@ template <class C> void add_updates_options(CLI::App* sub, Invocation& invocatio
             rebuilds = rebuilds == UseRebuilds::all ? rebuilds : UseRebuilds::changed;
         },
         "Also the rebuilds emerge --changed-use makes for changed USE");
+    add_exclude<C>(sub, invocation, plan_exclude_help);
     // An action always verifies.
     if constexpr (!std::is_same_v<C, Update>) {
         sub->add_flag_callback(
@@ -225,6 +233,7 @@ template <class C> void add_plan_options(CLI::App* sub, Invocation& invocation) 
            "Atoms and sets (@world, @selected, @system, @profile, @installed), as emerge's")
         ->type_name("ATOM")
         ->required();
+    add_exclude<C>(sub, invocation, plan_exclude_help);
     sub->add_flag_callback(
         "-u,--update", [plan] { plan().update = true; },
         "Update each installed slot a target matches, as emerge -u");
@@ -1979,9 +1988,34 @@ std::vector<std::string> tried_changes(Session& session, const Invocation& invoc
     return found;
 }
 
+// The exclusions a plan command was given, handed to the session so that its stores leave them
+// out; why they are refused.
+std::expected<std::vector<Exclusion>, std::string>
+exclude_from_plan(Session& session, std::span<const std::string> given) {
+    auto found = parse_exclusions(given);
+    if (!found) {
+        return std::unexpected(std::format("--exclude: {}", found.error()));
+    }
+    session.exclude(*found);
+    return found;
+}
+
+std::vector<std::string> exclusion_texts(std::span<const Exclusion> exclusions) {
+    std::vector<std::string> texts;
+    for (const auto& each : exclusions) {
+        texts.push_back(each.text);
+    }
+    return texts;
+}
+
 std::expected<Shown, Exit> show_updates(const Updates& command, Session& session,
                                         const Invocation& invocation, std::ostream& out,
                                         std::ostream& err) {
+    const auto excluded = exclude_from_plan(session, command.exclude);
+    if (!excluded) {
+        err << "egraph: updates: " << excluded.error() << '\n';
+        return std::unexpected(Exit::usage);
+    }
     // Both stores first, so that the dependencies are read from the same build.
     const auto stores = session.stores();
     if (!stores) {
@@ -2016,6 +2050,7 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
     }
     targets.running_root = running_root(invocation);
     targets.dynamic_deps = invocation.dynamic_deps;
+    targets.excluded = excluded_packages(*store, *excluded);
     auto replace = replace_list(invocation, "updates", err);
     if (!replace) {
         return std::unexpected(replace.error());
@@ -2033,7 +2068,8 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
                             .update = true,
                             .deep = command.deep,
                             .rebuilds = command.rebuilds,
-                            .dynamic_deps = invocation.dynamic_deps},
+                            .dynamic_deps = invocation.dynamic_deps,
+                            .exclude = exclusion_texts(*excluded)},
                 .store = *store,
                 .evaluated = evaluated,
                 .arguments = {},
@@ -2481,6 +2517,11 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
         err << "egraph: " << name << ": -D, -N and -U are only planned with -u\n";
         return std::unexpected(Exit::usage);
     }
+    const auto excluded = exclude_from_plan(session, command.exclude);
+    if (!excluded) {
+        err << "egraph: " << name << ": " << excluded.error() << '\n';
+        return std::unexpected(Exit::usage);
+    }
     const auto request = resolve_request(command, session, invocation);
     if (!request) {
         err << "egraph: " << name << ": " << request.error() << '\n';
@@ -2504,6 +2545,7 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
     Targets targets{.scope = {}, .roots = false, .deep = command.deep, .selection = selection};
     targets.running_root = running_root(invocation);
     targets.dynamic_deps = invocation.dynamic_deps;
+    targets.excluded = excluded_packages(*store, *excluded);
     if (request->installed) {
         if (!request->arguments.empty() || selection != Selection::update) {
             err << "egraph: " << name << ": @installed is only planned alone and with -u\n";
@@ -2542,7 +2584,8 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
                             .deep = command.deep,
                             .noreplace = command.noreplace,
                             .rebuilds = command.rebuilds,
-                            .dynamic_deps = invocation.dynamic_deps},
+                            .dynamic_deps = invocation.dynamic_deps,
+                            .exclude = exclusion_texts(*excluded)},
                 .store = *store,
                 .evaluated = evaluated,
                 .arguments = request->arguments,

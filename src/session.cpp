@@ -287,7 +287,7 @@ std::expected<std::shared_ptr<const Stores>, std::string> Session::shared_stores
     if (auto untried = untried_stores(); !untried) {
         return std::unexpected(std::move(untried.error()));
     }
-    if (invocation_.what_if.empty()) {
+    if (invocation_.what_if.empty() && exclusions_.empty()) {
         return stores_;
     }
     // What the lines newly reach is evaluated on request, until they reach nothing more.
@@ -316,8 +316,9 @@ std::expected<std::shared_ptr<const Stores>, std::string> Session::shared_stores
                                            "not evaluated (--no-refresh)\n",
                                            cps);
         }
-        tried_ = std::make_shared<const Stores>(
-            Stores{.installed = stores_->installed, .evaluated = std::move(*evaluated)});
+        tried_ = std::make_shared<const Stores>(Stores{
+            .installed = stores_->installed,
+            .evaluated = with_exclusions(std::move(*evaluated), stores_->installed, exclusions_)});
     }
     return tried_;
 }
@@ -342,6 +343,15 @@ Loaded<RepositoryIndex> Session::repository() {
 std::shared_ptr<const RepositoryIndex> Session::adopt_repository(RepositoryIndex index) {
     repository_ = std::make_shared<const RepositoryIndex>(std::move(index));
     return repository_;
+}
+
+void Session::exclude(std::vector<Exclusion> exclusions) {
+    const auto same =
+        std::ranges::equal(exclusions, exclusions_, {}, &Exclusion::text, &Exclusion::text);
+    if (!same) {
+        exclusions_ = std::move(exclusions);
+        tried_.reset();
+    }
 }
 
 void Session::reload() {

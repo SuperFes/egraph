@@ -75,6 +75,10 @@ class Session {
     depclean(bool build_deps, bool dynamic,
              std::span<const Exclusion> exclude = {}) EGRAPH_LIFETIMEBOUND;
 
+    // Plans from now on read the evaluated store as emerge --exclude leaves it (with_exclusions);
+    // none to read it as it is.
+    void exclude(std::vector<Exclusion> exclusions);
+
     // Has egraph-build evaluate cps into the store this invocation may write (the system store
     // as root, the user's otherwise) and answers from it from now on, as adopt(); the error when
     // the build or the load failed.
@@ -101,6 +105,7 @@ class Session {
     std::optional<Store> installed_;
     // As loaded, and with the invocation's what-if lines (stores_ itself without any).
     std::shared_ptr<const Stores> stores_;
+    std::vector<Exclusion> exclusions_;
     std::shared_ptr<const Stores> tried_;
     std::shared_ptr<const RepositoryIndex> repository_;
     std::filesystem::path repository_used_;

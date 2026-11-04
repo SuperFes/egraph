@@ -128,6 +128,9 @@ struct Targets {
     // Installed packages, by id, sorted, that emerge --reinstall-atoms names: rebuilt from their
     // own version's ebuild unless an update replaces them.
     std::vector<std::uint32_t> reinstall = {};
+    // emerge --exclude: the installed packages, by id, it names; empty when none. Their sub-slot
+    // changes rebuild no package for a build-time binding.
+    std::vector<bool> excluded = {};
 };
 
 // "@set atom", or the atom alone.

@@ -223,6 +223,9 @@ std::vector<std::string> request_options(const EmergeRequest& request, bool ones
     if (!request.dynamic_deps) {
         found.emplace_back("--dynamic-deps=n");
     }
+    for (const auto& atom : request.exclude) {
+        found.push_back(std::format("--exclude={}", atom));
+    }
     if (oneshot) {
         found.emplace_back("--oneshot");
     }

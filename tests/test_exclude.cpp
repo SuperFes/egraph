@@ -1,4 +1,5 @@
 #include "exclude.hpp"
+#include "plan.hpp"
 #include "system_builder.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -81,4 +82,62 @@ TEST_CASE("an exclusion matches installed packages by name, slot and wildcard") 
                                    "sys-kernel/vanilla-sources-6.2.0"});
     CHECK(matched("*/foo") == std::vector<std::string>{"app-misc/foo-1"});
     CHECK(matched("app-misc/bar").empty());
+}
+
+TEST_CASE("an excluded package is neither updated nor merged, and a slot atom spares the others") {
+    const auto system =
+        make_system({{.cpv = "app-misc/foo-1", .slot = "1"}, {.cpv = "app-misc/bar-1"}},
+                    {{.cpv = "app-misc/foo-1", .slot = "1"},
+                     {.cpv = "app-misc/foo-2", .slot = "1"},
+                     {.cpv = "app-misc/foo-3", .slot = "3"},
+                     {.cpv = "app-misc/bar-1"},
+                     {.cpv = "app-misc/bar-2"}});
+    const auto trimmed = [&](const std::string& text) {
+        const std::vector<std::string> values{text};
+        const auto found = egraph::parse_exclusions(values);
+        REQUIRE(found);
+        return egraph::with_exclusions(system.evaluated, system.store, *found);
+    };
+    const auto visible = [](const egraph::Evaluated& evaluated) {
+        std::vector<std::string> cpvs;
+        for (const auto& candidate : evaluated.candidates) {
+            if (candidate.visible()) {
+                cpvs.emplace_back(evaluated.string(candidate.cpv));
+            }
+        }
+        return cpvs;
+    };
+    const auto all = trimmed("app-misc/foo");
+    CHECK(visible(all) == std::vector<std::string>{"app-misc/bar-1", "app-misc/bar-2"});
+    const auto targeted = [&](const egraph::Evaluated& evaluated, const std::string& cpv) {
+        for (std::size_t id = 0; id < system.store.packages.size(); ++id) {
+            if (system.store.string(system.store.packages.at(id).cpv) == cpv) {
+                return evaluated.packages.at(id).target.has_value();
+            }
+        }
+        return false;
+    };
+    CHECK(targeted(system.evaluated, "app-misc/foo-1"));
+    CHECK_FALSE(targeted(all, "app-misc/foo-1"));
+    CHECK(targeted(all, "app-misc/bar-1"));
+    const auto slot = trimmed("app-misc/foo:3");
+    CHECK(visible(slot) == std::vector<std::string>{"app-misc/bar-1", "app-misc/bar-2",
+                                                    "app-misc/foo-1", "app-misc/foo-2"});
+    CHECK(targeted(slot, "app-misc/foo-1"));
+}
+
+TEST_CASE("a plan over excluded candidates merges only what is left") {
+    const auto system = make_system({{.cpv = "app-misc/foo-1"}, {.cpv = "app-misc/bar-1"}},
+                                    {{.cpv = "app-misc/foo-1"},
+                                     {.cpv = "app-misc/foo-2"},
+                                     {.cpv = "app-misc/bar-1"},
+                                     {.cpv = "app-misc/bar-2"}});
+    const std::vector<std::string> values{"app-misc/foo"};
+    const auto found = egraph::parse_exclusions(values);
+    REQUIRE(found);
+    const auto evaluated = egraph::with_exclusions(system.evaluated, system.store, *found);
+    const auto plan = egraph::plan_updates(system.store, evaluated, egraph::UseRebuilds::none, {});
+    REQUIRE(plan.merges.size() == 1);
+    CHECK(evaluated.string(evaluated.candidates.at(plan.merges.front().candidate).cpv) ==
+          "app-misc/bar-2");
 }

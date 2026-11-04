@@ -1421,7 +1421,7 @@ the last step drops it to a test dependency.
     and on the command line, the archive and conf memory kept as dispatch-conf keeps them.
   - 22c5: `env-update`: `profile.env`, `csh.env`, `ld.so.conf` and `ldconfig` (needed before
     exec merges without portage, 22g).
-- 22d (todo): the rest of emerge, continuing step 16: `--exclude` (16t), `--unmerge`,
+- 22d (todo): the rest of emerge, continuing step 16: `--exclude` (16t, 16y), `--unmerge`,
   `--prune`, `--info`, `--config`, `--fetchonly`, `--emptytree`, `--nodeps`/`--onlydeps`,
   `--changed-deps`, `--rebuild-if-*`, `--newrepo`, `--load-average` for exec, `--with-bdeps`
   on plans, autounmask beyond USE (keywords, masks, licenses), and the binary package options
@@ -1531,6 +1531,13 @@ Decided with the user (2026-10-16):
   - A remedy where the held package is an orphan (nothing keeps it): `remove <cpv>`. The
     preserved-libraries notice says the same of a consumer that cannot be rebuilt, rather than
     offering `install -1 @preserved-rebuild`.
+- 16y (done): `--exclude` on `updates`, `plan`, `update`, `install` and `exec`, as emerge's: a
+  package name or slot atom, wildcards allowed, that the plan neither merges nor replaces
+  (`with_exclusions`: matching candidates masked as "exclude option", no pending update or
+  rebuild for matching installed packages), passed on to emerge for `--verify`, `install` and
+  the resume entry's options. emerge's slot-operator update probe passes over an excluded child,
+  so a build-time binding to one rebuilds nothing. `test_verify.py` holds it to emerge on the
+  update scenarios.
 - 16x (todo): the run's display off the TUI (`install`, `exec`). Today each package scrolls a
   dozen status lines. Instead, the packages being worked on stay on screen, one line each with
   its current status updated in place; a package that finishes leaves that region and its

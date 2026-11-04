@@ -2,6 +2,7 @@
 
 #include "version.hpp"
 
+#include <algorithm>
 #include <format>
 #include <fstream>
 #include <ranges>
@@ -108,6 +109,66 @@ bool excludes(const Store& store, const Package& pkg, const Exclusion& exclusion
     const auto version = parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
     return version && matches(exclusion.atom, cp, *version, store.string(pkg.slot),
                               store.string(pkg.sub_slot), store.string(pkg.repo));
+}
+
+bool excludes(const Evaluated& evaluated, const Candidate& candidate, const Exclusion& exclusion) {
+    const auto cp = evaluated.string(candidate.cp);
+    const auto cpv = evaluated.string(candidate.cpv);
+    const auto version = parse_version(cpv.substr(std::min(cpv.size(), cp.size() + 1)));
+    return version &&
+           matches(exclusion.atom, cp, *version, evaluated.string(candidate.slot),
+                   evaluated.string(candidate.sub_slot), evaluated.string(candidate.repo));
+}
+
+std::vector<bool> excluded_packages(const Store& installed, std::span<const Exclusion> exclusions) {
+    if (exclusions.empty()) {
+        return {};
+    }
+    std::vector<bool> found;
+    found.reserve(installed.packages.size());
+    for (const auto& pkg : installed.packages) {
+        found.push_back(std::ranges::any_of(
+            exclusions, [&](const Exclusion& each) { return excludes(installed, pkg, each); }));
+    }
+    return found;
+}
+
+Evaluated with_exclusions(Evaluated evaluated, const Store& installed,
+                          std::span<const Exclusion> exclusions) {
+    if (exclusions.empty()) {
+        return evaluated;
+    }
+    const auto any = [&](const auto& matched) { return std::ranges::any_of(exclusions, matched); };
+    Interner intern(evaluated);
+    const auto reason = intern("exclude option");
+    std::vector<bool> masked(evaluated.candidates.size());
+    for (std::size_t i = 0; i < masked.size(); ++i) {
+        auto& candidate = evaluated.candidates.at(i);
+        masked.at(i) =
+            any([&](const Exclusion& each) { return excludes(evaluated, candidate, each); });
+        if (masked.at(i) && candidate.visible()) {
+            candidate.reasons = {.first = static_cast<std::uint32_t>(evaluated.ids.size()),
+                                 .count = 1};
+            evaluated.ids.push_back(reason);
+        }
+    }
+    const auto kept = [&](const std::optional<std::uint32_t>& index) {
+        return index && masked.at(*index);
+    };
+    for (std::size_t id = 0; id < evaluated.packages.size(); ++id) {
+        auto& each = evaluated.packages.at(id);
+        const bool held = any(
+            [&](const Exclusion& e) { return excludes(installed, installed.packages.at(id), e); });
+        if (held || kept(each.target)) {
+            each.target.reset();
+            each.rebuild = {};
+        }
+        if (held || kept(each.own)) {
+            each.own.reset();
+            each.own_rebuild = {};
+        }
+    }
+    return evaluated;
 }
 
 } // namespace egraph

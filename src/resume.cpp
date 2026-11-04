@@ -129,6 +129,7 @@ Json myopts_of(std::span<const std::string> options) {
     // The last of each decides.
     std::map<std::string, std::optional<std::string>, std::less<>> given;
     auto excludes = Json::array();
+    auto excluded = Json::array();
     for (const std::string_view option : options) {
         const auto equals = option.find('=');
         std::string name{option.substr(0, equals)};
@@ -136,7 +137,9 @@ Json myopts_of(std::span<const std::string> options) {
         if (equals != std::string_view::npos) {
             value = std::string{option.substr(equals + 1)};
         }
-        if (name == "--buildpkg-exclude") {
+        if (name == "--exclude") {
+            excluded.push_back(value.value_or(""));
+        } else if (name == "--buildpkg-exclude") {
             excludes.push_back(value.value_or(""));
         } else if (name == "--changed-use") {
             given.insert_or_assign("--reinstall", "changed-use");
@@ -147,6 +150,9 @@ Json myopts_of(std::span<const std::string> options) {
     Json found{{"--regex-search-auto", "y"}};
     if (!excludes.empty()) {
         found.emplace("--buildpkg-exclude", std::move(excludes));
+    }
+    if (!excluded.empty()) {
+        found.emplace("--exclude", std::move(excluded));
     }
     for (const auto& [name, value] : given) {
         const auto rule = std::ranges::find(rules, name, &Rule::name);

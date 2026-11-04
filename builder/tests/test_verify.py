@@ -452,3 +452,70 @@ def test_the_running_kernels_sources_keep_their_slot(playgrounds, tmp_path):
         "egraph: updates: keeping every old slot, as which hold the running kernel's "
         "sources is unknown: portage fell over\n"
     )
+
+
+@pytest.mark.parametrize("mode", ["u", "uDN", "world"])
+@pytest.mark.parametrize(
+    "name, excluded",
+    [
+        ("updates", ["app-misc/up"]),
+        ("updates", ["app-misc/up", "dev-libs/slotted:1"]),
+        ("updates", ["dev-libs/*"]),
+        ("updates", ["up", "both"]),
+        ("slotops", ["dev-libs/*"]),
+        ("pulls", ["dev-libs/*"]),
+        ("shallow", ["app-misc/*"]),
+    ],
+)
+def test_excluded_updates_agree_with_emerge(
+    playgrounds, tmp_path, name, excluded, mode
+):
+    """--exclude leaves the packages it names as they are, and merges the rest as emerge
+    does."""
+    system = playgrounds(name)
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path)
+    arguments = [f"--exclude={atom}" for atom in excluded]
+    result = egraph(
+        path,
+        "updates",
+        *UPDATE_MODES[mode],
+        *arguments,
+        "--verify",
+        emerge=real_emerge(system, tmp_path),
+    )
+    assert result.returncode in (0, EXIT_REFUSED), result.stderr
+    assert "differs" not in result.stdout + result.stderr, result.stdout
+
+
+@pytest.mark.parametrize(
+    "flags, target, excluded",
+    [
+        (["-u", "-D"], "@world", ["dev-libs/fresh"]),
+        (["-u", "-D", "-N"], "@world", ["app-misc/flagged"]),
+        ([], "dev-libs/fresh", ["dev-libs/fresh"]),
+        ([], "app-misc/flagged", ["dev-libs/*"]),
+    ],
+)
+def test_excluded_plans_agree_with_emerge(
+    playgrounds, tmp_path, flags, target, excluded
+):
+    """A target or a dependency the exclusions name is refused or left alone as emerge does."""
+    system = playgrounds("pulls")
+    path = tmp_path / "installed.egraph"
+    write_stores(system, path, request_all=True)
+    arguments = [f"--exclude={atom}" for atom in excluded]
+    result = egraph(
+        path,
+        "plan",
+        *flags,
+        *arguments,
+        "--verify",
+        target,
+        emerge=real_emerge(system, tmp_path),
+    )
+    # A target nothing but an excluded ebuild matches is masked before emerge is asked.
+    assert result.returncode in (0, 1, EXIT_REFUSED), result.stderr
+    if result.returncode == 1:
+        assert "every ebuild that matches is masked" in result.stderr
+    assert "differs" not in result.stdout + result.stderr, result.stdout

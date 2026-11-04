@@ -90,6 +90,12 @@ TEST_CASE("emerge keeps each execution option in its own type, as its parser lea
                           "--regex-search-auto": "y"})"));
 }
 
+TEST_CASE("emerge keeps each --exclude given, in order") {
+    CHECK(myopts({"--exclude=a/b", "--exclude=c/d", "--update"}) ==
+          Json::parse(R"({"--update": true, "--exclude": ["a/b", "c/d"],
+                          "--regex-search-auto": "y"})"));
+}
+
 TEST_CASE("the last of an option decides, and what turns one off leaves it out") {
     const auto search = Json::parse(R"({"--regex-search-auto": "y"})");
     CHECK(myopts({"--jobs=3", "--jobs"}) ==

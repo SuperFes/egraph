@@ -306,6 +306,10 @@ class Planner {
         return arguments_.empty() || arguments_.at(id);
     }
 
+    [[nodiscard]] bool excluded(std::uint32_t id) const {
+        const auto& excluded = targets_ref_.get().excluded;
+        return !excluded.empty() && excluded.at(id);
+    }
     [[nodiscard]] bool deep() const { return targets_ref_.get().deep; }
 
     void collect_arguments() {
@@ -627,6 +631,11 @@ class Planner {
                 }
                 for (std::uint32_t other = 0; other < store().packages.size(); ++other) {
                     if (!matches(store(), store().packages.at(other), *parsed)) {
+                        continue;
+                    }
+                    // emerge's update probe, which finds a build-time binding's rebuild, passes
+                    // over an excluded child.
+                    if (is_build_kind(static_cast<std::uint32_t>(kind)) && excluded(other)) {
                         continue;
                     }
                     const auto merged = choices_.at(other).merged();

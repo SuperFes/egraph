@@ -144,6 +144,8 @@ struct Updates {
     bool deep = false;
     // The plan held to emerge --pretend's.
     bool verify = false;
+    // emerge --exclude: packages the plan neither merges nor replaces.
+    std::vector<std::string> exclude;
     // Where the plan goes as mtimedb's resume entry.
     std::optional<std::filesystem::path> resume_list;
     // Where the plan goes as egraph-build --worker's requests.
@@ -169,6 +171,8 @@ struct PlanCommand {
     bool table = false;
     // The plan held to emerge --pretend's.
     bool verify = false;
+    // emerge --exclude: packages the plan neither merges nor replaces.
+    std::vector<std::string> exclude;
     // Where the plan goes as mtimedb's resume entry.
     std::optional<std::filesystem::path> resume_list;
     // Where the plan goes as egraph-build --worker's requests.

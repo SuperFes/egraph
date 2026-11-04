@@ -37,6 +37,9 @@ std::vector<std::string> pretend_arguments(const EmergeRequest& request) {
     if (!request.dynamic_deps) {
         arguments.emplace_back("--dynamic-deps=n");
     }
+    for (const auto& atom : request.exclude) {
+        arguments.push_back(std::format("--exclude={}", atom));
+    }
     arguments.insert(arguments.end(), request.targets.begin(), request.targets.end());
     return arguments;
 }

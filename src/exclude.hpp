@@ -3,6 +3,7 @@
 // Packages depclean never removes, as emerge --depclean --exclude keeps them.
 
 #include "atom.hpp"
+#include "evaluated.hpp"
 #include "store.hpp"
 
 #include <expected>
@@ -39,5 +40,19 @@ read_exclude_list(const std::filesystem::path& path);
 
 // Whether the exclusion matches the installed package.
 [[nodiscard]] bool excludes(const Store& store, const Package& pkg, const Exclusion& exclusion);
+
+// Whether the exclusion matches the candidate, whatever its USE.
+[[nodiscard]] bool excludes(const Evaluated& evaluated, const Candidate& candidate,
+                            const Exclusion& exclusion);
+
+// Whether each installed package, by id, is excluded; empty without exclusions.
+[[nodiscard]] std::vector<bool> excluded_packages(const Store& installed,
+                                                  std::span<const Exclusion> exclusions);
+
+// evaluated as emerge --exclude leaves it: each candidate an exclusion matches masked ("exclude
+// option"), and no installed package one matches updated or rebuilt. Candidate indices stay as
+// they are.
+[[nodiscard]] Evaluated with_exclusions(Evaluated evaluated, const Store& installed,
+                                        std::span<const Exclusion> exclusions);
 
 } // namespace egraph

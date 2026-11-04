@@ -22,6 +22,7 @@ VALUES = {
     "--buildpkg": (None, "y", "n", "True"),
     "--buildpkg-exclude": ("a/b", "c/d e/f"),
     "--color": ("y", "n"),
+    "--exclude": ("a/b", "c/d e/f"),
     "--fail-clean": (None, "y", "n"),
     "--jobs": (None, "1", "4", "y", "n"),
     "--jobs-tmpdir-require-free-gb": ("0", "18"),
