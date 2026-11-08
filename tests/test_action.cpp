@@ -157,6 +157,20 @@ TEST_CASE(
     CHECK(stop_before_verifying(readiness) == Stop::refused);
 }
 
+TEST_CASE("a plan emerge lists otherwise says whose list a yes carries out") {
+    CHECK(egraph::differing_note("exec", "merge", egraph::Carrier::egraph) ==
+          "egraph: exec: emerge would merge otherwise; on yes egraph merges its plan as shown");
+    CHECK(egraph::differing_note("update", "merge", egraph::Carrier::emerge) ==
+          "egraph: update: emerge would merge otherwise; on yes emerge merges its own list");
+    CHECK(egraph::differing_note("remove", "remove", egraph::Carrier::emerge) ==
+          "egraph: remove: emerge would remove otherwise; on yes emerge removes its own list");
+}
+
+TEST_CASE("a plan emerge lists otherwise is asked for anyway") {
+    CHECK(egraph::anyway("Have emerge merge this plan?") == "Have emerge merge this plan anyway?");
+    CHECK(egraph::anyway("Merge") == "Merge anyway?");
+}
+
 TEST_CASE("what emerge runs under is read from egraph-build's JSON") {
     const auto settings = egraph::parse_run_settings(R"({
  "options": ["--jobs", "4"],

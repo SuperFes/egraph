@@ -861,9 +861,13 @@ as root). Otherwise the same request goes to
 .B emerge \-\-pretend
 first, as
 .B \-\-verify
-sends it, and nothing is merged if its merge list differs (exit status 5). Then
+sends it, and where its merge list differs the differences are shown. Then
 .B egraph
-asks, and on yes runs
+asks (for the plan anyway where they differ, as
+.B emerge
+merges its own list, which the run's log notes; under
+.B \-\-yes
+it goes on all the same), and on yes runs
 .B emerge
 on the request under the same roots: without
 .BR EMERGE_DEFAULT_OPTS ,
@@ -971,7 +975,7 @@ Run emerge without asking, and offer no USE changes.
 .SS exec \fItarget\fR...|\-\-resume
 Shows the plan for the targets and verifies it as
 .B install
-does, then merges it without
+does (where emerge lists otherwise, a yes merges this plan as shown), then merges it without
 .BR emerge :
 .BR "egraph\-build \-\-worker" " (" egraph\-build (1))
 processes build the packages, as many at once as the jobs allow, and merge them one at a time,
@@ -1165,7 +1169,9 @@ runtime dependency. Then, as
 .B update
 does, the request goes to
 .B emerge \-\-pretend \-\-depclean
-first, nothing is removed if it would remove otherwise (exit status 5), and on yes
+first, and where it would remove otherwise the differences are shown and the question asks
+for the removal anyway, as emerge removes what it lists. On yes (or with
+.BR \-\-yes )
 .B emerge \-\-depclean
 removes them and the stores are refreshed. Each package removed comes with the bytes its vdb
 entry's
@@ -2211,7 +2217,7 @@ found the store differing from a fresh build.
 .TP
 .B 5
 .B \-\-verify
-found emerge merging otherwise, or an action found it merging or removing otherwise.
+found emerge merging otherwise.
 .TP
 .B 6
 emerge would refuse the plan of

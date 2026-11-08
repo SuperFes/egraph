@@ -31,6 +31,8 @@ struct RunStart {
     // Builds at once; none for no limit.
     std::optional<std::uint32_t> jobs{};
     bool keep_going = false;
+    // Carried out although emerge --pretend listed otherwise.
+    bool differs = false;
 };
 
 class RunEvents {
@@ -83,6 +85,8 @@ struct HandOver {
     // "emerge", and the whole command line run.
     std::string program{};
     std::vector<std::string> argv{};
+    // Carried out although emerge --pretend listed otherwise.
+    bool differs = false;
 };
 
 [[nodiscard]] log::Event handed_over(const std::string& run, const HandOver& hand_over, double now);

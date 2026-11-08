@@ -19,6 +19,13 @@ std::string counted(std::int64_t count, std::string_view one, std::string_view m
     return std::format("{} {}", count, count == 1 ? one : many);
 }
 
+// A run carried out although emerge --pretend listed otherwise starts with a warning.
+void mark_differing(log::Event& event) {
+    event.message += ", although emerge --pretend listed otherwise";
+    event.priority = 4;
+    event.fields.push_back({.name = "differs", .value = std::int64_t{1}});
+}
+
 } // namespace
 
 RunEvents::RunEvents(std::string run, std::vector<RunStep> steps)
@@ -62,6 +69,9 @@ log::Event RunEvents::started(const RunStart& start, double now) {
                                 {.name = "uninstalls", .value = uninstalls}}};
     if (start.jobs) {
         found.fields.push_back({.name = "jobs", .value = std::int64_t{*start.jobs}});
+    }
+    if (start.differs) {
+        mark_differing(found);
     }
     return found;
 }
@@ -181,15 +191,19 @@ log::Event handed_over(const std::string& run, const HandOver& hand_over, double
     if (!hand_over.targets.empty()) {
         message += std::format(", for {}", joined(hand_over.targets));
     }
-    return {.time = now,
-            .run = run,
-            .kind = "run",
-            .message = std::move(message),
-            .priority = 6,
-            .fields = {{.name = "command", .value = hand_over.command},
-                       {.name = "targets", .value = joined(hand_over.targets)},
-                       {.name = "program", .value = hand_over.program},
-                       {.name = "argv", .value = joined(hand_over.argv)}}};
+    log::Event found{.time = now,
+                     .run = run,
+                     .kind = "run",
+                     .message = std::move(message),
+                     .priority = 6,
+                     .fields = {{.name = "command", .value = hand_over.command},
+                                {.name = "targets", .value = joined(hand_over.targets)},
+                                {.name = "program", .value = hand_over.program},
+                                {.name = "argv", .value = joined(hand_over.argv)}}};
+    if (hand_over.differs) {
+        mark_differing(found);
+    }
+    return found;
 }
 
 log::Event handed_back(const std::string& run, const HandOver& hand_over,

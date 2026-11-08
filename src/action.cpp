@@ -275,6 +275,23 @@ std::optional<Stop> stop_before_verifying(const Readiness& readiness) {
     return std::nullopt;
 }
 
+std::string differing_note(std::string_view command, std::string_view verb, Carrier carrier) {
+    return carrier == Carrier::egraph
+               ? std::format("egraph: {}: emerge would {} otherwise; on yes egraph {}s its plan "
+                             "as shown",
+                             command, verb, verb)
+               : std::format("egraph: {}: emerge would {} otherwise; on yes emerge {}s its own "
+                             "list",
+                             command, verb, verb);
+}
+
+std::string anyway(std::string_view question) {
+    if (question.ends_with('?')) {
+        question.remove_suffix(1);
+    }
+    return std::format("{} anyway?", question);
+}
+
 std::expected<RunSettings, std::string> parse_run_settings(std::string_view text) {
     using Json = nlohmann::json;
     const auto json = Json::parse(text, nullptr, false);

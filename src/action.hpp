@@ -108,4 +108,16 @@ enum class Stop : std::uint8_t {
 
 [[nodiscard]] std::optional<Stop> stop_before_verifying(const Readiness& readiness);
 
+// What carries out an action whose plan emerge --pretend lists otherwise: egraph its own plan,
+// or emerge its own list.
+enum class Carrier : std::uint8_t { egraph, emerge };
+
+// The line an action says when emerge --pretend lists otherwise, verb being what it does
+// ("merge", "remove"): which list a yes carries out.
+[[nodiscard]] std::string differing_note(std::string_view command, std::string_view verb,
+                                         Carrier carrier);
+
+// question asked once emerge --pretend lists otherwise: "anyway" before its question mark.
+[[nodiscard]] std::string anyway(std::string_view question);
+
 } // namespace egraph

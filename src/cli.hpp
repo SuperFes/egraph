@@ -35,7 +35,7 @@ enum class Exit : std::uint8_t {
     not_implemented = 3,
     // egraph check: the store differs from a fresh build.
     drift = 4,
-    // --verify, or an action before merging: emerge --pretend would merge otherwise.
+    // --verify: emerge --pretend would merge otherwise.
     differs = 5,
     // updates, plan and the actions: emerge would refuse the plan, for blockers it cannot
     // resolve, dependencies nothing satisfies, REQUIRED_USE unmet or USE changes it needs.

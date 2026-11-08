@@ -52,6 +52,21 @@ TEST_CASE("a run's first event says what it will do") {
     CHECK(field<std::int64_t>(event, "keep_going") == 1);
     const auto unlimited = events().started({.command = "exec"}, 0);
     CHECK_FALSE(field<std::int64_t>(unlimited, "jobs"));
+    CHECK_FALSE(field<std::int64_t>(unlimited, "differs"));
+    CHECK(unlimited.priority == 6);
+}
+
+TEST_CASE("a run emerge --pretend listed otherwise starts with a warning") {
+    const auto event = events().started({.command = "exec", .differs = true}, 0);
+    CHECK(event.message ==
+          "egraph exec: 2 merges, 1 uninstall, although emerge --pretend listed otherwise");
+    CHECK(event.priority == 4);
+    CHECK(field<std::int64_t>(event, "differs") == 1);
+    const auto handed =
+        egraph::handed_over("run1", {.command = "update", .program = "emerge", .differs = true}, 0);
+    CHECK(handed.message == "egraph update: emerge, although emerge --pretend listed otherwise");
+    CHECK(handed.priority == 4);
+    CHECK(field<std::int64_t>(handed, "differs") == 1);
 }
 
 TEST_CASE("a merge logs its phases, its build and its merge, with their times") {

@@ -567,7 +567,10 @@ egraph plans and emerge executes (roadmap 16f). `update` and `install` show the 
 and `plan` show, then stop before emerge if the plan is refused, empty, or the vdb under the
 store's EROOT cannot be written; then without `--yes` or a terminal to ask on. emerge cannot
 be handed a plan, only the request again, so the request goes to `emerge --pretend` first (as
-`--verify`) and nothing is merged unless the merge lists agree; on yes the same request runs as
+`--verify`); where the merge lists differ, the differences are shown and the question asks for
+the plan anyway, since emerge then merges its own list (`exec`, which carries out egraph's own
+plan, merges that), and the run's log marks it; `--yes` answers that question as any other.
+On yes the same request runs as
 `emerge --ignore-default-opts --ask=n`, `update` with `--oneshot`. Ignoring EMERGE_DEFAULT_OPTS
 keeps what runs equal to what was verified; its options that only change how emerge carries
 out a plan (`--jobs`, `--keep-going` and the like: `execution_options`) are passed back, read

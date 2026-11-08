@@ -330,14 +330,50 @@ def test_a_plan_emerge_would_refuse_is_not_merged(system):
     assert not machine.asked()
 
 
-def test_a_plan_emerge_would_make_otherwise_is_not_merged(system):
-    """emerge --pretend listing nothing for the update: the plans differ, emerge never runs."""
+def test_a_plan_emerge_would_make_otherwise_is_merged_on_yes(system):
+    """emerge --pretend listing nothing for the update: the plans differ, and --yes merges
+    emerge's own list, saying so in the log."""
     machine = system(pretend="exit 0")
     result = machine.egraph("update", "--yes")
-    assert result.returncode == 5, result.stdout + result.stderr
-    assert "nothing was merged" in result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "egraph: update: emerge would merge otherwise; on yes emerge merges its own list"
+        in result.stderr
+    )
+    assert machine.emerged() != []
+    assert machine.installed("app-misc/a-2")
+    starts = [event for event in logged(machine) if event["event"] == "run"]
+    assert starts[-1]["differs"] == 1
+
+
+def test_an_exec_plan_emerge_would_make_otherwise_is_merged_on_yes(system):
+    machine = system(pretend="exit 0")
+    result = machine.egraph("exec", "--yes", "app-misc/a")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "egraph: exec: emerge would merge otherwise; on yes egraph merges its plan as shown"
+        in result.stderr
+    )
     assert machine.emerged() == []
-    assert machine.installed("app-misc/a-1")
+    assert machine.installed("app-misc/a-2")
+    starts = [event for event in logged(machine) if event["event"] == "run"]
+    assert starts[-1]["differs"] == 1
+
+
+@pytest.mark.parametrize("answer", ["y", "n"])
+def test_a_plan_emerge_would_make_otherwise_is_asked_for_anyway(system, answer):
+    machine = system(pretend="exit 0")
+    env = dict(os.environ, EGRAPH_STRICT="1")
+    status, printed = on_terminal(machine.command("update"), answer, env)
+    assert "emerge would merge otherwise" in printed
+    assert "Have emerge merge this plan anyway? [y/N]" in printed
+    if answer == "n":
+        assert status == 1, printed
+        assert machine.emerged() == []
+        assert machine.installed("app-misc/a-1")
+        return
+    assert status == 0, printed
+    assert machine.installed("app-misc/a-2")
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root writes anywhere")
@@ -449,11 +485,24 @@ def test_removing_a_package_with_what_it_needs(system):
     assert not machine.installed("app-misc/lib-1")
 
 
-def test_a_removal_emerge_would_make_otherwise_is_not_made(system):
+def test_a_removal_emerge_would_make_otherwise_is_made_on_yes(system):
     machine = system(pretend="exit 0", removable=True)
     result = machine.egraph("remove", "--yes", "app-misc/leaf")
-    assert result.returncode == 5, result.stdout + result.stderr
-    assert "nothing was removed" in result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "egraph: remove: emerge would remove otherwise; on yes emerge removes its own list"
+        in result.stderr
+    )
+    assert machine.emerged()[-1][-1] == "app-misc/leaf"
+    assert not machine.installed("app-misc/leaf-1")
+
+
+def test_a_removal_emerge_would_make_otherwise_is_asked_for_anyway(system):
+    machine = system(pretend="exit 0", removable=True)
+    env = dict(os.environ, EGRAPH_STRICT="1")
+    status, printed = on_terminal(machine.command("remove", "app-misc/leaf"), "n", env)
+    assert "Have emerge remove these packages anyway? [y/N]" in printed
+    assert status == 1, printed
     assert machine.emerged() == []
     assert machine.installed("app-misc/leaf-1")
 

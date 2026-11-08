@@ -3224,15 +3224,16 @@ using Cleanup = std::function<std::vector<std::string>(const std::vector<std::st
 
 // An action on targets once verified: asks unless yes, runs emerge with arguments(passed),
 // passed being EMERGE_DEFAULT_OPTS' execution options, then once it succeeds with cleanup's
-// arguments for the cleaned targets, and refreshes the stores after.
+// arguments for the cleaned targets, and refreshes the stores after. differs: emerge --pretend
+// listed otherwise.
 template <class Arguments>
-Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
+Exit confirm_and_run(std::string_view name, bool yes, std::string_view question, bool differs,
                      const std::vector<std::string>& targets, const Arguments& arguments,
                      const Store& store, Session& session, const Invocation& invocation,
                      std::ostream& out, std::ostream& err, const Cleanup& cleanup = {},
                      const std::vector<std::string>& cleaned = {}) {
     return confirm_and_carry_out(
-        name, yes, question, "emerge", true,
+        name, yes, differs ? anyway(question) : std::string{question}, "emerge", true,
         [&](const RunSettings& settings) {
             const auto passed = execution_options(settings.defaults);
             const auto run = [&](const std::vector<std::string>& these,
@@ -3241,7 +3242,8 @@ Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
                     {.command = std::string{name},
                      .targets = these,
                      .program = "emerge",
-                     .argv = with_elog_system(emerge_command(invocation, argv), settings)},
+                     .argv = with_elog_system(emerge_command(invocation, argv), settings),
+                     .differs = differs},
                     invocation, out);
             };
             auto ran = run(targets, arguments(passed));
@@ -3254,11 +3256,12 @@ Exit confirm_and_run(std::string_view name, bool yes, std::string_view question,
 }
 
 // An action on a plan: the plan show() shows, verified against emerge --pretend, then carried
-// out by carry(shown); act runs the action again once USE changes are written.
+// out by carry(shown, differs), differs saying emerge --pretend listed otherwise; act runs the
+// action again once USE changes are written.
 template <class Show, class Act, class Carry>
 Exit act_on_plan(std::string_view name, bool yes, Session& session, const Invocation& invocation,
-                 std::ostream& out, std::ostream& err, const Show& show, const Act& act,
-                 const Carry& carry, bool selecting = false) {
+                 std::ostream& out, std::ostream& err, Carrier carrier, const Show& show,
+                 const Act& act, const Carry& carry, bool selecting = false) {
     const auto shown = show();
     if (!shown) {
         return shown.error();
@@ -3284,14 +3287,15 @@ Exit act_on_plan(std::string_view name, bool yes, Session& session, const Invoca
             name, merge_words, vdb, output(invocation).human, out, err)) {
         return *status;
     }
-    if (const auto status = verify(invocation, name, request, store, evaluated, plan, out, err);
-        status != Exit::ok) {
-        if (status == Exit::differs) {
-            err << "egraph: " << name << ": emerge would merge otherwise; nothing was merged\n";
-        }
-        return status;
+    const auto verified = verify(invocation, name, request, store, evaluated, plan, out, err);
+    if (verified != Exit::ok && verified != Exit::differs) {
+        return verified;
     }
-    return carry(*shown);
+    const bool differs = verified == Exit::differs;
+    if (differs) {
+        err << differing_note(name, "merge", carrier) << '\n';
+    }
+    return carry(*shown, differs);
 }
 
 // An action merging a plan through emerge: the plan show() shows, verified, confirmed, and
@@ -3303,8 +3307,8 @@ Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
                 std::string_view question = "Have emerge merge this plan?",
                 bool selecting = false) {
     return act_on_plan(
-        name, yes, session, invocation, out, err, show, act,
-        [&](const Shown& shown) {
+        name, yes, session, invocation, out, err, Carrier::emerge, show, act,
+        [&](const Shown& shown, bool differs) {
             // emerge's depclean uninstalls the slots the plan replaces, once it has merged.
             std::vector<std::string> replaced;
             for (const auto id : replaced_slots(shown.plan)) {
@@ -3322,7 +3326,7 @@ Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
                 cleaned.push_back("=" + cpv);
             }
             return confirm_and_run(
-                name, yes, question, shown.request.targets,
+                name, yes, question, differs, shown.request.targets,
                 [&](const std::vector<std::string>& passed) {
                     return run_arguments(shown.request, oneshot, passed);
                 },
@@ -3397,7 +3401,7 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                                          const Exec& command, const Shown& shown,
                                          StepRequests& requests, const std::vector<Step>& steps,
                                          const std::vector<std::string>& names, RunState state,
-                                         std::ostream& out) {
+                                         bool differs, std::ostream& out) {
     const auto& plan = shown.plan;
     const auto jobs = exec_jobs(command.jobs, execution_options(settings.defaults),
                                 settings.jobserver.has_value());
@@ -3598,7 +3602,8 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                                  .targets = shown.request.targets,
                                  .options = request_options(shown.request, command.oneshot),
                                  .jobs = jobs,
-                                 .keep_going = keep_going},
+                                 .keep_going = keep_going,
+                                 .differs = differs},
                                 now()));
     // What exec --resume reads: rewritten as each merge finishes, so a run cut short leaves it.
     const auto state_path = run_state_path(shown.store.get().meta.eroot);
@@ -3760,7 +3765,7 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
 Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Session& session,
                const Invocation& invocation, std::ostream& out, std::ostream& err) {
     return act_on_plan(
-        Exec::name, command.yes, session, invocation, out, err,
+        Exec::name, command.yes, session, invocation, out, err, Carrier::egraph,
         [&] {
             return show_plan(command, Exec::name, session, invocation, out, err, command.jobs,
                              order_of(command), !command.oneshot && !command.resume);
@@ -3768,7 +3773,7 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
         [&](const Invocation& again) {
             return carry_out(command, merged, session, again, out, err);
         },
-        [&](const Shown& shown) {
+        [&](const Shown& shown, bool differs) {
             const auto& [plan, request, store, evaluated, arguments, favorites] = shown;
             auto all = run_steps(store, evaluated, plan, arguments, command.oneshot);
             const auto total = all.size();
@@ -3789,10 +3794,11 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
                 names.push_back(step_cpv(store, evaluated, plan, step));
             }
             StepRequests requests{store, evaluated, plan, steps};
+            const std::string_view question = steps.empty()
+                                                  ? "Have egraph-build record these favorites?"
+                                                  : "Have egraph-build --worker merge this plan?";
             return confirm_and_carry_out(
-                Exec::name, command.yes,
-                steps.empty() ? "Have egraph-build record these favorites?"
-                              : "Have egraph-build --worker merge this plan?",
+                Exec::name, command.yes, differs ? anyway(question) : std::string{question},
                 "egraph-build --worker", false,
                 [&](const RunSettings& settings) -> std::expected<int, std::string> {
                     // As emerge, before it merges.
@@ -3810,7 +3816,8 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
                         return 0;
                     }
                     return run_pool(invocation, settings, command, shown, requests, steps, names,
-                                    {.arguments = exec_arguments(command), .merged = merged}, out);
+                                    {.arguments = exec_arguments(command), .merged = merged},
+                                    differs, out);
                 },
                 store, session, invocation, out, err);
         });
@@ -3933,16 +3940,16 @@ Exit execute(const Remove& command, Session& session, const Invocation& invocati
     if (style.human) {
         human_verification(out, differences, style.theme, "removes");
     }
-    if (!differences.empty()) {
+    const bool differs = !differences.empty();
+    if (differs) {
         if (!style.human) {
             err << "egraph: remove: emerge --pretend --depclean removes otherwise:\n";
             write_lines(err, differences);
         }
-        err << "egraph: remove: emerge would remove otherwise; nothing was removed\n";
-        return Exit::differs;
+        err << differing_note(Remove::name, "remove", Carrier::emerge) << '\n';
     }
     return confirm_and_run(
-        Remove::name, command.yes, "Have emerge remove these packages?", command.packages,
+        Remove::name, command.yes, "Have emerge remove these packages?", differs, command.packages,
         [&](const std::vector<std::string>& passed) {
             std::vector<std::string> arguments{"--depclean", "--ignore-default-opts", "--ask=n"};
             arguments.insert(arguments.end(), passed.begin(), passed.end());
@@ -4066,7 +4073,8 @@ Exit execute(const Deselect& command, Session& session, const Invocation& invoca
         return *status;
     }
     return confirm_and_run(
-        Deselect::name, command.yes, "Have emerge remove these from @selected?", command.packages,
+        Deselect::name, command.yes, "Have emerge remove these from @selected?", false,
+        command.packages,
         [&](const std::vector<std::string>& passed) {
             std::vector<std::string> arguments{"--deselect", "--ignore-default-opts", "--ask=n"};
             arguments.insert(arguments.end(), passed.begin(), passed.end());
