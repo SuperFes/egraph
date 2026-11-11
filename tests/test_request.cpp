@@ -336,6 +336,28 @@ TEST_CASE("a request reaches only the slot of a dependency's best version") {
     CHECK(reach({tool}) == std::vector<bool>{true, true, true});
 }
 
+TEST_CASE("a request reaches an earlier || alternative in a newer slot of an installed package") {
+    const std::string newer = "|| ( dev-lang/py:3.15 dev-lang/py:3.14 )";
+    const std::string older = "|| ( dev-lang/py:3.13 dev-lang/py:3.14 )";
+    const auto system = make_system({{.cpv = "app-misc/newer-1", .deps = {{"RDEPEND", newer}}},
+                                     {.cpv = "app-misc/older-1", .deps = {{"RDEPEND", older}}},
+                                     {.cpv = "dev-lang/py-3.14.1", .slot = "3.14"}},
+                                    {{.cpv = "app-misc/newer-1", .deps = {{"RDEPEND", newer}}},
+                                     {.cpv = "app-misc/older-1", .deps = {{"RDEPEND", older}}},
+                                     {.cpv = "dev-lang/py-3.13.1", .slot = "3.13"},
+                                     {.cpv = "dev-lang/py-3.14.1", .slot = "3.14"},
+                                     {.cpv = "dev-lang/py-3.15.1", .slot = "3.15"}});
+    const auto taken = parse(system, {"app-misc/newer"});
+    REQUIRE(taken);
+    CHECK(egraph::request_reach(system.store, system.evaluated, *taken) ==
+          std::vector<bool>{true, false, false});
+    // An older slot stays behind the installed one.
+    const auto kept = parse(system, {"app-misc/older"});
+    REQUIRE(kept);
+    CHECK(egraph::request_reach(system.store, system.evaluated, *kept) ==
+          std::vector<bool>{false, true, true});
+}
+
 TEST_CASE("a request leaves the update out of an installed version only a USE change lets match") {
     const auto system = make_system(
         {{.cpv = "dev-libs/lib-1", .iuse = "gtk"}, {.cpv = "dev-libs/deep-1"}},

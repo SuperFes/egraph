@@ -1,5 +1,6 @@
 #include "request.hpp"
 
+#include "alternatives.hpp"
 #include "atom.hpp"
 #include "version.hpp"
 
@@ -517,6 +518,22 @@ class Reach {
         return false;
     }
 
+    // An earlier alternative -uD takes over satisfied, as emerge's dep_zapdeps does.
+    [[nodiscard]] std::optional<std::size_t> upgrade(const Tables& tables,
+                                                     std::span<const Node> list, std::size_t index,
+                                                     std::size_t satisfied) const {
+        alternatives::View view{
+            .atom = [&](std::size_t node) { return atom(tables, element(list, node), true); },
+            .best = [this](const Atom& wanted) { return best_match(wanted); },
+            .installed = [this](std::string_view cp) { return installed_.contains(cp); },
+            .version =
+                [this](std::uint32_t candidate) {
+                    const auto& c = evaluated().candidates.at(candidate);
+                    return version_of(evaluated().string(c.cpv), evaluated().string(c.cp));
+                }};
+        return alternatives::upgrade(list, index, satisfied, view);
+    }
+
     void take_node(const Tables& tables, std::span<const Node> list, std::size_t index) {
         const auto& node = element(list, index);
         switch (node.type) {
@@ -541,6 +558,9 @@ class Reach {
                     if (element(list, child).parent == index &&
                         stands(tables, list, child, standing)) {
                         first = child;
+                        if (standing != Standing::visible) {
+                            first = upgrade(tables, list, index, child).value_or(child);
+                        }
                     }
                 }
             }

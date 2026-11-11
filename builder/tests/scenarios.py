@@ -1936,4 +1936,50 @@ SCENARIOS = {
             "sys-devel/cc-16.1": {"EAPI": "8", "SLOT": "16"},
         },
     },
+    # || alternatives ahead of a satisfied one, as python-any-r1 writes them: a newer slot of an
+    # installed package, which -uD pulls in for an update and for a kept package, an older one
+    # and one of a package with nothing installed, which it passes over.
+    "newslot": {
+        "world": ["app-misc/cert", "app-misc/kept", "app-misc/older", "app-misc/other"],
+        "ebuilds": {
+            "app-misc/cert-1": {"EAPI": "8"},
+            "app-misc/cert-2": {
+                "EAPI": "8",
+                "BDEPEND": "|| ( dev-lang/py:3.15 dev-lang/py:3.14 )",
+            },
+            "app-misc/kept-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-lang/py:3.15 dev-lang/py:3.14 )",
+            },
+            "app-misc/older-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-lang/py:3.13 dev-lang/py:3.14 )",
+            },
+            "app-misc/other-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-lang/jit dev-lang/py:3.14 )",
+            },
+            "dev-lang/py-3.13.1": {"EAPI": "8", "SLOT": "3.13"},
+            "dev-lang/py-3.14.1": {"EAPI": "8", "SLOT": "3.14"},
+            "dev-lang/py-3.14.2": {"EAPI": "8", "SLOT": "3.14"},
+            "dev-lang/py-3.15.1": {"EAPI": "8", "SLOT": "3.15"},
+            "dev-lang/jit-1": {"EAPI": "8"},
+        },
+        "installed": {
+            "app-misc/cert-1": {"EAPI": "8"},
+            "app-misc/kept-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-lang/py:3.15 dev-lang/py:3.14 )",
+            },
+            "app-misc/older-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-lang/py:3.13 dev-lang/py:3.14 )",
+            },
+            "app-misc/other-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-lang/jit dev-lang/py:3.14 )",
+            },
+            "dev-lang/py-3.14.1": {"EAPI": "8", "SLOT": "3.14"},
+        },
+    },
 }

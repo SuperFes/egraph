@@ -1,5 +1,6 @@
 #include "plan.hpp"
 
+#include "alternatives.hpp"
 #include "atom.hpp"
 #include "blockers.hpp"
 #include "graph.hpp"
@@ -55,6 +56,9 @@ class Planner {
         }
         for (std::uint32_t i = 0; i < evaluated.candidates.size(); ++i) {
             by_cp_[std::string(evaluated.string(evaluated.candidates.at(i).cp))].push_back(i);
+        }
+        for (const auto& pkg : store.packages) {
+            installed_cps_.emplace(store.string(pkg.cp));
         }
         if (targets.roots) {
             collect_arguments();
@@ -265,6 +269,7 @@ class Planner {
     // The member whose dependencies are being pulled in.
     std::optional<Member> puller_;
     std::map<std::string, std::vector<std::uint32_t>, std::less<>> by_cp_;
+    std::set<std::string, std::less<>> installed_cps_;
     std::map<std::string, std::optional<Atom>, std::less<>> atoms_;
     // Slot and sub-slot a slot-operator atom is bound to, by the atom's text.
     std::map<std::string, std::optional<SlotKey>, std::less<>> bindings_;
@@ -1209,6 +1214,36 @@ class Planner {
         moves.emplace_back(*best, std::string(text));
     }
 
+    // The alternative of the || at node index of list that -uD takes over its first satisfied
+    // one, as emerge's dep_zapdeps does.
+    [[nodiscard]] std::optional<std::size_t> upgrade_alternative(const Tables& tables,
+                                                                 std::span<const Node> list,
+                                                                 std::size_t index,
+                                                                 const std::vector<bool>& ok) {
+        if (element(list, index).type != NodeType::any_of) {
+            return std::nullopt;
+        }
+        std::optional<std::size_t> satisfied;
+        for (std::size_t child = index + 1; child < list.size() && !satisfied; ++child) {
+            if (element(list, child).parent == index && ok.at(child)) {
+                satisfied = child;
+            }
+        }
+        if (!satisfied) {
+            return std::nullopt;
+        }
+        alternatives::View view{
+            .atom = [&](std::size_t node) { return atom(tables.string(element(list, node).atom)); },
+            .best = [this](const Atom& wanted) { return best_match(wanted); },
+            .installed = [this](std::string_view cp) { return installed_cps_.contains(cp); },
+            .version =
+                [this](std::uint32_t candidate) {
+                    const auto& c = evaluated().candidates.at(candidate);
+                    return version_of(evaluated().string(c.cpv), evaluated().string(c.cp));
+                }};
+        return alternatives::upgrade(list, index, *satisfied, view);
+    }
+
     [[nodiscard]] std::optional<std::uint32_t> installed_in(const SlotKey& key) const {
         for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
             const auto& pkg = store().packages.at(id);
@@ -1748,6 +1783,22 @@ class Planner {
                     if (ok.at(i)) {
                         if (!moves) {
                             continue;
+                        }
+                        if (const auto earlier = upgrade_alternative(tables, list, i, ok)) {
+                            std::vector<std::pair<std::uint32_t, std::string>> pulls;
+                            wanted_.clear();
+                            puller_ = item.member;
+                            pending_.clear();
+                            const bool pulled_in = pull(tables, list, *earlier, pulls);
+                            puller_.reset();
+                            pending_.clear();
+                            wanted_.clear();
+                            if (pulled_in) {
+                                for (auto& [candidate, text] : pulls) {
+                                    added.emplace_back(true, candidate, std::move(text));
+                                }
+                                continue;
+                            }
                         }
                         std::vector<std::pair<std::uint32_t, std::string>> found;
                         slot_moves(tables, list, i, ok, found);

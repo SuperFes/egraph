@@ -145,6 +145,33 @@ TEST_CASE("a slot nothing occupies is pulled in beside the installed one") {
                                    "new dev-lang/py-3.14.1 <- app-misc/slotty-2 dev-lang/py:3.14"});
 }
 
+TEST_CASE("-uD takes an earlier || alternative in a newer slot of an installed package") {
+    // As python-any-r1's || ( dev-lang/python:3.15 dev-lang/python:3.14 ).
+    const std::vector<std::pair<std::string, std::string>> dependents{
+        {"app-misc/newer-1", "|| ( dev-lang/py:3.15 dev-lang/py:3.14 )"},
+        {"app-misc/older-1", "|| ( dev-lang/py:3.13 dev-lang/py:3.14 )"},
+        {"app-misc/other-1", "|| ( dev-lang/jit dev-lang/py:3.14 )"}};
+    std::vector<Installed> installed{{.cpv = "dev-lang/py-3.14.1", .slot = "3.14"}};
+    std::vector<Available> available{{.cpv = "dev-lang/py-3.13.1", .slot = "3.13"},
+                                     {.cpv = "dev-lang/py-3.14.1", .slot = "3.14"},
+                                     {.cpv = "dev-lang/py-3.15.1", .slot = "3.15"},
+                                     {.cpv = "dev-lang/jit-1"}};
+    std::vector<std::string> world;
+    for (const auto& [cpv, dep] : dependents) {
+        installed.push_back({.cpv = cpv, .deps = {{"RDEPEND", dep}}});
+        available.push_back({.cpv = cpv, .deps = {{"RDEPEND", dep}}});
+        world.push_back(cpv.substr(0, cpv.rfind('-')));
+    }
+    const auto system = make_system(installed, available, world);
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               egraph::Targets{.scope = {}, .roots = true, .deep = true}) ==
+          std::vector<std::string>{"new dev-lang/py-3.15.1 <- app-misc/newer-1 dev-lang/py:3.15"});
+    // Plain -u keeps a satisfied dependency.
+    CHECK(plan(system, egraph::UseRebuilds::none,
+               egraph::Targets{.scope = {}, .roots = true, .deep = false})
+              .empty());
+}
+
 TEST_CASE("-uD moves a dependency naming no slot to a newer slot beside the installed one") {
     // As virtual/wine's || ( ... app-emulation/wine-vanilla[wow64(-)] ... ): a satisfied atom
     // goes to its best visible version, whatever slot it is in.
