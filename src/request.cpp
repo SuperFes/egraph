@@ -426,9 +426,27 @@ class Reach {
 
     void take_atom(const Tables& tables, const Node& node) {
         const auto ids = tables.ids_in(node.matches);
+        const auto wanted = atom(tables, node);
         if (!ids.empty()) {
-            std::ranges::for_each(ids, [this](std::uint32_t id) { reach(id); });
-        } else if (const auto wanted = atom(tables, node)) {
+            // emerge selects the atom's best version, leaving the installed slots beside it out;
+            // with nothing visible to select, any installed match may be the one it keeps.
+            const auto found = wanted ? best_match(*wanted) : std::nullopt;
+            if (!found) {
+                std::ranges::for_each(ids, [this](std::uint32_t id) { reach(id); });
+                return;
+            }
+            const auto slot = evaluated().string(evaluated().candidates.at(*found).slot);
+            bool installed = false;
+            for (const auto id : ids) {
+                if (store().string(store().packages.at(id).slot) == slot) {
+                    reach(id);
+                    installed = true;
+                }
+            }
+            if (!installed) {
+                take(*found);
+            }
+        } else if (wanted) {
             if (const auto found = best_match(*wanted)) {
                 // The installed version, which only a USE change lets match, joins the graph
                 // rebuilt and holds its slot: emerge leaves its update out.

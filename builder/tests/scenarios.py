@@ -1909,4 +1909,31 @@ SCENARIOS = {
             "package.accept_keywords": ("=app-misc/live-9999 **",),
         },
     },
+    # Installed slots beside the one a dependency's best version takes: an older slot with an
+    # update of its own and two whose IUSE grew, beside a new slot, which -uDN leaves alone.
+    "oldslots": {
+        "world": ["app-misc/tool"],
+        "ebuilds": {
+            "app-misc/tool-1": {
+                "EAPI": "8",
+                "RDEPEND": ">=dev-lang/rs-1:* sys-devel/cc",
+            },
+            "dev-lang/rs-1": {"EAPI": "8", "SLOT": "1", "IUSE": "extra"},
+            "dev-lang/rs-2": {"EAPI": "8", "SLOT": "2", "IUSE": "extra"},
+            "dev-lang/rs-3": {"EAPI": "8", "SLOT": "3", "IUSE": "extra"},
+            "sys-devel/cc-15.1": {"EAPI": "8", "SLOT": "15"},
+            "sys-devel/cc-15.2": {"EAPI": "8", "SLOT": "15"},
+            "sys-devel/cc-16.1": {"EAPI": "8", "SLOT": "16"},
+        },
+        "installed": {
+            "app-misc/tool-1": {
+                "EAPI": "8",
+                "RDEPEND": ">=dev-lang/rs-1:* sys-devel/cc",
+            },
+            "dev-lang/rs-1": {"EAPI": "8", "SLOT": "1"},
+            "dev-lang/rs-2": {"EAPI": "8", "SLOT": "2"},
+            "sys-devel/cc-15.1": {"EAPI": "8", "SLOT": "15"},
+            "sys-devel/cc-16.1": {"EAPI": "8", "SLOT": "16"},
+        },
+    },
 }

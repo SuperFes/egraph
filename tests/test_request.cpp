@@ -313,6 +313,29 @@ TEST_CASE("a request reaches the first alternative of a || that is installed, el
           std::vector<bool>{false, true, false, true});
 }
 
+TEST_CASE("a request reaches only the slot of a dependency's best version") {
+    const std::vector<egraph::test::Installed> installed = {
+        {.cpv = "app-misc/tool-1", .deps = {{"RDEPEND", ">=dev-lang/rs-1:*"}}},
+        {.cpv = "dev-lang/rs-1", .slot = "1"},
+        {.cpv = "dev-lang/rs-2", .slot = "2"}};
+    const auto reach = [&](std::vector<egraph::test::Available> candidates) {
+        const auto system = make_system(installed, std::move(candidates));
+        const auto request = parse(system, {"app-misc/tool"});
+        REQUIRE(request);
+        return egraph::request_reach(system.store, system.evaluated, *request);
+    };
+    const egraph::test::Available tool = {.cpv = "app-misc/tool-1",
+                                          .deps = {{"RDEPEND", ">=dev-lang/rs-1:*"}}};
+    const egraph::test::Available rs1 = {.cpv = "dev-lang/rs-1", .slot = "1"};
+    const egraph::test::Available rs2 = {.cpv = "dev-lang/rs-2", .slot = "2"};
+    CHECK(reach({tool, rs1, rs2}) == std::vector<bool>{true, false, true});
+    // A new slot takes every installed one out.
+    CHECK(reach({tool, rs1, rs2, {.cpv = "dev-lang/rs-3", .slot = "3"}}) ==
+          std::vector<bool>{true, false, false});
+    // With nothing visible to select, each installed match may be the one kept.
+    CHECK(reach({tool}) == std::vector<bool>{true, true, true});
+}
+
 TEST_CASE("a request leaves the update out of an installed version only a USE change lets match") {
     const auto system = make_system(
         {{.cpv = "dev-libs/lib-1", .iuse = "gtk"}, {.cpv = "dev-libs/deep-1"}},
