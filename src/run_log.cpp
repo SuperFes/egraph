@@ -45,6 +45,7 @@ log::Event RunEvents::step_event(std::size_t step, std::string kind, std::string
 log::Event RunEvents::started(const RunStart& start, double now) {
     start_ = now;
     command_ = start.command;
+    snapshot_ = start.snapshot;
     std::int64_t merges = 0;
     std::int64_t uninstalls = 0;
     for (const auto& step : steps_) {
@@ -69,6 +70,10 @@ log::Event RunEvents::started(const RunStart& start, double now) {
                                 {.name = "uninstalls", .value = uninstalls}}};
     if (start.jobs) {
         found.fields.push_back({.name = "jobs", .value = std::int64_t{*start.jobs}});
+    }
+    if (start.snapshot) {
+        found.message += ", in a snapshot";
+        found.fields.push_back({.name = "snapshot", .value = std::int64_t{1}});
     }
     if (start.differs) {
         mark_differing(found);
@@ -96,6 +101,15 @@ std::optional<log::Event> RunEvents::traced(std::size_t step, Traced what, doubl
     }
     case Traced::merged: {
         const auto seconds = now - times.merge_start.value_or(now);
+        if (snapshot_) {
+            const auto* done = steps_.at(step).uninstall ? "uninstalled" : "merged";
+            auto found = step_event(
+                step, done, std::format("{} in the snapshot in {}", done, log::duration(seconds)),
+                now);
+            found.fields.push_back({.name = "seconds", .value = seconds});
+            found.fields.push_back({.name = "where", .value = std::string{"snapshot"}});
+            return found;
+        }
         if (steps_.at(step).uninstall) {
             ++uninstalled_;
             auto found =
@@ -157,6 +171,20 @@ log::Event RunEvents::skipped(std::size_t step, const std::string& why, double n
     auto found = step_event(step, "skipped", "skipped, " + why, now);
     found.priority = 4;
     found.fields.push_back({.name = "why", .value = why});
+    return found;
+}
+
+log::Event RunEvents::replayed(std::size_t step, double started, double now) {
+    const bool uninstall = steps_.at(step).uninstall;
+    ++(uninstall ? uninstalled_ : merged_);
+    const auto seconds = now - started;
+    const auto* done = uninstall ? "uninstalled" : "merged";
+    auto found = step_event(step, done,
+                            std::format("{} {} the root in {}", done, uninstall ? "from" : "into",
+                                        log::duration(seconds)),
+                            now);
+    found.fields.push_back({.name = "seconds", .value = seconds});
+    found.fields.push_back({.name = "where", .value = std::string{"root"}});
     return found;
 }
 

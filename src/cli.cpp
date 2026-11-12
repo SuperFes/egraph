@@ -3560,10 +3560,74 @@ struct Confined {
     std::vector<os::Bind> binds;
 };
 
+// Merges into the root itself the binary packages the steps done kept, and their uninstalls, in
+// plan order, one worker taking each in turn; state records each merge, and the run's log.
+std::expected<void, std::string> replay(const Invocation& invocation, const RunSettings& settings,
+                                        const Shown& shown, const std::vector<Step>& steps,
+                                        const std::vector<std::string>& names,
+                                        std::vector<std::size_t> done,
+                                        const snapshot::RunPaths& paths, RunState& state,
+                                        RunEvents& events, log::Log& logger, std::ostream& out) {
+    std::ranges::sort(done);
+    std::vector<std::string> lines;
+    lines.reserve(done.size());
+    for (const auto step : done) {
+        lines.push_back(
+            binary_request(shown.store.get(), shown.evaluated.get(), shown.plan, steps.at(step)));
+    }
+    auto argv = worker_command(invocation);
+    argv.insert(argv.end(), {"--background", "--pkgdir", paths.packages.string()});
+    std::optional<RemovedAtEnd> portage_copy;
+    if (const auto copied = copy_portage_if_merged(invocation, settings, shown, portage_copy, argv);
+        !copied) {
+        return std::unexpected(copied.error());
+    }
+    WorkerPool pool{with_elog_system(std::move(argv), settings),
+                    std::nullopt,
+                    false,
+                    {.tmpdir = settings.tmpdir, .free_gb = 0},
+                    out};
+    out << std::format("egraph: exec: merging what built into {}\n", shown.store.get().meta.eroot);
+    const auto state_path = run_state_path(shown.store.get().meta.eroot);
+    auto started = epoch_seconds();
+    const auto outcome = run_in_turn(pool, lines, [&](std::size_t line, const WorkerEvent& event) {
+        const auto step = done.at(line);
+        if (event.kind != WorkerEvent::Kind::merged &&
+            event.kind != WorkerEvent::Kind::uninstalled) {
+            return;
+        }
+        const auto now = epoch_seconds();
+        logger.write(events.replayed(step, started, now));
+        started = now;
+        out << std::format("  {} {}\n", names.at(step), describe_event(event));
+        if (std::holds_alternative<MergeStep>(steps.at(step))) {
+            state.merged.push_back(names.at(step));
+            std::ignore = os::replace_with_text(state_path, run_state_json(state) + '\n');
+        }
+    });
+    const auto ended = pool.finish();
+    std::optional<std::string> error;
+    if (outcome.stopped) {
+        const auto& [line, why] = *outcome.stopped;
+        error = std::format("{}: {}, merging into the root", names.at(done.at(line)), why);
+    } else if (!ended) {
+        error = ended.error();
+    } else if (*ended != 0) {
+        error = std::format("the worker merging into the root exited with status {}", *ended);
+    }
+    if (error) {
+        state.status = RunState::Status::failed;
+        std::ignore = os::replace_with_text(state_path, run_state_json(state) + '\n');
+        return std::unexpected(*error);
+    }
+    return {};
+}
+
 // Runs the steps over a pool of workers, as many builds at once as command or else the settings
 // allow, going on after a failure as either says, reporting each event on out: the workers' exit
 // status, or why the run stopped short. Confined, the workers run in its snapshot, keeping the
-// binary packages, and the steps merged there go to done in the order they finish.
+// binary packages, the steps merged there go to done in the order they finish, and those merge
+// into the root after (replay).
 std::expected<int, std::string> run_pool(const Invocation& invocation, const RunSettings& settings,
                                          const Exec& command, const Shown& shown,
                                          StepRequests& requests, const std::vector<Step>& steps,
@@ -3771,7 +3835,8 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                                  .options = request_options(shown.request, command.oneshot),
                                  .jobs = jobs,
                                  .keep_going = keep_going,
-                                 .differs = differs},
+                                 .differs = differs,
+                                 .snapshot = confined.has_value()},
                                 now()));
     // What exec --resume reads: rewritten as each merge finishes, so a run cut short leaves it.
     const auto state_path = run_state_path(shown.store.get().meta.eroot);
@@ -3929,6 +3994,21 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
         }
         ended = std::unexpected(std::move(message));
     }
+    // In a snapshot, what was done there merges into the root once all of it was, or under
+    // --keep-going, once what could be was.
+    if (confined) {
+        const bool succeeded = ended && *ended == 0;
+        if (!done.empty() && (succeeded || keep_going)) {
+            if (auto replayed = replay(invocation, settings, shown, steps, names, done,
+                                       confined->paths, state, events, logger, out);
+                !replayed) {
+                ended = std::unexpected(succeeded ? replayed.error()
+                                                  : ended.error_or("") + "; " + replayed.error());
+            }
+        } else if (!succeeded) {
+            out << std::format("egraph: exec: {} is as it was\n", shown.store.get().meta.eroot);
+        }
+    }
     std::optional<std::string> error;
     if (!ended) {
         error = ended.error();
@@ -3968,65 +4048,6 @@ class SnapshotTaken {
     std::optional<std::filesystem::path> path_;
     std::reference_wrapper<std::ostream> out_;
 };
-
-// Merges into the root itself the binary packages the steps done kept, and their uninstalls, in
-// plan order, one worker taking each in turn; state records each merge.
-std::expected<void, std::string> replay(const Invocation& invocation, const RunSettings& settings,
-                                        const Shown& shown, const std::vector<Step>& steps,
-                                        const std::vector<std::string>& names,
-                                        std::vector<std::size_t> done,
-                                        const snapshot::RunPaths& paths, RunState& state,
-                                        std::ostream& out) {
-    std::ranges::sort(done);
-    std::vector<std::string> lines;
-    lines.reserve(done.size());
-    for (const auto step : done) {
-        lines.push_back(
-            binary_request(shown.store.get(), shown.evaluated.get(), shown.plan, steps.at(step)));
-    }
-    auto argv = worker_command(invocation);
-    argv.insert(argv.end(), {"--background", "--pkgdir", paths.packages.string()});
-    std::optional<RemovedAtEnd> portage_copy;
-    if (const auto copied = copy_portage_if_merged(invocation, settings, shown, portage_copy, argv);
-        !copied) {
-        return std::unexpected(copied.error());
-    }
-    WorkerPool pool{with_elog_system(std::move(argv), settings),
-                    std::nullopt,
-                    false,
-                    {.tmpdir = settings.tmpdir, .free_gb = 0},
-                    out};
-    out << std::format("egraph: exec: merging what built into {}\n", shown.store.get().meta.eroot);
-    const auto state_path = run_state_path(shown.store.get().meta.eroot);
-    const auto outcome = run_in_turn(pool, lines, [&](std::size_t line, const WorkerEvent& event) {
-        const auto step = done.at(line);
-        if (event.kind != WorkerEvent::Kind::merged &&
-            event.kind != WorkerEvent::Kind::uninstalled) {
-            return;
-        }
-        out << std::format("  {} {}\n", names.at(step), describe_event(event));
-        if (std::holds_alternative<MergeStep>(steps.at(step))) {
-            state.merged.push_back(names.at(step));
-            std::ignore = os::replace_with_text(state_path, run_state_json(state) + '\n');
-        }
-    });
-    const auto ended = pool.finish();
-    std::optional<std::string> error;
-    if (outcome.stopped) {
-        const auto& [line, why] = *outcome.stopped;
-        error = std::format("{}: {}, merging into the root", names.at(done.at(line)), why);
-    } else if (!ended) {
-        error = ended.error();
-    } else if (*ended != 0) {
-        error = std::format("the worker merging into the root exited with status {}", *ended);
-    }
-    if (error) {
-        state.status = RunState::Status::failed;
-        std::ignore = os::replace_with_text(state_path, run_state_json(state) + '\n');
-        return std::unexpected(*error);
-    }
-    return {};
-}
 
 // The steps run in a snapshot of the root, keeping each build's binary package (resuming, taking
 // those the last run kept), then once every step is done (or under --keep-going, those that
@@ -4077,19 +4098,6 @@ run_in_snapshot(const Invocation& invocation, const RunSettings& settings, const
     const auto ran = run_pool(invocation, settings, command, shown, requests, steps, names, state,
                               differs, confined, done, out);
     taken.remove();
-    const bool keep_going =
-        command.keep_going.value_or(keep_going_of(execution_options(settings.defaults)));
-    if (done.empty() || (!(ran && *ran == 0) && !keep_going)) {
-        if (!ran || *ran != 0) {
-            out << std::format("egraph: exec: {} is as it was\n", eroot.string());
-        }
-        return ran;
-    }
-    if (const auto replayed =
-            replay(invocation, settings, shown, steps, names, std::move(done), paths, state, out);
-        !replayed) {
-        return std::unexpected(replayed.error());
-    }
     if (ran && *ran == 0) {
         std::filesystem::remove_all(paths.packages, error);
     }

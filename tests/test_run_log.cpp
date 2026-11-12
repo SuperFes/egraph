@@ -208,3 +208,29 @@ TEST_CASE("a new notice logs as a warning or a notice by its kind") {
     notice.kind = egraph::NoticeKind::news;
     CHECK(egraph::noticed("r1", notice, 1700000000).priority == 5);
 }
+
+TEST_CASE("a snapshot run counts what merged into the root, not into the snapshot") {
+    auto run = events();
+    const auto start = run.started({.command = "exec", .snapshot = true}, 0);
+    CHECK(start.message == "egraph exec: 2 merges, 1 uninstall, in a snapshot");
+    CHECK(field<std::int64_t>(start, "snapshot") == 1);
+    std::ignore = run.traced(0, Traced::merge_started, 10);
+    const auto in_snapshot = run.traced(0, Traced::merged, 12);
+    REQUIRE(in_snapshot);
+    CHECK(in_snapshot->kind == "merged");
+    CHECK(in_snapshot->message == "app-misc/a-1: merged in the snapshot in 2.0 s");
+    CHECK(field<std::string>(*in_snapshot, "where") == "snapshot");
+    std::ignore = run.traced(1, Traced::merge_started, 12);
+    std::ignore = run.traced(1, Traced::merged, 13);
+    const auto merged = run.replayed(0, 20, 23);
+    CHECK(merged.kind == "merged");
+    CHECK(merged.message == "app-misc/a-1: merged into the root in 3.0 s");
+    CHECK(field<std::string>(merged, "where") == "root");
+    CHECK(field<double>(merged, "seconds") == 3);
+    const auto uninstalled = run.replayed(1, 23, 24);
+    CHECK(uninstalled.kind == "uninstalled");
+    CHECK(uninstalled.message == "app-misc/old-1: uninstalled from the root in 1.0 s");
+    const auto end = run.ended(std::nullopt, 30);
+    CHECK(field<std::int64_t>(end, "merged") == 1);
+    CHECK(field<std::int64_t>(end, "uninstalled") == 1);
+}

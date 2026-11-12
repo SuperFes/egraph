@@ -1610,5 +1610,5 @@ Decided with the user (2026-10-16):
     wherever user namespaces and btrfs allow, and skip elsewhere, CI among them; no loop image
     is needed. Also bound: `PORTAGE_LOGDIR`, the elog summary's directory, the packages
     directory, and egraph-build's and portage's own directories when on another volume than
-    `/` (a development tree). Open: the replay's merges are not in `egraph log`, and a run on
-    the live `/` as root is checked by hand.
+    `/` (a development tree). The log has each merge in the snapshot and then into the root,
+    the run's end counting the root's. Open: a run on the live `/` as root is checked by hand.

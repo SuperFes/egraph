@@ -33,6 +33,8 @@ struct RunStart {
     bool keep_going = false;
     // Carried out although emerge --pretend listed otherwise.
     bool differs = false;
+    // Run in a snapshot of the root, and merged into the root itself after.
+    bool snapshot = false;
 };
 
 class RunEvents {
@@ -51,6 +53,10 @@ class RunEvents {
                                                      double now);
 
     [[nodiscard]] log::Event skipped(std::size_t step, const std::string& why, double now);
+
+    // In a snapshot run, step merged or uninstalled in the root itself, since started; what the
+    // end counts, the merges in the snapshot not.
+    [[nodiscard]] log::Event replayed(std::size_t step, double started, double now);
 
     // The run's end, with what stopped it if anything did.
     [[nodiscard]] log::Event ended(const std::optional<std::string>& error, double now) const;
@@ -71,6 +77,7 @@ class RunEvents {
     std::vector<Times> times_;
     std::string command_;
     double start_ = 0;
+    bool snapshot_ = false;
     std::int64_t merged_ = 0;
     std::int64_t uninstalled_ = 0;
     std::int64_t failed_ = 0;

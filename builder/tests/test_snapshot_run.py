@@ -14,6 +14,7 @@ import pytest
 
 from test_actions import EGRAPH, System
 from test_build import age
+from test_exec_run import logged
 from test_enter import can_enter
 from test_worker import EBUILDS, INSTALL, PLAIN, Machine, differences
 
@@ -153,6 +154,18 @@ def test_a_run_in_a_snapshot_leaves_what_a_plain_run_leaves(machines):
     assert "egraph: exec: building in a snapshot of " in ran.stdout
     assert "egraph: exec: merging what built into " in ran.stdout
     snapshotted = merged_state(machine)
+    # Logged: each merge in the snapshot, then into the root, which is what the end counts.
+    if os.environ.get("EGRAPH_LOG") == "file":
+        events = [
+            e for e in logged(system) if e.get("run") == logged(system)[-1]["run"]
+        ]
+        assert events[0]["snapshot"] == 1
+        where = [(e["cpv"], e["where"]) for e in events if e["event"] == "merged"]
+        merged = ["app-misc/lib-1", "app-misc/needs-1", "app-misc/new-1"]
+        assert sorted(cpv for cpv, place in where if place == "snapshot") == merged
+        assert [cpv for cpv, place in where if place == "root"] == merged
+        assert events[-1]["merged"] == 3
+        assert events[-1]["uninstalled"] == 1
     assert leftovers(machine) == []
     assert not os.path.exists(machine.path("var/lib/egraph/packages"))
     put_back(machine)
