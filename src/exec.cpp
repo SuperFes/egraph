@@ -385,6 +385,17 @@ std::string worker_request(const Store& store, const Evaluated& original, const 
     return uninstall_request(store, plan, std::get<UninstallStep>(step));
 }
 
+std::string binary_request(const Store& store, const Evaluated& original, const Plan& plan,
+                           const Step& step) {
+    const auto& evaluated = plan.evaluated_or(original);
+    if (const auto* merge = std::get_if<MergeStep>(&step)) {
+        Json request{{"binpkg", evaluated.string(merged_candidate(evaluated, plan, *merge).cpv)}};
+        add_merge_fields(request, store, merge->blockers, merge->world);
+        return request.dump();
+    }
+    return uninstall_request(store, plan, std::get<UninstallStep>(step));
+}
+
 StepRequests::StepRequests(const Store& store, const Evaluated& evaluated, const Plan& plan,
                            std::vector<Step> steps)
     : store_ref_(store), evaluated_ref_(plan.evaluated_or(evaluated)), plan_ref_(plan),

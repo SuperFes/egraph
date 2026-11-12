@@ -132,6 +132,26 @@ TEST_CASE("an argument's repository is recorded with it") {
     }
 }
 
+TEST_CASE("a kept binary package merges with the blockers and world atom of its build") {
+    auto system = make_system({{.cpv = "app-misc/old-1"}},
+                              {{.cpv = "app-misc/new-1", .deps = {{"RDEPEND", "!app-misc/old"}}}});
+    egraph::Plan plan;
+    plan.merges = {merge(candidate(system, "app-misc/new-1"))};
+    plan.order = {0};
+    plan.uninstalls = {
+        {.package = installed(system, "app-misc/old-1"), .why = egraph::Block{}, .after = {0}}};
+    std::vector<Json> found;
+    for (const auto& step :
+         egraph::run_steps(system.store, system.evaluated, plan, atoms({"app-misc/new"}), false)) {
+        found.push_back(
+            Json::parse(egraph::binary_request(system.store, system.evaluated, plan, step)));
+    }
+    CHECK(found == std::vector<Json>{Json::parse(R"({"binpkg": "app-misc/new-1",
+                                                     "blockers": ["app-misc/old-1"],
+                                                     "world": "app-misc/new"})"),
+                                     Json::parse(R"({"uninstall": "app-misc/old-1"})")});
+}
+
 TEST_CASE("a merge takes its run-time blockers either way, but in its own slot") {
     auto system = make_system({{.cpv = "app-misc/old-1"},
                                {.cpv = "app-misc/holder-1", .deps = {{"RDEPEND", "!app-misc/new"}}},

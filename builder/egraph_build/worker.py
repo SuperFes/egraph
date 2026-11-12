@@ -8,10 +8,14 @@ Requests come one per line on stdin, as JSON objects:
   above, then merges what this worker built: the build directory stays locked from one to the
   other, as emerge keeps it while a built package waits its turn to merge, and several built
   packages may wait at once, merged in any order;
+- {"binpkg": cpv}, with "blockers" and "world" as above, merges the binary package of cpv kept in
+  --pkgdir, as emerge -K does;
 - {"uninstall": cpv} uninstalls the installed package, with "clean_world": true dropping the
   world file's atoms that then match nothing installed.
-For each, events go to stdout one per line: {"phase": name} as each phase starts (a merge's
-build phases, then "merge"; an uninstall's "unmerge"), then {"built": cpv}, {"merged": cpv} or
+With --pkgdir, each build also runs the package phase into that directory, as FEATURES=buildpkg
+does. For each request, events go to stdout one per line: {"phase": name} as each phase starts (a
+merge's build phases, "package", then "merge"; a binary merge's "setup" and "merge"; an
+uninstall's "unmerge"), then {"built": cpv}, {"merged": cpv} or
 {"uninstalled": cpv}, or {"failed": phase, "status": n, "log": path} when a phase fails, or
 {"error": message} for a request that cannot be tried. A build also reports the environment it
 starts in, {"environment": {name: value}}, and once installed its sizes in bytes, {"sizes":
@@ -59,13 +63,20 @@ class MergeBuilt(NamedTuple):
     world: Optional[str] = None
 
 
+class MergeBinary(NamedTuple):
+    cpv: str
+    blockers: tuple = ()
+    world: Optional[str] = None
+
+
 class Uninstall(NamedTuple):
     cpv: str
     clean_world: bool = False
 
 
 def parse_request(line):
-    """A Merge, Build, MergeBuilt or Uninstall from its line; ValueError for anything else."""
+    """A Merge, Build, MergeBuilt, MergeBinary or Uninstall from its line; ValueError for anything
+    else."""
     from portage.dep import Atom
     from portage.exception import InvalidAtom
     from portage.versions import catpkgsplit
@@ -82,8 +93,13 @@ def parse_request(line):
             raise ValueError(f"not a cpv: {value!r}")
         return value
 
-    if sum(key in fields for key in ("cpv", "build", "merge", "uninstall")) != 1:
-        raise ValueError('a request has one of "cpv", "build", "merge" and "uninstall"')
+    if (
+        sum(key in fields for key in ("cpv", "build", "merge", "binpkg", "uninstall"))
+        != 1
+    ):
+        raise ValueError(
+            'a request has one of "cpv", "build", "merge", "binpkg" and "uninstall"'
+        )
     if "uninstall" in fields:
         clean_world = fields.get("clean_world", False)
         if not isinstance(clean_world, bool):
@@ -94,9 +110,8 @@ def parse_request(line):
         if not isinstance(repo, str):
             raise ValueError('a build needs a "repo" string')
         return Build(cpv_of(fields["build"]), repo)
-    cpv, repo = fields.get("cpv", fields.get("merge")), fields.get("repo")
-    if "merge" in fields:
-        repo = ""
+    cpv = fields.get("cpv", fields.get("merge", fields.get("binpkg")))
+    repo = fields.get("repo") if "cpv" in fields else ""
     if not isinstance(cpv, str) or not isinstance(repo, str):
         raise ValueError('a request needs "cpv" and "repo" strings')
     blockers = fields.get("blockers", [])
@@ -110,6 +125,8 @@ def parse_request(line):
             raise ValueError(f"not an atom: {world!r}") from None
     if "merge" in fields:
         return MergeBuilt(cpv_of(cpv), tuple(map(cpv_of, blockers)), world)
+    if "binpkg" in fields:
+        return MergeBinary(cpv_of(cpv), tuple(map(cpv_of, blockers)), world)
     return Merge(cpv_of(cpv), repo, tuple(map(cpv_of, blockers)), world)
 
 
@@ -140,10 +157,13 @@ def event(**fields):
 
 def _queries_see(trees):
     """has_version and best_version, asked by an ebuild, answered from trees: as emerge does,
-    so that they see what this process merged."""
+    so that they see what this process merged; and portage's own trees, which doebuild's
+    package phase puts the binary package in, those of this root."""
+    import portage
     from portage.package.ebuild._ipc.QueryCommand import QueryCommand
 
     QueryCommand._db = trees
+    portage.db = trees
 
 
 class _Blocker(NamedTuple):
@@ -323,18 +343,24 @@ class Worker:
     """Merges into one root, as its configuration says, with what portage keeps between merges
     loaded once."""
 
-    def __init__(self, config_root=None, root=None, eprefix=None, cgroup=None):
+    def __init__(
+        self, config_root=None, root=None, eprefix=None, cgroup=None, pkgdir=None
+    ):
         import portage
 
         from egraph_build.cli import portage_environment
 
         env = portage_environment(config_root, root, eprefix)
+        if pkgdir is not None:
+            env["PKGDIR"] = pkgdir
+        self._pkgdir = pkgdir
         options = {"config_root": config_root, "target_root": root, "eprefix": eprefix}
         trees = portage.create_trees(**options, env=env)
         self._settings = portage.config(**options, env=env)
         use_cgroup(self._settings, cgroup)
         eroot = self._eroot = self._settings["EROOT"]
         self._portdb = trees[eroot]["porttree"].dbapi
+        self._bintree = trees[eroot]["bintree"]
         self._vartree = trees[eroot]["vartree"]
         self._mtimedb_path = os.path.join(eroot, portage.CACHE_PATH, "mtimedb")
         _queries_see(trees)
@@ -411,6 +437,19 @@ class Worker:
             if status != os.EX_OK:
                 lock.unlock()
                 return self._failed(emit, phase, status, settings)
+        if self._pkgdir is not None:
+            emit(event(phase="package"))
+            status = portage.doebuild(
+                ebuild,
+                "package",
+                settings=settings,
+                tree="porttree",
+                mydbapi=self._portdb,
+                vartree=self._vartree,
+            )
+            if status != os.EX_OK:
+                lock.unlock()
+                return self._failed(emit, "package", status, settings)
         emit(
             event(
                 sizes={
@@ -460,6 +499,107 @@ class Worker:
             mtimedb.commit()
         finally:
             built.lock.unlock()
+        if status != os.EX_OK:
+            return self._failed(emit, "merge", status, settings)
+        if request.world is not None:
+            _edit_world(self._eroot, lambda world: world.add(request.world))
+        emit(event(merged=request.cpv))
+        return True
+
+    def merge_binary(self, request, emit):
+        """Merges the binary package of the request's cpv kept in the package directory, as
+        emerge's Binpkg does: its metadata and saved environment, setup, its contents, then the
+        merge; whether it merged."""
+        import shutil
+
+        import portage
+        from portage.util.futures import asyncio
+
+        bintree = self._bintree
+        if self._pkgdir is None:
+            emit(event(error="a binary merge needs --pkgdir"))
+            return False
+        bintree.populate()
+        if not bintree.dbapi.cpv_exists(request.cpv):
+            emit(event(error=f"no binary package of {request.cpv} in {self._pkgdir}"))
+            return False
+        try:
+            blockers = self._blockers(request.blockers)
+        except ValueError as e:
+            emit(event(error=str(e)))
+            return False
+        settings = portage.config(clone=self._settings)
+        settings.setcpv(request.cpv, mydb=bintree.dbapi)
+        category, pf = portage.catsplit(request.cpv)
+        builddir = os.path.join(
+            os.path.realpath(settings["PORTAGE_TMPDIR"]), "portage", category, pf
+        )
+        infloc = os.path.join(builddir, "build-info")
+        ebuild = os.path.join(infloc, pf + ".ebuild")
+        settings["EBUILD"] = ebuild
+        portage.doebuild_environment(
+            ebuild, "setup", settings=settings, db=bintree.dbapi
+        )
+        pkg = settings.configdict["pkg"]
+        pkg["EMERGE_FROM"] = "binary"
+        pkg["MERGE_TYPE"] = "binary"
+        path = bintree.getname(request.cpv)
+        settings["PORTAGE_BINPKG_FILE"] = path
+        loop = asyncio.get_event_loop()
+        lock = _BuildDirLock(settings)
+        lock.lock()
+        try:
+            shutil.rmtree(builddir, ignore_errors=True)
+            for directory in (builddir, settings["D"], infloc):
+                portage.util.ensure_dirs(
+                    directory,
+                    uid=portage.data.portage_uid,
+                    gid=portage.data.portage_gid,
+                    mode=0o755,
+                )
+            portage.prepare_build_dirs(settings["ROOT"], settings, 1)
+            loop.run_until_complete(bintree.dbapi.unpack_metadata(settings, infloc))
+            (md5,) = bintree.dbapi.aux_get(request.cpv, ["MD5"])
+            with open(os.path.join(infloc, "BINPKGMD5"), "w", encoding="utf-8") as f:
+                f.write(f"{md5 or portage.checksum.perform_md5(path)}\n")
+            emit(event(phase="setup"))
+            status = portage.doebuild(
+                ebuild,
+                "setup",
+                settings=settings,
+                tree="bintree",
+                mydbapi=bintree.dbapi,
+                vartree=self._vartree,
+            )
+            if status != os.EX_OK:
+                return self._failed(emit, "setup", status, settings)
+            loop.run_until_complete(
+                bintree.dbapi.unpack_contents(settings, settings["D"])
+            )
+            with open(os.path.join(infloc, "EPREFIX"), encoding="utf-8") as f:
+                prefix = f.read().rstrip("\n")
+            if prefix != settings["EPREFIX"]:
+                emit(event(error=f"{request.cpv} was built for the prefix {prefix!r}"))
+                return False
+            portage.util.ensure_dirs(settings["ED"])
+            emit(event(phase="merge"))
+            mtimedb = self._mtimedb()
+            status = portage.merge(
+                category,
+                pf,
+                settings["D"],
+                infloc,
+                settings=settings,
+                myebuild=ebuild,
+                mytree="bintree",
+                mydbapi=bintree.dbapi,
+                vartree=self._vartree,
+                prev_mtimes=mtimedb["ldpath"],
+                blockers=lambda: blockers,
+            )
+            mtimedb.commit()
+        finally:
+            lock.unlock()
         if status != os.EX_OK:
             return self._failed(emit, "merge", status, settings)
         if request.world is not None:
@@ -541,6 +681,8 @@ class Worker:
             return self.build(request, emit)
         if isinstance(request, MergeBuilt):
             return self.merge_built(request, emit)
+        if isinstance(request, MergeBinary):
+            return self.merge_binary(request, emit)
         return self.merge(request, emit)
 
     @staticmethod
@@ -600,7 +742,14 @@ def _silenced():
         os.close(devnull)
 
 
-def main(config_root=None, root=None, eprefix=None, background=False, cgroup=None):
+def main(
+    config_root=None,
+    root=None,
+    eprefix=None,
+    background=False,
+    cgroup=None,
+    pkgdir=None,
+):
     # The events keep stdout to themselves; what anything else writes there goes to stderr.
     sys.stdout.flush()
     events = os.fdopen(os.dup(sys.stdout.fileno()), "w")
@@ -616,5 +765,7 @@ def main(config_root=None, root=None, eprefix=None, background=False, cgroup=Non
         os.environ.pop("PYTHONPATH", None)
     else:
         os.environ["PYTHONPATH"] = pythonpath
-    serve(Worker(config_root, root, eprefix, cgroup), sys.stdin, emit, background)
+    serve(
+        Worker(config_root, root, eprefix, cgroup, pkgdir), sys.stdin, emit, background
+    )
     return 0

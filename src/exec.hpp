@@ -104,6 +104,11 @@ class InstalledBlockers {
 [[nodiscard]] std::string worker_request(const Store& store, const Evaluated& evaluated,
                                          const Plan& plan, const Step& step);
 
+// The step as the request that merges the binary package its build kept, {"binpkg": cpv} with
+// the merge's blockers and world atom as worker_request gives them, or an uninstall's request.
+[[nodiscard]] std::string binary_request(const Store& store, const Evaluated& evaluated,
+                                         const Plan& plan, const Step& step);
+
 // The worker's requests for a run's steps when they run apart, a merge step's build and then its
 // merge: the merge's blockers as emerge's scheduler finds them when it merges, after the steps
 // done by then.

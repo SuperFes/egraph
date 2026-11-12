@@ -168,6 +168,16 @@ the other, as
 .B emerge
 keeps it while a built package waits its turn to merge; several may wait at once, merged in
 any order.
+.B {\(dqbinpkg\(dq: ...}
+(with
+.B \(dqblockers\(dq
+and
+.B \(dqworld\(dq
+as above) merges the binary package of the cpv kept in
+.BR \-\-pkgdir ,
+as
+.B emerge \-K
+does.
 .B {\(dquninstall\(dq: ...}
 uninstalls an installed package; with
 .BR "\(dqclean_world\(dq: true" ,
@@ -176,7 +186,15 @@ the world file's atoms that then match nothing installed go too, as
 drops them.
 Each request's progress goes to standard output, one JSON object a line:
 .B {\(dqphase\(dq: ...}
-as each phase starts (a merge's build phases and
+as each phase starts (a merge's build phases,
+.B package
+with
+.BR \-\-pkgdir ,
+and
+.BR merge ,
+a binary merge's
+.B setup
+and
 .BR merge ,
 an uninstall's
 .BR unmerge ),
@@ -195,6 +213,15 @@ import portage, and run the ebuilds, from the copy
 .B \-\-copy\-portage
 made in
 .IR dir .
+.TP
+.BI \-\-pkgdir " dir"
+With
+.BR \-\-worker :
+keep each build's binary package in
+.IR dir ,
+as FEATURES=buildpkg keeps it in PKGDIR, and merge one kept there on a
+.B binpkg
+request.
 .TP
 .BI \-\-cgroup " dir"
 With

@@ -477,6 +477,60 @@ def test_a_build_then_its_merge_leave_what_emerge_does(machine):
     assert events == built_then_merged("app-misc/files-2")
 
 
+def binpkg(cpv, **fields):
+    return json.dumps({"binpkg": cpv, **fields})
+
+
+def test_a_kept_binary_package_merges_as_emerge_K(machine):
+    """With --pkgdir a worker keeps each build's binary package, as FEATURES=buildpkg does, and
+    merging one from there leaves what emerge -K leaves from it: the image, the configuration
+    file waiting beside the user's, the vdb entries and the world file."""
+    pkgdir = str(machine.tmp_path / "packages")
+    machine.emerge("-1 =app-misc/files-1")
+    os.makedirs(machine.path("etc"), exist_ok=True)
+    with open(machine.path("etc", "files.conf"), "a") as f:
+        f.write("the user's\n")
+    machine.save()
+    events, status, stderr = machine.worker(
+        request("app-misc/files-2"), options=["--pkgdir", pkgdir]
+    )
+    assert status == 0, stderr
+    assert events == [{"phase": phase} for phase in worker.PHASES] + [
+        {"phase": "package"},
+        {"phase": "merge"},
+        {"merged": "app-misc/files-2"},
+    ]
+    machine.restore()
+    machine.environment["PKGDIR"] = pkgdir
+    machine.emerge("-K =app-misc/files-2")
+    emerged = machine.state()
+    machine.restore()
+    events, status, stderr = machine.worker(
+        binpkg("app-misc/files-2", blockers=[], world="app-misc/files"),
+        options=["--pkgdir", pkgdir],
+    )
+    assert status == 0, stderr
+    assert events == [
+        {"phase": "setup"},
+        {"phase": "merge"},
+        {"merged": "app-misc/files-2"},
+    ]
+    worked = machine.state()
+    assert worked == emerged, differences(emerged, worked)
+    holds(machine, {"etc/._cfg0000_files.conf": "2\n"})
+
+
+def test_a_binary_merge_needs_its_package_kept(machine):
+    pkgdir = str(machine.tmp_path / "packages")
+    events, status, _ = machine.worker(binpkg("app-misc/files-1"))
+    assert events == [{"error": "a binary merge needs --pkgdir"}]
+    events, status, _ = machine.worker(
+        binpkg("app-misc/files-1"), options=["--pkgdir", pkgdir]
+    )
+    assert events == [{"error": f"no binary package of app-misc/files-1 in {pkgdir}"}]
+    assert not machine.installed("app-misc/files-1")
+
+
 def until_final(process):
     """The events of the request just sent, up to the one ending it."""
     events = []
@@ -738,6 +792,9 @@ def test_a_failed_phase_merges_nothing_and_names_its_log(machine):
         build("app-misc/lib"),
         merge("app-misc/lib"),
         json.dumps({"merge": "app-misc/lib-1", "build": "app-misc/lib-1", "repo": "r"}),
+        binpkg("app-misc/lib"),
+        binpkg("app-misc/lib-1", blockers=["app-misc/old"]),
+        json.dumps({"binpkg": "app-misc/lib-1", "merge": "app-misc/lib-1"}),
     ],
 )
 def test_a_malformed_request_is_refused(line):
@@ -766,6 +823,9 @@ def test_parse_request():
     assert worker.parse_request(
         merge("app-misc/new-1", blockers=["app-misc/old-1"], world="app-misc/new")
     ) == worker.MergeBuilt("app-misc/new-1", ("app-misc/old-1",), "app-misc/new")
+    assert worker.parse_request(
+        binpkg("app-misc/new-1", blockers=["app-misc/old-1"], world="app-misc/new")
+    ) == worker.MergeBinary("app-misc/new-1", ("app-misc/old-1",), "app-misc/new")
 
 
 def test_a_request_that_cannot_be_tried_is_an_error(machine):

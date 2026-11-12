@@ -155,6 +155,12 @@ def parser():
         "named for its cpv, as FEATURES=cgroup does (as root)",
     )
     p.add_argument(
+        "--pkgdir",
+        metavar="DIR",
+        help="with --worker: keep each build's binary package in DIR, as FEATURES=buildpkg "
+        "does, and merge one kept there on request",
+    )
+    p.add_argument(
         "--portage-copy",
         type=Path,
         help="with --worker: run on the copy of portage --copy-portage made there",
@@ -638,7 +644,12 @@ def main(argv=None):
 
             selfupdate.use_copy(str(args.portage_copy))
         return worker.main(
-            args.config_root, args.root, args.eprefix, args.background, args.cgroup
+            args.config_root,
+            args.root,
+            args.eprefix,
+            args.background,
+            args.cgroup,
+            args.pkgdir,
         )
     if args.mode == "json":
         from egraph_build import build, installed
