@@ -3061,8 +3061,9 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
 // Opens the terminal and runs the interface over the stores, first showing any warnings from
 // opening them, on the notices page where asked, its depclean excluding exclude; errors go to err.
 [[nodiscard]] Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps,
-                                Alternatives alternatives, GlyphSet glyphs, const Services& services,
-                                std::span<const std::string> warnings, bool notices_first,
-                                std::vector<Exclusion> exclude, std::ostream& err);
+                                Alternatives alternatives, GlyphSet glyphs,
+                                const Services& services, std::span<const std::string> warnings,
+                                bool notices_first, std::vector<Exclusion> exclude,
+                                std::ostream& err);
 
 } // namespace egraph::tui

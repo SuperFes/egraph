@@ -354,6 +354,14 @@ def write_emerge_options(args):
             settings.get("CCACHE_DIR") if "ccache" in settings.features else None
         ),
         "repositories": [repo.location for repo in settings.repositories],
+        "logdir": settings.get("PORTAGE_LOGDIR") or settings.get("PORT_LOGDIR") or None,
+        # Where this program and portage are imported from, which a snapshot may not hold.
+        "runs_from": sorted(
+            {
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                os.path.dirname(os.path.dirname(os.path.abspath(portage.__file__))),
+            }
+        ),
     }
     args.output.write_text(json.dumps(written, indent=1, sort_keys=True))
     return EXIT_OK

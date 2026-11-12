@@ -1201,9 +1201,26 @@ done when the last run finished.
 .TP
 .B \-\-snapshot
 Build and merge in a snapshot of the root, merging into the root itself only once every package
-built; refused, saying why, where the root is not a btrfs subvolume, the run is not root, or the
-snapshot may take more than is free (twice what the merges install). Runs in a snapshot are not
-supported yet, so for now it is always refused. Unset, the
+built; refused, saying why, where the root (EROOT) is not a btrfs subvolume, the run is neither
+root nor the subvolume's owner, or the snapshot may take more than is free (twice what the
+merges install).
+Each worker enters the snapshot through a mount namespace of its own (in a user namespace of its
+own when not root), chrooted into it for
+.B /
+and with it bound over a prefix otherwise, sharing with the root
+.BR /dev ,
+.BR /proc ,
+.BR /sys ,
+.BR /run ,
+PORTAGE_TMPDIR, DISTDIR, CCACHE_DIR, PORTAGE_LOGDIR and the repositories (read-only), and keeps
+each build's binary package in
+.IR /var/lib/egraph/packages .
+Once every step is done (under
+.BR \-\-keep\-going ,
+those that were), one worker merges the binary packages into the root itself in plan order, as
+.B emerge \-K
+does, with the plan's uninstalls among them; the snapshot is deleted after a failure and a
+success alike, and the root left as it was after a failure. Unset, the
 .B snapshot
 setting decides.
 .TP
@@ -2124,7 +2141,8 @@ describes.
 Whether
 .B exec
 builds in a snapshot of the root and merges into the real one only when every package built:
-never (the default), where the root is a btrfs subvolume, the run is root and the space fits
+never (the default), where the root is a btrfs subvolume, the run is root or owns it and the
+space fits
 (else a plain run, said so), or always (failing where it cannot).
 .TP
 .BR alternatives " " upgrade | keep

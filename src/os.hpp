@@ -289,6 +289,12 @@ std::expected<FilesystemSpace, std::error_code> filesystem_space(const std::file
 // Whether this process runs as root (effective user id 0).
 bool is_root();
 
+// Whether this process's effective user owns path.
+bool owns(const std::filesystem::path& path);
+
+// Whether path is the top directory of a btrfs subvolume.
+bool btrfs_subvolume(const std::filesystem::path& path);
+
 // This process's id.
 std::int64_t process_id();
 
@@ -306,19 +312,22 @@ std::expected<FileIdentity, std::error_code> running_identity();
 std::expected<std::vector<std::string>, std::error_code> command_line();
 
 // Replaces this process's image with file run as argv (not empty), keeping its pid and
-// environment; returns only why it could not.
+// environment, file looked up in PATH when it has no slash; returns only why it could not.
 std::error_code exec(const std::filesystem::path& file, const std::vector<std::string>& argv);
 
-// A directory of the root seen at the same path under another, writable unless read_only.
+// A directory seen at the same path in a snapshot, writable unless read_only.
 struct Bind {
     std::filesystem::path path;
     bool read_only = false;
     bool operator==(const Bind&) const = default;
 };
 
-// Moves this process (single-threaded, root) into a mount namespace of its own, binds each of
-// binds under root, and changes its root directory to root; why not, naming the step, else.
-std::expected<void, std::string> enter(const std::filesystem::path& root,
+// Moves this process (single-threaded) into a mount namespace of its own where snapshot stands
+// in for target: each of binds inside target bound into it, then, for /, its root directory
+// changed to snapshot, else snapshot bound over target. Not root, it first enters a user
+// namespace of its own as the same user, to be let mount there. Why not, naming the step.
+std::expected<void, std::string> enter(const std::filesystem::path& snapshot,
+                                       const std::filesystem::path& target,
                                        std::span<const Bind> binds);
 
 // Whether standard output is a terminal.

@@ -82,12 +82,11 @@ std::vector<Remedy> remedies(const Store& store, const Evaluated& evaluated, con
             }
             // Its own dependencies weigh even where nothing keeps it any more.
             scope.at(back.package) = true;
-            const auto after =
-                plan_updates(store, evaluated, rebuilds,
-                             {.scope = scope,
-                              .roots = targets.roots,
-                              .deep = targets.deep,
-                              .alternatives = targets.alternatives});
+            const auto after = plan_updates(store, evaluated, rebuilds,
+                                            {.scope = scope,
+                                             .roots = targets.roots,
+                                             .deep = targets.deep,
+                                             .alternatives = targets.alternatives});
             std::set<std::uint32_t> still;
             for (const auto& held : after.held) {
                 still.insert(held.package);

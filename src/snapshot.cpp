@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <format>
+#include <fstream>
 #include <limits>
 #include <string_view>
 #include <utility>
@@ -13,13 +14,27 @@ namespace egraph::snapshot {
 
 namespace {
 
+// Runs argv quietly: why not, with the last line it wrote, if it failed.
 std::expected<void, std::string> succeeded(const std::vector<std::string>& argv) {
-    const auto status = os::run(argv);
+    const auto log = std::filesystem::temp_directory_path() /
+                     std::format("egraph-snapshot-{}.log", os::process_id());
+    const auto status = os::run(argv, log);
+    std::string last;
+    if (std::ifstream in{log}; in) {
+        for (std::string line; std::getline(in, line);) {
+            if (!line.empty()) {
+                last = std::move(line);
+            }
+        }
+    }
+    std::error_code ignored;
+    std::filesystem::remove(log, ignored);
     if (!status) {
         return std::unexpected(status.error().message);
     }
     if (*status != 0) {
-        return std::unexpected(std::format("{} failed with status {}", argv.front(), *status));
+        return std::unexpected(
+            last.empty() ? std::format("{} failed with status {}", argv.front(), *status) : last);
     }
     return {};
 }
@@ -40,7 +55,7 @@ Decision decide(SnapshotRun setting, std::optional<bool> flag, const Facts& fact
     }
     std::optional<std::string> why;
     if (!facts.root) {
-        why = "only root can take a snapshot";
+        why = "only root or the subvolume's owner can take a snapshot of it";
     } else if (!facts.snapshottable) {
         why = "the root is not a btrfs subvolume";
     } else if (facts.needed > facts.free) {
@@ -92,14 +107,50 @@ std::vector<os::Bind> binds(const RunSettings& settings) {
     if (settings.ccache_dir) {
         found.push_back({.path = *settings.ccache_dir, .read_only = false});
     }
+    if (settings.logdir) {
+        found.push_back({.path = *settings.logdir, .read_only = false});
+    }
+    if (settings.elog_summary) {
+        found.push_back({.path = std::filesystem::path{*settings.elog_summary}.parent_path(),
+                         .read_only = false});
+    }
     for (const auto& repository : settings.repositories) {
         found.push_back({.path = repository, .read_only = true});
     }
     return ordered(std::move(found));
 }
 
+RunPaths run_paths(const std::filesystem::path& eroot, std::int64_t pid) {
+    const auto state = eroot / "var/lib/egraph";
+    return {.snapshot = state / std::format("snapshot-{}", pid), .packages = state / "packages"};
+}
+
+std::vector<std::filesystem::path> other_volumes(std::span<const std::filesystem::path> paths) {
+    const auto root = os::identity("/");
+    std::vector<std::filesystem::path> found;
+    for (const auto& path : paths) {
+        const auto identity = os::identity(path);
+        if (root && identity && identity->device != root->device) {
+            found.push_back(path);
+        }
+    }
+    return found;
+}
+
+std::vector<os::Bind> worker_binds(const RunSettings& settings,
+                                   const std::filesystem::path& packages,
+                                   std::span<const std::filesystem::path> foreign) {
+    auto found = binds(settings);
+    found.push_back({.path = packages, .read_only = false});
+    for (const auto& path : foreign) {
+        found.push_back({.path = path, .read_only = true});
+    }
+    return ordered(std::move(found));
+}
+
 std::vector<std::string> enter_command(const std::filesystem::path& egraph,
-                                       const std::filesystem::path& root,
+                                       const std::filesystem::path& snapshot,
+                                       const std::filesystem::path& target,
                                        std::span<const os::Bind> binds,
                                        std::span<const std::string> argv) {
     std::vector<std::string> command{egraph.string(), "enter"};
@@ -107,14 +158,9 @@ std::vector<std::string> enter_command(const std::filesystem::path& egraph,
         command.insert(command.end(),
                        {bind.read_only ? "--read-only" : "--bind", bind.path.string()});
     }
-    command.push_back(root.string());
-    command.emplace_back("--");
+    command.insert(command.end(), {"--target", target.string(), snapshot.string(), "--"});
     command.insert(command.end(), argv.begin(), argv.end());
     return command;
-}
-
-std::vector<std::string> show_command(const std::filesystem::path& path) {
-    return {"btrfs", "subvolume", "show", path.string()};
 }
 
 std::vector<std::string> create_command(const std::filesystem::path& source,
@@ -127,8 +173,7 @@ std::vector<std::string> remove_command(const std::filesystem::path& path) {
 }
 
 bool snapshottable(const std::filesystem::path& path) {
-    // show prints the subvolume's details; only its status matters here.
-    return os::run(show_command(path), std::filesystem::path{"/dev/null"}).value_or(1) == 0;
+    return os::btrfs_subvolume(path);
 }
 
 std::expected<void, std::string> create(const std::filesystem::path& source,
@@ -137,7 +182,17 @@ std::expected<void, std::string> create(const std::filesystem::path& source,
 }
 
 std::expected<void, std::string> remove(const std::filesystem::path& destination) {
-    return succeeded(remove_command(destination));
+    const auto deleted = succeeded(remove_command(destination));
+    if (deleted) {
+        return {};
+    }
+    // Its owner, not root, may still remove it once emptied, as rmdir lets them.
+    std::error_code error;
+    std::filesystem::remove_all(destination, error);
+    if (error) {
+        return std::unexpected(std::format("{}; {}", deleted.error(), error.message()));
+    }
+    return {};
 }
 
 } // namespace egraph::snapshot

@@ -351,7 +351,9 @@ std::expected<RunSettings, std::string> parse_run_settings(std::string_view text
                          .tmpdir = {},
                          .distdir = {},
                          .ccache_dir = std::nullopt,
-                         .repositories = {}};
+                         .repositories = {},
+                         .logdir = std::nullopt,
+                         .runs_from = {}};
     for (const auto& [field, value] : {std::pair{"summary", &settings.elog_summary},
                                        std::pair{"system", &settings.elog_system}}) {
         const auto found = elog->find(field);
@@ -402,6 +404,19 @@ std::expected<RunSettings, std::string> parse_run_settings(std::string_view text
         return std::unexpected("repositories: not a list of paths");
     }
     settings.repositories = repositories->get<std::vector<std::string>>();
+    const auto logdir = json.find("logdir");
+    if (logdir == json.end() || !(logdir->is_null() || logdir->is_string())) {
+        return std::unexpected("logdir: not a string or null");
+    }
+    if (logdir->is_string()) {
+        settings.logdir = logdir->get<std::string>();
+    }
+    const auto runs_from = json.find("runs_from");
+    if (runs_from == json.end() || !runs_from->is_array() ||
+        !std::ranges::all_of(*runs_from, &Json::is_string)) {
+        return std::unexpected("runs_from: not a list of paths");
+    }
+    settings.runs_from = runs_from->get<std::vector<std::string>>();
     return settings;
 }
 

@@ -396,4 +396,57 @@ PoolOutcome run_schedule(Schedule& schedule, Pool& pool, Requests& requests, con
     }
 }
 
+// How a run in turn went: the line it stopped at and why, none when each finished.
+struct InTurn {
+    std::optional<std::pair<std::size_t, std::string>> stopped;
+};
+
+// Sends lines to one worker of pool (add, send, next as run_schedule's Pool), each once the one
+// before merged or uninstalled, calling report(line, event) for each event; stops at the first
+// that does not finish so.
+template <class Pool, class Report>
+InTurn run_in_turn(Pool& pool, std::span<const std::string> lines, const Report& report) {
+    if (lines.empty()) {
+        return {};
+    }
+    const auto worker = pool.add();
+    if (!worker) {
+        return {.stopped = std::pair{std::size_t{0}, worker.error()}};
+    }
+    for (std::size_t line = 0; line < lines.size(); ++line) {
+        const auto stop = [line](std::string why) {
+            return InTurn{.stopped = std::pair{line, std::move(why)}};
+        };
+        if (!pool.send(*worker, lines[line])) {
+            return stop("the worker takes no more requests");
+        }
+        for (;;) {
+            const auto heard = pool.next(false);
+            if (!heard) {
+                return stop(heard.error());
+            }
+            if (!heard->worker) {
+                continue;
+            }
+            if (!heard->line) {
+                return stop("the worker ended before the request was done");
+            }
+            const auto event = parse_event(*heard->line);
+            if (!event) {
+                return stop("the worker reported what egraph cannot read: " + event.error());
+            }
+            report(line, *event);
+            if (!final_event(*event)) {
+                continue;
+            }
+            if (event->kind != WorkerEvent::Kind::merged &&
+                event->kind != WorkerEvent::Kind::uninstalled) {
+                return stop(describe_event(*event));
+            }
+            break;
+        }
+    }
+    return {};
+}
+
 } // namespace egraph

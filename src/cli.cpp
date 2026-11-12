@@ -3527,19 +3527,49 @@ struct RemovedAtEnd {
     std::filesystem::path path;
 };
 
-// Runs the steps over a pool of workers, as many builds at once as command or else the settings
-// allow, going on after a failure as either says, reporting each event on out: the workers' exit
-// status, or why the run stopped short.
 // The order an exec's builds start in.
 BuildOrder order_of(const Exec& command) {
     return build_order_named(command.order.value_or("emerge")).value_or(BuildOrder::emerge);
 }
 
+// Portage merging itself into the running root: the workers run on a copy of the portage running
+// now, taken before the run into copy, as emerge updates itself; argv gains --portage-copy.
+std::expected<void, std::string> copy_portage_if_merged(const Invocation& invocation,
+                                                        const RunSettings& settings,
+                                                        const Shown& shown,
+                                                        std::optional<RemovedAtEnd>& copy,
+                                                        std::vector<std::string>& argv) {
+    if (!settings.portage_installed || !same_root(invocation.root, "/") ||
+        !merges_cp(shown.plan, shown.evaluated.get(), "sys-apps/portage")) {
+        return {};
+    }
+    std::random_device random;
+    copy.emplace(std::filesystem::path{settings.tmpdir} / "portage" /
+                 std::format("._egraph_portage_.{:08x}", random()));
+    if (const auto copied = output_of(copy_portage_command(invocation, copy->path)); !copied) {
+        return std::unexpected(
+            std::format("portage could not be copied to run from: {}", copied.error()));
+    }
+    argv.insert(argv.end(), {"--portage-copy", copy->path.string()});
+    return {};
+}
+
+// A run in a snapshot: where it is, and what its workers bind there.
+struct Confined {
+    snapshot::RunPaths paths;
+    std::vector<os::Bind> binds;
+};
+
+// Runs the steps over a pool of workers, as many builds at once as command or else the settings
+// allow, going on after a failure as either says, reporting each event on out: the workers' exit
+// status, or why the run stopped short. Confined, the workers run in its snapshot, keeping the
+// binary packages, and the steps merged there go to done in the order they finish.
 std::expected<int, std::string> run_pool(const Invocation& invocation, const RunSettings& settings,
                                          const Exec& command, const Shown& shown,
                                          StepRequests& requests, const std::vector<Step>& steps,
-                                         const std::vector<std::string>& names, RunState state,
-                                         bool differs, std::ostream& out) {
+                                         const std::vector<std::string>& names, RunState& state,
+                                         bool differs, const std::optional<Confined>& confined,
+                                         std::vector<std::size_t>& done, std::ostream& out) {
     const auto& plan = shown.plan;
     const auto jobs = exec_jobs(command.jobs, execution_options(settings.defaults),
                                 settings.jobserver.has_value());
@@ -3573,24 +3603,22 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
             argv.insert(argv.end(), {"--cgroup", hierarchy->root().string()});
         }
     }
-    // Portage merging itself into the running root: the workers run on a copy of the portage
-    // running now, taken before the run, as emerge updates itself.
     std::optional<RemovedAtEnd> portage_copy;
-    if (settings.portage_installed && same_root(invocation.root, "/") &&
-        merges_cp(plan, shown.evaluated.get(), "sys-apps/portage")) {
-        std::random_device random;
-        portage_copy.emplace(std::filesystem::path{settings.tmpdir} / "portage" /
-                             std::format("._egraph_portage_.{:08x}", random()));
-        if (const auto copied = output_of(copy_portage_command(invocation, portage_copy->path));
-            !copied) {
-            return std::unexpected(
-                std::format("portage could not be copied to run from: {}", copied.error()));
-        }
-        argv.insert(argv.end(), {"--portage-copy", portage_copy->path.string()});
+    if (const auto copied = copy_portage_if_merged(invocation, settings, shown, portage_copy, argv);
+        !copied) {
+        return std::unexpected(copied.error());
+    }
+    if (confined) {
+        argv.insert(argv.end(), {"--pkgdir", confined->paths.packages.string()});
     }
     // Under a make that started us, as emerge holds a token then.
     const auto passed = execution_options(settings.defaults);
-    WorkerPool pool{with_elog_system(std::move(argv), settings),
+    argv = with_elog_system(std::move(argv), settings);
+    if (confined) {
+        argv = snapshot::enter_command(os::executable(), confined->paths.snapshot,
+                                       shown.store.get().meta.eroot, confined->binds, argv);
+    }
+    WorkerPool pool{std::move(argv),
                     std::move(jobserver),
                     os::environment("MAKEFLAGS").has_value(),
                     {.tmpdir = settings.tmpdir, .free_gb = tmpdir_free_gb_of(passed)},
@@ -3834,10 +3862,17 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
             }
             auto kept = builds.traced(step, what, now(), probed);
             if (kept && what == Traced::merged) {
-                kept->installed_size = installed_size(vdb_of(shown.store.get()), names.at(step));
+                kept->installed_size = installed_size(
+                    confined ? confined->paths.snapshot / "var/db/pkg" : vdb_of(shown.store.get()),
+                    names.at(step));
             }
             keep_build(kept);
-            if (what == Traced::merged && std::holds_alternative<MergeStep>(steps.at(step))) {
+            if (what == Traced::merged) {
+                done.push_back(step);
+            }
+            // In a snapshot, merged only once the replay merges it.
+            if (what == Traced::merged && std::holds_alternative<MergeStep>(steps.at(step)) &&
+                !confined) {
                 state.merged.push_back(names.at(step));
                 record();
             }
@@ -3899,9 +3934,161 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     return ended;
 }
 
+// A snapshot deleted when it goes out of scope, or once asked, saying on out if it cannot be.
+class SnapshotTaken {
+  public:
+    SnapshotTaken(std::filesystem::path path, std::ostream& out EGRAPH_KEPT_BY_THIS)
+        : path_(std::move(path)), out_(out) {}
+    SnapshotTaken(const SnapshotTaken&) = delete;
+    SnapshotTaken& operator=(const SnapshotTaken&) = delete;
+    SnapshotTaken(SnapshotTaken&&) = delete;
+    SnapshotTaken& operator=(SnapshotTaken&&) = delete;
+    ~SnapshotTaken() { remove(); }
+
+    void remove() {
+        if (!path_) {
+            return;
+        }
+        if (const auto removed = snapshot::remove(*path_); !removed) {
+            out_.get() << std::format("egraph: exec: warning: the snapshot {} could not be "
+                                      "deleted: {}\n",
+                                      path_->string(), removed.error());
+        }
+        path_.reset();
+    }
+
+  private:
+    std::optional<std::filesystem::path> path_;
+    std::reference_wrapper<std::ostream> out_;
+};
+
+// Merges into the root itself the binary packages the steps done kept, and their uninstalls, in
+// plan order, one worker taking each in turn; state records each merge.
+std::expected<void, std::string> replay(const Invocation& invocation, const RunSettings& settings,
+                                        const Shown& shown, const std::vector<Step>& steps,
+                                        const std::vector<std::string>& names,
+                                        std::vector<std::size_t> done,
+                                        const snapshot::RunPaths& paths, RunState& state,
+                                        std::ostream& out) {
+    std::ranges::sort(done);
+    std::vector<std::string> lines;
+    lines.reserve(done.size());
+    for (const auto step : done) {
+        lines.push_back(
+            binary_request(shown.store.get(), shown.evaluated.get(), shown.plan, steps.at(step)));
+    }
+    auto argv = worker_command(invocation);
+    argv.insert(argv.end(), {"--background", "--pkgdir", paths.packages.string()});
+    std::optional<RemovedAtEnd> portage_copy;
+    if (const auto copied = copy_portage_if_merged(invocation, settings, shown, portage_copy, argv);
+        !copied) {
+        return std::unexpected(copied.error());
+    }
+    WorkerPool pool{with_elog_system(std::move(argv), settings),
+                    std::nullopt,
+                    false,
+                    {.tmpdir = settings.tmpdir, .free_gb = 0},
+                    out};
+    out << std::format("egraph: exec: merging what built into {}\n", shown.store.get().meta.eroot);
+    const auto state_path = run_state_path(shown.store.get().meta.eroot);
+    const auto outcome = run_in_turn(pool, lines, [&](std::size_t line, const WorkerEvent& event) {
+        const auto step = done.at(line);
+        if (event.kind != WorkerEvent::Kind::merged &&
+            event.kind != WorkerEvent::Kind::uninstalled) {
+            return;
+        }
+        out << std::format("  {} {}\n", names.at(step), describe_event(event));
+        if (std::holds_alternative<MergeStep>(steps.at(step))) {
+            state.merged.push_back(names.at(step));
+            std::ignore = os::replace_with_text(state_path, run_state_json(state) + '\n');
+        }
+    });
+    const auto ended = pool.finish();
+    std::optional<std::string> error;
+    if (outcome.stopped) {
+        const auto& [line, why] = *outcome.stopped;
+        error = std::format("{}: {}, merging into the root", names.at(done.at(line)), why);
+    } else if (!ended) {
+        error = ended.error();
+    } else if (*ended != 0) {
+        error = std::format("the worker merging into the root exited with status {}", *ended);
+    }
+    if (error) {
+        state.status = RunState::Status::failed;
+        std::ignore = os::replace_with_text(state_path, run_state_json(state) + '\n');
+        return std::unexpected(*error);
+    }
+    return {};
+}
+
+// The steps run in a snapshot of the root, keeping each build's binary package, then once every
+// step is done (or under --keep-going, those that were) merged into the root itself in plan
+// order; the snapshot is deleted either way.
+std::expected<int, std::string> run_in_snapshot(const Invocation& invocation,
+                                                const RunSettings& settings, const Exec& command,
+                                                const Shown& shown, StepRequests& requests,
+                                                const std::vector<Step>& steps,
+                                                const std::vector<std::string>& names,
+                                                RunState& state, bool differs, std::ostream& out) {
+    const auto paths = snapshot::run_paths(shown.store.get().meta.eroot, os::process_id());
+    std::error_code error;
+    std::filesystem::remove_all(paths.packages, error);
+    std::filesystem::create_directories(paths.packages, error);
+    if (!error) {
+        std::filesystem::create_directories(paths.snapshot.parent_path(), error);
+    }
+    if (error) {
+        return std::unexpected(std::format("{}: {}", paths.packages.string(), error.message()));
+    }
+    const std::filesystem::path eroot{shown.store.get().meta.eroot};
+    if (const auto made = snapshot::create(eroot, paths.snapshot); !made) {
+        return std::unexpected("the snapshot could not be taken: " + made.error());
+    }
+    SnapshotTaken taken{paths.snapshot, out};
+    out << std::format("egraph: exec: building in a snapshot of {}, {}\n", eroot.string(),
+                       paths.snapshot.string());
+    std::vector<std::filesystem::path> runs_from{settings.runs_from.begin(),
+                                                 settings.runs_from.end()};
+    if (const std::filesystem::path builder{builder_program(invocation)}; builder.is_absolute()) {
+        runs_from.push_back(builder.parent_path());
+    }
+    // A writable directory not made yet is made for the run to write to; any other missing is
+    // left out.
+    auto binds =
+        snapshot::worker_binds(settings, paths.packages, snapshot::other_volumes(runs_from));
+    std::erase_if(binds, [](const os::Bind& bind) {
+        std::error_code ignored;
+        if (!bind.read_only) {
+            std::filesystem::create_directories(bind.path, ignored);
+        }
+        return !std::filesystem::is_directory(bind.path, ignored);
+    });
+    const std::optional<Confined> confined{Confined{.paths = paths, .binds = std::move(binds)}};
+    std::vector<std::size_t> done;
+    const auto ran = run_pool(invocation, settings, command, shown, requests, steps, names, state,
+                              differs, confined, done, out);
+    taken.remove();
+    const bool keep_going =
+        command.keep_going.value_or(keep_going_of(execution_options(settings.defaults)));
+    if (done.empty() || (!(ran && *ran == 0) && !keep_going)) {
+        if (!ran || *ran != 0) {
+            out << std::format("egraph: exec: {} is as it was\n", eroot.string());
+        }
+        return ran;
+    }
+    if (const auto replayed =
+            replay(invocation, settings, shown, steps, names, std::move(done), paths, state, out);
+        !replayed) {
+        return std::unexpected(replayed.error());
+    }
+    if (ran && *ran == 0) {
+        std::filesystem::remove_all(paths.packages, error);
+    }
+    return ran;
+}
+
 // Whether the run of steps goes in a snapshot of the root, as command or else the setting asks.
-snapshot::Decision snapshot_decision(SnapshotRun setting, const Exec& command,
-                                     const Invocation& invocation, const Shown& shown,
+snapshot::Decision snapshot_decision(SnapshotRun setting, const Exec& command, const Shown& shown,
                                      std::span<const Step> steps) {
     if (snapshot::asked(setting, command.snapshot) == SnapshotRun::off) {
         return snapshot::Plain{};
@@ -3915,12 +4102,11 @@ snapshot::Decision snapshot_decision(SnapshotRun setting, const Exec& command,
             sizes.push_back(size != 0 ? std::optional{size} : std::nullopt);
         }
     }
-    return snapshot::decide(
-        setting, command.snapshot,
-        {.snapshottable = os::is_root() && snapshot::snapshottable(invocation.root),
-         .root = os::is_root(),
-         .free = os::free_bytes(invocation.root).value_or(0),
-         .needed = snapshot::needed_bytes(sizes)});
+    return snapshot::decide(setting, command.snapshot,
+                            {.snapshottable = snapshot::snapshottable(shown.store.get().meta.eroot),
+                             .root = os::is_root() || os::owns(shown.store.get().meta.eroot),
+                             .free = os::free_bytes(shown.store.get().meta.eroot).value_or(0),
+                             .needed = snapshot::needed_bytes(sizes)});
 }
 
 // Carries out command, a run resumed from one that merged the cpvs merged when it has any.
@@ -3966,8 +4152,7 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
                     const auto setting = read_settings(settings_path(config_root(invocation)))
                                              .value_or(Settings{})
                                              .snapshot;
-                    const auto decision =
-                        snapshot_decision(setting, command, invocation, shown, steps);
+                    const auto decision = snapshot_decision(setting, command, shown, steps);
                     if (const auto* refused = std::get_if<snapshot::Refused>(&decision)) {
                         return std::unexpected("cannot run in a snapshot: " + refused->why);
                     }
@@ -3975,13 +4160,6 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
                         plain != nullptr && plain->why) {
                         out << std::format("egraph: exec: running on the root itself: {}\n",
                                            *plain->why);
-                    }
-                    if (std::holds_alternative<snapshot::InSnapshot>(decision)) {
-                        if (snapshot::asked(setting, command.snapshot) == SnapshotRun::on) {
-                            return std::unexpected("runs in a snapshot are not supported yet");
-                        }
-                        out << "egraph: exec: running on the root itself: runs in a snapshot are "
-                               "not supported yet\n";
                     }
                     // As emerge, before it merges.
                     if (!favorites.empty()) {
@@ -3997,9 +4175,14 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
                     if (steps.empty()) {
                         return 0;
                     }
+                    RunState state{.arguments = exec_arguments(command), .merged = merged};
+                    if (std::holds_alternative<snapshot::InSnapshot>(decision)) {
+                        return run_in_snapshot(invocation, settings, command, shown, requests,
+                                               steps, names, state, differs, out);
+                    }
+                    std::vector<std::size_t> done;
                     return run_pool(invocation, settings, command, shown, requests, steps, names,
-                                    {.arguments = exec_arguments(command), .merged = merged},
-                                    differs, out);
+                                    state, differs, std::nullopt, done, out);
                 },
                 store, session, invocation, out, err);
         });
@@ -4486,7 +4669,8 @@ Exit execute(const Enter&, Session&, const Invocation&, std::ostream&, std::ostr
 
 // Confines this process to the snapshot, then becomes the command; returns only on failure.
 Exit enter(const Enter& command, std::ostream& err) {
-    if (const auto entered = os::enter(command.root, binds_of(command)); !entered) {
+    if (const auto entered = os::enter(command.snapshot, command.target, binds_of(command));
+        !entered) {
         err << "egraph: enter: " << entered.error() << '\n';
         return Exit::failure;
     }
@@ -6039,7 +6223,9 @@ void configure(CLI::App& app, Invocation& invocation) {
     add_field(enter_cmd, invocation, "--read-only", &Enter::read_only,
               "A directory shared with the real root, read-only")
         ->allow_extra_args(false);
-    add_field(enter_cmd, invocation, "root", &Enter::root, "The snapshot")->required();
+    add_field(enter_cmd, invocation, "--target", &Enter::target,
+              "What the snapshot stands in for (default /)");
+    add_field(enter_cmd, invocation, "snapshot", &Enter::snapshot, "The snapshot")->required();
     // The command is what follows --, its options its own.
     enter_cmd->prefix_command();
     enter_cmd->final_callback([enter_cmd, &invocation] {

@@ -73,6 +73,22 @@ def test_what_a_snapshot_shares_is_written_as_portage_sets_it(
         == cli.EXIT_OK
     )
     assert json.loads(output.read_text())["ccache_dir"] == "/var/cache/cc"
+    assert written["logdir"] is None
+    assert (
+        run(system, output, monkeypatch, PORTAGE_LOGDIR="/var/log/portage")
+        == cli.EXIT_OK
+    )
+    assert json.loads(output.read_text())["logdir"] == "/var/log/portage"
+    import portage
+
+    import egraph_build
+
+    assert written["runs_from"] == sorted(
+        {
+            os.path.dirname(os.path.dirname(egraph_build.__file__)),
+            os.path.dirname(os.path.dirname(portage.__file__)),
+        }
+    )
 
 
 def test_the_environment_wins_as_in_emerge(system, tmp_path, monkeypatch):

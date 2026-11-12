@@ -410,10 +410,12 @@ struct Affected {
     std::string request = "-";
 };
 
-// Hidden: runs command confined to the snapshot at root (os::enter), as a run's workers start.
+// Hidden: runs command with the snapshot standing in for target (os::enter), as a run's workers
+// start.
 struct Enter {
     static constexpr std::string_view name = "enter";
-    std::string root;
+    std::string snapshot;
+    std::string target = "/";
     std::vector<std::string> binds;
     std::vector<std::string> read_only;
     std::vector<std::string> command;

@@ -713,3 +713,42 @@ TEST_CASE("build orders go by their names") {
     CHECK(egraph::build_order_name(egraph::BuildOrder::critical) == "critical");
     CHECK_FALSE(egraph::build_order_named("fastest"));
 }
+
+TEST_CASE("lines run in turn on one worker, each after the one before finished") {
+    FakePool pool;
+    const std::vector<std::string> lines{"merge a", "uninstall b", "merge c"};
+    std::vector<std::pair<std::size_t, egraph::WorkerEvent::Kind>> reported;
+    const auto report = [&](std::size_t line, const egraph::WorkerEvent& event) {
+        reported.emplace_back(line, event.kind);
+    };
+    using Kind = egraph::WorkerEvent::Kind;
+    CHECK_FALSE(egraph::run_in_turn(pool, lines, report).stopped);
+    CHECK(pool.sent == std::vector<std::vector<std::string>>{lines});
+    CHECK(reported == std::vector<std::pair<std::size_t, Kind>>{
+                          {0, Kind::merged}, {1, Kind::uninstalled}, {2, Kind::merged}});
+
+    FakePool failing;
+    failing.failing.insert("uninstall b");
+    reported.clear();
+    const auto stopped = egraph::run_in_turn(failing, lines, report).stopped;
+    REQUIRE(stopped);
+    CHECK(stopped->first == 1);
+    CHECK(failing.sent.at(0) == std::vector<std::string>{"merge a", "uninstall b"});
+
+    FakePool ending;
+    ending.ending.insert("merge a");
+    const auto ended = egraph::run_in_turn(ending, lines, report).stopped;
+    REQUIRE(ended);
+    CHECK(*ended ==
+          std::pair<std::size_t, std::string>{0, "the worker ended before the request was done"});
+
+    FakePool garbled;
+    garbled.garbled.insert("merge c");
+    const auto unread = egraph::run_in_turn(garbled, lines, report).stopped;
+    REQUIRE(unread);
+    CHECK(unread->first == 2);
+
+    FakePool idle;
+    CHECK_FALSE(egraph::run_in_turn(idle, std::span<const std::string>{}, report).stopped);
+    CHECK(idle.sent.empty());
+}

@@ -699,6 +699,20 @@ bool is_root() {
     return geteuid() == 0;
 }
 
+bool owns(const std::filesystem::path& path) {
+    struct stat found{};
+    return ::stat(path.c_str(), &found) == 0 && found.st_uid == ::geteuid();
+}
+
+bool btrfs_subvolume(const std::filesystem::path& path) {
+    // A subvolume's top directory is always inode 256, BTRFS_FIRST_FREE_OBJECTID.
+    constexpr ino_t top = 256;
+    struct statfs filesystem{};
+    struct stat found{};
+    return ::statfs(path.c_str(), &filesystem) == 0 && filesystem.f_type == BTRFS_SUPER_MAGIC &&
+           ::stat(path.c_str(), &found) == 0 && S_ISDIR(found.st_mode) && found.st_ino == top;
+}
+
 std::filesystem::path executable() {
     std::error_code error;
     auto path = std::filesystem::read_symlink("/proc/self/exe", error);
@@ -736,17 +750,55 @@ std::error_code exec(const std::filesystem::path& file, const std::vector<std::s
         pointers.push_back(arg.data());
     }
     pointers.push_back(nullptr);
-    ::execv(file.c_str(), pointers.data());
+    ::execvp(file.c_str(), pointers.data());
     return {errno, std::generic_category()};
 }
 
-std::expected<void, std::string> enter(const std::filesystem::path& root,
+// The flags a remount of path must keep, as a mount locked in a user namespace cannot lose them.
+unsigned long kept_flags(const std::filesystem::path& path) {
+    struct statvfs found{};
+    if (::statvfs(path.c_str(), &found) != 0) {
+        return 0;
+    }
+    using Flags = std::pair<unsigned long, unsigned long>;
+    constexpr std::array kept{Flags{ST_NOSUID, MS_NOSUID},         Flags{ST_NODEV, MS_NODEV},
+                              Flags{ST_NOEXEC, MS_NOEXEC},         Flags{ST_NOATIME, MS_NOATIME},
+                              Flags{ST_NODIRATIME, MS_NODIRATIME}, Flags{ST_RELATIME, MS_RELATIME}};
+    unsigned long flags = 0;
+    for (const auto& [has, flag] : kept) {
+        if ((found.f_flag & has) != 0) {
+            flags |= flag;
+        }
+    }
+    return flags;
+}
+
+std::expected<void, std::string> enter(const std::filesystem::path& snapshot,
+                                       const std::filesystem::path& target,
                                        std::span<const Bind> binds) {
     // errno read first, before formatting can touch it.
     const auto failed = [](std::string_view step, const std::filesystem::path& path) {
         const std::error_code error{errno, std::generic_category()};
         return std::unexpected(std::format("{} {}: {}", step, path.string(), error.message()));
     };
+    if (::geteuid() != 0) {
+        const auto user = ::geteuid();
+        const auto group = ::getegid();
+        if (::unshare(CLONE_NEWUSER) != 0) {
+            return failed("unsharing the users of", "/");
+        }
+        // The same user and group inside, as the kernel lets anyone map themselves.
+        for (const auto& [file, text] :
+             {std::pair{"/proc/self/uid_map", std::format("{0} {0} 1\n", user)},
+              std::pair{"/proc/self/setgroups", std::string{"deny\n"}},
+              std::pair{"/proc/self/gid_map", std::format("{0} {0} 1\n", group)}}) {
+            std::ofstream out{file};
+            out << text << std::flush;
+            if (!out) {
+                return std::unexpected(std::format("writing {}: failed", file));
+            }
+        }
+    }
     if (::unshare(CLONE_NEWNS) != 0) {
         return failed("unsharing the mounts of", "/");
     }
@@ -755,22 +807,35 @@ std::expected<void, std::string> enter(const std::filesystem::path& root,
         return failed("making private", "/");
     }
     for (const auto& bind : binds) {
-        const auto target = root / bind.path.relative_path();
-        std::error_code made;
-        std::filesystem::create_directories(target, made);
-        if (made) {
-            return std::unexpected(std::format("creating {}: {}", target.string(), made.message()));
+        const auto inside = bind.path.lexically_relative(target);
+        if (inside.empty() || inside == "." || *inside.begin() == "..") {
+            continue;
         }
-        if (::mount(bind.path.c_str(), target.c_str(), nullptr, MS_BIND | MS_REC, nullptr) != 0) {
+        const auto destination = (snapshot / inside).lexically_normal();
+        std::error_code made;
+        std::filesystem::create_directories(destination, made);
+        if (made) {
+            return std::unexpected(
+                std::format("creating {}: {}", destination.string(), made.message()));
+        }
+        if (::mount(bind.path.c_str(), destination.c_str(), nullptr, MS_BIND | MS_REC, nullptr) !=
+            0) {
             return failed("binding", bind.path);
         }
-        if (bind.read_only && ::mount(nullptr, target.c_str(), nullptr,
-                                      MS_BIND | MS_REMOUNT | MS_RDONLY, nullptr) != 0) {
+        if (bind.read_only &&
+            ::mount(nullptr, destination.c_str(), nullptr,
+                    MS_BIND | MS_REMOUNT | MS_RDONLY | kept_flags(destination), nullptr) != 0) {
             return failed("making read-only", bind.path);
         }
     }
-    if (::chroot(root.c_str()) != 0) {
-        return failed("changing root to", root);
+    if (target != "/") {
+        if (::mount(snapshot.c_str(), target.c_str(), nullptr, MS_BIND | MS_REC, nullptr) != 0) {
+            return failed("binding the snapshot over", target);
+        }
+        return {};
+    }
+    if (::chroot(snapshot.c_str()) != 0) {
+        return failed("changing root to", snapshot);
     }
     if (::chdir("/") != 0) {
         return failed("changing to", "/");

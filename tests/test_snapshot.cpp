@@ -17,7 +17,6 @@ using Argv = std::vector<std::string>;
 using Binds = std::vector<egraph::os::Bind>;
 
 TEST_CASE("btrfs commands name the subvolume and the snapshot") {
-    CHECK(snapshot::show_command("/") == Argv{"btrfs", "subvolume", "show", "/"});
     CHECK(snapshot::create_command("/", "/var/tmp/egraph/root") ==
           Argv{"btrfs", "subvolume", "snapshot", "/", "/var/tmp/egraph/root"});
     CHECK(snapshot::remove_command("/var/tmp/egraph/root") ==
@@ -61,7 +60,8 @@ TEST_CASE("a run goes in a snapshot only where one can be taken, saying why not"
     unable = able;
     unable.root = false;
     CHECK(snapshot::decide(SnapshotRun::on, std::nullopt, unable) ==
-          snapshot::Decision{snapshot::Refused{.why = "only root can take a snapshot"}});
+          snapshot::Decision{snapshot::Refused{
+              .why = "only root or the subvolume's owner can take a snapshot of it"}});
     unable = able;
     unable.needed = 101;
     CHECK(snapshot::decide(SnapshotRun::automatic, std::nullopt, unable) ==
@@ -113,11 +113,43 @@ TEST_CASE("a worker in a snapshot shares the kernel's filesystems, builds, fetch
     CHECK(with_ccache.size() == without_ccache.size() + 1);
 }
 
-TEST_CASE("a worker enters the snapshot through egraph enter") {
+TEST_CASE("a worker enters the snapshot through egraph enter, standing in for its root") {
     const Binds binds{{.path = "/run", .read_only = false},
                       {.path = "/var/db/repos/gentoo", .read_only = true}};
-    CHECK(snapshot::enter_command("/usr/bin/egraph", "/var/tmp/egraph/root", binds,
+    CHECK(snapshot::enter_command("/usr/bin/egraph", "/var/tmp/egraph/root", "/", binds,
                                   Argv{"/usr/bin/egraph-build", "--worker", "--root", "/"}) ==
           Argv{"/usr/bin/egraph", "enter", "--bind", "/run", "--read-only", "/var/db/repos/gentoo",
-               "/var/tmp/egraph/root", "--", "/usr/bin/egraph-build", "--worker", "--root", "/"});
+               "--target", "/", "/var/tmp/egraph/root", "--", "/usr/bin/egraph-build", "--worker",
+               "--root", "/"});
+}
+
+TEST_CASE("a run keeps its snapshot by process and its binary packages beside its record") {
+    CHECK(snapshot::run_paths("/", 42) ==
+          snapshot::RunPaths{.snapshot = "/var/lib/egraph/snapshot-42",
+                             .packages = "/var/lib/egraph/packages"});
+}
+
+TEST_CASE("a worker binds its logs, the packages and what egraph-build runs from elsewhere") {
+    egraph::RunSettings settings;
+    settings.tmpdir = "/var/tmp";
+    settings.distdir = "/var/cache/distfiles";
+    settings.logdir = "/var/log/portage";
+    settings.elog_summary = "/var/log/portage/elog/summary.log";
+    const std::vector<std::filesystem::path> foreign{"/Development/egraph/builder"};
+    CHECK(snapshot::worker_binds(settings, "/var/lib/egraph/packages", foreign) ==
+          Binds{{.path = "/Development/egraph/builder", .read_only = true},
+                {.path = "/dev", .read_only = false},
+                {.path = "/proc", .read_only = false},
+                {.path = "/run", .read_only = false},
+                {.path = "/sys", .read_only = false},
+                {.path = "/var/cache/distfiles", .read_only = false},
+                {.path = "/var/lib/egraph/packages", .read_only = false},
+                {.path = "/var/log/portage", .read_only = false},
+                {.path = "/var/log/portage/elog", .read_only = false},
+                {.path = "/var/tmp", .read_only = false}});
+}
+
+TEST_CASE("only what lies on another volume than / is foreign to a snapshot of it") {
+    const std::vector<std::filesystem::path> paths{"/", "/proc", "/no/such/path"};
+    CHECK(snapshot::other_volumes(paths) == std::vector<std::filesystem::path>{"/proc"});
 }

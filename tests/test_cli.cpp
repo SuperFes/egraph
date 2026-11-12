@@ -750,7 +750,8 @@ TEST_CASE("egraph enter takes the binds, the snapshot and the command as exec wr
                                               {.path = "/var/tmp", .read_only = false}};
     const std::vector<std::string> worker{"/usr/bin/egraph-build", "--worker", "--root", "/srv/r",
                                           "--background"};
-    auto words = egraph::snapshot::enter_command("egraph", "/var/tmp/egraph/root", binds, worker);
+    auto words =
+        egraph::snapshot::enter_command("egraph", "/var/tmp/egraph/root", "/srv/r", binds, worker);
     // CLI11 takes them last first, without the program.
     words.erase(words.begin());
     std::ranges::reverse(words);
@@ -760,7 +761,8 @@ TEST_CASE("egraph enter takes the binds, the snapshot and the command as exec wr
     app.parse(words);
     const auto* enter = std::get_if<egraph::Enter>(&invocation.command);
     REQUIRE(enter != nullptr);
-    CHECK(enter->root == "/var/tmp/egraph/root");
+    CHECK(enter->snapshot == "/var/tmp/egraph/root");
+    CHECK(enter->target == "/srv/r");
     CHECK(enter->command == worker);
     CHECK(egraph::binds_of(*enter) == binds);
     CHECK(invocation.root == std::filesystem::path{"/"});

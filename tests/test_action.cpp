@@ -194,7 +194,8 @@ TEST_CASE("what emerge runs under is read from egraph-build's JSON") {
  "elog": {"summary": "/var/log/portage/elog/summary.log", "system": "save_summary"},
  "jobserver": "/run/jobserver", "merge_wait": false, "portage_installed": true,
  "tmpdir": "/var/tmp", "distdir": "/var/cache/distfiles", "ccache_dir": "/var/cache/ccache",
- "repositories": ["/var/db/repos/gentoo", "/var/db/repos/local"]
+ "repositories": ["/var/db/repos/gentoo", "/var/db/repos/local"],
+ "logdir": "/var/log/portage", "runs_from": ["/usr/lib/python3.14/site-packages"]
 })");
     REQUIRE(settings);
     CHECK(settings->defaults == std::vector<std::string>{"--jobs", "4"});
@@ -204,6 +205,8 @@ TEST_CASE("what emerge runs under is read from egraph-build's JSON") {
     CHECK(settings->ccache_dir == "/var/cache/ccache");
     CHECK(settings->repositories ==
           std::vector<std::string>{"/var/db/repos/gentoo", "/var/db/repos/local"});
+    CHECK(settings->logdir == "/var/log/portage");
+    CHECK(settings->runs_from == std::vector<std::string>{"/usr/lib/python3.14/site-packages"});
     CHECK_FALSE(settings->merge_wait);
     CHECK(settings->portage_installed);
     CHECK(settings->elog_summary == "/var/log/portage/elog/summary.log");
@@ -213,7 +216,8 @@ TEST_CASE("what emerge runs under is read from egraph-build's JSON") {
                                        "jobserver": null, "merge_wait": true,
                                        "portage_installed": false, "tmpdir": "/var/tmp",
                                        "distdir": "/d", "ccache_dir": null,
-                                       "repositories": []})");
+                                       "repositories": [], "logdir": null,
+                                       "runs_from": []})");
     REQUIRE(plain);
     CHECK_FALSE(plain->jobserver);
     CHECK(plain->merge_wait);
@@ -222,6 +226,7 @@ TEST_CASE("what emerge runs under is read from egraph-build's JSON") {
     CHECK_FALSE(plain->elog_system);
     CHECK_FALSE(plain->ccache_dir);
     CHECK(plain->repositories.empty());
+    CHECK_FALSE(plain->logdir);
     CHECK_FALSE(egraph::parse_run_settings(
         R"({"options": [], "elog": {"summary": null, "system": null}, "jobserver": null,
             "merge_wait": true, "portage_installed": false, "tmpdir": "/var/tmp",

@@ -1558,13 +1558,12 @@ Job<ScopePlan> App::start_scope_plan() {
         failed = found->second;
     }
     // Copies and shared stores, as the app may move on to others meanwhile.
-    auto made =
-        std::async(std::launch::async, [scope = scope_, loaded = owned_, store = store_,
-                                        evaluated = evaluated_, graph = graph_, masking = masking_,
-                                        dynamic_deps = dynamic_deps_,
-                                        alternatives = alternatives_, generation = generation_,
-                                        untried = untried_, reinstall = reinstalled(),
-                                        given = std::move(given), failed = std::move(failed)] {
+    auto made = std::async(
+        std::launch::async,
+        [scope = scope_, loaded = owned_, store = store_, evaluated = evaluated_, graph = graph_,
+         masking = masking_, dynamic_deps = dynamic_deps_, alternatives = alternatives_,
+         generation = generation_, untried = untried_, reinstall = reinstalled(),
+         given = std::move(given), failed = std::move(failed)] {
             auto plan = failed
                             ? scoped(scope, {}, store.get(), evaluated.get(), graph.get(), {}, {})
                             : plan_set(scope, store.get(), evaluated.get(), graph.get(), masking,

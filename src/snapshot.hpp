@@ -22,6 +22,7 @@ namespace egraph::snapshot {
 struct Facts {
     // The root is a btrfs subvolume.
     bool snapshottable = false;
+    // The run is root, or owns the subvolume.
     bool root = false;
     // On the root's filesystem: what is free, and what the snapshot and images may take.
     std::uint64_t free = 0;
@@ -58,17 +59,36 @@ using Decision = std::variant<Plain, InSnapshot, Refused>;
 [[nodiscard]] std::vector<os::Bind> ordered(std::vector<os::Bind> binds);
 
 // What a worker in a snapshot shares with the real root, ordered: the kernel's filesystems and
-// /run, where builds run and what they fetch or cache; the repositories read-only.
+// /run, where builds run, what they fetch or cache and their logs; the repositories read-only.
 [[nodiscard]] std::vector<os::Bind> binds(const RunSettings& settings);
 
-// The hidden egraph enter command line that runs argv confined to the snapshot at root.
+// Where a run on eroot keeps its snapshot, by the running process, and the binary packages its
+// builds keep, which outlive a failed run for the next to merge.
+struct RunPaths {
+    std::filesystem::path snapshot;
+    std::filesystem::path packages;
+    bool operator==(const RunPaths&) const = default;
+};
+[[nodiscard]] RunPaths run_paths(const std::filesystem::path& eroot, std::int64_t pid);
+
+// Of paths, those on another filesystem or subvolume than /, which a snapshot of / shows empty.
+[[nodiscard]] std::vector<std::filesystem::path>
+other_volumes(std::span<const std::filesystem::path> paths);
+
+// What a worker in the snapshot binds: binds(settings), the packages directory, and read-only
+// where egraph-build and portage come from on another volume (foreign); ordered.
+[[nodiscard]] std::vector<os::Bind> worker_binds(const RunSettings& settings,
+                                                 const std::filesystem::path& packages,
+                                                 std::span<const std::filesystem::path> foreign);
+
+// The hidden egraph enter command line that runs argv with the snapshot standing in for target.
 [[nodiscard]] std::vector<std::string> enter_command(const std::filesystem::path& egraph,
-                                                     const std::filesystem::path& root,
+                                                     const std::filesystem::path& snapshot,
+                                                     const std::filesystem::path& target,
                                                      std::span<const os::Bind> binds,
                                                      std::span<const std::string> argv);
 
 // The commands of the btrfs backend, as argv.
-std::vector<std::string> show_command(const std::filesystem::path& path);
 std::vector<std::string> create_command(const std::filesystem::path& source,
                                         const std::filesystem::path& destination);
 std::vector<std::string> remove_command(const std::filesystem::path& path);

@@ -67,6 +67,10 @@ struct RunSettings {
     std::optional<std::string> ccache_dir;
     // Each repository's location.
     std::vector<std::string> repositories;
+    // PORTAGE_LOGDIR, where build logs are kept, if set.
+    std::optional<std::string> logdir;
+    // Where egraph-build and portage are imported from.
+    std::vector<std::string> runs_from;
 };
 
 [[nodiscard]] std::expected<RunSettings, std::string> parse_run_settings(std::string_view text);
