@@ -5764,7 +5764,8 @@ void configure(CLI::App& app, Invocation& invocation) {
     exec_cmd->callback([&invocation] {
         const auto& exec = std::get<Exec>(invocation.command);
         if (exec.resume && (!exec.targets.empty() || exec.update || exec.deep || exec.noreplace ||
-                            exec.oneshot || exec.rebuilds != UseRebuilds::none)) {
+                            exec.oneshot || exec.rebuilds != UseRebuilds::none ||
+                            exec.alternatives)) {
             throw CLI::ValidationError("--resume", "takes the last run's targets and plan options");
         }
     });
@@ -6211,6 +6212,11 @@ std::vector<std::string> exec_arguments(const Exec& command) {
     }
     if (command.order) {
         arguments.insert(arguments.end(), {"--order", *command.order});
+    }
+    if (command.alternatives) {
+        arguments.insert(arguments.end(),
+                         {"--alternatives",
+                          *command.alternatives == Alternatives::keep ? "keep" : "upgrade"});
     }
     arguments.emplace_back("--");
     arguments.insert(arguments.end(), command.targets.begin(), command.targets.end());
