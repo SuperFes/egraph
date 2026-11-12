@@ -1192,11 +1192,25 @@ is made and verified afresh, then its merges of packages the last run merged, an
 installed still, are left out, where a target would be merged again otherwise. The
 .BR \-\-jobs ,
 .BR \-\-keep\-going ,
-.B \-\-merge\-wait\-scope
-and
+.BR \-\-merge\-wait\-scope ,
 .B \-\-order
+and
+.B \-\-snapshot
 given now replace the last run's; targets and the plan's options cannot be given. Nothing is
 done when the last run finished.
+.TP
+.B \-\-snapshot
+Build and merge in a snapshot of the root, merging into the root itself only once every package
+built; refused, saying why, where the root is not a btrfs subvolume, the run is not root, or the
+snapshot may take more than is free (twice what the merges install). Runs in a snapshot are not
+supported yet, so for now it is always refused. Unset, the
+.B snapshot
+setting decides.
+.TP
+.B \-\-no\-snapshot
+Merge into the root itself as each package builds, whatever the
+.B snapshot
+setting says.
 .TP
 .BI \-\-trace " file"
 Write to

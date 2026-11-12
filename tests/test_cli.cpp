@@ -528,6 +528,7 @@ TEST_CASE("a run's recorded arguments parse back to its command, but for --yes a
     command.keep_going = false;
     command.merge_wait_scope = "system";
     command.alternatives = egraph::Alternatives::keep;
+    command.snapshot = false;
     command.yes = true;
     command.trace = "/t";
     command.table = true;
@@ -535,7 +536,7 @@ TEST_CASE("a run's recorded arguments parse back to its command, but for --yes a
     CHECK(words == std::vector<std::string>{"--update", "--deep", "--noreplace", "--changed-use",
                                             "--oneshot", "--jobs", "3", "--keep-going=n",
                                             "--merge-wait-scope", "system", "--alternatives",
-                                            "keep", "--", "a/b", "@set"});
+                                            "keep", "--no-snapshot", "--", "a/b", "@set"});
     command.rebuilds = egraph::UseRebuilds::all;
     CHECK(std::ranges::contains(egraph::exec_arguments(command), "--newuse"));
     CHECK(egraph::exec_arguments(egraph::Exec{}) == std::vector<std::string>{"--"});
@@ -556,6 +557,7 @@ TEST_CASE("a run's recorded arguments parse back to its command, but for --yes a
     CHECK(resumed->keep_going == false);
     CHECK(resumed->merge_wait_scope == "system");
     CHECK(resumed->alternatives == egraph::Alternatives::keep);
+    CHECK(resumed->snapshot == false);
     CHECK(resumed->yes);
     CHECK(resumed->trace == "/u");
     CHECK_FALSE(resumed->table);
@@ -563,8 +565,10 @@ TEST_CASE("a run's recorded arguments parse back to its command, but for --yes a
     given.jobs = 8;
     given.keep_going = true;
     given.merge_wait_scope = "none";
+    given.snapshot = true;
     const auto overridden = egraph::resumed_exec(given, words);
     REQUIRE(overridden);
+    CHECK(overridden->snapshot == true);
     CHECK(overridden->jobs == 8U);
     CHECK(overridden->keep_going == true);
     CHECK(overridden->merge_wait_scope == "none");

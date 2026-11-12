@@ -1584,3 +1584,18 @@ Decided with the user (2026-10-16):
     fits, else runs plainly and says so; `on` fails rather than fall back; `exec --snapshot`
     and `--no-snapshot` decide one run. Making `auto` the default is a later change of the
     setting's default, once it has run on the dev box.
+  - Steps, decided with the user (2026-11-12): images are binary packages, portage's own
+    format (FEATURES=buildpkg into the run's own PKGDIR, merged into the real root as `emerge
+    -K` merges), shared with 22e; the root-only tests skip without root, btrfs and a loop
+    device, run by hand before a release.
+    - 16z1: `exec --snapshot` and `--no-snapshot`, and the decision (`snapshot::decide`): off,
+      on (refused, saying why, where `/` is no subvolume, the run is not root, or the space
+      does not fit) or auto (plain then, saying why); the space twice what the merges install.
+    - 16z2: the workers confined: each starts through a hidden egraph mode (`os::enter`): a
+      mount namespace of its own, the bind mounts, and a chroot into the snapshot.
+    - 16z3: the worker keeps each build's binary package, and merges a kept one into the real
+      root on request.
+    - 16z4: exec in the snapshot: created, the plan run inside, replayed into the real root in
+      plan order on success, deleted either way.
+    - 16z5: `--resume` takes the kept binary packages.
+    - 16z6: the btrfs loop-image test, the documentation.

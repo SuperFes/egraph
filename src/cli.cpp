@@ -44,6 +44,7 @@
 #include "run_log.hpp"
 #include "run_state.hpp"
 #include "schedule.hpp"
+#include "snapshot.hpp"
 #include "selection.hpp"
 #include "session.hpp"
 #include "sets.hpp"
@@ -3898,6 +3899,30 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     return ended;
 }
 
+// Whether the run of steps goes in a snapshot of the root, as command or else the setting asks.
+snapshot::Decision snapshot_decision(SnapshotRun setting, const Exec& command,
+                                     const Invocation& invocation, const Shown& shown,
+                                     std::span<const Step> steps) {
+    if (snapshot::asked(setting, command.snapshot) == SnapshotRun::off) {
+        return snapshot::Plain{};
+    }
+    const auto& store = shown.store.get();
+    std::vector<std::optional<std::uint64_t>> sizes;
+    for (const auto& step : steps) {
+        if (const auto* merge = std::get_if<MergeStep>(&step)) {
+            const auto replaces = shown.plan.merges.at(merge->merge).replaces;
+            const auto size = replaces ? store.packages.at(*replaces).size : 0;
+            sizes.push_back(size != 0 ? std::optional{size} : std::nullopt);
+        }
+    }
+    return snapshot::decide(setting, command.snapshot,
+                            {.snapshottable =
+                                 os::is_root() && snapshot::snapshottable(invocation.root),
+                             .root = os::is_root(),
+                             .free = os::free_bytes(invocation.root).value_or(0),
+                             .needed = snapshot::needed_bytes(sizes)});
+}
+
 // Carries out command, a run resumed from one that merged the cpvs merged when it has any.
 Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Session& session,
                const Invocation& invocation, std::ostream& out, std::ostream& err) {
@@ -3938,6 +3963,26 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
                 Exec::name, command.yes, differs ? anyway(question) : std::string{question},
                 "egraph-build --worker", false,
                 [&](const RunSettings& settings) -> std::expected<int, std::string> {
+                    const auto setting = read_settings(settings_path(config_root(invocation)))
+                                             .value_or(Settings{})
+                                             .snapshot;
+                    const auto decision =
+                        snapshot_decision(setting, command, invocation, shown, steps);
+                    if (const auto* refused = std::get_if<snapshot::Refused>(&decision)) {
+                        return std::unexpected("cannot run in a snapshot: " + refused->why);
+                    }
+                    if (const auto* plain = std::get_if<snapshot::Plain>(&decision);
+                        plain != nullptr && plain->why) {
+                        out << std::format("egraph: exec: running on the root itself: {}\n",
+                                           *plain->why);
+                    }
+                    if (std::holds_alternative<snapshot::InSnapshot>(decision)) {
+                        if (snapshot::asked(setting, command.snapshot) == SnapshotRun::on) {
+                            return std::unexpected("runs in a snapshot are not supported yet");
+                        }
+                        out << "egraph: exec: running on the root itself: runs in a snapshot are "
+                               "not supported yet\n";
+                    }
                     // As emerge, before it merges.
                     if (!favorites.empty()) {
                         const auto recorded = output_of(favorites_command(invocation, favorites));
@@ -5744,6 +5789,13 @@ void configure(CLI::App& app, Invocation& invocation) {
             "builds first), as the build history foretells them")
         ->type_name("ORDER")
         ->check(CLI::IsMember({"emerge", "longest", "critical"}));
+    exec_cmd->add_flag_callback(
+        "--snapshot", [&invocation] { std::get<Exec>(invocation.command).snapshot = true; },
+        "Build and merge in a snapshot of the root, merging into the root itself only once every "
+        "package built; refused where it cannot (egraph.conf's snapshot otherwise)");
+    exec_cmd->add_flag_callback(
+        "--no-snapshot", [&invocation] { std::get<Exec>(invocation.command).snapshot = false; },
+        "Merge into the root itself as each package builds, whatever egraph.conf's snapshot says");
     // Targets stay required while parsing, so that --keep-going takes none for its value, unless
     // --resume, which takes the last run's.
     CLI::Option* exec_targets = exec_cmd->get_option("targets");
@@ -5759,7 +5811,7 @@ void configure(CLI::App& app, Invocation& invocation) {
                 exec_targets->required(false);
             },
             "Carry out the last run's targets and options again, without what it merged; --jobs, "
-            "--keep-going, --merge-wait-scope and --order given now replace its own")
+            "--keep-going, --merge-wait-scope, --order and --snapshot given now replace its own")
         ->trigger_on_parse();
     exec_cmd->callback([&invocation] {
         const auto& exec = std::get<Exec>(invocation.command);
@@ -6218,6 +6270,9 @@ std::vector<std::string> exec_arguments(const Exec& command) {
                          {"--alternatives",
                           *command.alternatives == Alternatives::keep ? "keep" : "upgrade"});
     }
+    if (command.snapshot) {
+        arguments.emplace_back(*command.snapshot ? "--snapshot" : "--no-snapshot");
+    }
     arguments.emplace_back("--");
     arguments.insert(arguments.end(), command.targets.begin(), command.targets.end());
     return arguments;
@@ -6247,6 +6302,7 @@ std::expected<Exec, std::string> resumed_exec(const Exec& given,
     resumed.merge_wait_scope =
         given.merge_wait_scope ? given.merge_wait_scope : resumed.merge_wait_scope;
     resumed.order = given.order ? given.order : resumed.order;
+    resumed.snapshot = given.snapshot ? given.snapshot : resumed.snapshot;
     resumed.yes = given.yes;
     resumed.trace = given.trace;
     return resumed;

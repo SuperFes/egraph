@@ -1,11 +1,52 @@
 #pragma once
 
+#include "history.hpp"
+
+#include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <optional>
+#include <span>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace egraph::snapshot {
+
+// What decides whether a run can go in a snapshot of its root.
+struct Facts {
+    // The root is a btrfs subvolume.
+    bool snapshottable = false;
+    bool root = false;
+    // On the root's filesystem: what is free, and what the snapshot and images may take.
+    std::uint64_t free = 0;
+    std::uint64_t needed = 0;
+};
+
+// The run goes on the root itself; with why, when auto could not snapshot.
+struct Plain {
+    std::optional<std::string> why;
+    bool operator==(const Plain&) const = default;
+};
+struct InSnapshot {
+    bool operator==(const InSnapshot&) const = default;
+};
+// on asked for a snapshot that cannot be taken.
+struct Refused {
+    std::string why;
+    bool operator==(const Refused&) const = default;
+};
+using Decision = std::variant<Plain, InSnapshot, Refused>;
+
+// How a run goes, as exec's --snapshot or --no-snapshot (flag) or else the setting says.
+[[nodiscard]] Decision decide(SnapshotRun setting, std::optional<bool> flag, const Facts& facts);
+
+// The setting as the flag overrides it.
+[[nodiscard]] SnapshotRun asked(SnapshotRun setting, std::optional<bool> flag);
+
+// What a run in a snapshot may take on the root's filesystem: the merges' files, written in the
+// snapshot and again as binary packages, by each merge's installed size where known.
+[[nodiscard]] std::uint64_t needed_bytes(std::span<const std::optional<std::uint64_t>> sizes);
 
 // The commands of the btrfs backend, as argv.
 std::vector<std::string> show_command(const std::filesystem::path& path);

@@ -226,6 +226,9 @@ struct Exec : Install {
     std::optional<std::string> order;
     // Carry out the last run's request again, without what it merged.
     bool resume = false;
+    // --snapshot or --no-snapshot: whether the run goes in a snapshot of the root; none for
+    // egraph.conf's.
+    std::optional<bool> snapshot;
 };
 
 // emerge --depclean run on packages once shown, verified and confirmed.

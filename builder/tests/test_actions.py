@@ -405,6 +405,30 @@ def test_an_exec_plan_emerge_would_make_otherwise_is_merged_on_yes(system):
     assert starts[-1]["differs"] == 1
 
 
+def test_a_run_in_a_snapshot_is_refused_where_none_can_be_taken(system):
+    machine = system()
+    result = machine.egraph("exec", "--yes", "--snapshot", "app-misc/a")
+    assert result.returncode != 0
+    assert "cannot run in a snapshot: " in result.stderr
+    assert not machine.installed("app-misc/a-2")
+
+
+def test_snapshot_auto_runs_on_the_root_itself_where_none_can_be_taken(system):
+    machine = system()
+    settings = os.path.join(machine.playground.eroot, "etc", "egraph", "egraph.conf")
+    os.makedirs(os.path.dirname(settings), exist_ok=True)
+    with open(settings, "w") as f:
+        f.write("snapshot = auto\n")
+    result = machine.egraph("exec", "--yes", "app-misc/a")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "egraph: exec: running on the root itself: " in result.stdout
+    assert machine.installed("app-misc/a-2")
+    # --no-snapshot decides the run without a word.
+    result = machine.egraph("exec", "--yes", "--no-snapshot", "app-misc/a")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "running on the root itself" not in result.stdout
+
+
 @pytest.mark.parametrize("answer", ["y", "n"])
 def test_a_plan_emerge_would_make_otherwise_is_asked_for_anyway(system, answer):
     machine = system(pretend="exit 0")
