@@ -470,6 +470,27 @@ TEST_CASE("a || keeps its installed alternative unless a root atom names it") {
                                    "new dev-libs/other-1 <- app-misc/either-1 dev-libs/other"});
 }
 
+TEST_CASE("a || gives up its installed alternative to a merge that pulls the update") {
+    const std::vector<Installed> installed{
+        {.cpv = "app-misc/either-1",
+         .deps = {{"RDEPEND", "|| ( dev-libs/other dev-libs/alt:0/1 )"}}},
+        {.cpv = "app-misc/tool-1", .deps = {{"RDEPEND", "dev-libs/alt"}}},
+        {.cpv = "dev-libs/alt-1", .sub_slot = "1"}};
+    const std::vector<Available> available{
+        {.cpv = "app-misc/either-1",
+         .deps = {{"RDEPEND", "|| ( dev-libs/other dev-libs/alt:0/1 )"}}},
+        {.cpv = "app-misc/tool-1", .deps = {{"RDEPEND", "dev-libs/alt"}}},
+        {.cpv = "app-misc/tool-2", .deps = {{"RDEPEND", "dev-libs/alt"}}},
+        {.cpv = "dev-libs/alt-1", .sub_slot = "1"},
+        {.cpv = "dev-libs/alt-2", .sub_slot = "2"},
+        {.cpv = "dev-libs/other-1"}};
+    CHECK(plan(make_system(installed, available, {"app-misc/either", "app-misc/tool"}),
+               egraph::UseRebuilds::none, {.scope = {}, .roots = true}) ==
+          std::vector<std::string>{"app-misc/tool-1 -> app-misc/tool-2",
+                                   "dev-libs/alt-1 -> dev-libs/alt-2",
+                                   "new dev-libs/other-1 <- app-misc/either-1 dev-libs/other"});
+}
+
 TEST_CASE("dependents hold an update back to the best version they all accept") {
     const auto system =
         make_system({{.cpv = "app-misc/pylint-1", .deps = {{"RDEPEND", "<dev-libs/astroid-4.1"}}},

@@ -493,7 +493,8 @@ are in scope, and one outside keeps its version while its dependencies weigh not
 arguments are the root sets' atoms here, not a slot atom per installed package, and only an
 argument is updated regardless of what depends on it. So a `||` whose installed alternative an
 update would take away rejects that update when no root atom names the package, rather than
-switch alternatives. And a kept dependent bound by a slot operator to an older slot is rebuilt
+switch alternatives, unless another merge's dependency outside any `||` matches the update:
+emerge pulls it in for that merge, and the `||` then takes another alternative. And a kept dependent bound by a slot operator to an older slot is rebuilt
 against the best visible version in a newer one, as `--rebuild-if-new-slot` (depgraph's
 `_slot_operator_update_probe`): when its ebuild's atoms naming the cp name no slot, the version
 is higher than the bound one, and every other kept dependent's atom (a slot operator's whatever

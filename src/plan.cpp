@@ -1650,9 +1650,49 @@ class Planner {
         return false;
     }
 
+    static bool in_any_of(std::span<const Node> list, std::size_t node) {
+        for (auto at = element(list, node).parent; at != no_parent; at = element(list, at).parent) {
+            if (element(list, at).type == NodeType::any_of) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Whether another merge's dependency outside any || matches the update of installed package
+    // replaced: emerge pulls the update in for that merge whatever a || preferred.
+    [[nodiscard]] bool pulled_by_merge(std::uint32_t replaced) {
+        const auto& target = evaluated().candidates.at(*choices_.at(replaced).merged());
+        const auto cp = evaluated().string(target.cp);
+        for (std::uint32_t id = 0; id < choices_.size(); ++id) {
+            const auto merged = choices_.at(id).merged();
+            if (id == replaced || !merged) {
+                continue;
+            }
+            const Member member{.candidate = true, .index = *merged};
+            const auto& tables = this->tables(member);
+            for (std::size_t kind = 0; kind < dep_kinds.size(); ++kind) {
+                const auto list = nodes(member, kind);
+                for (std::size_t i = 0; i < list.size(); ++i) {
+                    const auto& node = element(list, i);
+                    if (node.type != NodeType::atom || in_any_of(list, i)) {
+                        continue;
+                    }
+                    const auto& wanted = atom(tables.string(node.atom));
+                    if (wanted && wanted->cp == cp &&
+                        matches(store(), evaluated(), target, *wanted)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     // The first alternative of a || under node index that an installed package being replaced
-    // matches, and that package, when no argument names it: emerge's || prefers what is
-    // installed, and only an argument updates it regardless.
+    // matches, and that package, when no argument names it and no other merge pulls its
+    // update: emerge's || prefers what is installed, and only an argument or another merge's
+    // dependency updates it regardless.
     std::optional<std::pair<std::uint32_t, std::string>>
     installed_alternative(const Tables& tables, std::span<const Node> list, std::size_t index) {
         for (std::size_t i = index; i < list.size(); ++i) {
@@ -1663,7 +1703,7 @@ class Planner {
                 continue;
             }
             for (const auto id : tables.ids_in(node.matches)) {
-                if (!kept(id) && (!argument(id) || alone(id))) {
+                if (!kept(id) && (!argument(id) || alone(id)) && !pulled_by_merge(id)) {
                     return std::pair{id, std::string(tables.string(node.atom))};
                 }
             }

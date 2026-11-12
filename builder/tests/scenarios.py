@@ -394,6 +394,8 @@ SCENARIOS = {
             "app-misc/dynamic",
             "app-misc/skin",
             "app-misc/effects",
+            "app-misc/sdk",
+            "app-misc/tls",
         ],
         "ebuilds": {
             "app-misc/pylint-1": {"EAPI": "8", "RDEPEND": "<dev-libs/astroid-4.1"},
@@ -436,6 +438,15 @@ SCENARIOS = {
             "app-misc/effects-2": {"EAPI": "8", "RDEPEND": ">=app-misc/rgb-1:="},
             "app-misc/rgb-1_rc3": {"EAPI": "8", "SLOT": "0/rc3"},
             "app-misc/rgb-1": {"EAPI": "8", "SLOT": "0/1"},
+            "app-misc/sdk-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-libs/ssl-compat:3 dev-libs/ssl:0/3 )",
+            },
+            "app-misc/tls-1": {"EAPI": "8", "RDEPEND": "dev-libs/ssl:="},
+            "app-misc/tls-2": {"EAPI": "8", "RDEPEND": "dev-libs/ssl:="},
+            "dev-libs/ssl-3": {"EAPI": "8", "SLOT": "0/3"},
+            "dev-libs/ssl-4": {"EAPI": "8", "SLOT": "0/4"},
+            "dev-libs/ssl-compat-3": {"EAPI": "8", "SLOT": "3"},
         },
         "installed": {
             "app-misc/pylint-1": {"EAPI": "8", "RDEPEND": "<dev-libs/astroid-4.1"},
@@ -465,6 +476,12 @@ SCENARIOS = {
             },
             "app-misc/effects-1": {"EAPI": "8", "RDEPEND": "app-misc/rgb:0/rc3="},
             "app-misc/rgb-1_rc3": {"EAPI": "8", "SLOT": "0/rc3"},
+            "app-misc/sdk-1": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-libs/ssl-compat:3 dev-libs/ssl:0/3 )",
+            },
+            "app-misc/tls-1": {"EAPI": "8", "RDEPEND": "dev-libs/ssl:0/3="},
+            "dev-libs/ssl-3": {"EAPI": "8", "SLOT": "0/3"},
         },
     },
     # Dependencies behind flags the installed build left off: nested, negated, inside and around
