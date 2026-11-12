@@ -44,10 +44,10 @@
 #include "run_log.hpp"
 #include "run_state.hpp"
 #include "schedule.hpp"
-#include "snapshot.hpp"
 #include "selection.hpp"
 #include "session.hpp"
 #include "sets.hpp"
+#include "snapshot.hpp"
 #include "status.hpp"
 #include "steve.hpp"
 #include "store.hpp"
@@ -3915,12 +3915,12 @@ snapshot::Decision snapshot_decision(SnapshotRun setting, const Exec& command,
             sizes.push_back(size != 0 ? std::optional{size} : std::nullopt);
         }
     }
-    return snapshot::decide(setting, command.snapshot,
-                            {.snapshottable =
-                                 os::is_root() && snapshot::snapshottable(invocation.root),
-                             .root = os::is_root(),
-                             .free = os::free_bytes(invocation.root).value_or(0),
-                             .needed = snapshot::needed_bytes(sizes)});
+    return snapshot::decide(
+        setting, command.snapshot,
+        {.snapshottable = os::is_root() && snapshot::snapshottable(invocation.root),
+         .root = os::is_root(),
+         .free = os::free_bytes(invocation.root).value_or(0),
+         .needed = snapshot::needed_bytes(sizes)});
 }
 
 // Carries out command, a run resumed from one that merged the cpvs merged when it has any.
@@ -4476,6 +4476,23 @@ Exit execute(const Tui& tui_command, Session& session, const Invocation& invocat
 Exit execute(const Shell&, Session& session, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
     return run_shell(session, invocation, std::cin, out, err, invocation.input_terminal);
+}
+
+// Reached only from a shell line, which run_line refuses.
+Exit execute(const Enter&, Session&, const Invocation&, std::ostream&, std::ostream& err) {
+    err << "egraph: enter starts a run's worker in a snapshot, as exec runs it\n";
+    return Exit::usage;
+}
+
+// Confines this process to the snapshot, then becomes the command; returns only on failure.
+Exit enter(const Enter& command, std::ostream& err) {
+    if (const auto entered = os::enter(command.root, binds_of(command)); !entered) {
+        err << "egraph: enter: " << entered.error() << '\n';
+        return Exit::failure;
+    }
+    const auto error = os::exec(command.command.front(), command.command);
+    err << std::format("egraph: enter: {}: {}\n", command.command.front(), error.message());
+    return Exit::failure;
 }
 
 Exit execute(const Affected& command, Session& session, const Invocation& invocation,
@@ -5815,9 +5832,9 @@ void configure(CLI::App& app, Invocation& invocation) {
         ->trigger_on_parse();
     exec_cmd->callback([&invocation] {
         const auto& exec = std::get<Exec>(invocation.command);
-        if (exec.resume && (!exec.targets.empty() || exec.update || exec.deep || exec.noreplace ||
-                            exec.oneshot || exec.rebuilds != UseRebuilds::none ||
-                            exec.alternatives)) {
+        if (exec.resume &&
+            (!exec.targets.empty() || exec.update || exec.deep || exec.noreplace || exec.oneshot ||
+             exec.rebuilds != UseRebuilds::none || exec.alternatives)) {
             throw CLI::ValidationError("--resume", "takes the last run's targets and plan options");
         }
     });
@@ -6012,6 +6029,29 @@ void configure(CLI::App& app, Invocation& invocation) {
         [&invocation] { std::get<Complete>(invocation.command).what = Completing::repositories; },
         "Repository names");
     add_field(complete_cmd, invocation, "word", &Complete::word, "The word typed so far");
+    CLI::App* enter_cmd =
+        add_command<Enter>(app, invocation, "Run a command confined to a snapshot");
+    // Hidden: how exec starts its workers in a snapshot.
+    enter_cmd->group("");
+    add_field(enter_cmd, invocation, "--bind", &Enter::binds,
+              "A directory shared with the real root, writable")
+        ->allow_extra_args(false);
+    add_field(enter_cmd, invocation, "--read-only", &Enter::read_only,
+              "A directory shared with the real root, read-only")
+        ->allow_extra_args(false);
+    add_field(enter_cmd, invocation, "root", &Enter::root, "The snapshot")->required();
+    // The command is what follows --, its options its own.
+    enter_cmd->prefix_command();
+    enter_cmd->final_callback([enter_cmd, &invocation] {
+        auto command = enter_cmd->remaining();
+        if (!command.empty() && command.front() == "--") {
+            command.erase(command.begin());
+        }
+        if (command.empty()) {
+            throw CLI::RequiredError("command");
+        }
+        std::get<Enter>(invocation.command).command = std::move(command);
+    });
     add_field(
         add_dynamic_deps(add_command<Affected>(
             app, invocation,
@@ -6266,9 +6306,9 @@ std::vector<std::string> exec_arguments(const Exec& command) {
         arguments.insert(arguments.end(), {"--order", *command.order});
     }
     if (command.alternatives) {
-        arguments.insert(arguments.end(),
-                         {"--alternatives",
-                          *command.alternatives == Alternatives::keep ? "keep" : "upgrade"});
+        arguments.insert(
+            arguments.end(),
+            {"--alternatives", *command.alternatives == Alternatives::keep ? "keep" : "upgrade"});
     }
     if (command.snapshot) {
         arguments.emplace_back(*command.snapshot ? "--snapshot" : "--no-snapshot");
@@ -6458,6 +6498,9 @@ LineResult run_line(Session& session, const Invocation& invocation, std::string_
     if (std::holds_alternative<Notify>(command.command)) {
         return usage("notify runs on its own until stopped, as the desktop session starts it");
     }
+    if (std::holds_alternative<Enter>(command.command)) {
+        return usage("enter starts a run's worker in a snapshot, as exec runs it");
+    }
     // emerge would write over the interface's screen.
     if (!command.what_if.empty() && acts(command.command)) {
         return usage("--use and --env try configuration; actions run with what is saved");
@@ -6536,9 +6579,24 @@ std::vector<std::string> multicall_arguments(CLI::App& app, std::string_view pro
     return arguments;
 }
 
+std::vector<os::Bind> binds_of(const Enter& command) {
+    std::vector<os::Bind> binds;
+    for (const auto& path : command.binds) {
+        binds.push_back({.path = path, .read_only = false});
+    }
+    for (const auto& path : command.read_only) {
+        binds.push_back({.path = path, .read_only = true});
+    }
+    return snapshot::ordered(std::move(binds));
+}
+
 Exit run(const Invocation& invocation, std::ostream& out, std::ostream& err) {
-    // The interface and the services run actions, which never take what was only tried.
     const auto& command = invocation.command;
+    // Before a session, whose threads would keep a mount namespace from being unshared.
+    if (const auto* entering = std::get_if<Enter>(&command)) {
+        return enter(*entering, err);
+    }
+    // The interface and the services run actions, which never take what was only tried.
     if (!invocation.what_if.empty() &&
         (acts(command) || std::holds_alternative<std::monostate>(command) ||
          std::holds_alternative<Tui>(command) || std::holds_alternative<Watch>(command) ||

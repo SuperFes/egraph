@@ -1,4 +1,5 @@
 #include "cli.hpp"
+#include "snapshot.hpp"
 #include "tui.hpp"
 
 #include <CLI/CLI.hpp>
@@ -741,4 +742,26 @@ TEST_CASE("notices takes names to dismiss or put off, for how long, and --all") 
     CHECK(set.put_off == egraph::PutOff::week);
     CHECK(set.all);
     CHECK_THROWS(parse("notices --later x --for month"));
+}
+
+TEST_CASE("egraph enter takes the binds, the snapshot and the command as exec writes them") {
+    const std::vector<egraph::os::Bind> binds{{.path = "/run", .read_only = false},
+                                              {.path = "/var/db/repos/gentoo", .read_only = true},
+                                              {.path = "/var/tmp", .read_only = false}};
+    const std::vector<std::string> worker{"/usr/bin/egraph-build", "--worker", "--root", "/srv/r",
+                                          "--background"};
+    auto words = egraph::snapshot::enter_command("egraph", "/var/tmp/egraph/root", binds, worker);
+    // CLI11 takes them last first, without the program.
+    words.erase(words.begin());
+    std::ranges::reverse(words);
+    CLI::App app;
+    egraph::Invocation invocation;
+    egraph::configure(app, invocation);
+    app.parse(words);
+    const auto* enter = std::get_if<egraph::Enter>(&invocation.command);
+    REQUIRE(enter != nullptr);
+    CHECK(enter->root == "/var/tmp/egraph/root");
+    CHECK(enter->command == worker);
+    CHECK(egraph::binds_of(*enter) == binds);
+    CHECK(invocation.root == std::filesystem::path{"/"});
 }

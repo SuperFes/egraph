@@ -58,6 +58,23 @@ def test_make_conf_options_are_written_as_emerge_splits_them(
     assert written["tmpdir"] == os.path.join(system.eprefix, "var/tmp")
 
 
+def test_what_a_snapshot_shares_is_written_as_portage_sets_it(
+    system, tmp_path, monkeypatch
+):
+    output = tmp_path / "options"
+    assert run(system, output, monkeypatch) == cli.EXIT_OK
+    written = json.loads(output.read_text())
+    settings = system.settings
+    assert written["distdir"] == settings["DISTDIR"]
+    assert written["ccache_dir"] is None
+    assert system.settings.repositories["test_repo"].location in written["repositories"]
+    assert (
+        run(system, output, monkeypatch, FEATURES="ccache", CCACHE_DIR="/var/cache/cc")
+        == cli.EXIT_OK
+    )
+    assert json.loads(output.read_text())["ccache_dir"] == "/var/cache/cc"
+
+
 def test_the_environment_wins_as_in_emerge(system, tmp_path, monkeypatch):
     output = tmp_path / "options"
     assert run(system, output, monkeypatch, "-j2") == cli.EXIT_OK

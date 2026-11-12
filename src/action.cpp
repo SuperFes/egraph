@@ -348,7 +348,10 @@ std::expected<RunSettings, std::string> parse_run_settings(std::string_view text
                          .jobserver = std::nullopt,
                          .merge_wait = true,
                          .portage_installed = false,
-                         .tmpdir = {}};
+                         .tmpdir = {},
+                         .distdir = {},
+                         .ccache_dir = std::nullopt,
+                         .repositories = {}};
     for (const auto& [field, value] : {std::pair{"summary", &settings.elog_summary},
                                        std::pair{"system", &settings.elog_system}}) {
         const auto found = elog->find(field);
@@ -381,6 +384,24 @@ std::expected<RunSettings, std::string> parse_run_settings(std::string_view text
         return std::unexpected("tmpdir: not a string");
     }
     settings.tmpdir = tmpdir->get<std::string>();
+    const auto distdir = json.find("distdir");
+    if (distdir == json.end() || !distdir->is_string()) {
+        return std::unexpected("distdir: not a string");
+    }
+    settings.distdir = distdir->get<std::string>();
+    const auto ccache = json.find("ccache_dir");
+    if (ccache == json.end() || !(ccache->is_null() || ccache->is_string())) {
+        return std::unexpected("ccache_dir: not a string or null");
+    }
+    if (ccache->is_string()) {
+        settings.ccache_dir = ccache->get<std::string>();
+    }
+    const auto repositories = json.find("repositories");
+    if (repositories == json.end() || !repositories->is_array() ||
+        !std::ranges::all_of(*repositories, &Json::is_string)) {
+        return std::unexpected("repositories: not a list of paths");
+    }
+    settings.repositories = repositories->get<std::vector<std::string>>();
     return settings;
 }
 

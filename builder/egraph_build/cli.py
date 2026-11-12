@@ -342,6 +342,12 @@ def write_emerge_options(args):
         "portage_installed": installation.TYPE == installation.TYPES.SYSTEM,
         "merge_wait": "merge-wait" in settings.features,
         "tmpdir": settings["PORTAGE_TMPDIR"],
+        # What a run in a snapshot shares with the real root.
+        "distdir": settings["DISTDIR"],
+        "ccache_dir": (
+            settings.get("CCACHE_DIR") if "ccache" in settings.features else None
+        ),
+        "repositories": [repo.location for repo in settings.repositories],
     }
     args.output.write_text(json.dumps(written, indent=1, sort_keys=True))
     return EXIT_OK

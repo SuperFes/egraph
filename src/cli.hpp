@@ -6,6 +6,7 @@
 #include "human.hpp"
 #include "job.hpp"
 #include "log.hpp"
+#include "os.hpp"
 #include "query.hpp"
 #include "search.hpp"
 #include "verify.hpp"
@@ -409,12 +410,21 @@ struct Affected {
     std::string request = "-";
 };
 
+// Hidden: runs command confined to the snapshot at root (os::enter), as a run's workers start.
+struct Enter {
+    static constexpr std::string_view name = "enter";
+    std::string root;
+    std::vector<std::string> binds;
+    std::vector<std::string> read_only;
+    std::vector<std::string> command;
+};
+
 using Command =
     std::variant<std::monostate, Deps, Rdeps, Why, Match, UseCommand, Soname, Broken, Search,
                  Versions, ConfigCommand, Blockers, Orphans, Updates, PlanCommand, Update, Install,
                  Exec, Remove, Select, Deselect, Save, Sync, SetsCommand, NoticesCommand, Export,
                  Stats, LogCommand, BuildsCommand, Diff, HistoryCommand, StatusCommand, Rebuild,
-                 Refresh, Watch, Check, Notify, Tui, Shell, Complete, Affected>;
+                 Refresh, Watch, Check, Notify, Tui, Shell, Complete, Affected, Enter>;
 
 // How query results are written: for people (grouped, aligned, perhaps coloured) or as
 // tab-separated lines for scripts. auto picks people on a terminal.
@@ -537,6 +547,9 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
                                                        std::string_view mode,
                                                        const std::filesystem::path& path,
                                                        std::span<const std::string> cps = {});
+
+// The directories an enter command binds, ordered as os::enter mounts them.
+[[nodiscard]] std::vector<os::Bind> binds_of(const Enter& command);
 
 // The egraph-build --worker command line, under the invocation's roots.
 [[nodiscard]] std::vector<std::string> worker_command(const Invocation& invocation);

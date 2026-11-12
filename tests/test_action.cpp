@@ -193,12 +193,17 @@ TEST_CASE("what emerge runs under is read from egraph-build's JSON") {
  "options": ["--jobs", "4"],
  "elog": {"summary": "/var/log/portage/elog/summary.log", "system": "save_summary"},
  "jobserver": "/run/jobserver", "merge_wait": false, "portage_installed": true,
- "tmpdir": "/var/tmp"
+ "tmpdir": "/var/tmp", "distdir": "/var/cache/distfiles", "ccache_dir": "/var/cache/ccache",
+ "repositories": ["/var/db/repos/gentoo", "/var/db/repos/local"]
 })");
     REQUIRE(settings);
     CHECK(settings->defaults == std::vector<std::string>{"--jobs", "4"});
     CHECK(settings->jobserver == "/run/jobserver");
     CHECK(settings->tmpdir == "/var/tmp");
+    CHECK(settings->distdir == "/var/cache/distfiles");
+    CHECK(settings->ccache_dir == "/var/cache/ccache");
+    CHECK(settings->repositories ==
+          std::vector<std::string>{"/var/db/repos/gentoo", "/var/db/repos/local"});
     CHECK_FALSE(settings->merge_wait);
     CHECK(settings->portage_installed);
     CHECK(settings->elog_summary == "/var/log/portage/elog/summary.log");
@@ -206,13 +211,25 @@ TEST_CASE("what emerge runs under is read from egraph-build's JSON") {
     const auto plain =
         egraph::parse_run_settings(R"({"options": [], "elog": {"summary": null, "system": null},
                                        "jobserver": null, "merge_wait": true,
-                                       "portage_installed": false, "tmpdir": "/var/tmp"})");
+                                       "portage_installed": false, "tmpdir": "/var/tmp",
+                                       "distdir": "/d", "ccache_dir": null,
+                                       "repositories": []})");
     REQUIRE(plain);
     CHECK_FALSE(plain->jobserver);
     CHECK(plain->merge_wait);
     CHECK_FALSE(plain->portage_installed);
     CHECK_FALSE(plain->elog_summary);
     CHECK_FALSE(plain->elog_system);
+    CHECK_FALSE(plain->ccache_dir);
+    CHECK(plain->repositories.empty());
+    CHECK_FALSE(egraph::parse_run_settings(
+        R"({"options": [], "elog": {"summary": null, "system": null}, "jobserver": null,
+            "merge_wait": true, "portage_installed": false, "tmpdir": "/var/tmp",
+            "distdir": "/d", "ccache_dir": null, "repositories": [1]})"));
+    CHECK_FALSE(egraph::parse_run_settings(
+        R"({"options": [], "elog": {"summary": null, "system": null}, "jobserver": null,
+            "merge_wait": true, "portage_installed": false, "tmpdir": "/var/tmp",
+            "ccache_dir": null, "repositories": []})"));
     CHECK_FALSE(egraph::parse_run_settings("--jobs\n4\n"));
     CHECK_FALSE(egraph::parse_run_settings(R"({"options": [1], "elog": {}})"));
     CHECK_FALSE(egraph::parse_run_settings(R"({"options": [], "elog": {"summary": 1}})"));

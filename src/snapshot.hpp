@@ -1,6 +1,7 @@
 #pragma once
 
 #include "history.hpp"
+#include "os.hpp"
 
 #include <cstdint>
 #include <expected>
@@ -10,6 +11,10 @@
 #include <string>
 #include <variant>
 #include <vector>
+
+namespace egraph {
+struct RunSettings;
+}
 
 namespace egraph::snapshot {
 
@@ -47,6 +52,20 @@ using Decision = std::variant<Plain, InSnapshot, Refused>;
 // What a run in a snapshot may take on the root's filesystem: the merges' files, written in the
 // snapshot and again as binary packages, by each merge's installed size where known.
 [[nodiscard]] std::uint64_t needed_bytes(std::span<const std::optional<std::uint64_t>> sizes);
+
+// binds normalized and sorted so each directory comes before those inside it, a directory given
+// twice writable if either is.
+[[nodiscard]] std::vector<os::Bind> ordered(std::vector<os::Bind> binds);
+
+// What a worker in a snapshot shares with the real root, ordered: the kernel's filesystems and
+// /run, where builds run and what they fetch or cache; the repositories read-only.
+[[nodiscard]] std::vector<os::Bind> binds(const RunSettings& settings);
+
+// The hidden egraph enter command line that runs argv confined to the snapshot at root.
+[[nodiscard]] std::vector<std::string> enter_command(const std::filesystem::path& egraph,
+                                                     const std::filesystem::path& root,
+                                                     std::span<const os::Bind> binds,
+                                                     std::span<const std::string> argv);
 
 // The commands of the btrfs backend, as argv.
 std::vector<std::string> show_command(const std::filesystem::path& path);

@@ -309,6 +309,18 @@ std::expected<std::vector<std::string>, std::error_code> command_line();
 // environment; returns only why it could not.
 std::error_code exec(const std::filesystem::path& file, const std::vector<std::string>& argv);
 
+// A directory of the root seen at the same path under another, writable unless read_only.
+struct Bind {
+    std::filesystem::path path;
+    bool read_only = false;
+    bool operator==(const Bind&) const = default;
+};
+
+// Moves this process (single-threaded, root) into a mount namespace of its own, binds each of
+// binds under root, and changes its root directory to root; why not, naming the step, else.
+std::expected<void, std::string> enter(const std::filesystem::path& root,
+                                       std::span<const Bind> binds);
+
 // Whether standard output is a terminal.
 bool stdout_is_terminal();
 

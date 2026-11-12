@@ -87,6 +87,12 @@ TEST_CASE("watch, which runs until stopped, runs on its own rather than from the
     CHECK(ran.exit == egraph::Exit::usage);
 }
 
+TEST_CASE("enter, which becomes a run's worker, runs only as exec starts it") {
+    const auto ran = shell("enter /var/tmp/egraph/root -- /bin/true\n");
+    CHECK(ran.err.find("egraph: shell: enter starts a run's worker") != std::string::npos);
+    CHECK(ran.exit == egraph::Exit::usage);
+}
+
 TEST_CASE("notify, which runs until stopped, runs on its own rather than from the shell") {
     const auto ran = shell("notify\n");
     CHECK(ran.err.find("egraph: shell: notify runs on its own") != std::string::npos);

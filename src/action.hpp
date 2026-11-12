@@ -61,6 +61,12 @@ struct RunSettings {
     bool portage_installed = false;
     // PORTAGE_TMPDIR, where builds run.
     std::string tmpdir;
+    // DISTDIR, where fetches go.
+    std::string distdir;
+    // CCACHE_DIR under FEATURES=ccache.
+    std::optional<std::string> ccache_dir;
+    // Each repository's location.
+    std::vector<std::string> repositories;
 };
 
 [[nodiscard]] std::expected<RunSettings, std::string> parse_run_settings(std::string_view text);

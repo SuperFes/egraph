@@ -19,6 +19,7 @@
 #include <poll.h>
 #include <random>
 #include <ranges>
+#include <sched.h>
 #include <span>
 #include <spawn.h>
 #include <sstream>
@@ -27,6 +28,7 @@
 #include <sys/file.h>
 #include <sys/inotify.h>
 #include <sys/ioctl.h>
+#include <sys/mount.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -736,6 +738,44 @@ std::error_code exec(const std::filesystem::path& file, const std::vector<std::s
     pointers.push_back(nullptr);
     ::execv(file.c_str(), pointers.data());
     return {errno, std::generic_category()};
+}
+
+std::expected<void, std::string> enter(const std::filesystem::path& root,
+                                       std::span<const Bind> binds) {
+    // errno read first, before formatting can touch it.
+    const auto failed = [](std::string_view step, const std::filesystem::path& path) {
+        const std::error_code error{errno, std::generic_category()};
+        return std::unexpected(std::format("{} {}: {}", step, path.string(), error.message()));
+    };
+    if (::unshare(CLONE_NEWNS) != 0) {
+        return failed("unsharing the mounts of", "/");
+    }
+    // Nothing mounted here reaches the real root's namespace.
+    if (::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr) != 0) {
+        return failed("making private", "/");
+    }
+    for (const auto& bind : binds) {
+        const auto target = root / bind.path.relative_path();
+        std::error_code made;
+        std::filesystem::create_directories(target, made);
+        if (made) {
+            return std::unexpected(std::format("creating {}: {}", target.string(), made.message()));
+        }
+        if (::mount(bind.path.c_str(), target.c_str(), nullptr, MS_BIND | MS_REC, nullptr) != 0) {
+            return failed("binding", bind.path);
+        }
+        if (bind.read_only && ::mount(nullptr, target.c_str(), nullptr,
+                                      MS_BIND | MS_REMOUNT | MS_RDONLY, nullptr) != 0) {
+            return failed("making read-only", bind.path);
+        }
+    }
+    if (::chroot(root.c_str()) != 0) {
+        return failed("changing root to", root);
+    }
+    if (::chdir("/") != 0) {
+        return failed("changing to", "/");
+    }
+    return {};
 }
 
 bool stdout_is_terminal() {
