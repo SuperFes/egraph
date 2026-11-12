@@ -96,6 +96,14 @@ src_compile() { mark compile; }
 src_install() { mark install; }
 """,
     },
+    # Moves its source directory away as it installs, as app-text/pandoc-bin does.
+    "app-misc/moved-1": {
+        **PLAIN,
+        "MISC_CONTENT": """S="${WORKDIR}/${P}"
+src_unpack() { mkdir -p "${S}"; echo moved > "${S}"/data; }
+src_install() { mv "${S}" "${T}"/moved || die; insinto /usr/share/moved; doins "${T}"/moved/data; }
+""",
+    },
     "app-misc/broken-1": {
         **PLAIN,
         "MISC_CONTENT": 'S="${WORKDIR}"\nsrc_compile() { die "cannot compile"; }\n',
@@ -560,6 +568,22 @@ def test_a_build_takes_its_kept_binary_package_built_alike(machine):
     assert status == 0, stderr
     assert {"phase": "compile"} in events
     assert {"phase": "binpkg"} not in events
+
+
+def test_the_package_phase_runs_alone_as_in_emerge(machine):
+    """Tests not enabled leave no mark that they ran, so a package phase that ran the phases
+    before it again would test after an install that moved the source directory away."""
+    pkgdir = str(machine.tmp_path / "packages")
+    events, status, stderr = machine.worker(
+        request("app-misc/moved-1"), options=["--pkgdir", pkgdir]
+    )
+    assert status == 0, stderr
+    assert events[-3:] == [
+        {"phase": "package"},
+        {"phase": "merge"},
+        {"merged": "app-misc/moved-1"},
+    ]
+    holds(machine, {"usr/share/moved/data": "moved\n"})
 
 
 def test_a_binary_merge_needs_its_package_kept(machine):

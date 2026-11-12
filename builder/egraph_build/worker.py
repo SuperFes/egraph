@@ -447,14 +447,21 @@ class Worker:
                 return self._failed(emit, phase, status, settings)
         if self._pkgdir is not None:
             emit(event(phase="package"))
-            status = portage.doebuild(
-                ebuild,
-                "package",
-                settings=settings,
-                tree="porttree",
-                mydbapi=self._portdb,
-                vartree=self._vartree,
-            )
+            # Alone, as emerge's EbuildBinpkg runs it: doebuild would run the phases before it
+            # again where they left no mark (a test phase not enabled leaves none), after an
+            # install that may have moved the source directory away.
+            settings.features.add("noauto")
+            try:
+                status = portage.doebuild(
+                    ebuild,
+                    "package",
+                    settings=settings,
+                    tree="porttree",
+                    mydbapi=self._portdb,
+                    vartree=self._vartree,
+                )
+            finally:
+                settings.features.discard("noauto")
             if status != os.EX_OK:
                 lock.unlock()
                 return self._failed(emit, "package", status, settings)
