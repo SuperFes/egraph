@@ -151,6 +151,8 @@ struct Updates {
     std::vector<std::string> exclude;
     // Packages a || nothing installed or planned decides takes, as though installed.
     std::vector<std::string> choose;
+    // Whether an update switches a ||'s installed alternative; unset, egraph.conf's.
+    std::optional<Alternatives> alternatives;
     // Where the plan goes as mtimedb's resume entry.
     std::optional<std::filesystem::path> resume_list;
     // Where the plan goes as egraph-build --worker's requests.
@@ -180,6 +182,8 @@ struct PlanCommand {
     std::vector<std::string> exclude;
     // Packages a || nothing installed or planned decides takes, as though installed.
     std::vector<std::string> choose;
+    // Whether an update switches a ||'s installed alternative; unset, egraph.conf's.
+    std::optional<Alternatives> alternatives;
     // Where the plan goes as mtimedb's resume entry.
     std::optional<std::filesystem::path> resume_list;
     // Where the plan goes as egraph-build --worker's requests.

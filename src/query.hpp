@@ -4,6 +4,7 @@
 #include "depclean.hpp"
 #include "evaluated.hpp"
 #include "graph.hpp"
+#include "history.hpp"
 #include "store.hpp"
 
 #include <cstdint>
@@ -134,6 +135,8 @@ struct Targets {
     // Package names a || nothing satisfies takes as though installed: --choose's, and exec's
     // answers.
     std::vector<std::string> chosen = {};
+    // With roots, whether an update taking away a ||'s installed alternative switches it.
+    Alternatives alternatives = Alternatives::upgrade;
 };
 
 // "@set atom", or the atom alone.

@@ -319,6 +319,7 @@ def test_updates_are_emerges(
         *filter(None, [option]),
         *world,
         *(["-D"] if deep else []),
+        *("--alternatives", "keep"),
     ]
     result = egraph(path, "updates", *options, check=False)
     assert result.returncode == (
@@ -340,6 +341,42 @@ def test_updates_are_emerges(
         assert kind == (
             "upgrade" if order > 0 else "downgrade" if order < 0 else "rebuild"
         )
+
+
+def test_upgraded_alternatives_are_emerges_with_the_update_named(
+    scenario, system, dynamic_deps
+):
+    """Where alternatives upgrade changes what -uD @world merges, by taking another alternative
+    of a || rather than hold an update its installed one would lose, the plan is emerge -puD
+    @world's with the packages so updated named too: emerge updates an argument regardless and
+    switches the || itself."""
+    import update
+
+    _, path = system
+    options = [*dynamic_option(dynamic_deps), "--world", "-D"]
+    keep = egraph(path, "updates", *options, "--alternatives", "keep", check=False)
+    upgrade = egraph(
+        path, "updates", *options, "--alternatives", "upgrade", check=False
+    )
+    assert upgrade.returncode == keep.returncode, upgrade.stderr
+    kept, upgraded = merged(keep.stdout), merged(upgrade.stdout)
+    if keep.returncode != 0 or kept == upgraded:
+        return
+    switched = sorted(set(upgraded[0]) - set(kept[0]))
+    assert switched, "upgrade only adds updates"
+    slots = {
+        cpv: scenario.vardb.aux_get(cpv, ["SLOT"])[0].split("/")[0] for cpv in switched
+    }
+    named = [f"{cpv_getkey(cpv)}:{slots[cpv]}" for cpv in switched]
+    expected = update.updates(
+        scenario.trees,
+        scenario.eroot,
+        deep=True,
+        target=["@world", *named],
+        dynamic_deps=dynamic_deps,
+    )
+    assert expected.success
+    assert upgraded == (expected.replaced, expected.rebuilt, expected.new)
 
 
 def masked_rows(output):
@@ -456,7 +493,17 @@ def test_plans_are_emerges(playgrounds, tmp_path, name, mode):
             system.trees, system.eroot, target=[target], **options
         )
         loading, env = loading_sets(system, tmp_path, target)
-        result = egraph(path, *loading, "plan", *flags, target, check=False, env=env)
+        result = egraph(
+            path,
+            *loading,
+            "plan",
+            *flags,
+            "--alternatives",
+            "keep",
+            target,
+            check=False,
+            env=env,
+        )
         if not expected.success and not refuses(expected):
             continue
         if result.returncode == 1 and target in expected.unsatisfied:

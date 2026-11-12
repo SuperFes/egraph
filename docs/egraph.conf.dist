@@ -23,3 +23,9 @@
 # fits; else a plain run) or on (fails where it cannot). exec --snapshot and --no-snapshot
 # decide one run.
 #snapshot = off
+
+# When an update would take away the installed alternative of a dependent's || (a library
+# a -compat package can stand in for): upgrade (take another alternative, holding the update
+# only when none can be pulled in) or keep (the installed one, unless a root atom or another
+# merge needs the update, as emerge -uD @world). --alternatives decides one plan.
+#alternatives = upgrade

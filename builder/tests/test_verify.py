@@ -112,7 +112,13 @@ def test_verified_updates_agree_with_emerge(playgrounds, tmp_path, name, mode):
         target="@world" if "--world" in options else "@installed",
     )
     result = egraph(
-        path, "updates", *options, "--verify", emerge=real_emerge(system, tmp_path)
+        path,
+        "updates",
+        *options,
+        "--alternatives",
+        "keep",
+        "--verify",
+        emerge=real_emerge(system, tmp_path),
     )
     if expected.success:
         assert result.returncode == 0, result.stderr

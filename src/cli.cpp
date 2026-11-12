@@ -176,6 +176,21 @@ CLI::Validator one_of(std::vector<std::pair<std::string, T>> choices, bool ignor
             std::format("{{{}}}", names)};
 }
 
+// --alternatives, over egraph.conf's for one plan.
+template <class C> void add_alternatives(CLI::App* sub, Invocation& invocation) {
+    sub->add_option_function<Alternatives>(
+           "--alternatives",
+           [&invocation](const Alternatives& value) {
+               std::get<C>(invocation.command).alternatives = value;
+           },
+           "When an update takes away a dependent's installed || alternative: upgrade takes "
+           "another, holding the update only when none can be pulled in; keep holds it unless an "
+           "argument or another merge needs it, as emerge -uD @world (default egraph.conf's "
+           "alternatives, upgrade)")
+        ->transform(one_of<Alternatives>(
+            {{"upgrade", Alternatives::upgrade}, {"keep", Alternatives::keep}}));
+}
+
 // --resume-list, filling the path field() returns.
 template <class Field> void add_resume_list(CLI::App* sub, Field field) {
     sub->add_option_function<std::string>(
@@ -237,6 +252,7 @@ template <class C> void add_updates_options(CLI::App* sub, Invocation& invocatio
     }
     if constexpr (std::is_same_v<C, Updates>) {
         add_choose<C>(sub, invocation);
+        add_alternatives<C>(sub, invocation);
         add_resume_list(sub, [updates]() -> auto& { return updates().resume_list; });
         add_requests(sub, [updates]() -> auto& { return updates().requests; });
         sub->add_flag_callback(
@@ -257,6 +273,7 @@ template <class C> void add_plan_options(CLI::App* sub, Invocation& invocation) 
     // emerge carries install's plan out, which knows nothing of these.
     if constexpr (!std::is_same_v<C, Install>) {
         add_choose<C>(sub, invocation);
+        add_alternatives<C>(sub, invocation);
     }
     sub->add_flag_callback(
         "-u,--update", [plan] { plan().update = true; },
@@ -2118,6 +2135,16 @@ std::vector<std::string> exclusion_texts(std::span<const Exclusion> exclusions) 
     return texts;
 }
 
+// The command's --alternatives, else egraph.conf's.
+Alternatives alternatives_of(const std::optional<Alternatives>& given,
+                             const Invocation& invocation) {
+    if (given) {
+        return *given;
+    }
+    const auto settings = read_settings(settings_path(config_root(invocation)));
+    return settings ? settings->alternatives : Settings{}.alternatives;
+}
+
 std::expected<Shown, Exit> show_updates(const Updates& command, Session& session,
                                         const Invocation& invocation, std::ostream& out,
                                         std::ostream& err) {
@@ -2161,6 +2188,7 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
     targets.running_root = running_root(invocation);
     targets.dynamic_deps = invocation.dynamic_deps;
     targets.excluded = excluded_packages(*store, *excluded);
+    targets.alternatives = alternatives_of(command.alternatives, invocation);
     auto chosen = chosen_packages(command.choose, invocation);
     if (!chosen) {
         err << "egraph: updates: " << chosen.error() << '\n';
@@ -2662,6 +2690,7 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
     targets.running_root = running_root(invocation);
     targets.dynamic_deps = invocation.dynamic_deps;
     targets.excluded = excluded_packages(*store, *excluded);
+    targets.alternatives = alternatives_of(command.alternatives, invocation);
     auto chosen = chosen_packages(command.choose, invocation);
     if (!chosen) {
         err << "egraph: " << name << ": " << chosen.error() << '\n';
@@ -3440,18 +3469,23 @@ Exit run_action(std::string_view name, bool oneshot, bool yes, Session& session,
 
 Exit execute(const Update& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
+    // emerge carries the plan out, keeping a ||'s installed alternative as it does.
+    auto planned = command;
+    planned.alternatives = Alternatives::keep;
     return run_action(
         Update::name, true, command.yes, session, invocation, out, err,
-        [&] { return show_updates(command, session, invocation, out, err); },
+        [&] { return show_updates(planned, session, invocation, out, err); },
         [&](const Invocation& again) { return execute(command, session, again, out, err); });
 }
 
 Exit execute(const Install& command, Session& session, const Invocation& invocation,
              std::ostream& out, std::ostream& err) {
+    auto planned = command;
+    planned.alternatives = Alternatives::keep;
     return run_action(
         Install::name, command.oneshot, command.yes, session, invocation, out, err,
         [&] {
-            return show_plan(command, Install::name, session, invocation, out, err, std::nullopt,
+            return show_plan(planned, Install::name, session, invocation, out, err, std::nullopt,
                              BuildOrder::emerge, !command.oneshot);
         },
         [&](const Invocation& again) { return execute(command, session, again, out, err); });
@@ -4328,7 +4362,8 @@ Exit execute(const Tui& tui_command, Session& session, const Invocation& invocat
         refresh = [&invocation, &session] { return background_refresh(invocation, session); };
     }
     return tui::open_and_run(
-        *stores, invocation.dynamic_deps, style(invocation).glyphs,
+        *stores, invocation.dynamic_deps, alternatives_of(std::nullopt, invocation),
+        style(invocation).glyphs,
         {.check = check,
          .rebuild = rebuild,
          .watch = watch,

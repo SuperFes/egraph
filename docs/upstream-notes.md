@@ -102,6 +102,15 @@ is right.
   allows and the jobserver hands tokens for, so steve's job count decides. emerge builds one at a
   time without `--jobs`, jobserver or not. A preference rather than a correction, at the user's
   request (2026-10-08); `exec_jobs` in `test_action.cpp`.
+- Under `-uD @world`, an update that would take away the installed alternative of a dependent's
+  `||` is held by emerge unless a root atom names the package or another merge pulls the update
+  in. egraph's default (`alternatives = upgrade`) takes another alternative instead, as a
+  `-compat` library stands in for the old ABI, and holds the update only when no alternative can
+  be pulled in; `alternatives = keep` (and `update`, `install`, which emerge carries out) plans as
+  emerge. A preference rather than a correction, at the user's request (2026-11-12): openssl 4
+  held back by `|| ( dev-libs/openssl-compat:3 dev-libs/openssl:0/3 )` of binary packages.
+  "alternatives upgrade switches a || rather than hold the update" in `test_plan.cpp`, and
+  `test_upgraded_alternatives_are_emerges_installed` against emerge's `@installed`.
 - `exec --order=longest` and `--order=critical` start, among the builds that may start, the
   longest (or the one leading the longest chain of builds and merges to the plan's end) first,
   by the build history, where emerge starts the first in its merge list; what each waits for,

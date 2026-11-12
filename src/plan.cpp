@@ -1692,9 +1692,12 @@ class Planner {
     // The first alternative of a || under node index that an installed package being replaced
     // matches, and that package, when no argument names it and no other merge pulls its
     // update: emerge's || prefers what is installed, and only an argument or another merge's
-    // dependency updates it regardless.
+    // dependency updates it regardless. None when alternatives upgrade, so the || takes another.
     std::optional<std::pair<std::uint32_t, std::string>>
     installed_alternative(const Tables& tables, std::span<const Node> list, std::size_t index) {
+        if (targets_ref_.get().alternatives == Alternatives::upgrade) {
+            return std::nullopt;
+        }
         for (std::size_t i = index; i < list.size(); ++i) {
             const auto& node = element(list, i);
             if (node.type != NodeType::atom || node.parent == no_parent ||

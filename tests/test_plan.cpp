@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+using egraph::Alternatives;
 using egraph::test::Available;
 using egraph::test::Installed;
 using egraph::test::make_system;
@@ -461,13 +462,37 @@ TEST_CASE("a || keeps its installed alternative unless a root atom names it") {
         {.cpv = "dev-libs/alt-1"},
         {.cpv = "dev-libs/alt-2"},
         {.cpv = "dev-libs/other-1"}};
+    const egraph::Targets keep{.scope = {}, .roots = true, .alternatives = Alternatives::keep};
     CHECK(plan(make_system(installed, available, {"app-misc/either"}), egraph::UseRebuilds::none,
-               {.scope = {}, .roots = true}) ==
+               keep) ==
           std::vector<std::string>{"dev-libs/alt-1 held <- app-misc/either-1 <dev-libs/alt-2"});
     CHECK(plan(make_system(installed, available, {"app-misc/either", "dev-libs/alt"}),
-               egraph::UseRebuilds::none, {.scope = {}, .roots = true}) ==
+               egraph::UseRebuilds::none, keep) ==
           std::vector<std::string>{"dev-libs/alt-1 -> dev-libs/alt-2",
                                    "new dev-libs/other-1 <- app-misc/either-1 dev-libs/other"});
+}
+
+TEST_CASE("alternatives upgrade switches a || rather than hold the update") {
+    const std::vector<Installed> installed{
+        {.cpv = "app-misc/either-1",
+         .deps = {{"RDEPEND", "|| ( <dev-libs/alt-2 dev-libs/other )"}}},
+        {.cpv = "dev-libs/alt-1"}};
+    std::vector<Available> available{
+        {.cpv = "app-misc/either-1",
+         .deps = {{"RDEPEND", "|| ( <dev-libs/alt-2 dev-libs/other )"}}},
+        {.cpv = "dev-libs/alt-1"},
+        {.cpv = "dev-libs/alt-2"},
+        {.cpv = "dev-libs/other-1"}};
+    const egraph::Targets upgrade{.scope = {}, .roots = true};
+    CHECK(plan(make_system(installed, available, {"app-misc/either"}), egraph::UseRebuilds::none,
+               upgrade) ==
+          std::vector<std::string>{"dev-libs/alt-1 -> dev-libs/alt-2",
+                                   "new dev-libs/other-1 <- app-misc/either-1 dev-libs/other"});
+    // With no other alternative to pull in, the update is held after all.
+    available.back().visible = false;
+    CHECK(plan(make_system(installed, available, {"app-misc/either"}), egraph::UseRebuilds::none,
+               upgrade) ==
+          std::vector<std::string>{"dev-libs/alt-1 held <- app-misc/either-1 <dev-libs/alt-2"});
 }
 
 TEST_CASE("a || gives up its installed alternative to a merge that pulls the update") {
@@ -485,7 +510,8 @@ TEST_CASE("a || gives up its installed alternative to a merge that pulls the upd
         {.cpv = "dev-libs/alt-2", .sub_slot = "2"},
         {.cpv = "dev-libs/other-1"}};
     CHECK(plan(make_system(installed, available, {"app-misc/either", "app-misc/tool"}),
-               egraph::UseRebuilds::none, {.scope = {}, .roots = true}) ==
+               egraph::UseRebuilds::none,
+               {.scope = {}, .roots = true, .alternatives = Alternatives::keep}) ==
           std::vector<std::string>{"app-misc/tool-1 -> app-misc/tool-2",
                                    "dev-libs/alt-1 -> dev-libs/alt-2",
                                    "new dev-libs/other-1 <- app-misc/either-1 dev-libs/other"});
@@ -1418,7 +1444,7 @@ TEST_CASE("-u rebuilds what binds to a version it must merge, as plain emerge do
         std::vector<std::string>{"dev-libs/bound-0.3 held <- app-misc/kwin-1 dev-libs/bound:0/3="});
 }
 
-TEST_CASE("-uD keeps an atom's installed version that a || prefers") {
+TEST_CASE("-uD keeps an atom's installed version that a || prefers, with alternatives keep") {
     const auto system =
         make_system({{.cpv = "app-misc/either-1",
                       .deps = {{"RDEPEND", "|| ( <dev-libs/alt-2 dev-libs/other )"}}},
@@ -1429,8 +1455,12 @@ TEST_CASE("-uD keeps an atom's installed version that a || prefers") {
                      {.cpv = "dev-libs/alt-2"},
                      {.cpv = "dev-libs/other-1"}},
                     {"app-misc/either"});
-    CHECK(plan(system, egraph::UseRebuilds::none,
-               request({"dev-libs/alt"}, egraph::Selection::update, true)) ==
+    auto targets = request({"dev-libs/alt"}, egraph::Selection::update, true);
+    CHECK(plan(system, egraph::UseRebuilds::none, targets) ==
+          std::vector<std::string>{"dev-libs/alt-1 -> dev-libs/alt-2",
+                                   "new dev-libs/other-1 <- app-misc/either-1 dev-libs/other"});
+    targets.alternatives = Alternatives::keep;
+    CHECK(plan(system, egraph::UseRebuilds::none, targets) ==
           std::vector<std::string>{"dev-libs/alt-1 held <- app-misc/either-1 <dev-libs/alt-2"});
 }
 

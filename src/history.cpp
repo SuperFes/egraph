@@ -262,6 +262,15 @@ std::expected<Settings, std::string> parse_settings(std::string_view text) {
                 return std::unexpected(std::format(
                     "line {}: snapshot takes off, auto or on, not {}", line_number, value));
             }
+        } else if (key == "alternatives") {
+            if (value == "upgrade") {
+                settings.alternatives = Alternatives::upgrade;
+            } else if (value == "keep") {
+                settings.alternatives = Alternatives::keep;
+            } else {
+                return std::unexpected(std::format(
+                    "line {}: alternatives takes upgrade or keep, not {}", line_number, value));
+            }
         } else {
             return std::unexpected(std::format("line {}: unknown setting {}", line_number, key));
         }
@@ -728,6 +737,12 @@ std::string settings_example() {
 # fits; else a plain run) or on (fails where it cannot). exec --snapshot and --no-snapshot
 # decide one run.
 #snapshot = off
+
+# When an update would take away the installed alternative of a dependent's || (a library
+# a -compat package can stand in for): upgrade (take another alternative, holding the update
+# only when none can be pulled in) or keep (the installed one, unless a root atom or another
+# merge needs the update, as emerge -uD @world). --alternatives decides one plan.
+#alternatives = upgrade
 )",
                        defaults.history_days, defaults.build_keep, defaults.stale_days);
 }

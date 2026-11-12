@@ -654,6 +654,8 @@ class App {
     void handle(const Key& key);
     // Has depclean keep what the exclusions match, as emerge --exclude.
     void exclude(std::vector<Exclusion> exclude);
+    // How the sets' plans weigh a ||'s installed alternative an update takes away.
+    void alternatives(Alternatives alternatives) { alternatives_ = alternatives; }
     [[nodiscard]] bool done() const { return done_; }
 
     // The package list: every installed package whose cpv contains the query.
@@ -1060,6 +1062,7 @@ class App {
     std::optional<Search> search_;
     std::optional<Listing> listing_;
     bool dynamic_deps_ = false;
+    Alternatives alternatives_ = Alternatives::upgrade;
     Update update_;
     Source source_ = Source::opened;
     std::vector<std::string> folded_;
@@ -3058,7 +3061,7 @@ std::optional<std::string> run(S& screen, App& app, const Glyphs& glyph, const S
 // Opens the terminal and runs the interface over the stores, first showing any warnings from
 // opening them, on the notices page where asked, its depclean excluding exclude; errors go to err.
 [[nodiscard]] Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps,
-                                GlyphSet glyphs, const Services& services,
+                                Alternatives alternatives, GlyphSet glyphs, const Services& services,
                                 std::span<const std::string> warnings, bool notices_first,
                                 std::vector<Exclusion> exclude, std::ostream& err);
 

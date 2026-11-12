@@ -25,6 +25,11 @@ enum class PlanWhen : std::uint8_t { refresh, sync, never };
 // run is able, or always (failing where it cannot).
 enum class SnapshotRun : std::uint8_t { off, automatic, on };
 
+// When an update takes away the installed alternative of a dependent's ||: take another
+// alternative, holding the update only when none can be pulled in, or keep the installed one
+// unless an argument or another merge needs the update, as emerge -uD @world does.
+enum class Alternatives : std::uint8_t { upgrade, keep };
+
 // egraph's settings, from ${PORTAGE_CONFIGROOT}/etc/egraph/egraph.conf.
 struct Settings {
     // How many days of generations to keep; 0 keeps none.
@@ -38,6 +43,7 @@ struct Settings {
     // empty, one found.
     std::string terminal{};
     SnapshotRun snapshot = SnapshotRun::off;
+    Alternatives alternatives = Alternatives::upgrade;
 };
 
 // "key = value" lines, blank lines and "#" comments skipped. An error names the line of an

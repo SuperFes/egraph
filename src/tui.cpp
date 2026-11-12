@@ -880,7 +880,7 @@ ScopePlan scoped(const Scope& scope, Plan plan, const Store& store, const Evalua
 // and what the set reaches in scope, the set's atoms emerge's arguments.
 ScopePlan plan_set(const Scope& scope, const Store& store, const Evaluated& evaluated,
                    const Graph& graph, const std::vector<Masking>& masking, bool dynamic_deps,
-                   const std::shared_ptr<const Stores>& untried,
+                   Alternatives alternatives, const std::shared_ptr<const Stores>& untried,
                    const std::vector<std::uint32_t>& reinstall = {}, const Sets& given = {}) {
     // With lines tried, what they change against the plan made the same way without them (and
     // without the rebuilds they ask for).
@@ -929,6 +929,7 @@ ScopePlan plan_set(const Scope& scope, const Store& store, const Evaluated& eval
     }
     targets.request = request->arguments;
     targets.dynamic_deps = dynamic_deps;
+    targets.alternatives = alternatives;
     targets.reinstall = reinstall;
     auto plan = plan_updates(store, evaluated, shown_rebuilds, targets);
     auto changes = tried(plan, targets);
@@ -1094,7 +1095,7 @@ void App::index() {
     // tried, planned twice.
     if (has_evaluated() && !untried_) {
         auto installed = plan_set(Scope::installed(), store, evaluated(), graph, masking_,
-                                  dynamic_deps_, nullptr);
+                                  dynamic_deps_, alternatives_, nullptr);
         installed.generation = generation_;
         plans_.front() = std::move(installed);
     }
@@ -1560,13 +1561,14 @@ Job<ScopePlan> App::start_scope_plan() {
     auto made =
         std::async(std::launch::async, [scope = scope_, loaded = owned_, store = store_,
                                         evaluated = evaluated_, graph = graph_, masking = masking_,
-                                        dynamic_deps = dynamic_deps_, generation = generation_,
+                                        dynamic_deps = dynamic_deps_,
+                                        alternatives = alternatives_, generation = generation_,
                                         untried = untried_, reinstall = reinstalled(),
                                         given = std::move(given), failed = std::move(failed)] {
             auto plan = failed
                             ? scoped(scope, {}, store.get(), evaluated.get(), graph.get(), {}, {})
                             : plan_set(scope, store.get(), evaluated.get(), graph.get(), masking,
-                                       dynamic_deps, untried, reinstall, given);
+                                       dynamic_deps, alternatives, untried, reinstall, given);
             if (failed) {
                 plan.error = failed;
             }
@@ -4277,9 +4279,10 @@ DriftSign drift_sign(char sign) {
     }
 }
 
-Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps, GlyphSet glyphs,
-                  const Services& services, std::span<const std::string> warnings,
-                  bool notices_first, std::vector<Exclusion> exclude, std::ostream& err) {
+Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps,
+                  Alternatives alternatives, GlyphSet glyphs, const Services& services,
+                  std::span<const std::string> warnings, bool notices_first,
+                  std::vector<Exclusion> exclude, std::ostream& err) {
 #if EGRAPH_HAVE_TUI
     auto screen = Screen::open();
     if (!screen) {
@@ -4287,6 +4290,7 @@ Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps, Glyph
         return Exit::failure;
     }
     App app{std::move(stores), dynamic_deps, services.rebuild ? Update::save : Update::preview};
+    app.alternatives(alternatives);
     if (!exclude.empty()) {
         app.exclude(std::move(exclude));
     }
@@ -4304,6 +4308,7 @@ Exit open_and_run(std::shared_ptr<const Stores> stores, bool dynamic_deps, Glyph
 #else
     (void)stores;
     (void)dynamic_deps;
+    (void)alternatives;
     (void)glyphs;
     (void)services;
     (void)warnings;

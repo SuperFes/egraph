@@ -50,6 +50,15 @@ TEST_CASE("the plan setting takes refresh, sync or never, refresh by default") {
           "line 1: plan takes refresh, sync or never, not always");
 }
 
+TEST_CASE("the alternatives setting takes upgrade or keep, upgrade by default") {
+    using egraph::Alternatives;
+    CHECK(egraph::parse_settings("")->alternatives == Alternatives::upgrade);
+    CHECK(egraph::parse_settings("alternatives = keep\n")->alternatives == Alternatives::keep);
+    CHECK(egraph::parse_settings("alternatives=upgrade")->alternatives == Alternatives::upgrade);
+    CHECK(egraph::parse_settings("alternatives = newest").error() ==
+          "line 1: alternatives takes upgrade or keep, not newest");
+}
+
 TEST_CASE("a plan's counts") {
     egraph::Plan plan;
     plan.merges = {merge(0), merge(1), merge(2, egraph::UpdateKind::downgrade),

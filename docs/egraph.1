@@ -640,6 +640,19 @@ several to a value; emerge knows nothing of it, so
 .B \-\-verify
 lists the difference.
 .TP
+.BR \-\-alternatives " " upgrade | keep
+When an update would take away the installed alternative of a dependent's || (as a library
+that a \-compat package can stand in for): upgrade takes another alternative, holding the
+update only when none can be pulled in; keep holds it unless a root atom names the package or
+another merge's dependency needs the update, as
+.B emerge \-uD @world
+does. Unset, the
+.B alternatives
+setting's, upgrade by default. Under @installed every package is an argument, so both
+switch alternatives. Where upgrade differs from emerge,
+.B \-\-verify
+lists the difference.
+.TP
 .B \-\-held
 Also the updates that installed dependents hold back, which of their atoms do, and the commands
 that would get past them.
@@ -811,6 +824,10 @@ As for
 .BR updates .
 .TP
 .BI \-\-choose " package"
+As for
+.BR updates .
+.TP
+.BR \-\-alternatives " " upgrade | keep
 As for
 .BR updates .
 .TP
@@ -1084,6 +1101,10 @@ As for
 .BR updates .
 .TP
 .BI \-\-choose " package"
+As for
+.BR updates .
+.TP
+.BR \-\-alternatives " " upgrade | keep
 As for
 .BR updates .
 .TP
@@ -2091,6 +2112,15 @@ Whether
 builds in a snapshot of the root and merges into the real one only when every package built:
 never (the default), where the root is a btrfs subvolume, the run is root and the space fits
 (else a plain run, said so), or always (failing where it cannot).
+.TP
+.BR alternatives " " upgrade | keep
+How plans weigh an update that would take away a dependent's installed || alternative, as
+.B updates \-\-alternatives
+describes: upgrade (the default) or keep.
+.B update
+and
+.B install
+always keep, as emerge carries their plans out.
 .RE
 .TP
 .I ${EROOT}/var/lib/egraph/builds.jsonl
