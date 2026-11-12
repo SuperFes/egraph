@@ -18,6 +18,8 @@ target-version = ["py39"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# A test still running after this long dumps every thread's stack, naming what it waits on.
+faulthandler_timeout = 300
 markers = [
     "system: reads the live /var/db/pkg; opt in with EGRAPH_SYSTEM_TESTS=1",
 ]
