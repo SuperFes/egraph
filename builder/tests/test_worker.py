@@ -520,6 +520,48 @@ def test_a_kept_binary_package_merges_as_emerge_K(machine):
     holds(machine, {"etc/._cfg0000_files.conf": "2\n"})
 
 
+def test_a_build_takes_its_kept_binary_package_built_alike(machine):
+    """A run that stopped short kept the package: building it again takes that, and its merge
+    leaves what emerge -K leaves; with other USE flags it builds from source."""
+    pkgdir = str(machine.tmp_path / "packages")
+    machine.save()
+    events, status, stderr = machine.worker(
+        request("app-misc/files-1"), options=["--pkgdir", pkgdir]
+    )
+    assert status == 0, stderr
+    machine.restore()
+    machine.environment["PKGDIR"] = pkgdir
+    machine.emerge("-1K =app-misc/files-1")
+    emerged = machine.state()
+    machine.restore()
+    events, status, stderr = machine.worker(
+        build("app-misc/files-1"),
+        merge("app-misc/files-1"),
+        options=["--pkgdir", pkgdir],
+    )
+    assert status == 0, stderr
+    assert events == [
+        {"phase": "binpkg"},
+        {"built": "app-misc/files-1"},
+        {"phase": "setup"},
+        {"phase": "merge"},
+        {"merged": "app-misc/files-1"},
+    ]
+    worked = machine.state()
+    assert worked == emerged, differences(emerged, worked)
+    machine.restore()
+    use = machine.path("etc", "portage", "package.use")
+    os.makedirs(use, exist_ok=True)
+    with open(os.path.join(use, "extra"), "w") as f:
+        f.write("app-misc/files extra\n")
+    events, status, stderr = machine.worker(
+        request("app-misc/files-1"), options=["--pkgdir", pkgdir]
+    )
+    assert status == 0, stderr
+    assert {"phase": "compile"} in events
+    assert {"phase": "binpkg"} not in events
+
+
 def test_a_binary_merge_needs_its_package_kept(machine):
     pkgdir = str(machine.tmp_path / "packages")
     events, status, _ = machine.worker(binpkg("app-misc/files-1"))

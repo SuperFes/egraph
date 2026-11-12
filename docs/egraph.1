@@ -1196,7 +1196,9 @@ installed still, are left out, where a target would be merged again otherwise. T
 .B \-\-order
 and
 .B \-\-snapshot
-given now replace the last run's; targets and the plan's options cannot be given. Nothing is
+given now replace the last run's; targets and the plan's options cannot be given. In a snapshot,
+a package whose binary package the last run kept, built with the same USE flags, is merged from
+it rather than built again. Nothing is
 done when the last run finished.
 .TP
 .B \-\-snapshot

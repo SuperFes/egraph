@@ -13,7 +13,8 @@ Requests come one per line on stdin, as JSON objects:
 - {"uninstall": cpv} uninstalls the installed package, with "clean_world": true dropping the
   world file's atoms that then match nothing installed.
 With --pkgdir, each build also runs the package phase into that directory, as FEATURES=buildpkg
-does. For each request, events go to stdout one per line: {"phase": name} as each phase starts (a
+does, and a build whose binary package is kept there already, from the same repository with the
+same USE flags, takes it instead ("binpkg" its only phase), its merge then a binary merge. For each request, events go to stdout one per line: {"phase": name} as each phase starts (a
 merge's build phases, "package", then "merge"; a binary merge's "setup" and "merge"; an
 uninstall's "unmerge"), then {"built": cpv}, {"merged": cpv} or
 {"uninstalled": cpv}, or {"failed": phase, "status": n, "log": path} when a phase fails, or
@@ -226,12 +227,13 @@ class _BuildDirLock:
 
 
 class _Built(NamedTuple):
-    """A package this worker built, waiting for its merge with its build directory locked."""
+    """A package this worker built, waiting for its merge with its build directory locked; or,
+    without an ebuild, one whose binary package was kept already."""
 
     cpv: str
-    ebuild: str
+    ebuild: Optional[str]
     settings: object
-    lock: _BuildDirLock
+    lock: Optional[_BuildDirLock]
 
 
 def _edit_world(eroot, edit):
@@ -419,6 +421,12 @@ class Worker:
         except ValueError as e:
             emit(event(error=str(e)))
             return False
+        if self._kept(request, settings):
+            emit(event(phase="binpkg"))
+            self._built[request.cpv] = _Built(request.cpv, None, settings, None)
+            if announce:
+                emit(event(built=request.cpv))
+            return True
         lock = _BuildDirLock(settings)
         lock.lock()
         emit(event(environment=environment(settings)))
@@ -479,6 +487,10 @@ class Worker:
             emit(event(error=str(e)))
             return False
         del self._built[request.cpv]
+        if built.ebuild is None:
+            return self.merge_binary(
+                MergeBinary(request.cpv, request.blockers, request.world), emit
+            )
         settings = built.settings
         emit(event(phase="merge"))
         mtimedb = self._mtimedb()
@@ -505,6 +517,21 @@ class Worker:
             _edit_world(self._eroot, lambda world: world.add(request.world))
         emit(event(merged=request.cpv))
         return True
+
+    def _kept(self, request, settings):
+        """Whether the package directory holds the request's binary package already, built
+        from its repository with the USE flags it builds with now, as a run that stopped short
+        left it."""
+        if self._pkgdir is None:
+            return False
+        bintree = self._bintree
+        bintree.populate()
+        if not bintree.dbapi.cpv_exists(request.cpv):
+            return False
+        use, repo = bintree.dbapi.aux_get(request.cpv, ["USE", "repository"])
+        return repo == request.repo and set(use.split()) == set(
+            settings["PORTAGE_USE"].split()
+        )
 
     def merge_binary(self, request, emit):
         """Merges the binary package of the request's cpv kept in the package directory, as

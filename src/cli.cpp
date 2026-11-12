@@ -3689,6 +3689,8 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
     }
     BuildRecorder builds{std::string{Exec::name}, run, built,
                          installed_toolchain(shown.store.get()), jobs};
+    // The steps whose kept binary package stood in for a build, which records none.
+    std::set<std::size_t> reused;
     // By step, the worker building it, measured from /proc and its leaf at its events and
     // sampled each second while it builds.
     std::map<std::size_t, std::int64_t> building;
@@ -3811,6 +3813,9 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
             say(step, event);
             if (event.kind == WorkerEvent::Kind::phase) {
                 observer.phase(step, event.text);
+                if (event.text == "binpkg") {
+                    reused.insert(step);
+                }
             }
             if (event.kind == WorkerEvent::Kind::failed || event.kind == WorkerEvent::Kind::error) {
                 state.failed.push_back(
@@ -3866,7 +3871,9 @@ std::expected<int, std::string> run_pool(const Invocation& invocation, const Run
                     confined ? confined->paths.snapshot / "var/db/pkg" : vdb_of(shown.store.get()),
                     names.at(step));
             }
-            keep_build(kept);
+            if (!reused.contains(step)) {
+                keep_build(kept);
+            }
             if (what == Traced::merged) {
                 done.push_back(step);
             }
@@ -4021,18 +4028,20 @@ std::expected<void, std::string> replay(const Invocation& invocation, const RunS
     return {};
 }
 
-// The steps run in a snapshot of the root, keeping each build's binary package, then once every
-// step is done (or under --keep-going, those that were) merged into the root itself in plan
-// order; the snapshot is deleted either way.
-std::expected<int, std::string> run_in_snapshot(const Invocation& invocation,
-                                                const RunSettings& settings, const Exec& command,
-                                                const Shown& shown, StepRequests& requests,
-                                                const std::vector<Step>& steps,
-                                                const std::vector<std::string>& names,
-                                                RunState& state, bool differs, std::ostream& out) {
+// The steps run in a snapshot of the root, keeping each build's binary package (resuming, taking
+// those the last run kept), then once every step is done (or under --keep-going, those that
+// were) merged into the root itself in plan order; the snapshot is deleted either way.
+std::expected<int, std::string>
+run_in_snapshot(const Invocation& invocation, const RunSettings& settings, const Exec& command,
+                const Shown& shown, StepRequests& requests, const std::vector<Step>& steps,
+                const std::vector<std::string>& names, RunState& state, bool differs, bool resuming,
+                std::ostream& out) {
     const auto paths = snapshot::run_paths(shown.store.get().meta.eroot, os::process_id());
     std::error_code error;
-    std::filesystem::remove_all(paths.packages, error);
+    // Resumed, the packages the last run kept build nothing twice.
+    if (!resuming) {
+        std::filesystem::remove_all(paths.packages, error);
+    }
     std::filesystem::create_directories(paths.packages, error);
     if (!error) {
         std::filesystem::create_directories(paths.snapshot.parent_path(), error);
@@ -4109,9 +4118,12 @@ snapshot::Decision snapshot_decision(SnapshotRun setting, const Exec& command, c
                              .needed = snapshot::needed_bytes(sizes)});
 }
 
-// Carries out command, a run resumed from one that merged the cpvs merged when it has any.
-Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Session& session,
-               const Invocation& invocation, std::ostream& out, std::ostream& err) {
+// Carries out command; resumed, the last run again without the cpvs it merged, the binary
+// packages it kept taken.
+Exit carry_out(const Exec& command, const std::optional<std::vector<std::string>>& resumed,
+               Session& session, const Invocation& invocation, std::ostream& out,
+               std::ostream& err) {
+    const auto merged = resumed.value_or(std::vector<std::string>{});
     return act_on_plan(
         Exec::name, command.yes, session, invocation, out, err, Carrier::egraph,
         [&] {
@@ -4119,7 +4131,7 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
                              order_of(command), !command.oneshot && !command.resume);
         },
         [&](const Invocation& again) {
-            return carry_out(command, merged, session, again, out, err);
+            return carry_out(command, resumed, session, again, out, err);
         },
         [&](const Shown& shown, bool differs) {
             const auto& [plan, request, store, evaluated, arguments, favorites] = shown;
@@ -4178,7 +4190,8 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
                     RunState state{.arguments = exec_arguments(command), .merged = merged};
                     if (std::holds_alternative<snapshot::InSnapshot>(decision)) {
                         return run_in_snapshot(invocation, settings, command, shown, requests,
-                                               steps, names, state, differs, out);
+                                               steps, names, state, differs, resumed.has_value(),
+                                               out);
                     }
                     std::vector<std::size_t> done;
                     return run_pool(invocation, settings, command, shown, requests, steps, names,
@@ -4191,7 +4204,7 @@ Exit carry_out(const Exec& command, const std::vector<std::string>& merged, Sess
 Exit execute(const Exec& command, Session& session, const Invocation& invocation, std::ostream& out,
              std::ostream& err) {
     if (!command.resume) {
-        return carry_out(command, {}, session, invocation, out, err);
+        return carry_out(command, std::nullopt, session, invocation, out, err);
     }
     const auto stores = session.stores();
     if (!stores) {

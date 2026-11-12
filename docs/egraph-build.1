@@ -221,7 +221,10 @@ keep each build's binary package in
 .IR dir ,
 as FEATURES=buildpkg keeps it in PKGDIR, and merge one kept there on a
 .B binpkg
-request.
+request. A build whose binary package is there already, from the same repository with the same
+USE flags, takes it instead of building
+.RB ( binpkg
+its only phase), its merge then a binary merge.
 .TP
 .BI \-\-cgroup " dir"
 With

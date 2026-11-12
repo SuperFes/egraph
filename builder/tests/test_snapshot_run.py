@@ -15,7 +15,7 @@ import pytest
 from test_actions import EGRAPH, System
 from test_build import age
 from test_enter import can_enter
-from test_worker import EBUILDS, Machine, differences
+from test_worker import EBUILDS, INSTALL, PLAIN, Machine, differences
 
 BASE = os.environ.get("EGRAPH_BTRFS_TMPDIR", "/var/tmp")
 
@@ -55,18 +55,43 @@ def as_subvolume(path):
     os.rename(made, path)
 
 
-@pytest.fixture
-def machines(gnupg_home, tmp_path, monkeypatch):
+def over(ebuilds, tmp_path, monkeypatch, base):
+    """A playground with ebuilds in a subvolume under base, as an egraph System and a Machine."""
     from portage.tests.resolver.ResolverPlayground import ResolverPlayground
 
-    base = tempfile.mkdtemp(dir=BASE, prefix="egraph-snapshot-")
     monkeypatch.setattr(tempfile, "tempdir", base)
-    playground = ResolverPlayground(ebuilds=EBUILDS)
+    playground = ResolverPlayground(ebuilds=ebuilds)
     monkeypatch.setattr(tempfile, "tempdir", None)
     as_subvolume(playground.eprefix)
-    yield System(playground, tmp_path), Machine(playground, tmp_path)
-    playground.cleanup()
-    shutil.rmtree(base, ignore_errors=True)
+    try:
+        yield System(playground, tmp_path), Machine(playground, tmp_path)
+    finally:
+        playground.cleanup()
+        shutil.rmtree(base, ignore_errors=True)
+
+
+@pytest.fixture
+def machines(gnupg_home, tmp_path, monkeypatch):
+    base = tempfile.mkdtemp(dir=BASE, prefix="egraph-snapshot-")
+    yield from over(EBUILDS, tmp_path, monkeypatch, base)
+
+
+@pytest.fixture
+def flaky(gnupg_home, tmp_path, monkeypatch):
+    """The worker's ebuilds and one needing lib that fails to build while a marker, outside the
+    snapshot, is there: the System, the Machine and the marker."""
+    base = tempfile.mkdtemp(dir=BASE, prefix="egraph-snapshot-")
+    marker = os.path.join(base, "fail")
+    ebuilds = dict(EBUILDS)
+    ebuilds["app-misc/flaky-1"] = {
+        **PLAIN,
+        "DEPEND": "app-misc/lib",
+        "RDEPEND": "app-misc/lib",
+        "MISC_CONTENT": INSTALL
+        + f'src_compile() {{ [[ -e {marker} ]] && die "marked to fail"; }}\n',
+    }
+    for system, machine in over(ebuilds, tmp_path, monkeypatch, base):
+        yield system, machine, marker
 
 
 def put_back(machine):
@@ -151,3 +176,24 @@ def test_a_failed_run_in_a_snapshot_leaves_the_root_as_it_was(machines):
     after = machine.state()
     assert after == before, differences(before, after)
     assert leftovers(machine) == []
+
+
+def test_a_resumed_run_in_a_snapshot_takes_what_the_last_one_built(flaky):
+    system, machine, marker = flaky
+    open(marker, "w").close()
+    ran = system.egraph("exec", "--yes", "--snapshot", "app-misc/flaky")
+    assert ran.returncode != 0
+    assert "app-misc/flaky-1: compile failed" in ran.stderr
+    assert not machine.installed("app-misc/lib-1")
+    kept = machine.path("var/lib/egraph/packages/app-misc")
+    assert glob.glob(os.path.join(kept, "**", "lib-1*"), recursive=True)
+    os.unlink(marker)
+    age(system.playground.eroot)
+    ran = system.egraph("exec", "--yes", "--resume")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert "app-misc/lib-1\tbinpkg" in ran.stdout
+    assert "app-misc/flaky-1\tcompile" in ran.stdout
+    assert machine.installed("app-misc/lib-1")
+    assert machine.installed("app-misc/flaky-1")
+    assert leftovers(machine) == []
+    assert not os.path.exists(machine.path("var/lib/egraph/packages"))
