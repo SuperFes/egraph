@@ -285,12 +285,14 @@ struct Action {
     Scope scope = Scope::installed();
     // For a removal, as remove --with-bdeps.
     bool build_deps = true;
+    // For a merge, the packages taken of ||s order alone decides, as exec --choose.
+    std::vector<std::string> chosen{};
     bool operator==(const Action&) const = default;
 };
 
 // The command carrying the action out, without the program and --yes: install as exec, update as
 // exec --oneshot -u -N (every update as -D and the scope's set), rebuild as exec --oneshot, remove
-// as remove, sync as sync.
+// as remove, sync as sync; a merge's chosen packages as --choose.
 [[nodiscard]] std::vector<std::string> action_arguments(const Action& action);
 
 // Whether the action's command shows what it would do before doing it: a sync does not.
@@ -310,6 +312,16 @@ struct Preview {
     bool ready = false;
     std::string out{};
     std::string err{};
+    // The ||s its plan decided by order alone.
+    std::vector<OpenChoice> choices{};
+};
+
+// A || the action to confirm decided by order alone, and the alternative it takes: the first,
+// as emerge takes it, until a digit turns it to the next.
+struct Turned {
+    OpenChoice choice;
+    std::size_t taken = 0;
+    bool operator==(const Turned&) const = default;
 };
 using Previewer = std::function<Preview(const Action&)>;
 
@@ -888,6 +900,8 @@ class App {
     [[nodiscard]] const std::vector<std::string>& picked() const { return picked_; }
     // An action waiting for run() to preview it, for a dialog to confirm.
     [[nodiscard]] const std::optional<Action>& preview_requested() const { return previewing_; }
+    // The ||s the action to confirm decided by order alone, each digit turning one.
+    [[nodiscard]] const std::vector<Turned>& choices() const { return choices_; }
     void finish_preview(const Preview& preview);
     // The confirmed action, which run() starts and polls to its end.
     [[nodiscard]] const std::optional<Action>& run_requested() const { return running_; }
@@ -1118,6 +1132,7 @@ class App {
     std::optional<Action> previewing_;
     // The action the dialog asks to run; while a run goes, an empty one asks to quit.
     std::optional<Action> confirming_;
+    std::vector<Turned> choices_;
     std::optional<Action> running_;
     std::size_t dialog_height_ = 1;
     std::optional<std::string> prompt_;

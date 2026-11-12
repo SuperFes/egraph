@@ -189,6 +189,18 @@ struct Plan {
     }
 };
 
+// A || a plan decided by order alone: the package whose dependency it is, by cpv, and the
+// alternatives that could be pulled in, the plan's (emerge's) first.
+struct OpenChoice {
+    std::string by;
+    std::vector<std::string> alternatives;
+    bool operator==(const OpenChoice&) const = default;
+};
+
+// The plan's merges with Merge::alternatives, in their order, plan made against evaluated.
+[[nodiscard]] std::vector<OpenChoice> open_choices(const Store& store, const Evaluated& evaluated,
+                                                   const Plan& plan);
+
 // For a merge new in its slot, the installed packages of its cp, in their other slots, by
 // version: emerge's NS.
 [[nodiscard]] std::vector<std::uint32_t> other_slots(const Store& store, const Evaluated& evaluated,

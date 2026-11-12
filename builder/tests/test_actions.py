@@ -346,6 +346,51 @@ def test_a_plan_emerge_would_make_otherwise_is_merged_on_yes(system):
     assert starts[-1]["differs"] == 1
 
 
+# A || nothing installed decides, both alternatives visible.
+CHOOSING = {
+    "app-misc/needs-1": {
+        "EAPI": "8",
+        "KEYWORDS": "x86",
+        "RDEPEND": "|| ( app-misc/b app-misc/c )",
+    }
+}
+
+
+@pytest.mark.parametrize("answer", ["", "2"])
+def test_exec_asks_which_alternative_order_alone_decided(system, answer):
+    """The first is emerge's and the default; another plans again, which emerge lists
+    otherwise."""
+    machine = system(ebuilds=CHOOSING)
+    env = dict(os.environ, EGRAPH_STRICT="1")
+    status, printed = on_terminal(
+        machine.command("exec", "--oneshot", "app-misc/needs"),
+        [answer, "y"],
+        env,
+        questions=(b"[y/N]", b"? [1]"),
+    )
+    assert "app-misc/needs-1 needs one of these" in printed
+    assert "  1) app-misc/b  (as emerge takes it)\n  2) app-misc/c\n" in printed
+    assert status == 0, printed
+    taken, passed = (
+        ("app-misc/c-1", "app-misc/b-1") if answer else ("app-misc/b-1", "app-misc/c-1")
+    )
+    assert machine.installed(taken), printed
+    assert not machine.installed(passed), printed
+    assert ("Planning again with the alternatives chosen." in printed) == bool(answer)
+    assert ("emerge would merge otherwise" in printed) == bool(answer)
+
+
+def test_exec_takes_the_alternative_chosen_without_asking(system):
+    machine = system(ebuilds=CHOOSING)
+    result = machine.egraph(
+        "exec", "--yes", "--oneshot", "--choose", "app-misc/c", "app-misc/needs"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "needs one of these" not in result.stdout
+    assert machine.installed("app-misc/c-1")
+    assert not machine.installed("app-misc/b-1")
+
+
 def test_an_exec_plan_emerge_would_make_otherwise_is_merged_on_yes(system):
     machine = system(pretend="exit 0")
     result = machine.egraph("exec", "--yes", "app-misc/a")

@@ -3253,6 +3253,10 @@ TEST_CASE("an action's command: exec for merges, remove for removals") {
           Words{"exec", "--oneshot", "-u", "-N", "a/b:0", "c/d:2"});
     CHECK(egraph::tui::action_arguments({.kind = Action::Kind::update}) ==
           Words{"exec", "--oneshot", "-u", "-N", "-D", "@installed"});
+    CHECK(egraph::tui::action_arguments({.kind = Action::Kind::install,
+                                         .targets = {"a/b"},
+                                         .chosen = {"dev-lang/ybin", "dev-lang/tools"}}) ==
+          Words{"exec", "--choose", "dev-lang/ybin", "--choose", "dev-lang/tools", "a/b"});
     CHECK(egraph::tui::action_arguments({.kind = Action::Kind::remove, .targets = {"=a/b-1"}}) ==
           Words{"remove", "=a/b-1"});
     CHECK(egraph::tui::action_arguments(
@@ -3399,6 +3403,47 @@ TEST_CASE("space picks packages in the list, and U updates them, or every update
     app.handle(character(U'U'));
     CHECK(*app.preview_requested() ==
           Action{.kind = Action::Kind::update, .targets = {}, .build_deps = true});
+}
+
+TEST_CASE("a digit turns a || order alone decided to its next alternative, previewed again") {
+    egraph::tui::App app{both(), true};
+    app.handle(character(U'U'));
+    const egraph::OpenChoice choice{
+        .by = "x11-terms/fresh-2",
+        .alternatives = {"dev-lang/y", "( dev-lang/ybin dev-lang/tools )"}};
+    app.finish_preview({.ready = true, .out = "the plan\n", .err = "", .choices = {choice}});
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->lines ==
+          std::vector<std::string>{
+              "the plan", "",
+              "Of each, nothing installed decides which to take; its digit takes the next:",
+              "  1  x11-terms/fresh-2  [dev-lang/y]  ( dev-lang/ybin dev-lang/tools )"});
+    CHECK(app.dialog()->closing == " y yes  n no  1 turn ");
+    // A digit no choice has leaves the question up.
+    app.handle(character(U'2'));
+    CHECK(app.dialog().has_value());
+    CHECK_FALSE(app.preview_requested().has_value());
+
+    app.handle(character(U'1'));
+    CHECK_FALSE(app.dialog().has_value());
+    REQUIRE(app.preview_requested().has_value());
+    CHECK(app.preview_requested()->chosen ==
+          std::vector<std::string>{"dev-lang/ybin", "dev-lang/tools"});
+    // Chosen, the plan lists it no more, and it stays turned.
+    app.finish_preview({.ready = true, .out = "another plan\n", .err = ""});
+    REQUIRE(app.dialog().has_value());
+    CHECK(app.dialog()->lines.back() ==
+          "  1  x11-terms/fresh-2  dev-lang/y  [( dev-lang/ybin dev-lang/tools )]");
+
+    // Turned past the last, it is emerge's again.
+    app.handle(character(U'1'));
+    REQUIRE(app.preview_requested().has_value());
+    CHECK(app.preview_requested()->chosen.empty());
+    app.finish_preview({.ready = true, .out = "the plan\n", .err = "", .choices = {choice}});
+    app.handle(character(U'y'));
+    REQUIRE(app.run_requested().has_value());
+    CHECK(app.run_requested()->chosen.empty());
+    CHECK(app.choices().empty());
 }
 
 TEST_CASE("a preview with nothing to do, or that cannot run, only says so") {

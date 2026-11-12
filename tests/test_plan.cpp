@@ -235,6 +235,13 @@ TEST_CASE("a || nothing installed decides notes the alternatives that could be p
                                egraph::HeldLines::none, false, deep)
               .back() == "dev-lang/z-0.17.1\tchoice\tdev-lang/z:0.17\t( dev-lang/zbin:0.17 "
                          "virtual/zig )");
+    // So does a package chosen.
+    auto chosen = deep;
+    chosen.chosen = {"dev-lang/zbin"};
+    CHECK(plan(system, egraph::UseRebuilds::none, chosen) ==
+          std::vector<std::string>{"x11-terms/gt-1 -> x11-terms/gt-2",
+                                   "new dev-lang/zbin-0.17.1 <- x11-terms/gt-2 dev-lang/zbin:0.17",
+                                   "new virtual/zig-1 <- x11-terms/gt-2 virtual/zig"});
     // A package installed in another slot, beside a virtual, decides it.
     CHECK(alternatives(with(false, true)) == std::vector<std::vector<std::string>>{{}, {}, {}});
     CHECK(plan(with(false, true), egraph::UseRebuilds::none, deep).at(1) ==

@@ -888,3 +888,56 @@ def test_tui_removes_installs_and_shows_a_failed_build(merges, tmp_path):
         wait_for(socket, "EXIT=0")
     finally:
         tmux(socket, "kill-server")
+
+
+@pytest.fixture
+def choosing(gnupg_home, tmp_path):
+    """The worker's ebuilds, with a || nothing installed decides."""
+    from test_exec_run import over
+    from test_worker import EBUILDS, PLAIN
+
+    either = {**PLAIN, "RDEPEND": "|| ( app-misc/lib app-misc/old )"}
+    yield from over({**EBUILDS, "app-misc/either-1": either}, tmp_path)
+
+
+def test_tui_turns_a_choice_and_merges_the_alternative_taken(choosing, tmp_path):
+    """The confirm dialog lists the || order alone decided; its digit takes the next
+    alternative, previewed again, and the run merges it."""
+    skip_without_tui()
+    system, machine = choosing
+    # depclean refuses to run with @world empty.
+    machine.emerge("=app-misc/files-1")
+    age(system.playground.eroot)
+
+    socket = f"egraph-test-{os.getpid()}"
+    command = shlex.join(system.command("tui")) + "; echo EXIT=$?; sleep 30"
+    tmux(socket, "new-session", "-d", "-s", "t", "-x", "120", "-y", "30", command)
+    try:
+        wait_for(socket, " updates")
+        tmux(socket, "send-keys", "-t", "t", "s", "either", "Enter")
+        wait_for(socket, "1 found", "app-misc/either", seconds=120)
+        tmux(socket, "send-keys", "-t", "t", "i")
+        wait_for(
+            socket,
+            "Run egraph exec?",
+            "1  app-misc/either-1  [app-misc/lib]  app-misc/old",
+            "1 turn",
+            seconds=60,
+        )
+        tmux(socket, "send-keys", "-t", "t", "1")
+        wait_for(
+            socket,
+            "Run egraph exec?",
+            "1  app-misc/either-1  app-misc/lib  [app-misc/old]",
+            seconds=60,
+        )
+        tmux(socket, "send-keys", "-t", "t", "y")
+        wait_for(socket, "egraph exec finished", seconds=120)
+        assert machine.installed("app-misc/old-1")
+        assert not machine.installed("app-misc/lib-1")
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        tmux(socket, "send-keys", "-t", "t", "Escape")
+        tmux(socket, "send-keys", "-t", "t", "q")
+        wait_for(socket, "EXIT=0")
+    finally:
+        tmux(socket, "kill-server")

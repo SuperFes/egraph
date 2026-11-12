@@ -2,6 +2,7 @@
 
 #include "required_use.hpp"
 
+#include "action.hpp"
 #include "build_info.hpp"
 #include "build_views.hpp"
 #include "request.hpp"
@@ -2092,6 +2093,24 @@ void App::handle_dialog(const Key& key) {
         }
         return;
     }
+    if (confirming_ && key.kind == KeyKind::character && key.code >= U'1' &&
+        key.code - U'1' < std::min<std::size_t>(choices_.size(), 9)) {
+        // The plan changes with the alternative, so it is previewed again.
+        auto& turned = choices_.at(static_cast<std::size_t>(key.code - U'1'));
+        turned.taken = (turned.taken + 1) % turned.choice.alternatives.size();
+        auto action = std::move(*confirming_);
+        confirming_.reset();
+        action.chosen.clear();
+        for (const auto& each : choices_) {
+            if (each.taken != 0) {
+                std::ranges::copy(alternative_cps(each.choice.alternatives.at(each.taken)),
+                                  std::back_inserter(action.chosen));
+            }
+        }
+        dialog_.reset();
+        previewing_ = std::move(action);
+        return;
+    }
     if ((is(key, U'y') || is(key, U'Y')) && confirming_save_) {
         dialog_.reset();
         writing_ = std::move(confirming_save_);
@@ -2104,6 +2123,7 @@ void App::handle_dialog(const Key& key) {
         }
         running_ = std::move(confirming_);
         confirming_.reset();
+        choices_.clear();
         picked_.clear();
         // The run shows in the emerge view.
         pages_.clear();
@@ -2122,6 +2142,7 @@ void App::handle_dialog(const Key& key) {
         dialog_.reset();
         confirming_.reset();
         confirming_save_.reset();
+        choices_.clear();
     }
 }
 
@@ -2172,6 +2193,7 @@ void App::finish_save(const std::expected<void, std::string>& written) {
 }
 
 void App::act(Action action) {
+    choices_.clear();
     if (running_) {
         show({.error = false,
               .title = "A run is going",
@@ -2231,10 +2253,48 @@ void App::finish_preview(const Preview& preview) {
         shown.emplace_back();
     }
     shown.insert(shown.end(), problems.begin(), problems.end());
+    // Those turned stay, which the plan no longer lists once their packages are chosen.
+    std::vector<Turned> kept;
+    for (auto& each : choices_) {
+        if (each.taken != 0 || std::ranges::contains(preview.choices, each.choice)) {
+            kept.push_back(std::move(each));
+        }
+    }
+    for (const auto& choice : preview.choices) {
+        if (!std::ranges::contains(kept, choice, &Turned::choice)) {
+            kept.push_back({.choice = choice, .taken = 0});
+        }
+    }
+    choices_ = std::move(kept);
     if (preview.ready) {
         const auto title = std::format("Run egraph {}?", action_arguments(*action).front());
         confirming_ = std::move(action);
-        show({.error = false, .title = title, .lines = std::move(shown), .question = true});
+        std::string closing;
+        if (!choices_.empty()) {
+            shown.emplace_back();
+            shown.emplace_back(
+                "Of each, nothing installed decides which to take; its digit takes the "
+                "next:");
+            for (std::size_t i = 0; i < choices_.size(); ++i) {
+                const auto& [choice, taken] = choices_.at(i);
+                auto line = std::format("{:>3}  {}", i < 9 ? std::to_string(i + 1) : "", choice.by);
+                for (std::size_t at = 0; at < choice.alternatives.size(); ++at) {
+                    line += at == taken ? std::format("  [{}]", choice.alternatives.at(at))
+                                        : std::format("  {}", choice.alternatives.at(at));
+                }
+                shown.push_back(std::move(line));
+            }
+            closing =
+                std::format(" y yes  n no  {} turn ",
+                            choices_.size() == 1
+                                ? std::string{"1"}
+                                : std::format("1-{}", std::min<std::size_t>(choices_.size(), 9)));
+        }
+        show({.error = false,
+              .title = title,
+              .lines = std::move(shown),
+              .question = true,
+              .closing = std::move(closing)});
     } else {
         show({.error = !problems.empty(),
               .title = problems.empty() ? "Nothing to do" : "It cannot run",
@@ -3479,6 +3539,9 @@ std::vector<std::string> action_arguments(const Action& action) {
     case Action::Kind::sync:
         words = {"sync"};
         break;
+    }
+    for (const auto& cp : action.chosen) {
+        words.insert(words.end(), {"--choose", cp});
     }
     words.insert(words.end(), action.targets.begin(), action.targets.end());
     return words;

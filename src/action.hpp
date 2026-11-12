@@ -120,4 +120,13 @@ enum class Carrier : std::uint8_t { egraph, emerge };
 // question asked once emerge --pretend lists otherwise: "anyway" before its question mark.
 [[nodiscard]] std::string anyway(std::string_view question);
 
+// The package names of a || alternative as the plan prints it ("atom" or "( atom ... )"), each
+// once, blockers left out: what --choose pins to take it.
+[[nodiscard]] std::vector<std::string> alternative_cps(std::string_view alternative);
+
+// The alternative an answer to "which of count" picks, by index: the first for an empty answer,
+// none for anything but a number from 1 to count.
+[[nodiscard]] std::optional<std::size_t> chosen_alternative(std::string_view answer,
+                                                            std::size_t count);
+
 } // namespace egraph

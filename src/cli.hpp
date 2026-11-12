@@ -149,6 +149,8 @@ struct Updates {
     bool verify = false;
     // emerge --exclude: packages the plan neither merges nor replaces.
     std::vector<std::string> exclude;
+    // Packages a || nothing installed or planned decides takes, as though installed.
+    std::vector<std::string> choose;
     // Where the plan goes as mtimedb's resume entry.
     std::optional<std::filesystem::path> resume_list;
     // Where the plan goes as egraph-build --worker's requests.
@@ -176,6 +178,8 @@ struct PlanCommand {
     bool verify = false;
     // emerge --exclude: packages the plan neither merges nor replaces.
     std::vector<std::string> exclude;
+    // Packages a || nothing installed or planned decides takes, as though installed.
+    std::vector<std::string> choose;
     // Where the plan goes as mtimedb's resume entry.
     std::optional<std::filesystem::path> resume_list;
     // Where the plan goes as egraph-build --worker's requests.
@@ -456,6 +460,8 @@ struct Invocation {
     bool preview = false;
     // USE changes were offered already, so they are not again when the command runs anew.
     bool use_offered = false;
+    // Package names exec's answers chose for the ||s order alone decided, taken as --choose's.
+    std::vector<std::string> chosen;
     // The rebuild of what uses preserved libraries was offered already, by the action that runs.
     bool rebuild_offered = false;
     // Configuration lines tried (--use, --env): queries and plans answer as if egraph's own

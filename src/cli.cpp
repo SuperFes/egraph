@@ -122,6 +122,24 @@ void add_exclude(CLI::App* sub, Invocation& invocation,
         ->trigger_on_parse();
 }
 
+// --choose, once per package (or several to a value, space-separated).
+template <class C> void add_choose(CLI::App* sub, Invocation& invocation) {
+    sub->add_option_function<std::string>(
+           "--choose",
+           [&invocation](const std::string& value) {
+               for (const auto word : std::views::split(value, ' ')) {
+                   if (!std::string_view{word}.empty()) {
+                       std::get<C>(invocation.command).choose.emplace_back(std::string_view{word});
+                   }
+               }
+           },
+           "Of a || nothing installed or planned decides, the alternative naming this package, "
+           "rather than the first that can be pulled in as emerge takes it")
+        ->type_name("PACKAGE")
+        ->multi_option_policy(CLI::MultiOptionPolicy::TakeAll)
+        ->trigger_on_parse();
+}
+
 // Converts an option's value from one of the names, which the help shows in this order; anything
 // else, the values' own spellings included, fails naming them.
 template <class T>
@@ -218,6 +236,7 @@ template <class C> void add_updates_options(CLI::App* sub, Invocation& invocatio
             "Also ask emerge --pretend, and show where its merge list differs");
     }
     if constexpr (std::is_same_v<C, Updates>) {
+        add_choose<C>(sub, invocation);
         add_resume_list(sub, [updates]() -> auto& { return updates().resume_list; });
         add_requests(sub, [updates]() -> auto& { return updates().requests; });
         sub->add_flag_callback(
@@ -235,6 +254,10 @@ template <class C> void add_plan_options(CLI::App* sub, Invocation& invocation) 
         ->type_name("ATOM")
         ->required();
     add_exclude<C>(sub, invocation, plan_exclude_help);
+    // emerge carries install's plan out, which knows nothing of these.
+    if constexpr (!std::is_same_v<C, Install>) {
+        add_choose<C>(sub, invocation);
+    }
     sub->add_flag_callback(
         "-u,--update", [plan] { plan().update = true; },
         "Update each installed slot a target matches, as emerge -u");
@@ -965,9 +988,13 @@ tui::Preview preview_action(Session& session, const Invocation& invocation, std:
     std::ostringstream shown;
     std::ostringstream problems;
     session.warn_to(problems);
+    std::ignore = session.take_choices();
     const auto exit = dispatch(session, command, shown, problems);
     session.warn_to(err);
-    return {.ready = exit == Exit::previewed, .out = shown.str(), .err = problems.str()};
+    return {.ready = exit == Exit::previewed,
+            .out = shown.str(),
+            .err = problems.str(),
+            .choices = session.take_choices()};
 }
 
 // The last bytes of a file, enough for a log's last lines.
@@ -1824,6 +1851,46 @@ Exit offer_use_changes(Exit status, const Plan& plan, const Store& store,
     return replan(again);
 }
 
+// When the invocation may ask, asks which alternative to take of each || the plan decided by
+// order alone; once one other than emerge's is chosen, replan runs the command again with every
+// answer taken as --choose's. None to go on with the plan as it is.
+template <typename Replan>
+std::optional<Exit> offer_choices(const Plan& plan, const Store& store, const Evaluated& original,
+                                  const Invocation& invocation, std::ostream& out,
+                                  const Replan& replan) {
+    if (!invocation.ask || !output(invocation).human) {
+        return std::nullopt;
+    }
+    auto again = invocation;
+    bool changed = false;
+    for (const auto& [by, alternatives] : open_choices(store, original, plan)) {
+        out << std::format("{} needs one of these, and nothing installed decides which:\n", by);
+        for (std::size_t i = 0; i < alternatives.size(); ++i) {
+            out << std::format("  {}) {}{}\n", i + 1, alternatives.at(i),
+                               i == 0 ? "  (as emerge takes it)" : "");
+        }
+        std::optional<std::size_t> picked;
+        while (!picked) {
+            out << std::format("Pull in which, 1-{}? [1] ", alternatives.size()) << std::flush;
+            std::string answer;
+            if (!std::getline(std::cin, answer)) {
+                out << '\n';
+                picked = 0;
+            } else {
+                picked = chosen_alternative(answer, alternatives.size());
+            }
+        }
+        changed = changed || *picked != 0;
+        std::ranges::copy(alternative_cps(alternatives.at(*picked)),
+                          std::back_inserter(again.chosen));
+    }
+    if (!changed) {
+        return std::nullopt;
+    }
+    out << "Planning again with the alternatives chosen.\n";
+    return replan(again);
+}
+
 // A plan as shown, and the request that has emerge plan it too.
 struct Shown {
     Plan plan;
@@ -2028,6 +2095,21 @@ exclude_from_plan(Session& session, std::span<const std::string> given) {
     return found;
 }
 
+// The package names --choose gave, then those exec's answers chose; why they are refused.
+std::expected<std::vector<std::string>, std::string>
+chosen_packages(std::span<const std::string> given, const Invocation& invocation) {
+    std::vector<std::string> cps;
+    for (const auto& text : given) {
+        const auto atom = parse_atom(text);
+        if (!atom) {
+            return std::unexpected(std::format("--choose: {}: {}", text, atom.error()));
+        }
+        cps.push_back(atom->cp);
+    }
+    std::ranges::copy(invocation.chosen, std::back_inserter(cps));
+    return cps;
+}
+
 std::vector<std::string> exclusion_texts(std::span<const Exclusion> exclusions) {
     std::vector<std::string> texts;
     for (const auto& each : exclusions) {
@@ -2079,6 +2161,12 @@ std::expected<Shown, Exit> show_updates(const Updates& command, Session& session
     targets.running_root = running_root(invocation);
     targets.dynamic_deps = invocation.dynamic_deps;
     targets.excluded = excluded_packages(*store, *excluded);
+    auto chosen = chosen_packages(command.choose, invocation);
+    if (!chosen) {
+        err << "egraph: updates: " << chosen.error() << '\n';
+        return std::unexpected(Exit::usage);
+    }
+    targets.chosen = std::move(*chosen);
     auto replace = replace_list(invocation, "updates", err);
     if (!replace) {
         return std::unexpected(replace.error());
@@ -2574,6 +2662,12 @@ std::expected<Shown, Exit> show_plan(const PlanCommand& command, std::string_vie
     targets.running_root = running_root(invocation);
     targets.dynamic_deps = invocation.dynamic_deps;
     targets.excluded = excluded_packages(*store, *excluded);
+    auto chosen = chosen_packages(command.choose, invocation);
+    if (!chosen) {
+        err << "egraph: " << name << ": " << chosen.error() << '\n';
+        return std::unexpected(Exit::usage);
+    }
+    targets.chosen = std::move(*chosen);
     if (request->installed) {
         if (!request->arguments.empty() || selection != Selection::update) {
             err << "egraph: " << name << ": @installed is only planned alone and with -u\n";
@@ -3272,6 +3366,15 @@ Exit act_on_plan(std::string_view name, bool yes, Session& session, const Invoca
                                               invocation, out, err, act);
         if (status != Exit::refused) {
             return status;
+        }
+    }
+    // emerge carries out its own list, which knows nothing of these.
+    if (invocation.preview && carrier == Carrier::egraph) {
+        session.note_choices(open_choices(store, evaluated, plan));
+    }
+    if (!yes && carrier == Carrier::egraph && !plan.refused()) {
+        if (const auto status = offer_choices(plan, store, evaluated, invocation, out, act)) {
+            return *status;
         }
     }
     const auto vdb = vdb_of(store);

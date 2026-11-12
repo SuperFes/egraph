@@ -632,6 +632,14 @@ Neither merge nor replace the installed packages the atom matches, as
 does: a package name, with or without its category, or a slot atom, wildcards allowed. Repeated,
 or several to a value; passed on to emerge.
 .TP
+.BI \-\-choose " package"
+Of a || nothing satisfies and nothing installed or planned decides, take the alternative
+naming the package (a name or an atom; with several packages, each must be chosen), as though
+it were installed, rather than the first that can be pulled in, as emerge would. Repeated, or
+several to a value; emerge knows nothing of it, so
+.B \-\-verify
+lists the difference.
+.TP
 .B \-\-held
 Also the updates that installed dependents hold back, which of their atoms do, and the commands
 that would get past them.
@@ -799,6 +807,10 @@ also the rebuilds
 makes.
 .TP
 .BI \-\-exclude " atom"
+As for
+.BR updates .
+.TP
+.BI \-\-choose " package"
 As for
 .BR updates .
 .TP
@@ -995,6 +1007,15 @@ holds): a build starts once nothing it reaches through what each package waits f
 is still to merge, a built package merges once no build runs, in the order the builds finished,
 and each package a blocker needs gone, or old slot the plan replaces, is uninstalled once the
 merges that need it gone are done.
+On a terminal, without
+.BR \-\-yes ,
+each || the plan decided by order alone (a
+.B choice
+line of
+.BR updates )
+is asked about first, the first alternative taken by default; choosing another plans again, every
+answer taken as a
+.BR \-\-choose .
 Before the first build, the sets
 .B install
 would list as favorites are recorded in world_sets, as
@@ -1059,6 +1080,10 @@ Also run as
 .BR \-U ", " \-\-changed\-use
 .TP
 .BI \-\-exclude " atom"
+As for
+.BR updates .
+.TP
+.BI \-\-choose " package"
 As for
 .BR updates .
 .TP
@@ -1838,7 +1863,12 @@ and
 installs a search result, or the version under the cursor, as
 .BR exec .
 Each shows what its command would do and runs it once confirmed, beside the interface, in the
-emerge view; the run goes on if the interface quits. Its output goes to
+emerge view; the run goes on if the interface quits. A merge's dialog lists each || its plan
+decided by order alone (see
+.BR updates ),
+the alternative taken bracketed; the digit before one takes its next alternative, as
+.BR \-\-choose ,
+and shows the plan again. Its output goes to
 .IR ${ROOT}${EPREFIX}/var/lib/egraph/interface.log ,
 and a failed build shows the end of its log.
 The bar at the bottom shows the keys for what is selected, and

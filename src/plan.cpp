@@ -61,6 +61,7 @@ class Planner {
         for (const auto& pkg : store.packages) {
             installed_cps_.emplace(store.string(pkg.cp));
         }
+        chosen_.insert(targets.chosen.begin(), targets.chosen.end());
         if (targets.roots) {
             collect_arguments();
             lenient_ = std::ranges::all_of(args_, [](const Arg& arg) {
@@ -282,6 +283,7 @@ class Planner {
     std::optional<Member> puller_;
     std::map<std::string, std::vector<std::uint32_t>, std::less<>> by_cp_;
     std::set<std::string, std::less<>> installed_cps_;
+    std::set<std::string, std::less<>> chosen_;
     std::map<std::string, std::optional<Atom>, std::less<>> atoms_;
     // Slot and sub-slot a slot-operator atom is bound to, by the atom's text.
     std::map<std::string, std::optional<SlotKey>, std::less<>> bindings_;
@@ -1460,7 +1462,8 @@ class Planner {
     }
 
     // Whether a || alternative is in dep_zapdeps' first bin: each of its atoms names a package
-    // installed in some slot, or a virtual, or is met by the plan. A nested || is beyond this.
+    // installed in some slot, or a virtual, or is met by the plan; or one chosen. A nested || is
+    // beyond this.
     bool preferred(const Tables& tables, std::span<const Node> list, std::size_t index) {
         const auto& node = element(list, index);
         switch (node.type) {
@@ -1469,8 +1472,9 @@ class Planner {
             return true;
         case NodeType::atom: {
             const auto& wanted = atom(tables.string(node.atom));
-            return wanted && (wanted->cp.starts_with("virtual/") ||
-                              installed_cps_.contains(wanted->cp) || satisfied_atom(tables, node));
+            return wanted &&
+                   (wanted->cp.starts_with("virtual/") || installed_cps_.contains(wanted->cp) ||
+                    chosen_.contains(wanted->cp) || satisfied_atom(tables, node));
         }
         case NodeType::any_of:
             return false;
@@ -2488,6 +2492,23 @@ std::string merge_use(const Store& store, const Evaluated& evaluated, const Merg
         return use_display(evaluated, candidate, store, store.packages.at(others.back()));
     }
     return use_display(evaluated, candidate);
+}
+
+std::vector<OpenChoice> open_choices(const Store& store, const Evaluated& original,
+                                     const Plan& plan) {
+    const auto& evaluated = plan.evaluated_or(original);
+    std::vector<OpenChoice> found;
+    for (const auto& merge : plan.merges) {
+        if (merge.alternatives.empty() || !merge.pulled_by) {
+            continue;
+        }
+        const auto& by = merge.pulled_by->member;
+        found.push_back({.by = std::string(
+                             by.candidate ? evaluated.string(evaluated.candidates.at(by.index).cpv)
+                                          : store.string(store.packages.at(by.index).cpv)),
+                         .alternatives = merge.alternatives});
+    }
+    return found;
 }
 
 std::vector<std::uint32_t> other_slots(const Store& store, const Evaluated& evaluated,

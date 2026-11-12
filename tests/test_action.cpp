@@ -171,6 +171,23 @@ TEST_CASE("a plan emerge lists otherwise is asked for anyway") {
     CHECK(egraph::anyway("Merge") == "Merge anyway?");
 }
 
+TEST_CASE("a || alternative pins its package names") {
+    CHECK(egraph::alternative_cps("dev-lang/zig-bin:0.17") ==
+          std::vector<std::string>{"dev-lang/zig-bin"});
+    CHECK(egraph::alternative_cps("( >=dev-lang/a-1[x] !dev-lang/b dev-lang/c:2 dev-lang/a )") ==
+          std::vector<std::string>{"dev-lang/a", "dev-lang/c"});
+}
+
+TEST_CASE("an answer picks an alternative by its number, the first by default") {
+    CHECK(egraph::chosen_alternative("", 2) == 0);
+    CHECK(egraph::chosen_alternative(" 2 ", 2) == 1);
+    CHECK(egraph::chosen_alternative("1", 2) == 0);
+    CHECK(!egraph::chosen_alternative("3", 2));
+    CHECK(!egraph::chosen_alternative("0", 2));
+    CHECK(!egraph::chosen_alternative("b", 2));
+    CHECK(!egraph::chosen_alternative("1x", 2));
+}
+
 TEST_CASE("what emerge runs under is read from egraph-build's JSON") {
     const auto settings = egraph::parse_run_settings(R"({
  "options": ["--jobs", "4"],

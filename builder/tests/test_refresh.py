@@ -559,10 +559,10 @@ def test_plan_refuses_a_name_no_repository_knows(repository_system):
     assert evaluations(repository_system) == []
 
 
-def on_terminal(command, answer, env):
-    """Runs command on a pseudo-terminal, answering its [y/N] question with answer, or its
-    questions in turn with a list of answers: (status, everything it printed, ANSI codes
-    stripped)."""
+def on_terminal(command, answer, env, questions=(b"[y/N]",)):
+    """Runs command on a pseudo-terminal, answering its [y/N] question (or another of
+    questions) with answer, or its questions in turn with a list of answers: (status,
+    everything it printed, ANSI codes stripped)."""
     import pty
     import re
     import select
@@ -587,7 +587,7 @@ def on_terminal(command, answer, env):
         if not chunk:
             break
         printed += chunk
-        while answered < min(printed.count(b"[y/N]"), len(answers)):
+        while answered < min(sum(map(printed.count, questions)), len(answers)):
             os.write(master, answers[answered].encode() + b"\n")
             answered += 1
     os.close(master)

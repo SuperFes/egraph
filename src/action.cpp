@@ -1,5 +1,7 @@
 #include "action.hpp"
 
+#include "atom.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -8,6 +10,7 @@
 #include <cstddef>
 #include <format>
 #include <iterator>
+#include <ranges>
 #include <string_view>
 
 namespace egraph {
@@ -290,6 +293,38 @@ std::string anyway(std::string_view question) {
         question.remove_suffix(1);
     }
     return std::format("{} anyway?", question);
+}
+
+std::vector<std::string> alternative_cps(std::string_view alternative) {
+    std::vector<std::string> cps;
+    for (const auto word : std::views::split(alternative, ' ')) {
+        const std::string_view text{word};
+        if (text.empty() || text == "(" || text == ")" || text == "||" || text.starts_with('!')) {
+            continue;
+        }
+        if (const auto atom = parse_atom(text); atom && !std::ranges::contains(cps, atom->cp)) {
+            cps.push_back(atom->cp);
+        }
+    }
+    return cps;
+}
+
+std::optional<std::size_t> chosen_alternative(std::string_view answer, std::size_t count) {
+    while (!answer.empty() && answer.front() == ' ') {
+        answer.remove_prefix(1);
+    }
+    while (!answer.empty() && answer.back() == ' ') {
+        answer.remove_suffix(1);
+    }
+    if (answer.empty()) {
+        return count == 0 ? std::nullopt : std::optional<std::size_t>{0};
+    }
+    std::size_t number = 0;
+    const auto [end, error] = std::from_chars(answer.begin(), answer.end(), number);
+    if (error != std::errc{} || end != answer.end() || number < 1 || number > count) {
+        return std::nullopt;
+    }
+    return number - 1;
 }
 
 std::expected<RunSettings, std::string> parse_run_settings(std::string_view text) {

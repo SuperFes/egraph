@@ -131,6 +131,9 @@ struct Targets {
     // emerge --exclude: the installed packages, by id, it names; empty when none. Their sub-slot
     // changes rebuild no package for a build-time binding.
     std::vector<bool> excluded = {};
+    // Package names a || nothing satisfies takes as though installed: --choose's, and exec's
+    // answers.
+    std::vector<std::string> chosen = {};
 };
 
 // "@set atom", or the atom alone.

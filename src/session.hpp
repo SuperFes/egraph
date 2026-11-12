@@ -8,6 +8,7 @@
 #include "evaluated.hpp"
 #include "graph.hpp"
 #include "os.hpp"
+#include "plan.hpp"
 #include "repository.hpp"
 #include "store.hpp"
 
@@ -23,6 +24,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace egraph {
@@ -91,6 +93,10 @@ class Session {
     // Sends later warnings to warnings instead.
     void warn_to(std::ostream& warnings EGRAPH_KEPT_BY_THIS) { warnings_ = warnings; }
 
+    // The ||s an action's previewed plan decided by order alone, for the interface to ask about.
+    void note_choices(std::vector<OpenChoice> choices) { choices_ = std::move(choices); }
+    [[nodiscard]] std::vector<OpenChoice> take_choices() { return std::exchange(choices_, {}); }
+
     // The installed store's path, once one is loaded: the system store or the user's.
     [[nodiscard]] const std::filesystem::path& used() const EGRAPH_LIFETIMEBOUND { return used_; }
     // The repository index's, once loaded: beside whichever installed store was current for it.
@@ -101,6 +107,7 @@ class Session {
   private:
     Invocation invocation_;
     std::reference_wrapper<std::ostream> warnings_;
+    std::vector<OpenChoice> choices_;
     std::filesystem::path used_;
     std::optional<Store> installed_;
     // As loaded, and with the invocation's what-if lines (stores_ itself without any).

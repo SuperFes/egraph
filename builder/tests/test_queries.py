@@ -590,6 +590,17 @@ def test_a_choice_lists_what_order_alone_decided(playgrounds, tmp_path):
     ]
     human = egraph(path, "--layout", "human", "updates", "-D").stdout
     assert "or dev-lang/ybin" in human
+    # Chosen, it is decided.
+    lines = egraph(
+        path, "updates", "-D", "--choose", "dev-lang/ybin"
+    ).stdout.splitlines()
+    assert not [line for line in lines if line.split("\t")[1] == "choice"]
+    assert (
+        "dev-lang/ybin-1\tnew\tdev-lang/ybin-1\ttest_repo\t\tx11-terms/fresh-2 dev-lang/ybin"
+        in lines
+    )
+    refused = egraph(path, "updates", "--choose", "not an atom", check=False)
+    assert refused.returncode == 2
 
 
 def test_update_order_is_valid(scenario, system, dynamic_deps):
