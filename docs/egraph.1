@@ -1187,8 +1187,10 @@ that another would finish a tenth and five minutes sooner says so (see
 .BR plan ).
 .TP
 .B \-\-resume
-Carry out the last run's targets and options again, after it failed or was cut short: the plan
-is made and verified afresh, then its merges of packages the last run merged, and that are
+Carry out the last run's targets and options again, after it failed or was cut short (the
+alternatives it was given with
+.B \-\-choose
+or chose when asked among them): the plan is made and verified afresh, then its merges of packages the last run merged, and that are
 installed still, are left out, where a target would be merged again otherwise. The
 .BR \-\-jobs ,
 .BR \-\-keep\-going ,

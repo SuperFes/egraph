@@ -515,6 +515,7 @@ TEST_CASE("exec --resume takes no targets or plan options of its own") {
     CHECK_THROWS(parse("exec --resume --oneshot"));
     CHECK_THROWS(parse("exec --resume --changed-use"));
     CHECK_THROWS(parse("exec --resume --alternatives keep"));
+    CHECK_THROWS(parse("exec --resume --choose dev-libs/a"));
 }
 
 TEST_CASE("a run's recorded arguments parse back to its command, but for --yes and --trace") {
@@ -530,14 +531,33 @@ TEST_CASE("a run's recorded arguments parse back to its command, but for --yes a
     command.merge_wait_scope = "system";
     command.alternatives = egraph::Alternatives::keep;
     command.snapshot = false;
+    command.choose = {"dev-libs/a"};
     command.yes = true;
     command.trace = "/t";
     command.table = true;
-    const auto words = egraph::exec_arguments(command);
-    CHECK(words == std::vector<std::string>{"--update", "--deep", "--noreplace", "--changed-use",
-                                            "--oneshot", "--jobs", "3", "--keep-going=n",
-                                            "--merge-wait-scope", "system", "--alternatives",
-                                            "keep", "--no-snapshot", "--", "a/b", "@set"});
+    // Asked for one more, and one given already.
+    const std::vector<std::string> chosen{"dev-libs/b", "dev-libs/a"};
+    const auto words = egraph::exec_arguments(command, chosen);
+    CHECK(words == std::vector<std::string>{"--update",
+                                            "--deep",
+                                            "--noreplace",
+                                            "--changed-use",
+                                            "--oneshot",
+                                            "--jobs",
+                                            "3",
+                                            "--keep-going=n",
+                                            "--merge-wait-scope",
+                                            "system",
+                                            "--alternatives",
+                                            "keep",
+                                            "--no-snapshot",
+                                            "--choose",
+                                            "dev-libs/a",
+                                            "--choose",
+                                            "dev-libs/b",
+                                            "--",
+                                            "a/b",
+                                            "@set"});
     command.rebuilds = egraph::UseRebuilds::all;
     CHECK(std::ranges::contains(egraph::exec_arguments(command), "--newuse"));
     CHECK(egraph::exec_arguments(egraph::Exec{}) == std::vector<std::string>{"--"});
@@ -559,6 +579,7 @@ TEST_CASE("a run's recorded arguments parse back to its command, but for --yes a
     CHECK(resumed->merge_wait_scope == "system");
     CHECK(resumed->alternatives == egraph::Alternatives::keep);
     CHECK(resumed->snapshot == false);
+    CHECK(resumed->choose == std::vector<std::string>{"dev-libs/a", "dev-libs/b"});
     CHECK(resumed->yes);
     CHECK(resumed->trace == "/u");
     CHECK_FALSE(resumed->table);

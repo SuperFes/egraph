@@ -4187,7 +4187,8 @@ Exit carry_out(const Exec& command, const std::optional<std::vector<std::string>
                     if (steps.empty()) {
                         return 0;
                     }
-                    RunState state{.arguments = exec_arguments(command), .merged = merged};
+                    RunState state{.arguments = exec_arguments(command, invocation.chosen),
+                                   .merged = merged};
                     if (std::holds_alternative<snapshot::InSnapshot>(decision)) {
                         return run_in_snapshot(invocation, settings, command, shown, requests,
                                                steps, names, state, differs, resumed.has_value(),
@@ -6031,7 +6032,7 @@ void configure(CLI::App& app, Invocation& invocation) {
         const auto& exec = std::get<Exec>(invocation.command);
         if (exec.resume &&
             (!exec.targets.empty() || exec.update || exec.deep || exec.noreplace || exec.oneshot ||
-             exec.rebuilds != UseRebuilds::none || exec.alternatives)) {
+             exec.rebuilds != UseRebuilds::none || exec.alternatives || !exec.choose.empty())) {
             throw CLI::ValidationError("--resume", "takes the last run's targets and plan options");
         }
     });
@@ -6479,7 +6480,7 @@ std::vector<std::string> copy_portage_command(const Invocation& invocation,
     return argv;
 }
 
-std::vector<std::string> exec_arguments(const Exec& command) {
+std::vector<std::string> exec_arguments(const Exec& command, std::span<const std::string> chosen) {
     std::vector<std::string> arguments;
     const auto flag = [&arguments](bool set, const char* name) {
         if (set) {
@@ -6511,6 +6512,15 @@ std::vector<std::string> exec_arguments(const Exec& command) {
     }
     if (command.snapshot) {
         arguments.emplace_back(*command.snapshot ? "--snapshot" : "--no-snapshot");
+    }
+    std::vector<std::string> choices{command.choose.begin(), command.choose.end()};
+    for (const auto& package : chosen) {
+        if (!std::ranges::contains(choices, package)) {
+            choices.push_back(package);
+        }
+    }
+    for (const auto& package : choices) {
+        arguments.insert(arguments.end(), {"--choose", package});
     }
     arguments.emplace_back("--");
     arguments.insert(arguments.end(), command.targets.begin(), command.targets.end());

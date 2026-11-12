@@ -597,8 +597,10 @@ save_stores(const Invocation& invocation, const std::optional<ScratchStores>& ch
                                                             const std::filesystem::path& directory);
 
 // exec's own arguments for command, as the run's record keeps them: the options that shape its
-// plan and run, then its targets.
-[[nodiscard]] std::vector<std::string> exec_arguments(const Exec& command);
+// plan and run, the ||s' alternatives it was given or asked for (chosen) as --choose, then its
+// targets.
+[[nodiscard]] std::vector<std::string> exec_arguments(const Exec& command,
+                                                      std::span<const std::string> chosen = {});
 
 // The command exec --resume carries out: the recorded run's arguments, with the --jobs,
 // --keep-going and --merge-wait-scope given now in place of the run's, and given's --yes and
