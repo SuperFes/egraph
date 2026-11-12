@@ -284,7 +284,7 @@ def test_differences_are_listed_and_fail(playgrounds, tmp_path):
     assert lines[0] == "egraph: updates: emerge --pretend merges otherwise:"
     assert "app-misc/bogus-1::test_repo\temerge\tnew" in lines
     only_ours = [line for line in lines[1:] if line.split("\t")[1] == "egraph"]
-    assert len(only_ours) == len(ours)
+    assert len(only_ours) == len([line for line in ours if "\tchoice\t" not in line])
 
     human = egraph(
         path,

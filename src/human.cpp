@@ -1313,6 +1313,18 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
         rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
         places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
     }
+    // The alternatives of each new package's || that order alone decided, the one taken first,
+    // taken off by its cpv.
+    std::map<std::string_view, Fields, std::less<>> choices;
+    for (std::size_t i = rows.size(); i-- > 0;) {
+        const auto& row = rows.at(i);
+        if (row.size() < 3 || row.at(1) != "choice") {
+            continue;
+        }
+        choices.emplace(row.at(0), Fields(row.begin() + 2, row.end()));
+        rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
+        places.erase(places.begin() + static_cast<std::ptrdiff_t>(i));
+    }
     // What lines tried change, taken off: the marks of the merges by first field, and the merges
     // they drop, as merge rows.
     std::map<std::string_view, std::string_view, std::less<>> tried;
@@ -1477,6 +1489,14 @@ void human_updates(std::ostream& out, std::span<const std::string> records, cons
             }
             if (row.size() > 6) {
                 put_beside(out, row.at(6), paint);
+            }
+            // The other alternatives of a || that order alone decided.
+            if (const auto found = choices.find(row.at(0));
+                found != choices.end() && found->second.size() > 1) {
+                out << "  " << paint("or", Tone::note);
+                for (std::size_t i = 1; i < found->second.size(); ++i) {
+                    out << (i == 1 ? " " : ", ") << paint(found->second.at(i), Tone::note);
+                }
             }
         } else if (row.at(1) == "rebuild" && row.size() > 5) {
             put_why(row.at(5));

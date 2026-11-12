@@ -504,6 +504,12 @@ With
 .BR \-D ,
 a dependency naming no slot goes to its best version as emerge's does, into a new slot beside
 the installed one when that is where the best version is.
+Of a || nothing satisfies, the first alternative whose packages each have some slot installed or
+are already in the plan is pulled in, else the first that can be; one decided by order alone,
+with another that could be pulled in, ends the plan as the line
+.IB "cpv " choice " alternative" ...,
+the one taken first (for people, the others follow its row after
+.BR or ).
 Then the installed packages it would uninstall for a blocker between them and a merge,
 and the old slots it replaces: those
 .I replace\-slots

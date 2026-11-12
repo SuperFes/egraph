@@ -535,8 +535,8 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& origi
             }
         }
     }
-    // Uninstalls, blocks, unsatisfied dependencies, unmet REQUIRED_USE and needed USE changes,
-    // after everything else.
+    // Uninstalls, blocks, unsatisfied dependencies, unmet REQUIRED_USE, needed USE changes,
+    // masked packages and the ||s order alone decided, after everything else.
     std::vector<std::string> trailing_rows;
     trailing_rows.reserve(plan.uninstalls.size() + plan.blocks.size() + plan.unsatisfied.size() +
                           plan.unmet.size() + plan.use_changes.size());
@@ -637,6 +637,17 @@ std::vector<std::string> update_lines(const Store& store, const Evaluated& origi
             if (!line.empty()) {
                 row += std::format("\t{}", std::string_view{line.begin(), line.end()});
             }
+        }
+        trailing_rows.push_back(std::move(row));
+    }
+    for (const auto& merge : plan.merges) {
+        if (merge.alternatives.empty()) {
+            continue;
+        }
+        auto row = std::format("{}\tchoice",
+                               evaluated.string(evaluated.candidates.at(merge.candidate).cpv));
+        for (const auto& alternative : merge.alternatives) {
+            row += std::format("\t{}", alternative);
         }
         trailing_rows.push_back(std::move(row));
     }
@@ -806,16 +817,16 @@ std::vector<std::string> soname_users(const Store& store, std::string_view sonam
     return lines;
 }
 
-std::string render(const Store& store, std::span<const Node> nodes, std::size_t index) {
+std::string render(const Tables& tables, std::span<const Node> nodes, std::size_t index) {
     const auto& node = element(nodes, index);
     if (node.type != NodeType::any_of && node.type != NodeType::all_of) {
-        return std::string{store.string(node.atom)};
+        return std::string{tables.string(node.atom)};
     }
     std::string out = node.type == NodeType::any_of ? "|| (" : "(";
     for (std::size_t child = index + 1; child < nodes.size(); ++child) {
         if (element(nodes, child).parent == index) {
             out += ' ';
-            out += render(store, nodes, child);
+            out += render(tables, nodes, child);
         }
     }
     out += " )";

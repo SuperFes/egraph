@@ -392,7 +392,10 @@ dependency (a kept package's own, read with or without `--dynamic-deps`, or a me
 candidate's, reduced under the USE it would be built with) must be satisfied by the plan: by a
 package it keeps or merges, a slot operator's sub-slot aside (see below), or else by pulling in the best visible version that matches into a slot nothing
 occupies (a new package, with the dependency that pulled it). A `||` takes its first
-alternative that can be satisfied so. Under `-uD`, as `dep_zapdeps` with `want_update`, an earlier
+alternative that can be satisfied so, those first (as `dep_zapdeps` bins them) whose packages
+each have some slot installed or are in the plan already. One decided by order alone, with
+another alternative that could be pulled in, is recorded on the merge it pulled in, for the
+front ends to show and `exec` to ask about. Under `-uD`, as `dep_zapdeps` with `want_update`, an earlier
 alternative whose packages each have some slot installed takes over when it moves a package the
 satisfied one shares to a higher version and none to a lower: `|| ( python:3.15 python:3.14 )`
 pulls in a new 3.15 beside an installed 3.14. The reach `-uD` updates within follows a

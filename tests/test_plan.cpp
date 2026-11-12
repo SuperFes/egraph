@@ -195,6 +195,52 @@ TEST_CASE("an unsatisfied || takes the alternative of a package installed in ano
     }
 }
 
+TEST_CASE("a || nothing installed decides notes the alternatives that could be pulled in") {
+    const auto with = [](bool other_visible, bool installed) {
+        std::vector<Installed> present{{.cpv = "x11-terms/gt-1"}};
+        if (installed) {
+            present.push_back({.cpv = "dev-lang/zbin-0.15.2", .slot = "0.15"});
+        }
+        return make_system(present,
+                           {{.cpv = "dev-lang/zbin-0.15.2", .slot = "0.15"},
+                            {.cpv = "dev-lang/zbin-0.17.1", .slot = "0.17"},
+                            {.cpv = "dev-lang/z-0.17.1", .slot = "0.17"},
+                            {.cpv = "dev-lang/old-1", .visible = other_visible},
+                            {.cpv = "virtual/zig-1"},
+                            {.cpv = "x11-terms/gt-1"},
+                            {.cpv = "x11-terms/gt-2",
+                             .deps = {{"BDEPEND", "|| ( dev-lang/z:0.17 dev-lang/old "
+                                                  "( dev-lang/zbin:0.17 virtual/zig ) )"}}}},
+                           {"x11-terms/gt"});
+    };
+    const egraph::Targets deep{.scope = {}, .roots = true, .deep = true};
+    const auto alternatives = [&](const egraph::test::System& system) {
+        std::vector<std::vector<std::string>> found;
+        for (const auto& merge :
+             egraph::plan_updates(system.store, system.evaluated, egraph::UseRebuilds::none, deep)
+                 .merges) {
+            found.push_back(merge.alternatives);
+        }
+        return found;
+    };
+    // The one taken first, then those after it that could be pulled in.
+    CHECK(alternatives(with(false, false)) ==
+          std::vector<std::vector<std::string>>{
+              {}, {"dev-lang/z:0.17", "( dev-lang/zbin:0.17 virtual/zig )"}});
+    CHECK(alternatives(with(true, false)) ==
+          std::vector<std::vector<std::string>>{
+              {}, {"dev-lang/z:0.17", "dev-lang/old", "( dev-lang/zbin:0.17 virtual/zig )"}});
+    const auto system = with(false, false);
+    CHECK(egraph::update_lines(system.store, system.evaluated, egraph::UseRebuilds::none,
+                               egraph::HeldLines::none, false, deep)
+              .back() == "dev-lang/z-0.17.1\tchoice\tdev-lang/z:0.17\t( dev-lang/zbin:0.17 "
+                         "virtual/zig )");
+    // A package installed in another slot, beside a virtual, decides it.
+    CHECK(alternatives(with(false, true)) == std::vector<std::vector<std::string>>{{}, {}, {}});
+    CHECK(plan(with(false, true), egraph::UseRebuilds::none, deep).at(1) ==
+          "new dev-lang/zbin-0.17.1 <- x11-terms/gt-2 dev-lang/zbin:0.17");
+}
+
 TEST_CASE("-uD moves a dependency naming no slot to a newer slot beside the installed one") {
     // As virtual/wine's || ( ... app-emulation/wine-vanilla[wow64(-)] ... ): a satisfied atom
     // goes to its best visible version, whatever slot it is in.
@@ -1259,6 +1305,7 @@ TEST_CASE("a merge new to its cp shows its USE unmarked") {
                               .flags = {},
                               .pulled_by = {},
                               .named_by = {},
+                              .alternatives = {},
                               .rebuilt_for = {},
                               .waits = {}};
     CHECK(egraph::merge_use(store, evaluated, merge) ==

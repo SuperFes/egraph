@@ -78,6 +78,10 @@ struct Merge {
     // For a new package, the dependency that first pulled it in, or the argument naming it.
     std::optional<Reason> pulled_by;
     std::optional<Argument> named_by;
+    // For a new package a || pulled in that nothing installed or merged decides: the
+    // alternatives that could be pulled in, as the dependencies print them, the one taken (as
+    // emerge takes it) first.
+    std::vector<std::string> alternatives;
     // For a slot-operator rebuild of the installed version: the merge whose slot or sub-slot
     // breaks its binding, with the bound atom as the rebuilt package's dependencies print it.
     std::optional<Reason> rebuilt_for;

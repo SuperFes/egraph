@@ -124,6 +124,7 @@ TRAILING_KINDS = (
     "masked",
     "tried",
     "env",
+    "choice",
 )
 
 
@@ -575,6 +576,20 @@ def test_a_leaf_holder_is_offered_for_removal(playgrounds, tmp_path):
         "dev-libs/lone-1\tremove\t",
         "dev-libs/lone-1\tnodeps",
     ]
+
+
+def test_a_choice_lists_what_order_alone_decided(playgrounds, tmp_path):
+    """A || that nothing installed or merged decides lists the alternatives that could be
+    pulled in, the one taken first; one a package installed in another slot decides lists none.
+    """
+    path = tmp_path / "installed.egraph"
+    write_stores(playgrounds("otherslot"), path)
+    lines = egraph(path, "updates", "-D").stdout.splitlines()
+    assert [line for line in lines if line.split("\t")[1] == "choice"] == [
+        "dev-lang/y-1\tchoice\tdev-lang/y\tdev-lang/ybin"
+    ]
+    human = egraph(path, "--layout", "human", "updates", "-D").stdout
+    assert "or dev-lang/ybin" in human
 
 
 def test_update_order_is_valid(scenario, system, dynamic_deps):

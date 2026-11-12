@@ -181,15 +181,17 @@ enum class HeldLines : std::uint8_t {
 // argument; with remedies, when an installed version stands in its way, then the installed cpv it
 // would replace and a "holder cpv atom" field for each package whose atom keeps that version;
 // then "cpv<TAB>orphan" for each installed package nothing keeps (by the remedies' rescope) that
-// a held update or an unsatisfied merge is of, then "cpv<TAB>required-use<TAB>repo<TAB>USE<TAB>unsatisfied<TAB>complete" for each
-// version whose REQUIRED_USE its USE leaves unsatisfied: the constraints left, and the whole
-// REQUIRED_USE when they are only part of it (else empty), then
-// "cpv<TAB>use-change<TAB>repo<TAB>package.use line<TAB>required by..." for each USE change the
-// plan needs (package_use_line, then a field per link of required_by); in the table led by two
-// empty fields too, but for an uninstall's second: the places of the merges it waits for. Last,
+// a held update or an unsatisfied merge is of, then
+// "cpv<TAB>required-use<TAB>repo<TAB>USE<TAB>unsatisfied<TAB>complete" for each version whose
+// REQUIRED_USE its USE leaves unsatisfied: the constraints left, and the whole REQUIRED_USE when
+// they are only part of it (else empty), then "cpv<TAB>use-change<TAB>repo<TAB>package.use
+// line<TAB>required by..." for each USE change the plan needs (package_use_line, then a field per
+// link of required_by); in the table led by two empty fields too, but for an uninstall's second:
+// the places of the merges it waits for. Last,
 // "cpv<TAB>masked<TAB>repo<TAB>reasons<TAB>file<TAB>comment line..." for each installed package
 // emerge warns is masked: its reasons comma-separated as emerge joins them, then for
-// package.mask the file and a field per line of the comment above the entry.
+// package.mask the file and a field per line of the comment above the entry. Then
+// "cpv<TAB>choice<TAB>alternative..." for each new package with Merge::alternatives.
 [[nodiscard]] std::vector<std::string>
 update_lines(const Store& store, const Evaluated& evaluated, UseRebuilds rebuilds,
              HeldLines held = HeldLines::none, bool table = false, const Targets& targets = {},
@@ -219,7 +221,7 @@ update_lines(const Store& store, const Evaluated& evaluated, const Plan& plan, U
                                                     bool providers);
 
 // A dependency as portage's paren_enclose renders it: "atom", "|| ( ... )" or "( ... )".
-[[nodiscard]] std::string render(const Store& store, std::span<const Node> nodes,
+[[nodiscard]] std::string render(const Tables& tables, std::span<const Node> nodes,
                                  std::size_t index);
 
 // A top-level dependency of a package that nothing installed satisfies.

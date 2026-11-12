@@ -5,6 +5,7 @@
 #include "blockers.hpp"
 #include "graph.hpp"
 #include "minimize.hpp"
+#include "query.hpp"
 #include "replace.hpp"
 #include "version.hpp"
 
@@ -185,6 +186,15 @@ class Planner {
         std::optional<std::uint32_t> named_by;
         // The installed package whose merge pulled it in, if a merge did.
         std::optional<std::uint32_t> root;
+        std::vector<std::string> alternatives;
+    };
+
+    // A || a pull decided by order alone: where in the pulls its alternative's start, and the
+    // first candidate that alternative pulled in.
+    struct Undecided {
+        std::size_t at = 0;
+        std::uint32_t candidate = 0;
+        std::vector<std::string> alternatives;
     };
 
     struct Rebuilt {
@@ -266,6 +276,8 @@ class Planner {
     // for before it was known whether it fails.
     std::vector<NeededUseChange> proposed_;
     std::vector<NeededUseChange> pending_;
+    // The ||s the current pull decided by order alone.
+    std::vector<Undecided> undecided_;
     // The member whose dependencies are being pulled in.
     std::optional<Member> puller_;
     std::map<std::string, std::vector<std::uint32_t>, std::less<>> by_cp_;
@@ -869,7 +881,8 @@ class Planner {
             {.candidate = moved.candidate,
              .by = Reason{.member = {.candidate = false, .index = id}, .atom = moved.wanted},
              .named_by = {},
-             .root = {}});
+             .root = {},
+             .alternatives = {}});
         work.push_back({.member = {.candidate = true, .index = moved.candidate}, .root = {}});
         return Member{.candidate = true, .index = moved.candidate};
     }
@@ -1346,6 +1359,9 @@ class Planner {
                 const bool done = pull(tables, list, child, pulls);
                 if (any && done) {
                     pending_.resize(asked);
+                    if (puller_ && pulls.size() > before) {
+                        note_undecided(tables, list, index, child, before, pulls);
+                    }
                     return true;
                 }
                 if (!any && !done) {
@@ -1473,6 +1489,36 @@ class Planner {
         while (pulls.size() > size) {
             unplace(pulls.back().first);
             pulls.pop_back();
+        }
+        std::erase_if(undecided_, [size](const Undecided& each) { return each.at >= size; });
+    }
+
+    // Notes the || at node index of list as undecided when an alternative after taken, the one
+    // pulled in from before on, could be pulled in too.
+    void note_undecided(const Tables& tables, std::span<const Node> list, std::size_t index,
+                        std::size_t taken, std::size_t before,
+                        std::vector<std::pair<std::uint32_t, std::string>>& pulls) {
+        std::vector<std::string> alternatives{render(tables, list, taken)};
+        for (std::size_t child = taken + 1; child < list.size(); ++child) {
+            if (element(list, child).parent != index) {
+                continue;
+            }
+            const auto mark = pulls.size();
+            const auto asked = pending_.size();
+            const auto in_way = wanted_.size();
+            const auto noted = undecided_.size();
+            if (pull(tables, list, child, pulls)) {
+                alternatives.push_back(render(tables, list, child));
+            }
+            rollback(pulls, mark);
+            pending_.resize(asked);
+            wanted_.resize(in_way);
+            undecided_.resize(noted);
+        }
+        if (alternatives.size() > 1) {
+            undecided_.push_back({.at = before,
+                                  .candidate = pulls.at(before).first,
+                                  .alternatives = std::move(alternatives)});
         }
     }
 
@@ -1705,7 +1751,11 @@ class Planner {
             }
             place(candidate);
             selected_.insert(candidate);
-            pulled_.push_back({.candidate = candidate, .by = {}, .named_by = root, .root = {}});
+            pulled_.push_back({.candidate = candidate,
+                               .by = {},
+                               .named_by = root,
+                               .root = {},
+                               .alternatives = {}});
             work.push_back({.member = {.candidate = true, .index = candidate}, .root = {}});
         }
         for (std::uint32_t id = 0; id < store().packages.size(); ++id) {
@@ -1814,6 +1864,9 @@ class Planner {
                 // What the list pulls in, (in a ||, candidate, atom), kept once all of it is
                 // known.
                 std::vector<std::tuple<bool, std::uint32_t, std::string>> added;
+                // The alternatives of each || decided by order alone, by the first candidate its
+                // alternative pulled in.
+                std::map<std::uint32_t, std::vector<std::string>> undecided;
                 for (std::size_t i = 0; i < list.size(); ++i) {
                     if (element(list, i).parent != no_parent) {
                         continue;
@@ -1831,6 +1884,7 @@ class Planner {
                             puller_.reset();
                             pending_.clear();
                             wanted_.clear();
+                            undecided_.clear();
                             if (pulled_in) {
                                 for (auto& [candidate, text] : pulls) {
                                     added.emplace_back(true, candidate, std::move(text));
@@ -1865,6 +1919,7 @@ class Planner {
                     const bool disjunctive = element(list, i).type == NodeType::any_of;
                     puller_ = item.member;
                     pending_.clear();
+                    undecided_.clear();
                     const bool pulled_in = pull(tables, list, i, pulls);
                     puller_.reset();
                     if (!pulled_in) {
@@ -1876,6 +1931,10 @@ class Planner {
                         for (auto& [candidate, text] : pulls) {
                             added.emplace_back(disjunctive, candidate, std::move(text));
                         }
+                        for (auto& each : undecided_) {
+                            undecided[each.candidate] = std::move(each.alternatives);
+                        }
+                        undecided_.clear();
                         continue;
                     }
                     // The first installed package in the way takes the update, and the next
@@ -1937,10 +1996,14 @@ class Planner {
                         continue;
                     }
                     reached_pulls.emplace_back(rank, disjunctive, candidate);
+                    auto alternatives = undecided.extract(candidate);
                     pulled_.push_back({.candidate = candidate,
                                        .by = Reason{.member = item.member, .atom = std::move(text)},
                                        .named_by = {},
-                                       .root = item.root});
+                                       .root = item.root,
+                                       .alternatives = alternatives
+                                                           ? std::move(alternatives.mapped())
+                                                           : std::vector<std::string>{}});
                     work.push_back(
                         {.member = {.candidate = true, .index = candidate}, .root = item.root});
                 }
@@ -2085,6 +2148,7 @@ class Planner {
                      .flags = {},
                      .pulled_by = {},
                      .named_by = {},
+                     .alternatives = {},
                      .rebuilt_for = found->second.why,
                      .waits = {}});
             }
@@ -2099,6 +2163,7 @@ class Planner {
                             .flags = {},
                             .pulled_by = {},
                             .named_by = {},
+                            .alternatives = {},
                             .rebuilt_for = {},
                             .waits = {}};
                 if (choice.at == 0) {
@@ -2165,6 +2230,7 @@ class Planner {
                                    .named_by = found.named_by
                                                    ? std::optional{args_.at(*found.named_by).named}
                                                    : std::nullopt,
+                                   .alternatives = found.alternatives,
                                    .rebuilt_for = {},
                                    .waits = {}});
         }
