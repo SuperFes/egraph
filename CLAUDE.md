@@ -65,6 +65,8 @@ build/egraph config init                              # write a commented egraph
 printf '{"cpv": "app-misc/foo-1", "repo": "gentoo"}\n' | build/egraph-build --worker  # as emerge -1
 docker run --rm -v "$PWD":/src -w /src gentoo/stage3 sh .github/ci.sh   # CI (on a copy: it chowns)
 EGRAPH_SYSTEM_TESTS=1 PYTHONPATH=... pytest builder/tests         # also compare on the live vdb
+EGRAPH_BTRFS_TMPDIR=/var/tmp meson test -C build      # snapshot runs need btrfs there (the default)
+sudo build/egraph exec --snapshot -y app-misc/foo     # a snapshot run on the live /, by hand before a release
 ```
 
 `meson test` puts the `portage_lib` option on PYTHONPATH; its default, empty, is the installed
@@ -118,6 +120,12 @@ scheduling rules (with and without FEATURES=merge-wait), a run merging portage i
 to what emerge drops, a failed run resumed (`exec --resume`) to one install of it all, its status file (its own, in `run/egraph`) to emerge's under
 FEATURES=observability, and its log (to the playground's file, as `meson test` sets
 `EGRAPH_LOG=file`) to its trace.
+`test_enter.py` holds `egraph enter` (a worker's mount namespace, binds and chroot or prefix
+bind) and `test_snapshot_run.py` an `exec --snapshot` on a playground turned into a btrfs
+subvolume: the system it leaves is a plain run's, a failed run leaves the root as it was, and a
+resumed one takes the binary packages the failed one kept. Both run unprivileged (the owner of a
+subvolume may snapshot it; the workers enter a user namespace) and skip without user namespaces,
+or without btrfs under `EGRAPH_BTRFS_TMPDIR` (default `/var/tmp`).
 Test stores come from `conftest.write_stores`, which writes the evaluated store beside the
 installed one as a builder run does. Scenario packages get an accepted
 KEYWORDS in `conftest.py`, because depclean's `||` choices depend on visibility and egraph assumes

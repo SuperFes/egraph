@@ -73,7 +73,13 @@ and accepts, as the what-if changes are saved. Recorded 2026-10-08.
   and diffing the image and vdb entry. First step: run egraph's plan through `ebuild`.
 - Transactional merges: build the whole plan into a staging root (a btrfs snapshot of `/`, or
   an overlay), check it, and swap it in only once everything built, so a failure half way leaves
-  the system untouched. A snapshot also gives a rollback.
+  the system untouched. A snapshot also gives a rollback. Roadmap step 16z builds in a snapshot
+  and replays into `/`.
+- An image-based root, as Bazzite or MicroOS keep one, but built from source by portage's own
+  merges (raised by the user 2026-11-12, a future thing): `/` mounted read-only, each run
+  finished in a new snapshot that becomes the next boot's root (the default subvolume or a boot
+  entry), the one before kept for rollback, with no replay. New beside 16z: the boot side,
+  `/etc` and `/var` kept across roots, and what runs between a merge and the reboot.
 - Problems presented, not panicked over: where portage refuses outright, egraph explains and
   offers to try. Example: installing dev-db/mariadb-12 over a file dev-db/mysql-connector-c
   owned made portage mask mariadb-12, though the collision only matters one way (the connector

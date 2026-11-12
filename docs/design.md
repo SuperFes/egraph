@@ -869,6 +869,17 @@ workers start with `--portage-copy`, importing portage and running the ebuilds f
 that none started after the merge runs half of each version; the copy goes at the end. emerge's
 `_prepare_self_update` does the same for its own process, but removes its copy when the process
 that made it exits, which is why the builder makes one of its own.
+In a snapshot (`exec --snapshot`, `src/snapshot.cpp`), the same run happens in a btrfs snapshot
+of EROOT: each worker starts as `egraph enter` (handled before the session, while the process
+is single-threaded), which in `os::enter` unshares a mount namespace (first a user namespace
+mapping the user to themselves, when not root), binds what the run shares with the real system
+(the kernel's filesystems, `/run`, PORTAGE_TMPDIR, DISTDIR, CCACHE_DIR, the logs, the packages
+directory; the repositories read-only) into the snapshot, then chroots into it for `/` or binds
+it over a prefix; the worker never knows. Each build also runs portage's package phase into
+`var/lib/egraph/packages`, and once every step is done a worker in the real root merges those
+binary packages in plan order, as `emerge -K` does (`run_in_turn`), with the uninstalls among
+them; the snapshot goes either way, and the packages stay after a failure for `--resume`, whose
+builds take one built with the same USE flags.
 `--trace` writes each step's start and end, which `test_exec_run.py` holds to
 these rules. The run publishes itself in the schema of emerge's `ObservabilityMonitor`, to its
 own `${EPREFIX}/run/egraph/exec-<pid>.json` (egraph writes none of emerge's files), so that the

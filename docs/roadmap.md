@@ -1551,7 +1551,7 @@ Decided with the user (2026-10-16):
   last line stays above; a totals line beneath holds done of total, failures, elapsed and the
   estimate left. Off a terminal, or with a script layout, the lines are those it always printed.
   `install` shows emerge's own output, which egraph does not redraw.
-- 16z (todo; the btrfs backend, `src/snapshot.cpp`, is in): a run in a snapshot (`exec --snapshot`), so a plan that fails or leaves the
+- 16z (done): a run in a snapshot (`exec --snapshot`), so a plan that fails or leaves the
   system half-upgraded never touches it (found on the dev box 2026-11-04: `llvm-23.1.5` merged
   while `ld.lld` stayed 23.1.4 against the new same-soname `libLLVM.so.23.1`, which crashed, and
   `clang-23.1.5-r1`'s build with it; emerge orders the same, through a test-dependency cycle
@@ -1599,3 +1599,16 @@ Decided with the user (2026-10-16):
       plan order on success, deleted either way.
     - 16z5: `--resume` takes the kept binary packages.
     - 16z6: the btrfs loop-image test, the documentation.
+  - Landed (2026-11-12) otherwise than planned in three ways. The snapshot is of EROOT, not
+    only `/`: for `/` the workers chroot into it, for a prefix or another `--root` it is bound
+    over the target in their namespace. Root or the subvolume's owner may take it: btrfs lets
+    an owner snapshot a subvolume, the workers enter a user namespace of their own first when
+    not root, and the subvolume check is the filesystem type and inode 256 rather than
+    `btrfs subvolume show` (which needs root); a snapshot `btrfs subvolume delete` will not
+    remove is removed as a tree. So the end-to-end tests (`test_snapshot_run.py`, a playground
+    turned into a subvolume under `EGRAPH_BTRFS_TMPDIR`, else `/var/tmp`) run unprivileged
+    wherever user namespaces and btrfs allow, and skip elsewhere, CI among them; no loop image
+    is needed. Also bound: `PORTAGE_LOGDIR`, the elog summary's directory, the packages
+    directory, and egraph-build's and portage's own directories when on another volume than
+    `/` (a development tree). Open: the replay's merges are not in `egraph log`, and a run on
+    the live `/` as root is checked by hand.
