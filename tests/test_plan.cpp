@@ -172,6 +172,29 @@ TEST_CASE("-uD takes an earlier || alternative in a newer slot of an installed p
               .empty());
 }
 
+TEST_CASE("an unsatisfied || takes the alternative of a package installed in another slot") {
+    // As ghostty's || ( zig-bin:0.17 zig:0.17 ) beside zig-utils.eclass's
+    // || ( zig:0.17[llvm(+)] zig-bin:0.17 ), with zig-bin:0.15 installed.
+    const std::string both = "|| ( dev-lang/zbin:0.17 dev-lang/z:0.17 ) "
+                             "|| ( dev-lang/z:0.17 dev-lang/zbin:0.17 )";
+    const std::string reversed = "|| ( dev-lang/z:0.17 dev-lang/zbin:0.17 )";
+    for (const auto& dep : {both, reversed}) {
+        const auto system = make_system(
+            {{.cpv = "dev-lang/zbin-0.15.2", .slot = "0.15"}, {.cpv = "x11-terms/gt-1"}},
+            {{.cpv = "dev-lang/zbin-0.15.2", .slot = "0.15"},
+             {.cpv = "dev-lang/zbin-0.17.1", .slot = "0.17"},
+             {.cpv = "dev-lang/z-0.17.1", .slot = "0.17"},
+             {.cpv = "x11-terms/gt-1"},
+             {.cpv = "x11-terms/gt-2", .deps = {{"BDEPEND", dep}}}},
+            {"x11-terms/gt"});
+        CHECK(plan(system, egraph::UseRebuilds::none,
+                   egraph::Targets{.scope = {}, .roots = true, .deep = true}) ==
+              std::vector<std::string>{
+                  "x11-terms/gt-1 -> x11-terms/gt-2",
+                  "new dev-lang/zbin-0.17.1 <- x11-terms/gt-2 dev-lang/zbin:0.17"});
+    }
+}
+
 TEST_CASE("-uD moves a dependency naming no slot to a newer slot beside the installed one") {
     // As virtual/wine's || ( ... app-emulation/wine-vanilla[wow64(-)] ... ): a satisfied atom
     // goes to its best visible version, whatever slot it is in.

@@ -1324,6 +1324,18 @@ class Planner {
             // A || asks for a USE change only when no alternative will do without, and then
             // of the first that can take one.
             const auto asked = pending_.size();
+            // dep_zapdeps tries the alternatives it prefers first, in their order.
+            for (std::size_t child = index + 1; any && child < list.size(); ++child) {
+                if (element(list, child).parent != index || !preferred(tables, list, child)) {
+                    continue;
+                }
+                if (pull(tables, list, child, pulls)) {
+                    pending_.resize(asked);
+                    return true;
+                }
+                rollback(pulls, start);
+            }
+            pending_.resize(asked);
             bool some = false;
             for (std::size_t child = index + 1; child < list.size(); ++child) {
                 if (element(list, child).parent != index) {
@@ -1429,6 +1441,32 @@ class Planner {
             })) {
             proposed_.push_back(std::move(needed));
         }
+    }
+
+    // Whether a || alternative is in dep_zapdeps' first bin: each of its atoms names a package
+    // installed in some slot, or a virtual, or is met by the plan. A nested || is beyond this.
+    bool preferred(const Tables& tables, std::span<const Node> list, std::size_t index) {
+        const auto& node = element(list, index);
+        switch (node.type) {
+        case NodeType::weak_blocker:
+        case NodeType::strong_blocker:
+            return true;
+        case NodeType::atom: {
+            const auto& wanted = atom(tables.string(node.atom));
+            return wanted && (wanted->cp.starts_with("virtual/") ||
+                              installed_cps_.contains(wanted->cp) || satisfied_atom(tables, node));
+        }
+        case NodeType::any_of:
+            return false;
+        case NodeType::all_of:
+            for (std::size_t child = index + 1; child < list.size(); ++child) {
+                if (element(list, child).parent == index && !preferred(tables, list, child)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return false;
     }
 
     void rollback(std::vector<std::pair<std::uint32_t, std::string>>& pulls, std::size_t size) {

@@ -1982,4 +1982,31 @@ SCENARIOS = {
             "dev-lang/py-3.14.1": {"EAPI": "8", "SLOT": "3.14"},
         },
     },
+    # Unsatisfied || groups naming a package with another slot installed, as ghostty's
+    # || ( zig-bin zig ) beside zig-utils.eclass's || ( zig[llvm(+)] zig-bin ): emerge takes the
+    # installed package's alternative whatever its place.
+    "otherslot": {
+        "world": ["x11-terms/gt", "x11-terms/rev"],
+        "ebuilds": {
+            "x11-terms/gt-1": {"EAPI": "8"},
+            "x11-terms/gt-2": {
+                "EAPI": "8",
+                "BDEPEND": "|| ( dev-lang/zbin:0.17 dev-lang/z:0.17 ) "
+                "|| ( dev-lang/z:0.17 dev-lang/zbin:0.17 )",
+            },
+            "x11-terms/rev-1": {"EAPI": "8"},
+            "x11-terms/rev-2": {
+                "EAPI": "8",
+                "RDEPEND": "|| ( dev-lang/z:0.17 dev-lang/zbin:0.17 )",
+            },
+            "dev-lang/zbin-0.15.2": {"EAPI": "8", "SLOT": "0.15"},
+            "dev-lang/zbin-0.17.1": {"EAPI": "8", "SLOT": "0.17"},
+            "dev-lang/z-0.17.1": {"EAPI": "8", "SLOT": "0.17"},
+        },
+        "installed": {
+            "x11-terms/gt-1": {"EAPI": "8"},
+            "x11-terms/rev-1": {"EAPI": "8"},
+            "dev-lang/zbin-0.15.2": {"EAPI": "8", "SLOT": "0.15"},
+        },
+    },
 }
